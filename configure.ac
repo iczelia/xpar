@@ -3,7 +3,7 @@ m4_define([xpar_version_minor], [5])
 m4_define([xpar_version], [xpar_version_major.xpar_version_minor])
 
 AC_PREREQ([2.69])
-AC_INIT([xpar],[xpar_version],[https://github.com/kspalaiologos/xpar])
+AC_INIT([xpar],[xpar_version],[https://github.com/iczelia/xpar])
 AC_CONFIG_HEADERS([config.h])
 AC_COPYRIGHT([Copyright (C) 2022-2024 Kamila Szewczyk])
 AC_LANG([C])
