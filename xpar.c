@@ -92,7 +92,7 @@ static void help() {
     "The interlacing factor of two allows correction of 4080 contiguous\n"
     "errors in a 65025 byte block.\n"
     "\n"
-    "Report bugs to: https://github.com/kspalaiologos/xpar\n"
+    "Report bugs to: https://github.com/iczelia/xpar\n"
     "Or contact the author: Kamila Szewczyk <k@iczelia.net>\n"
   );
 }
