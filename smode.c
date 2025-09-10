@@ -33,9 +33,8 @@ void smode_gf256_gentab(u8 poly) {
     if ((b <<= 1) >= 256)
       b = (b - 256) ^ poly;
   }
-  for (int i = 1; i < 256; i++)
-    for (int j = 1; j < 256; j++)
-      PROD[i][j] = EXP[(LOG[i] + LOG[j]) % 255];
+  Fi0(256, 1, Fj0(256, 1,
+      PROD[i][j] = EXP[(LOG[i] + LOG[j]) % 255]))
 }
 static u8 gf256_div(u8 a, u8 b) {
   if (!a || !b) return 0;
@@ -75,24 +74,20 @@ static gf256mat * gf256mat_eye(int n) {
 }
 static gf256mat * gf256mat_prod(gf256mat * a, gf256mat * b) {
   gf256mat * c = gf256mat_init(a->n, b->m);
-  for (int i = 0; i < a->n; i++)
-    for (int k = 0; k < a->m; k++)
-      for (int j = 0; j < b->m; j++)
-        c->v[i][j] ^= PROD[a->v[i][k]][b->v[k][j]];
+  Fi(a->n, Fk(a->m, Fj(b->m,
+      c->v[i][j] ^= PROD[a->v[i][k]][b->v[k][j]])))
   return c;
 }
 static gf256mat * gf256mat_cat(gf256mat * a, gf256mat * b) {
   gf256mat * c = gf256mat_init(a->n, a->m + b->m);
-  for (int i = 0; i < a->n; i++) {
+  Fi(a->n,
     memcpy(c->v[i], a->v[i], a->m);
-    memcpy(c->v[i] + a->m, b->v[i], b->m);
-  }
+    memcpy(c->v[i] + a->m, b->v[i], b->m))
   return c;
 }
 static gf256mat * gf256mat_submat(gf256mat * a, int r, int c, int n, int m) {
   gf256mat * b = gf256mat_init(n, m);
-  for (int i = 0; i < n; i++)
-    memcpy(b->v[i], a->v[r + i] + c, m);
+  Fi(n, memcpy(b->v[i], a->v[r + i] + c, m))
   return b;
 }
 static void gf256mat_swaprows(gf256mat * a, int r1, int r2) {
@@ -101,40 +96,33 @@ static void gf256mat_swaprows(gf256mat * a, int r1, int r2) {
   a->v[r2] = tmp;
 }
 static void gf256mat_trans(gf256mat * a) {
-  for (int i = 0; i < a->n; i++)
-    for (int j = i + 1; j < a->m; j++) {
-      u8 tmp = a->v[i][j];
-      a->v[i][j] = a->v[j][i];
-      a->v[j][i] = tmp;
-    }
+  Fi(a->n, Fj0(a->m, i + 1,
+    u8 tmp = a->v[i][j];
+    a->v[i][j] = a->v[j][i];
+    a->v[j][i] = tmp))
 }
 static gf256mat * gf256mat_inv(gf256mat * a) {
   gf256mat * b = gf256mat_eye(a->n);
   gf256mat * c = gf256mat_cat(a, b);
-  for (int i = 0; i < c->n; i++) {
+  Fi(c->n,
     int r = i;
     while (r < c->n && c->v[r][i] == 0)
       r++;
     if (r == c->n) { gf256mat_free(c); return NULL; }
     gf256mat_swaprows(c, i, r);
     u8 inv = gf256_div(1, c->v[i][i]);
-    for (int j = 0; j < c->m; j++)
-      c->v[i][j] = PROD[inv][c->v[i][j]];
-    for (int j = 0; j < c->n; j++) if (j != i) {
+    Fj(c->m,c->v[i][j] = PROD[inv][c->v[i][j]])
+    Fj(c->n, if (j != i) {
       u8 f = c->v[j][i];
-      for (int k = 0; k < c->m; k++)
-        c->v[j][k] ^= PROD[f][c->v[i][k]];
-    }
-  }
+      Fk(c->m, c->v[j][k] ^= PROD[f][c->v[i][k]]);
+    }))
   gf256mat * d = gf256mat_submat(c, 0, a->n, a->n, a->n);
   gf256mat_free(c);
   return d;
 }
 static gf256mat * vandermonde(int row, int col) {
   gf256mat * mat = gf256mat_init(row, col);
-  for (int i = 0; i < row; i++)
-    for (int j = 0; j < col; j++)
-      mat->v[i][j] = gf256_exp(i, j);
+  Fi(row, Fj(col, mat->v[i][j] = gf256_exp(i, j)))
   return mat;
 }
 typedef struct {
@@ -158,31 +146,25 @@ static rs * rs_init(int data_shards, int parity_shards) {
 }
 static void gf256_prod(uint8_t * restrict dst, uint8_t a,
                        uint8_t * restrict b, size_t len) {
-  for (int i = 0; i < len; i++)
-    dst[i] ^= PROD[a][b[i]];
+  Fi(len, dst[i] ^= PROD[a][b[i]]);
 }
 static void rs_encode(rs * r, uint8_t ** in, size_t len) {
-  for (int j = 0; j < r->parity; j++)
-    memset(in[r->data + j], 0, len);
+  Fj(r->parity, memset(in[r->data + j], 0, len));
 #if defined(XPAR_OPENMP)
   #pragma omp parallel for if((r->data + r->parity) > 8 && len > 100 * 1024 * 1024)
 #endif
-  for (int j = 0; j < r->parity; j++)
-    for (int k = 0; k < r->data; k++)
-      gf256_prod(in[r->data + j], r->rows[j][k], in[k], len);
+  Fj(r->parity, Fk(r->data, gf256_prod(in[r->data + j], r->rows[j][k], in[k], len)))
 }
 static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, size_t len) {
   int present = 0;
-  for (int i = 0; i < r->total; i++)
-    if (shards_present[i]) present++;
+  Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
   if (present == r->total) return true;
   gf256mat * mat = gf256mat_init(r->data, r->data);
   uint8_t ** shards = calloc(r->data, sizeof(uint8_t *));
   for (int i = 0, k = 0; i < r->total && k < r->data; i++)
     if (shards_present[i]) {
-      for (int j = 0; j < r->data; j++)
-        mat->v[k][j] = r->matrix->v[i][j];
+      Fj(r->data, mat->v[k][j] = r->matrix->v[i][j]);
       shards[k++] = in[i];
     }
   gf256mat * inv = gf256mat_inv(mat);
@@ -193,9 +175,9 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, size_t l
 #if defined(XPAR_OPENMP)
   #pragma omp parallel for if((r->data + r->parity) > 8 && len > 100 * 1024 * 1024)
 #endif
-  for (int i = 0; i < r->data; i++)
-    for (int j = 0; j < r->data; j++)
-      if(!shards_present[i]) gf256_prod(in[i], inv->v[j][i], shards[j], len);
+  Fi(r->data, Fj(r->data,
+    if(!shards_present[i]) gf256_prod(in[i], inv->v[j][i], shards[j], len)
+  ))
   gf256mat_free(inv);  free(shards);
   return true;
 }
@@ -291,13 +273,11 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
       if (memcmp(map.map, "XPAS", 4)) {
         xpar_unmap(&map);  return res;
       }
-      for (int i = 0; i < 4; i++)
-        res.crc |= ((sz) map.map[4 + i]) << (24 - 8 * i);
+      Fi(4, res.crc |= ((sz) map.map[4 + i]) << (24 - 8 * i))
       res.dshards = map.map[8];
       res.pshards = map.map[9];
       res.shard_number = map.map[10];
-      for (int i = 0; i < 8; i++)
-        res.total_size |= ((sz) map.map[11 + i]) << (56 - 8 * i);
+      Fi(8, res.total_size |= ((sz) map.map[11 + i]) << (56 - 8 * i))
       if (SIZEOF_SIZE_T == 4) {
         if (map.map[11] || map.map[12] || map.map[13] || map.map[14]) {
           if(!opt.quiet)
@@ -333,13 +313,11 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
   if (memcmp(buffer, "XPAS", 4)) {
     free(buffer);  return res;
   }
-  for (int i = 0; i < 4; i++)
-    res.crc |= ((sz) buffer[4 + i]) << (24 - 8 * i);
+  Fi(4, res.crc |= ((sz) buffer[4 + i]) << (24 - 8 * i));
   res.dshards = buffer[8];
   res.pshards = buffer[9];
   res.shard_number = buffer[10];
-  for (int i = 0; i < 8; i++)
-    res.total_size |= ((sz) buffer[11 + i]) << (56 - 8 * i);
+  Fi(8, res.total_size |= ((sz) buffer[11 + i]) << (56 - 8 * i));
   if (SIZEOF_SIZE_T == 4) {
     if (buffer[11] || buffer[12] || buffer[13] || buffer[14]) {
       if(!opt.quiet)
