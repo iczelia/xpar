@@ -47,17 +47,14 @@ void jmode_gf256_gentab(u8 poly) {
       b = (b - 256) ^ poly;
   }
   LOG[0] = 255; EXP[255] = 0;
-  for (int i = 0; i < 256; i++)
-    for (int j = 0; j < 256; j++)
-      PROD[i][j] = (i && j) ? EXP[(LOG[i] + LOG[j]) % 255] : 0,
-      DP[i][j] = (i != 255 && j) ? EXP[(i + LOG[j]) % 255] : 0;
+  Fi(256, Fj(256,
+    PROD[i][j] = (i && j) ? EXP[(LOG[i] + LOG[j]) % 255] : 0,
+    DP[i][j] = (i != 255 && j) ? EXP[(i + LOG[j]) % 255] : 0))
   static const u8 gen[T] = {
     1, 91, 127, 86, 16, 30, 13, 235, 97, 165, 8, 42, 54, 86, 171, 32,
     113, 32, 171, 86, 54, 42, 8, 165, 97, 235, 13, 30, 16, 86, 127, 91
   };
-  for (int i = 0; i < 256; i++)
-    for (int j = 0; j < T; j++)
-      PROD_GEN[i][j] = PROD[i][gen[j]];
+  Fi(256, Fj(T, PROD_GEN[i][j] = PROD[i][gen[j]]))
 }
 static u8 gf256_div(u8 a, u8 b) {
   if (!a || !b) return 0;
@@ -126,7 +123,7 @@ int rsd32(u8 data[N]) {
       s[i+4] ^= t5; t5 = PROD[a5][t5];
     }
   }
-  for (syn_error = 0, i = 0; i < T; i++) syn_error |= s[i];
+  syn_error = 0; Fi(T, syn_error |= s[i])
   if (!syn_error) return 0;
   lambda[0] = 1;  r = el = 0;  memcpy(b, lambda, T + 1);
   while (++r <= T) {
@@ -142,8 +139,8 @@ int rsd32(u8 data[N]) {
       memcpy(lambda, t, T + 1);
     }
   }
-  for (deg_lambda = 0, i = 0; i < T + 1; i++)
-    if (lambda[i]) deg_lambda = i, reg[i] = lambda[i];
+  deg_lambda = 0;
+  Fi(T + 1, if (lambda[i]) deg_lambda = i, reg[i] = lambda[i])
   for (count = 0, i = 1, k = 139; i <= 255; i++, k = (k + 139) % 255) {
     for (q = 1, j = deg_lambda; j > 0; j--)
       q ^= reg[j] = DP[j][reg[j]];
@@ -152,11 +149,10 @@ int rsd32(u8 data[N]) {
     if (++count == deg_lambda) break; // Early exit.
   }
   if (deg_lambda != count) return -1;
-  for (i = 0; i < T; i++) {
+  Fi(T,
     for (tmp = 0, j = MIN(deg_lambda, i); j >= 0; j--)
       tmp ^= PROD[s[i - j]][lambda[j]];
-    if (tmp) deg_omega = i, omega[i] = tmp;
-  }
+    if (tmp) deg_omega = i, omega[i] = tmp)
   for (j = count - 1; j >= 0; j--) {
     for (num1 = 0, i = deg_omega; i >= 0; i--)
       num1 ^= DP[(i * root[j]) % 255][omega[i]];
