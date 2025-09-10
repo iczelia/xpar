@@ -1,4 +1,55 @@
+2025-09-10  Kamila Szewczyk  <kspalaiologos@gmail.com>
+
+	update news
+
+	smode: misc style
+
+	jmode misc style
+
+2025-08-05  Kamila Szewczyk  <27734421+iczelia@users.noreply.github.com>
+
+	Update xpar.c
+
+	Update README.md
+
+	Update configure.ac
+
+	Felker's code is no mre.
+
+	Update xpar.1
+
+2025-07-12  Kamila Szewczyk  <27734421+kspalaiologos@users.noreply.github.com>
+
+	Update README.md
+
+	Update AUTHORS
+
+	Update yarg.h
+
+	Update xpar.1
+
+	Update xpar.c
+
+	remove my acm email
+
+	no @acm
+
+2024-12-17  Kamila Szewczyk  <27734421+kspalaiologos@users.noreply.github.com>
+
+	Update yarg.h
+
+2024-12-16  Kamila Szewczyk  <27734421+kspalaiologos@users.noreply.github.com>
+
+	Update yarg.h
+
+2024-11-20  Kamila Szewczyk  <27734421+kspalaiologos@users.noreply.github.com>
+
+	Update README.md
+
 2024-10-17  Kamila Szewczyk  <kspalaiologos@gmail.com>
+
+	v0.5
+	update release workflow, bump version
 
 	ensure that -i3 pads to full block size
 	otherwise we lose the nominal burst error correction capability. if a feature to remove the padding existed, it'd probably be based on shortenings to RS codes (i.e. we know exactly which values must be zero judging just from the block length, so they don't count towards the errors, allowing us to get better parity to data ratio)
