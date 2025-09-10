@@ -2,6 +2,11 @@ This file contains release notes for major and minor releases of xpar.
 For a complete list of source-level changes, consult the ChangeLog file.
 
 ===============================================================================
+v0.6 (10-09-2025)
+- Move the project page to iczelia/xpar.
+- Minor style changes and fixes to command parsing.
+
+===============================================================================
 v0.5 (17-10-2024)
 - OpenMP support for sharded mode (which unfortunately seems bottlenecked by
   I/O). 
