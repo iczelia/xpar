@@ -9,6 +9,8 @@ file from a given data file. Such a file can be recovered as long as no more
 than about 6.2% of the data is corrupted. xpar internally uses a (255,223)-RS
 code over an 8-bit Galois field.
 
+can be consiered a sibling project of par2.
+
 ## Building
 
 ```
