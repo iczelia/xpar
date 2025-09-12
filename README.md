@@ -17,10 +17,20 @@ can be consiered a sibling project of par2.
 # If using a git clone (not needed for source packages), first...
 $ ./bootstrap
 
-# All...
-$ ./configure
-$ make
-$ sudo make install
+# Optimised x86-64
+$ ./configure --enable-x86_64 --enable-native --enable-lto && make && sudo make install
+
+# Optimised aarch64
+$ ./configure --enable-aarch64 --enable-native --enable-lto && make && sudo make install
+
+# Generic x86-64
+$ ./configure --enable-x86_64 && make && sudo make install
+
+# Generic aarch64
+$ ./configure --enable-aarch64 && make && sudo make install
+
+# Generic unknown architecture
+$ ./configure && make && sudo make install
 ```
 
 ## Usage
