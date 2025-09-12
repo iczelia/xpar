@@ -99,6 +99,7 @@ Benchmark 1: ./xpar -Sdf data.org data.bin.xpa*
   Range (min … max):    1.464 s …  1.505 s    10 runs
 ```
 
-Encode + Decode speed on random data (most adversarial scenario; joint mode, no interlacing): 244MB/s, 132MB/s respectively.
-Encode + Decode speed on random data (sharded mode, 50 + 4): 1231MB/s, 34482MB/s respectively.
-PAR2 Encode + Decode speed on random data (sharded mode): 153MB/s, 277MB/s.
+Numbers:
+- Encode + Decode speed on random data (most adversarial scenario; joint mode, no interlacing): 244MB/s, 132MB/s respectively.
+- Encode + Decode speed on random data (sharded mode, 50 + 4): 1231MB/s, 34482MB/s respectively.
+- PAR2 Encode + Decode speed on random data (sharded mode): 153MB/s, 277MB/s.
