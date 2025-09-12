@@ -81,6 +81,24 @@ Benchmark 1: ./xpar -Jef data.bin
 Benchmark 1: ./xpar -Jdf data.bin.xpa
   Time (mean ± σ):      8.772 s ±  0.110 s    [User: 7.554 s, System: 0.783 s]
   Range (min … max):    8.478 s …  8.893 s    10 runs
+% hyperfine 'rm -f *.par2 && par2create data.bin'
+Benchmark 1: rm -f *.par2 && par2create data.bin
+  Time (mean ± σ):      6.529 s ±  0.043 s    [User: 154.445 s, System: 0.217 s]
+  Range (min … max):    6.474 s …  6.624 s    10 runs
+% hyperfine 'par2 verify data.bin.par2'
+Benchmark 1: par2 verify data.bin.par2
+  Time (mean ± σ):      3.659 s ±  0.011 s    [User: 3.605 s, System: 0.058 s]
+  Range (min … max):    3.653 s …  3.688 s    10 runs
+% hyperfine 'rm data.bin.xpa* && ./xpar -Sef --dshards=50 --pshards=4 --out-prefix=data.bin.xpa data.bin'
+Benchmark 1: rm data.bin.xpa* && ./xpar -Sef --dshards=50 --pshards=4 --out-prefix=data.bin.xpa data.bin
+  Time (mean ± σ):      2.154 s ±  0.016 s    [User: 0.812 s, System: 0.782 s]
+  Range (min … max):    2.135 s …  2.188 s    10 runs
+% hyperfine './xpar -Sdf data.org data.bin.xpa*'
+Benchmark 1: ./xpar -Sdf data.org data.bin.xpa*
+  Time (mean ± σ):      1.480 s ±  0.014 s    [User: 0.029 s, System: 0.999 s]
+  Range (min … max):    1.464 s …  1.505 s    10 runs
 ```
 
 Encode + Decode speed on random data (most adversarial scenario; joint mode, no interlacing): 244MB/s, 132MB/s respectively.
+Encode + Decode speed on random data (sharded mode, 50 + 4): 1231MB/s, 34482MB/s respectively.
+PAR2 Encode + Decode speed on random data (sharded mode): 153MB/s, 277MB/s.
