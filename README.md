@@ -43,7 +43,7 @@ The file format will change until the stable version v1.0 is reached.
 Do not use xpar for critical data, do not expect backwards or forwards
 compatibility until then.
 
-# Development 
+## Development 
 
 A rough outline of some development-related topics below.
 
@@ -59,3 +59,28 @@ As it stands:
 
 Code style:
 - Two space indent, brace on the same line, middle pointers - `char * p;`.
+
+## Benchmarks
+
+Quiet AMD Ryzen 9 5900X 12-Core Processor running Linux 6.12.38+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.38-1 (2025-07-16) x86_64 GNU/Linux.
+
+```
+% clang --version
+Debian clang version 19.1.7 (3+b2)
+Target: x86_64-pc-linux-gnu
+Thread model: posix
+InstalledDir: /usr/lib/llvm-19/bin
+% ./configure --enable-x86_64 --enable-native --enable-lto CC=clang
+% make -j8
+% head -c 1000000000 /dev/urandom > data.bin   # 1 GB of random data to protect.
+% hyperfine './xpar -Jef data.bin'
+Benchmark 1: ./xpar -Jef data.bin
+  Time (mean ± σ):      5.508 s ±  0.055 s    [User: 4.093 s, System: 0.903 s]
+  Range (min … max):    5.360 s …  5.562 s    10 runs
+% hyperfine './xpar -Jdf data.bin.xpa'
+Benchmark 1: ./xpar -Jdf data.bin.xpa
+  Time (mean ± σ):      8.772 s ±  0.110 s    [User: 7.554 s, System: 0.783 s]
+  Range (min … max):    8.478 s …  8.893 s    10 runs
+```
+
+Encode + Decode speed on random data (most adversarial scenario; joint mode, no interlacing): 244MB/s, 132MB/s respectively.
