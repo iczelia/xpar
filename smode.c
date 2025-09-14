@@ -191,6 +191,7 @@ void rs_destroy(rs * r) {
 // ============================================================================
 static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
   FILE * out[MAX_TOTAL_SHARDS];
+  if (o.pshards >= o.dshards) FATAL("Too many parity shards.");
   Fi(o.dshards + o.pshards,
     char * name; asprintf(&name, "%s.xpa.%03d", o.output_prefix, i);
     struct stat st;  memset(&st, 0, sizeof(struct stat));
