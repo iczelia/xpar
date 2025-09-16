@@ -141,7 +141,7 @@ int main(int argc, char * argv[]) {
         if (jobs != -1) goto conflict;  jobs = atoi(o.arg); break;
       case 'J':
         if (sharded || log_sharded) goto conflict;  joint = true; break;
-      case 'S':
+      case 'W':
         if (joint || log_sharded) goto conflict;  sharded = true; break;
       case 'L':
         if (joint || sharded) goto conflict;  log_sharded = true; break;
