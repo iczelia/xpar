@@ -69,20 +69,19 @@
   #if HAVE_AVX2
     #define LEO_TRY_AVX2 /* 256-bit */
     #define LEO_ALIGN_BYTES 32
+    #define LEO_M256 __m256i
   #endif
 
   #if HAVE_SSSE3
     #define LEO_TRY_SSSE3 /* 128-bit */
     #include <tmmintrin.h> // SSSE3: _mm_shuffle_epi8
     #include <emmintrin.h> // SSE2
+    #define LEO_M128 __m128i
   #endif
 
   #include <x86intrin.h>
 #elif defined(XPAR_AARCH64)
-  #include "sse2neon.h"
-
-  #define LEO_USE_SSE2NEON
-  #define LEO_TARGET_MOBILE
+  // TODO.
 #else
 #endif
 
@@ -116,80 +115,20 @@ typedef enum LeopardResultT
 // Unroll inner loops 4 times
 #define LEO_USE_VECTOR4_OPT
 
+// Define if unaligned accesses are undesired.
+// #define LEO_ALIGNED_ACCESSES
+
 //------------------------------------------------------------------------------
 // Platform/Architecture
 
-#if defined(HAVE_ARM_NEON_H)
-  #include <arm_neon.h>
-#endif // HAVE_ARM_NEON_H
-
-#if defined(LEO_TARGET_MOBILE)
-
-  #define LEO_ALIGNED_ACCESSES /* Inputs must be aligned to LEO_ALIGN_BYTES */
-
-# if defined(HAVE_ARM_NEON_H)
-  // Compiler-specific 128-bit SIMD register keyword
-  #define LEO_M128 uint8x16_t
-  #define LEO_TRY_NEON
-#elif defined(LEO_USE_SSE2NEON)
-  #define LEO_M128 __m128i
-#else
-  #define LEO_M128 uint64_t
-# endif
-
-#else // LEO_TARGET_MOBILE
-
-  // Compiler-specific 128-bit SIMD register keyword
-  #define LEO_M128 __m128i
-
-#endif // LEO_TARGET_MOBILE
-
-#ifdef LEO_TRY_AVX2
-  // Compiler-specific 256-bit SIMD register keyword
-  #define LEO_M256 __m256i
-#endif
-
-// Compiler-specific C++11 restrict keyword
-#define LEO_RESTRICT __restrict
-
-// Compiler-specific force inline keyword
-#ifdef _MSC_VER
-  #define LEO_FORCE_INLINE inline __forceinline
-#else
-  #define LEO_FORCE_INLINE inline __attribute__((always_inline))
-#endif
-
-// Compiler-specific alignment keyword
-// Note: Alignment only matters for ARM NEON where it should be 16
-#ifdef _MSC_VER
-  #define LEO_ALIGNED __declspec(align(LEO_ALIGN_BYTES))
-#else // _MSC_VER
-  #define LEO_ALIGNED __attribute__((aligned(LEO_ALIGN_BYTES)))
-#endif // _MSC_VER
-
+#define LEO_FORCE_INLINE inline __attribute__((always_inline))
+#define LEO_ALIGNED __attribute__((aligned(LEO_ALIGN_BYTES)))
 
 //------------------------------------------------------------------------------
 // Runtime CPU Architecture Check
 
-// Initialize CPU architecture flags
-void InitializeCPUArch();
-
-
-#if defined(LEO_TRY_NEON)
-# if defined(IOS) && defined(__ARM_NEON__)
-  // Does device support NEON?
-  static const bool CpuHasNeon = true;
-  static const bool CpuHasNeon64 = true;
-# else
-  // Does device support NEON?
-  // Remember to add LOCAL_STATIC_LIBRARIES := cpufeatures
-  extern bool CpuHasNeon; // V6 / V7
-  extern bool CpuHasNeon64; // 64-bit
-# endif
-#endif
-
-extern bool CpuHasAVX2;
-extern bool CpuHasSSSE3;
+static bool CpuHasAVX2 = false;
+static bool CpuHasSSSE3 = false;
 
 //------------------------------------------------------------------------------
 // Portable Intrinsics
@@ -198,15 +137,7 @@ extern bool CpuHasSSSE3;
 // Precondition: x != 0
 LEO_FORCE_INLINE uint32_t LastNonzeroBit32(uint32_t x)
 {
-#ifdef _MSC_VER
-  unsigned long index;
-  // Note: Ignoring result because x != 0
-  _BitScanReverse(&index, (uint32_t)x);
-  return (unsigned)index;
-#else
-  // Note: Ignoring return value of 0 because x != 0
   return 31 - (uint32_t)__builtin_clz(x);
-#endif
 }
 
 // Returns next power of two at or above given value
@@ -223,16 +154,16 @@ LEO_FORCE_INLINE uint32_t NextPow2(uint32_t n)
 
 // x[] ^= y[]
 void xor_mem(
-  void * LEO_RESTRICT x, const void * LEO_RESTRICT y,
+  void * restrict x, const void * restrict y,
   uint64_t bytes);
 
 #ifdef LEO_M1_OPT
 
 // x[] ^= y[] ^ z[]
 void xor_mem_2to1(
-  void * LEO_RESTRICT x,
-  const void * LEO_RESTRICT y,
-  const void * LEO_RESTRICT z,
+  void * restrict x,
+  const void * restrict y,
+  const void * restrict z,
   uint64_t bytes);
 
 #endif // LEO_M1_OPT
@@ -241,10 +172,10 @@ void xor_mem_2to1(
 
 // For i = {0, 1, 2, 3}: x_i[] ^= x_i[]
 void xor_mem4(
-  void * LEO_RESTRICT x_0, const void * LEO_RESTRICT y_0,
-  void * LEO_RESTRICT x_1, const void * LEO_RESTRICT y_1,
-  void * LEO_RESTRICT x_2, const void * LEO_RESTRICT y_2,
-  void * LEO_RESTRICT x_3, const void * LEO_RESTRICT y_3,
+  void * restrict x_0, const void * restrict y_0,
+  void * restrict x_1, const void * restrict y_1,
+  void * restrict x_2, const void * restrict y_2,
+  void * restrict x_3, const void * restrict y_3,
   uint64_t bytes);
 
 #endif // LEO_USE_VECTOR4_OPT
@@ -622,16 +553,16 @@ static const ffe_t* Multiply8LUT = NULL;
 
 // Reference version of muladd: x[] ^= y[] * log_m
 static LEO_FORCE_INLINE void RefMulAdd(
-  void* LEO_RESTRICT x,
-  const void* LEO_RESTRICT y,
+  void* restrict x,
+  const void* restrict y,
   ffe_t log_m,
   uint64_t bytes)
 {
-  const ffe_t* LEO_RESTRICT lut = Multiply8LUT + (unsigned)log_m * 256;
-  const ffe_t * LEO_RESTRICT y1 = (const ffe_t *) (y);
+  const ffe_t* restrict lut = Multiply8LUT + (unsigned)log_m * 256;
+  const ffe_t * restrict y1 = (const ffe_t *) (y);
 
-#ifdef LEO_TARGET_MOBILE
-  ffe_t * LEO_RESTRICT x1 = (ffe_t *) (x);
+#ifdef LEO_ALIGNED_ACCESSES
+  ffe_t * restrict x1 = (ffe_t *) (x);
 
   do
   {
@@ -642,7 +573,7 @@ static LEO_FORCE_INLINE void RefMulAdd(
       bytes -= 64;
 } while (bytes > 0);
 #else
-  uint64_t * LEO_RESTRICT x8 = (uint64_t *) (x);
+  uint64_t * restrict x8 = (uint64_t *) (x);
 
   do
   {
@@ -669,16 +600,16 @@ static LEO_FORCE_INLINE void RefMulAdd(
 
 // Reference version of mul: x[] = y[] * log_m
 static LEO_FORCE_INLINE void RefMul(
-  void* LEO_RESTRICT x,
-  const void* LEO_RESTRICT y,
+  void* restrict x,
+  const void* restrict y,
   ffe_t log_m,
   uint64_t bytes)
 {
-  const ffe_t* LEO_RESTRICT lut = Multiply8LUT + (unsigned)log_m * 256;
-  const ffe_t * LEO_RESTRICT y1 = (const ffe_t *) (y);
+  const ffe_t* restrict lut = Multiply8LUT + (unsigned)log_m * 256;
+  const ffe_t * restrict y1 = (const ffe_t *) (y);
 
-#ifdef LEO_TARGET_MOBILE
-  ffe_t * LEO_RESTRICT x1 = (ffe_t *) (x);
+#ifdef LEO_ALIGNED_ACCESSES
+  ffe_t * restrict x1 = (ffe_t *) (x);
 
   do
   {
@@ -689,7 +620,7 @@ static LEO_FORCE_INLINE void RefMul(
       bytes -= 64;
   } while (bytes > 0);
 #else
-  uint64_t * LEO_RESTRICT x8 = (uint64_t *) (x);
+  uint64_t * restrict x8 = (uint64_t *) (x);
 
   do
   {
@@ -784,7 +715,7 @@ static void InitializeMultiplyTables()
 
 
 static void mul_mem(
-  void * LEO_RESTRICT x, const void * LEO_RESTRICT y,
+  void * restrict x, const void * restrict y,
   ffe_t log_m, uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
@@ -795,8 +726,8 @@ static void mul_mem(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      LEO_M256 * LEO_RESTRICT x32 = (LEO_M256 *)(x);
-      const LEO_M256 * LEO_RESTRICT y32 = (const LEO_M256 *)(y);
+      LEO_M256 * restrict x32 = (LEO_M256 *)(x);
+      const LEO_M256 * restrict y32 = (const LEO_M256 *)(y);
 
       do
       {
@@ -828,8 +759,8 @@ static void mul_mem(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
-      const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(y);
+      LEO_M128 * restrict x16 = (LEO_M128 *)(x);
+      const LEO_M128 * restrict y16 = (const LEO_M128 *)(y);
 
       do
       {
@@ -916,7 +847,7 @@ static void FFTInitialize()
 
 // 2-way butterfly
 static void IFFT_DIT2(
-  void * LEO_RESTRICT x, void * LEO_RESTRICT y,
+  void * restrict x, void * restrict y,
   ffe_t log_m, uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
@@ -927,8 +858,8 @@ static void IFFT_DIT2(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      LEO_M256 * LEO_RESTRICT x32 = (LEO_M256 *)(x);
-      LEO_M256 * LEO_RESTRICT y32 = (LEO_M256 *)(y);
+      LEO_M256 * restrict x32 = (LEO_M256 *)(x);
+      LEO_M256 * restrict y32 = (LEO_M256 *)(y);
 
       do
       {
@@ -959,8 +890,8 @@ static void IFFT_DIT2(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
-      LEO_M128 * LEO_RESTRICT y16 = (LEO_M128 *)(y);
+      LEO_M128 * restrict x16 = (LEO_M128 *)(x);
+      LEO_M128 * restrict y16 = (LEO_M128 *)(y);
 
       do
       {
@@ -1015,10 +946,10 @@ static void IFFT_DIT4(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      LEO_M256 * LEO_RESTRICT work0 = (LEO_M256 *)(work[0]);
-      LEO_M256 * LEO_RESTRICT work1 = (LEO_M256 *)(work[dist]);
-      LEO_M256 * LEO_RESTRICT work2 = (LEO_M256 *)(work[dist * 2]);
-      LEO_M256 * LEO_RESTRICT work3 = (LEO_M256 *)(work[dist * 3]);
+      LEO_M256 * restrict work0 = (LEO_M256 *)(work[0]);
+      LEO_M256 * restrict work1 = (LEO_M256 *)(work[dist]);
+      LEO_M256 * restrict work2 = (LEO_M256 *)(work[dist * 2]);
+      LEO_M256 * restrict work3 = (LEO_M256 *)(work[dist * 3]);
 
       do
       {
@@ -1072,10 +1003,10 @@ static void IFFT_DIT4(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      LEO_M128 * LEO_RESTRICT work0 = (LEO_M128 *)(work[0]);
-      LEO_M128 * LEO_RESTRICT work1 = (LEO_M128 *)(work[dist]);
-      LEO_M128 * LEO_RESTRICT work2 = (LEO_M128 *)(work[dist * 2]);
-      LEO_M128 * LEO_RESTRICT work3 = (LEO_M128 *)(work[dist * 3]);
+      LEO_M128 * restrict work0 = (LEO_M128 *)(work[0]);
+      LEO_M128 * restrict work1 = (LEO_M128 *)(work[dist]);
+      LEO_M128 * restrict work2 = (LEO_M128 *)(work[dist * 2]);
+      LEO_M128 * restrict work3 = (LEO_M128 *)(work[dist * 3]);
 
       do
       {
@@ -1145,8 +1076,8 @@ static void IFFT_DIT4(
 
 // {x_out, y_out} ^= IFFT_DIT2( {x_in, y_in} )
 static void IFFT_DIT2_xor(
-  void * LEO_RESTRICT x_in, void * LEO_RESTRICT y_in,
-  void * LEO_RESTRICT x_out, void * LEO_RESTRICT y_out,
+  void * restrict x_in, void * restrict y_in,
+  void * restrict x_out, void * restrict y_out,
   const ffe_t log_m, uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
@@ -1157,10 +1088,10 @@ static void IFFT_DIT2_xor(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      const LEO_M256 * LEO_RESTRICT x32_in = (const LEO_M256 *)(x_in);
-      const LEO_M256 * LEO_RESTRICT y32_in = (const LEO_M256 *)(y_in);
-      LEO_M256 * LEO_RESTRICT x32_out = (LEO_M256 *)(x_out);
-      LEO_M256 * LEO_RESTRICT y32_out = (LEO_M256 *)(y_out);
+      const LEO_M256 * restrict x32_in = (const LEO_M256 *)(x_in);
+      const LEO_M256 * restrict y32_in = (const LEO_M256 *)(y_in);
+      LEO_M256 * restrict x32_out = (LEO_M256 *)(x_out);
+      LEO_M256 * restrict y32_out = (LEO_M256 *)(y_out);
 
       do
       {
@@ -1195,10 +1126,10 @@ static void IFFT_DIT2_xor(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      const LEO_M128 * LEO_RESTRICT x16_in = (const LEO_M128 *)(x_in);
-      const LEO_M128 * LEO_RESTRICT y16_in = (const LEO_M128 *)(y_in);
-      LEO_M128 * LEO_RESTRICT x16_out = (LEO_M128 *)(x_out);
-      LEO_M128 * LEO_RESTRICT y16_out = (LEO_M128 *)(y_out);
+      const LEO_M128 * restrict x16_in = (const LEO_M128 *)(x_in);
+      const LEO_M128 * restrict y16_in = (const LEO_M128 *)(y_in);
+      LEO_M128 * restrict x16_out = (LEO_M128 *)(x_out);
+      LEO_M128 * restrict y16_out = (LEO_M128 *)(y_out);
 
       do
       {
@@ -1260,14 +1191,14 @@ static void IFFT_DIT4_xor(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      const LEO_M256 * LEO_RESTRICT work0 = (const LEO_M256 *)(work_in[0]);
-      const LEO_M256 * LEO_RESTRICT work1 = (const LEO_M256 *)(work_in[dist]);
-      const LEO_M256 * LEO_RESTRICT work2 = (const LEO_M256 *)(work_in[dist * 2]);
-      const LEO_M256 * LEO_RESTRICT work3 = (const LEO_M256 *)(work_in[dist * 3]);
-      LEO_M256 * LEO_RESTRICT xor0 = (LEO_M256 *)(xor_out[0]);
-      LEO_M256 * LEO_RESTRICT xor1 = (LEO_M256 *)(xor_out[dist]);
-      LEO_M256 * LEO_RESTRICT xor2 = (LEO_M256 *)(xor_out[dist * 2]);
-      LEO_M256 * LEO_RESTRICT xor3 = (LEO_M256 *)(xor_out[dist * 3]);
+      const LEO_M256 * restrict work0 = (const LEO_M256 *)(work_in[0]);
+      const LEO_M256 * restrict work1 = (const LEO_M256 *)(work_in[dist]);
+      const LEO_M256 * restrict work2 = (const LEO_M256 *)(work_in[dist * 2]);
+      const LEO_M256 * restrict work3 = (const LEO_M256 *)(work_in[dist * 3]);
+      LEO_M256 * restrict xor0 = (LEO_M256 *)(xor_out[0]);
+      LEO_M256 * restrict xor1 = (LEO_M256 *)(xor_out[dist]);
+      LEO_M256 * restrict xor2 = (LEO_M256 *)(xor_out[dist * 2]);
+      LEO_M256 * restrict xor3 = (LEO_M256 *)(xor_out[dist * 3]);
 
       do
       {
@@ -1328,14 +1259,14 @@ static void IFFT_DIT4_xor(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      const LEO_M128 * LEO_RESTRICT work0 = (const LEO_M128 *)(work_in[0]);
-      const LEO_M128 * LEO_RESTRICT work1 = (const LEO_M128 *)(work_in[dist]);
-      const LEO_M128 * LEO_RESTRICT work2 = (const LEO_M128 *)(work_in[dist * 2]);
-      const LEO_M128 * LEO_RESTRICT work3 = (const LEO_M128 *)(work_in[dist * 3]);
-      LEO_M128 * LEO_RESTRICT xor0 = (LEO_M128 *)(xor_out[0]);
-      LEO_M128 * LEO_RESTRICT xor1 = (LEO_M128 *)(xor_out[dist]);
-      LEO_M128 * LEO_RESTRICT xor2 = (LEO_M128 *)(xor_out[dist * 2]);
-      LEO_M128 * LEO_RESTRICT xor3 = (LEO_M128 *)(xor_out[dist * 3]);
+      const LEO_M128 * restrict work0 = (const LEO_M128 *)(work_in[0]);
+      const LEO_M128 * restrict work1 = (const LEO_M128 *)(work_in[dist]);
+      const LEO_M128 * restrict work2 = (const LEO_M128 *)(work_in[dist * 2]);
+      const LEO_M128 * restrict work3 = (const LEO_M128 *)(work_in[dist * 3]);
+      LEO_M128 * restrict xor0 = (LEO_M128 *)(xor_out[0]);
+      LEO_M128 * restrict xor1 = (LEO_M128 *)(xor_out[dist]);
+      LEO_M128 * restrict xor2 = (LEO_M128 *)(xor_out[dist * 2]);
+      LEO_M128 * restrict xor3 = (LEO_M128 *)(xor_out[dist * 3]);
 
       do
       {
@@ -1590,7 +1521,7 @@ static void IFFT_DIT_Decoder(
 
 // 2-way butterfly
 static void FFT_DIT2(
-  void * LEO_RESTRICT x, void * LEO_RESTRICT y,
+  void * restrict x, void * restrict y,
   ffe_t log_m, uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
@@ -1601,8 +1532,8 @@ static void FFT_DIT2(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      LEO_M256 * LEO_RESTRICT x32 = (LEO_M256 *)(x);
-      LEO_M256 * LEO_RESTRICT y32 = (LEO_M256 *)(y);
+      LEO_M256 * restrict x32 = (LEO_M256 *)(x);
+      LEO_M256 * restrict y32 = (LEO_M256 *)(y);
 
       do
       {
@@ -1633,8 +1564,8 @@ static void FFT_DIT2(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
-      LEO_M128 * LEO_RESTRICT y16 = (LEO_M128 *)(y);
+      LEO_M128 * restrict x16 = (LEO_M128 *)(x);
+      LEO_M128 * restrict y16 = (LEO_M128 *)(y);
 
       do
       {
@@ -1688,10 +1619,10 @@ static void FFT_DIT4(
 
       const LEO_M256 clr_mask = _mm256_set1_epi8(0x0f);
 
-      LEO_M256 * LEO_RESTRICT work0 = (LEO_M256 *)(work[0]);
-      LEO_M256 * LEO_RESTRICT work1 = (LEO_M256 *)(work[dist]);
-      LEO_M256 * LEO_RESTRICT work2 = (LEO_M256 *)(work[dist * 2]);
-      LEO_M256 * LEO_RESTRICT work3 = (LEO_M256 *)(work[dist * 3]);
+      LEO_M256 * restrict work0 = (LEO_M256 *)(work[0]);
+      LEO_M256 * restrict work1 = (LEO_M256 *)(work[dist]);
+      LEO_M256 * restrict work2 = (LEO_M256 *)(work[dist * 2]);
+      LEO_M256 * restrict work3 = (LEO_M256 *)(work[dist * 3]);
 
       do
       {
@@ -1745,10 +1676,10 @@ static void FFT_DIT4(
 
       const LEO_M128 clr_mask = _mm_set1_epi8(0x0f);
 
-      LEO_M128 * LEO_RESTRICT work0 = (LEO_M128 *)(work[0]);
-      LEO_M128 * LEO_RESTRICT work1 = (LEO_M128 *)(work[dist]);
-      LEO_M128 * LEO_RESTRICT work2 = (LEO_M128 *)(work[dist * 2]);
-      LEO_M128 * LEO_RESTRICT work3 = (LEO_M128 *)(work[dist * 3]);
+      LEO_M128 * restrict work0 = (LEO_M128 *)(work[0]);
+      LEO_M128 * restrict work1 = (LEO_M128 *)(work[dist]);
+      LEO_M128 * restrict work2 = (LEO_M128 *)(work[dist * 2]);
+      LEO_M128 * restrict work3 = (LEO_M128 *)(work[dist * 3]);
 
       do
       {
@@ -2184,93 +2115,18 @@ void ReedSolomonDecode(
           mul_mem(work[i], work[i + m], kModulus - error_locations[i + m], buffer_bytes);
 }
 
-
-//------------------------------------------------------------------------------
-// API
-
-static bool IsInitialized = false;
-
-bool Initialize()
-{
-  if (IsInitialized)
-      return true;
-
-  InitializeLogarithmTables();
-  InitializeMultiplyTables();
-  FFTInitialize();
-
-  IsInitialized = true;
-  return true;
-}
-
-//------------------------------------------------------------------------------
-// Runtime CPU Architecture Check
-//
-// Feature checks stolen shamelessly from
-// https://github.com/jedisct1/libsodium/blob/master/src/libsodium/sodium/runtime.c
-
-#if defined(HAVE_ANDROID_GETCPUFEATURES)
-  #include <cpu-features.h>
-#endif
-
-#if defined(LEO_TRY_NEON)
-# if defined(IOS) && defined(__ARM_NEON__)
-  // Requires iPhone 5S or newer
-# else
-  // Remember to add LOCAL_STATIC_LIBRARIES := cpufeatures
-  bool CpuHasNeon = false; // V6 / V7
-  bool CpuHasNeon64 = false; // 64-bit
-# endif
-#endif
-
-
-#if !defined(LEO_TARGET_MOBILE)
-
-bool CpuHasAVX2 = false;
-bool CpuHasSSSE3 = false;
-
-#elif defined(LEO_USE_SSE2NEON)
-bool CpuHasSSSE3 = true;
-#endif // defined(LEO_TARGET_MOBILE)
-
-
-void InitializeCPUArch()
-{
-#if defined(LEO_TRY_NEON) && defined(HAVE_ANDROID_GETCPUFEATURES)
-  AndroidCpuFamily family = android_getCpuFamily();
-  if (family == ANDROID_CPU_FAMILY_ARM)
-  {
-      if (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_NEON)
-          CpuHasNeon = true;
-  }
-  else if (family == ANDROID_CPU_FAMILY_ARM64)
-  {
-      CpuHasNeon = true;
-      if (android_getCpuFeatures() & ANDROID_CPU_ARM64_FEATURE_ASIMD)
-          CpuHasNeon64 = true;
-  }
-#endif
-
-#if defined(LEO_TRY_SSSE3) || defined(LEO_TRY_AVX2)
-  int flags = xpar_leo_x86_64_cpuflags(); // rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
-  CpuHasSSSE3 = (flags & 2) != 0;
-  CpuHasAVX2 = (flags & 1) != 0;
-#endif // LEO_TARGET_MOBILE
-}
-
-
 //------------------------------------------------------------------------------
 // XOR Memory
 
 void xor_mem(
-  void * LEO_RESTRICT vx, const void * LEO_RESTRICT vy,
+  void * restrict vx, const void * restrict vy,
   uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
   if (CpuHasAVX2)
   {
-      LEO_M256 * LEO_RESTRICT x32 = (LEO_M256 *)(vx);
-      const LEO_M256 * LEO_RESTRICT y32 = (const LEO_M256 *)(vy);
+      LEO_M256 * restrict x32 = (LEO_M256 *)(vx);
+      const LEO_M256 * restrict y32 = (const LEO_M256 *)(vy);
       while (bytes >= 128)
       {
           const LEO_M256 x0 = _mm256_xor_si256(_mm256_loadu_si256(x32),     _mm256_loadu_si256(y32));
@@ -2297,8 +2153,8 @@ void xor_mem(
 
 #if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3) {
-    LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(vx);
-    const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(vy);
+    LEO_M128 * restrict x16 = (LEO_M128 *)(vx);
+    const LEO_M128 * restrict y16 = (const LEO_M128 *)(vy);
     do
     {
         const LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16),     _mm_loadu_si128(y16));
@@ -2317,8 +2173,8 @@ void xor_mem(
 #endif
 
   // Simple reference version:
-  uint8_t * LEO_RESTRICT x8 = (uint8_t *)(vx);
-  const uint8_t * LEO_RESTRICT y8 = (const uint8_t *)(vy);
+  uint8_t * restrict x8 = (uint8_t *)(vx);
+  const uint8_t * restrict y8 = (const uint8_t *)(vy);
   do { *x8++ ^= *y8++; } while (--bytes > 0);
   return;
 }
@@ -2326,17 +2182,17 @@ void xor_mem(
 #ifdef LEO_M1_OPT
 
 void xor_mem_2to1(
-  void * LEO_RESTRICT x,
-  const void * LEO_RESTRICT y,
-  const void * LEO_RESTRICT z,
+  void * restrict x,
+  const void * restrict y,
+  const void * restrict z,
   uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
   if (CpuHasAVX2)
   {
-      LEO_M256 * LEO_RESTRICT x32 = (LEO_M256 *)(x);
-      const LEO_M256 * LEO_RESTRICT y32 = (const LEO_M256 *)(y);
-      const LEO_M256 * LEO_RESTRICT z32 = (const LEO_M256 *)(z);
+      LEO_M256 * restrict x32 = (LEO_M256 *)(x);
+      const LEO_M256 * restrict y32 = (const LEO_M256 *)(y);
+      const LEO_M256 * restrict z32 = (const LEO_M256 *)(z);
       while (bytes >= 128)
       {
           LEO_M256 x0 = _mm256_xor_si256(_mm256_loadu_si256(x32), _mm256_loadu_si256(y32));
@@ -2371,9 +2227,9 @@ void xor_mem_2to1(
 
 #if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3) {
-    LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
-    const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(y);
-    const LEO_M128 * LEO_RESTRICT z16 = (const LEO_M128 *)(z);
+    LEO_M128 * restrict x16 = (LEO_M128 *)(x);
+    const LEO_M128 * restrict y16 = (const LEO_M128 *)(y);
+    const LEO_M128 * restrict z16 = (const LEO_M128 *)(z);
     do
     {
         LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16), _mm_loadu_si128(y16));
@@ -2396,9 +2252,9 @@ void xor_mem_2to1(
 #endif
 
   // Simple reference version:
-  uint8_t * LEO_RESTRICT x8 = (uint8_t *)(x);
-  const uint8_t * LEO_RESTRICT y8 = (const uint8_t *)(y);
-  const uint8_t * LEO_RESTRICT z8 = (const uint8_t *)(z);
+  uint8_t * restrict x8 = (uint8_t *)(x);
+  const uint8_t * restrict y8 = (const uint8_t *)(y);
+  const uint8_t * restrict z8 = (const uint8_t *)(z);
   do { *x8++ ^= *y8++ ^ *z8++; } while (--bytes > 0);
   return;
 }
@@ -2408,23 +2264,23 @@ void xor_mem_2to1(
 #ifdef LEO_USE_VECTOR4_OPT
 
 void xor_mem4(
-  void * LEO_RESTRICT vx_0, const void * LEO_RESTRICT vy_0,
-  void * LEO_RESTRICT vx_1, const void * LEO_RESTRICT vy_1,
-  void * LEO_RESTRICT vx_2, const void * LEO_RESTRICT vy_2,
-  void * LEO_RESTRICT vx_3, const void * LEO_RESTRICT vy_3,
+  void * restrict vx_0, const void * restrict vy_0,
+  void * restrict vx_1, const void * restrict vy_1,
+  void * restrict vx_2, const void * restrict vy_2,
+  void * restrict vx_3, const void * restrict vy_3,
   uint64_t bytes)
 {
 #if defined(LEO_TRY_AVX2)
   if (CpuHasAVX2)
   {
-      LEO_M256 * LEO_RESTRICT       x32_0 = (LEO_M256 *)      (vx_0);
-      const LEO_M256 * LEO_RESTRICT y32_0 = (const LEO_M256 *)(vy_0);
-      LEO_M256 * LEO_RESTRICT       x32_1 = (LEO_M256 *)      (vx_1);
-      const LEO_M256 * LEO_RESTRICT y32_1 = (const LEO_M256 *)(vy_1);
-      LEO_M256 * LEO_RESTRICT       x32_2 = (LEO_M256 *)      (vx_2);
-      const LEO_M256 * LEO_RESTRICT y32_2 = (const LEO_M256 *)(vy_2);
-      LEO_M256 * LEO_RESTRICT       x32_3 = (LEO_M256 *)      (vx_3);
-      const LEO_M256 * LEO_RESTRICT y32_3 = (const LEO_M256 *)(vy_3);
+      LEO_M256 * restrict       x32_0 = (LEO_M256 *)      (vx_0);
+      const LEO_M256 * restrict y32_0 = (const LEO_M256 *)(vy_0);
+      LEO_M256 * restrict       x32_1 = (LEO_M256 *)      (vx_1);
+      const LEO_M256 * restrict y32_1 = (const LEO_M256 *)(vy_1);
+      LEO_M256 * restrict       x32_2 = (LEO_M256 *)      (vx_2);
+      const LEO_M256 * restrict y32_2 = (const LEO_M256 *)(vy_2);
+      LEO_M256 * restrict       x32_3 = (LEO_M256 *)      (vx_3);
+      const LEO_M256 * restrict y32_3 = (const LEO_M256 *)(vy_3);
       while (bytes >= 128)
       {
           const LEO_M256 x0_0 = _mm256_xor_si256(_mm256_loadu_si256(x32_0),     _mm256_loadu_si256(y32_0));
@@ -2490,14 +2346,14 @@ void xor_mem4(
 
 #if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3) {
-    LEO_M128 * LEO_RESTRICT       x16_0 = (LEO_M128 *)      (vx_0);
-    const LEO_M128 * LEO_RESTRICT y16_0 = (const LEO_M128 *)(vy_0);
-    LEO_M128 * LEO_RESTRICT       x16_1 = (LEO_M128 *)      (vx_1);
-    const LEO_M128 * LEO_RESTRICT y16_1 = (const LEO_M128 *)(vy_1);
-    LEO_M128 * LEO_RESTRICT       x16_2 = (LEO_M128 *)      (vx_2);
-    const LEO_M128 * LEO_RESTRICT y16_2 = (const LEO_M128 *)(vy_2);
-    LEO_M128 * LEO_RESTRICT       x16_3 = (LEO_M128 *)      (vx_3);
-    const LEO_M128 * LEO_RESTRICT y16_3 = (const LEO_M128 *)(vy_3);
+    LEO_M128 * restrict       x16_0 = (LEO_M128 *)      (vx_0);
+    const LEO_M128 * restrict y16_0 = (const LEO_M128 *)(vy_0);
+    LEO_M128 * restrict       x16_1 = (LEO_M128 *)      (vx_1);
+    const LEO_M128 * restrict y16_1 = (const LEO_M128 *)(vy_1);
+    LEO_M128 * restrict       x16_2 = (LEO_M128 *)      (vx_2);
+    const LEO_M128 * restrict y16_2 = (const LEO_M128 *)(vy_2);
+    LEO_M128 * restrict       x16_3 = (LEO_M128 *)      (vx_3);
+    const LEO_M128 * restrict y16_3 = (const LEO_M128 *)(vy_3);
     do
     {
         const LEO_M128 x0_0 = _mm_xor_si128(_mm_loadu_si128(x16_0),     _mm_loadu_si128(y16_0));
@@ -2542,14 +2398,14 @@ void xor_mem4(
 #endif
 
   // Simple reference version:
-  uint8_t * LEO_RESTRICT x8_0 = (uint8_t *)(vx_0);
-  const uint8_t * LEO_RESTRICT y8_0 = (const uint8_t *)(vy_0);
-  uint8_t * LEO_RESTRICT x8_1 = (uint8_t *)(vx_1);
-  const uint8_t * LEO_RESTRICT y8_1 = (const uint8_t *)(vy_1);
-  uint8_t * LEO_RESTRICT x8_2 = (uint8_t *)(vx_2);
-  const uint8_t * LEO_RESTRICT y8_2 = (const uint8_t *)(vy_2);
-  uint8_t * LEO_RESTRICT x8_3 = (uint8_t *)(vx_3);
-  const uint8_t * LEO_RESTRICT y8_3 = (const uint8_t *)(vy_3);
+  uint8_t * restrict x8_0 = (uint8_t *)(vx_0);
+  const uint8_t * restrict y8_0 = (const uint8_t *)(vy_0);
+  uint8_t * restrict x8_1 = (uint8_t *)(vx_1);
+  const uint8_t * restrict y8_1 = (const uint8_t *)(vy_1);
+  uint8_t * restrict x8_2 = (uint8_t *)(vx_2);
+  const uint8_t * restrict y8_2 = (const uint8_t *)(vy_2);
+  uint8_t * restrict x8_3 = (uint8_t *)(vx_3);
+  const uint8_t * restrict y8_3 = (const uint8_t *)(vy_3);
   do
   {
       *x8_0++ ^= *y8_0++;
@@ -2593,8 +2449,14 @@ void VectorXOR(
 }
 
 void lmode_gentab() {
-  InitializeCPUArch();
-  Initialize();
+#if defined(LEO_TRY_SSSE3) || defined(LEO_TRY_AVX2)
+  int flags = xpar_leo_x86_64_cpuflags(); // rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
+  CpuHasSSSE3 = (flags & 2) != 0;
+  CpuHasAVX2 = (flags & 1) != 0;
+#endif
+  InitializeLogarithmTables();
+  InitializeMultiplyTables();
+  FFTInitialize();
 }
 
 // ============================================================================
