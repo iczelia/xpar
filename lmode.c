@@ -358,37 +358,7 @@ void ReedSolomonDecode(
 #include <string.h>
 
 //------------------------------------------------------------------------------
-// Result
-
-const char* leo_result_string(LeopardResult result)
-{
-    switch (result)
-    {
-    case Leopard_Success: return "Operation succeeded";
-    case Leopard_NeedMoreData: return "Not enough recovery data received";
-    case Leopard_TooMuchData: return "Buffer counts are too high";
-    case Leopard_InvalidSize: return "Buffer size must be a multiple of 64 bytes";
-    case Leopard_InvalidCounts: return "Invalid counts provided";
-    case Leopard_InvalidInput: return "A function parameter was invalid";
-    case Leopard_Platform: return "Platform is unsupported";
-    }
-    return "Unknown";
-}
-
-
-//------------------------------------------------------------------------------
 // Encoder API
-
-unsigned leo_encode_work_count(
-    unsigned original_count,
-    unsigned recovery_count)
-{
-    if (original_count == 1)
-        return recovery_count;
-    if (recovery_count == 1)
-        return 1;
-    return NextPow2(recovery_count) * 2;
-}
 
 // recovery_data = parity of original_data (xor sum)
 static void EncodeM1(
@@ -410,18 +380,6 @@ static void EncodeM1(
 
 //------------------------------------------------------------------------------
 // Decoder API
-
-unsigned leo_decode_work_count(
-    unsigned original_count,
-    unsigned recovery_count)
-{
-    if (original_count == 1 || recovery_count == 1)
-        return original_count;
-    const unsigned m = NextPow2(recovery_count);
-    const unsigned n = NextPow2(m + original_count);
-    return n;
-}
-
 static void DecodeM1(
     uint64_t buffer_bytes,
     unsigned original_count,
@@ -439,99 +397,6 @@ static void DecodeM1(
             XORSummer_Add(&summer, original_data[i], buffer_bytes);
 
     XORSummer_Finalize(&summer, buffer_bytes);
-}
-
-LeopardResult leo_decode(
-    uint64_t buffer_bytes,                    // Number of bytes in each data buffer
-    unsigned original_count,                  // Number of original_data[] buffer pointers
-    unsigned recovery_count,                  // Number of recovery_data[] buffer pointers
-    unsigned work_count,                      // Number of buffer pointers in work_data[]
-    const void* const * const original_data,  // Array of original data buffers
-    const void* const * const recovery_data,  // Array of recovery data buffers
-    void** work_data)                         // Array of work data buffers
-{
-    if (buffer_bytes <= 0 || buffer_bytes % 64 != 0)
-        return Leopard_InvalidSize;
-
-    if (recovery_count <= 0 || recovery_count > original_count)
-        return Leopard_InvalidCounts;
-
-    if (!original_data || !recovery_data || !work_data)
-        return Leopard_InvalidInput;
-
-    // Check if not enough recovery data arrived
-    unsigned original_loss_count = 0;
-    unsigned original_loss_i = 0;
-    for (unsigned i = 0; i < original_count; ++i)
-    {
-        if (!original_data[i])
-        {
-            ++original_loss_count;
-            original_loss_i = i;
-        }
-    }
-    unsigned recovery_got_count = 0;
-    unsigned recovery_got_i = 0;
-    for (unsigned i = 0; i < recovery_count; ++i)
-    {
-        if (recovery_data[i])
-        {
-            ++recovery_got_count;
-            recovery_got_i = i;
-        }
-    }
-    if (recovery_got_count < original_loss_count)
-        return Leopard_NeedMoreData;
-
-    // Handle k = 1 case
-    if (original_count == 1)
-    {
-        memcpy(work_data[0], recovery_data[recovery_got_i], buffer_bytes);
-        return Leopard_Success;
-    }
-    
-    // Handle case original_loss_count = 0
-    if (original_loss_count == 0)
-    {
-        for(unsigned i = 0; i < original_count; i++)
-            memcpy(work_data[i], original_data[i], buffer_bytes);
-        return Leopard_Success;
-    }
-
-    // Handle m = 1 case
-    if (recovery_count == 1)
-    {
-        DecodeM1(
-            buffer_bytes,
-            original_count,
-            original_data,
-            recovery_data[0],
-            work_data[original_loss_i]);
-        return Leopard_Success;
-    }
-
-    const unsigned m = NextPow2(recovery_count);
-    const unsigned n = NextPow2(m + original_count);
-
-    if (work_count != n)
-        return Leopard_InvalidCounts;
-
-    if (n <= kOrder)
-    {
-        ReedSolomonDecode(
-            buffer_bytes,
-            original_count,
-            recovery_count,
-            m,
-            n,
-            original_data,
-            recovery_data,
-            work_data);
-    }
-    else
-        return Leopard_TooMuchData;
-
-    return Leopard_Success;
 }
 
 //------------------------------------------------------------------------------
@@ -2731,8 +2596,8 @@ static rs * rs_init(int data_shards, int parity_shards) {
   rs * r = xmalloc(sizeof(rs));
   r->data = data_shards; r->parity = parity_shards;
   r->total = data_shards + parity_shards;
-  r->ebuf = leo_encode_work_count(data_shards, parity_shards);
-  r->dbuf = leo_decode_work_count(data_shards, parity_shards);
+  r->ebuf = data_shards == 1 ? parity_shards : parity_shards == 1 ? 1 : NextPow2(parity_shards) * 2;
+  r->dbuf = data_shards == 1 || parity_shards == 1 ? data_shards : NextPow2(data_shards + NextPow2(parity_shards));
   return r;
 }
 static void rs_encode(rs * r, uint8_t ** in, sz len) {
@@ -2750,7 +2615,8 @@ static void rs_encode(rs * r, uint8_t ** in, sz len) {
   Fi0(r->ebuf, r->parity, free(ework[i]))  free(ework);
 }
 static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len) {
-  int present = 0, di = 0, pi = 0;  Fi(r->total, present += !!shards_present[i])
+  int present = 0, di = 0, pi = 0;
+  Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
   if (present == r->total) return true;
   printf("The workspace is r->dbuf * len = %d * %zu = %zu bytes\n", r->dbuf, len, r->dbuf * len);
@@ -2766,10 +2632,38 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len) 
       else pshards[pi++] = NULL;
     }
   )
-  int res = leo_decode(len, r->data, r->parity, r->dbuf,
-    (const void * const * const) dshards,
-    (const void * const * const) pshards,
-    dwork);
+
+  {
+    // Check if not enough recovery data arrived
+    unsigned original_loss_count = 0;
+    unsigned original_loss_i = 0;
+    Fi(r->data, if (!dshards[i]) { ++original_loss_count; original_loss_i = i; })
+    unsigned recovery_got_count = 0;
+    unsigned recovery_got_i = 0;
+    Fi(r->parity, if (!pshards[i]) { ++recovery_got_count; recovery_got_i = i; })
+    if (recovery_got_count < original_loss_count)
+      FATAL("Not enough recovery data received: lost %u, got %u\n",
+            original_loss_count, recovery_got_count);
+    if (r->data == 1) {
+      memcpy(dwork[0], pshards[recovery_got_i], len);
+    } else if (original_loss_count == 0) {
+      Fi(r->data, memcpy(dwork[i], dshards[i], len))
+    } else if (r->parity == 1) {
+      DecodeM1(
+          len, r->data,
+          (const void * const * const) dshards,
+          pshards[0], dwork[original_loss_i]);
+    } else {
+      const unsigned m = NextPow2(r->parity);
+      const unsigned n = NextPow2(m + r->data);
+      ReedSolomonDecode(
+          len, r->data, r->parity, m, n,
+          (const void * const * const) dshards,
+          (const void * const * const) pshards,
+          dwork);
+    }
+  }
+
   Fi(r->total, if (!shards_present[i]) memcpy(in[i], dwork[i], len))
   Fi(r->dbuf, free(dwork[i]))  free(dwork); free(dshards);  free(pshards);
   return true;
