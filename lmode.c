@@ -57,6 +57,39 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#if defined(XPAR_X86_64)
+  #ifdef HAVE_FUNC_ATTRIBUTE_SYSV_ABI
+    #define EXTERNAL_ABI __attribute__((sysv_abi))
+  #else
+    #define EXTERNAL_ABI
+  #endif
+
+  extern EXTERNAL_ABI int xpar_leo_x86_64_cpuflags(void);
+
+  #if HAVE_AVX2
+    #define LEO_TRY_AVX2 /* 256-bit */
+    #define LEO_ALIGN_BYTES 32
+  #endif
+
+  #if HAVE_SSSE3
+    #define LEO_TRY_SSSE3 /* 128-bit */
+    #include <tmmintrin.h> // SSSE3: _mm_shuffle_epi8
+    #include <emmintrin.h> // SSE2
+  #endif
+
+  #include <x86intrin.h>
+#elif defined(XPAR_AARCH64)
+  #include "sse2neon.h"
+
+  #define LEO_USE_SSE2NEON
+  #define LEO_TARGET_MOBILE
+#else
+#endif
+
+#ifndef LEO_ALIGN_BYTES
+  #define LEO_ALIGN_BYTES 16
+#endif
+
 typedef enum LeopardResultT
 {
   Leopard_Success           =  0, // Operation succeeded
@@ -83,43 +116,8 @@ typedef enum LeopardResultT
 // Unroll inner loops 4 times
 #define LEO_USE_VECTOR4_OPT
 
-// MacOS M1
-#if defined(__aarch64__)
-  #define LEO_USE_SSE2NEON
-  #define LEO_TARGET_MOBILE
-#endif
-
 //------------------------------------------------------------------------------
 // Platform/Architecture
-
-#ifdef _MSC_VER
-  #include <intrin.h>
-#endif
-
-#if defined(ANDROID) || defined(IOS)
-  #define LEO_TARGET_MOBILE
-#endif // ANDROID
-
-// todo: replace this:
-#if HAVE_AVX2
-  #define LEO_TRY_AVX2 /* 256-bit */
-  #include <immintrin.h>
-  #define LEO_ALIGN_BYTES 32
-#else // __AVX2__
-  #define LEO_ALIGN_BYTES 16
-#endif // __AVX2__
-
-#if HAVE_SSSE3
-  #define LEO_TRY_SSSE3 /* 128-bit */
-#endif
-
-#if !defined(LEO_TARGET_MOBILE)
-  // Note: MSVC currently only supports SSSE3 but not AVX2
-  #include <tmmintrin.h> // SSSE3: _mm_shuffle_epi8
-  #include <emmintrin.h> // SSE2
-#elif defined(LEO_USE_SSE2NEON)
-  #include "sse2neon.h"
-#endif // LEO_TARGET_MOBILE
 
 #if defined(HAVE_ARM_NEON_H)
   #include <arm_neon.h>
@@ -578,6 +576,7 @@ static void InitializeLogarithmTables()
   Specifically section 6 outlines the algorithm used here for 8-bit fields.
 */
 
+#if defined (LEO_TRY_SSSE3)
 typedef struct
 {
   LEO_M128 Value[2];
@@ -593,6 +592,8 @@ static const Multiply128LUT_t* Multiply128LUT = NULL;
               hi = _mm_and_si128(hi, clr_mask); \
               hi = _mm_shuffle_epi8(table_hi, hi); \
               x_reg = _mm_xor_si128(x_reg, _mm_xor_si128(lo, hi)); }
+
+#endif
 
 #if defined(LEO_TRY_AVX2)
 
@@ -747,10 +748,13 @@ static void InitializeMultiplyTables()
 #ifdef LEO_TRY_AVX2
   if (CpuHasAVX2)
       Multiply256LUT = (const Multiply256LUT_t*) (SIMDSafeAllocate(sizeof(Multiply256LUT_t) * kOrder));
-  else
-#endif // LEO_TRY_AVX2
+#endif
+#ifdef LEO_TRY_SSSE3
+  if (CpuHasSSSE3 && !Multiply256LUT)
       Multiply128LUT = (const Multiply128LUT_t*) (SIMDSafeAllocate(sizeof(Multiply128LUT_t) * kOrder));
+#endif
 
+#if defined(LEO_TRY_AVX2) || defined(LEO_TRY_SSSE3)
   // For each value we could multiply by:
   for (unsigned log_m = 0; log_m < kOrder; ++log_m)
   {
@@ -781,6 +785,7 @@ static void InitializeMultiplyTables()
 #endif // LEO_TRY_AVX2
       }
   }
+#endif
 }
 
 
@@ -2232,53 +2237,8 @@ bool Initialize()
 
 #if !defined(LEO_TARGET_MOBILE)
 
-#ifdef _MSC_VER
-  #include <intrin.h> // __cpuid
-  #pragma warning(disable: 4752) // found Intel(R) Advanced Vector Extensions; consider using /arch:AVX
-#endif
-
 bool CpuHasAVX2 = false;
 bool CpuHasSSSE3 = false;
-
-#define CPUID_EBX_AVX2    0x00000020
-#define CPUID_ECX_SSSE3   0x00000200
-
-static void _cpuid(unsigned int cpu_info[4U], const unsigned int cpu_info_type)
-{
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_AMD64) || defined(_M_IX86))
-  __cpuid((int *) cpu_info, cpu_info_type);
-#else //if defined(HAVE_CPUID)
-  cpu_info[0] = cpu_info[1] = cpu_info[2] = cpu_info[3] = 0;
-# ifdef __i386__
-  __asm__ __volatile__ ("pushfl; pushfl; "
-                        "popl %0; "
-                        "movl %0, %1; xorl %2, %0; "
-                        "pushl %0; "
-                        "popfl; pushfl; popl %0; popfl" :
-                        "=&r" (cpu_info[0]), "=&r" (cpu_info[1]) :
-                        "i" (0x200000));
-  if (((cpu_info[0] ^ cpu_info[1]) & 0x200000) == 0) {
-      return; /* LCOV_EXCL_LINE */
-  }
-# endif
-# ifdef __i386__
-  __asm__ __volatile__ ("xchgl %%ebx, %k1; cpuid; xchgl %%ebx, %k1" :
-                        "=a" (cpu_info[0]), "=&r" (cpu_info[1]),
-                        "=c" (cpu_info[2]), "=d" (cpu_info[3]) :
-                        "0" (cpu_info_type), "2" (0U));
-# elif defined(__x86_64__)
-  __asm__ __volatile__ ("xchgq %%rbx, %q1; cpuid; xchgq %%rbx, %q1" :
-                        "=a" (cpu_info[0]), "=&r" (cpu_info[1]),
-                        "=c" (cpu_info[2]), "=d" (cpu_info[3]) :
-                        "0" (cpu_info_type), "2" (0U));
-# else
-  __asm__ __volatile__ ("cpuid" :
-                        "=a" (cpu_info[0]), "=b" (cpu_info[1]),
-                        "=c" (cpu_info[2]), "=d" (cpu_info[3]) :
-                        "0" (cpu_info_type), "2" (0U));
-# endif
-#endif
-}
 
 #elif defined(LEO_USE_SSE2NEON)
 bool CpuHasSSSE3 = true;
@@ -2302,20 +2262,10 @@ void InitializeCPUArch()
   }
 #endif
 
-  CpuHasSSSE3 = false;
-  CpuHasAVX2 = false;
-
-#if !defined(LEO_TARGET_MOBILE) && defined(LEO_TRY_SSSE3)
-  unsigned int cpu_info[4];
-
-  _cpuid(cpu_info, 1);
-  CpuHasSSSE3 = ((cpu_info[2] & CPUID_ECX_SSSE3) != 0);
-
-#if defined(LEO_TRY_AVX2)
-  _cpuid(cpu_info, 7);
-  CpuHasAVX2 = ((cpu_info[1] & CPUID_EBX_AVX2) != 0);
-#endif // LEO_TRY_AVX2
-
+#if defined(LEO_TRY_SSSE3) || defined(LEO_TRY_AVX2)
+  int flags = xpar_leo_x86_64_cpuflags(); // rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
+  CpuHasSSSE3 = (flags & 2) != 0;
+  CpuHasAVX2 = (flags & 1) != 0;
 #endif // LEO_TARGET_MOBILE
 }
 
@@ -2356,21 +2306,32 @@ void xor_mem(
   }
 #endif // LEO_TRY_AVX2
 
-  LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(vx);
-  const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(vy);
-  do
-  {
-      const LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16),     _mm_loadu_si128(y16));
-      const LEO_M128 x1 = _mm_xor_si128(_mm_loadu_si128(x16 + 1), _mm_loadu_si128(y16 + 1));
-      const LEO_M128 x2 = _mm_xor_si128(_mm_loadu_si128(x16 + 2), _mm_loadu_si128(y16 + 2));
-      const LEO_M128 x3 = _mm_xor_si128(_mm_loadu_si128(x16 + 3), _mm_loadu_si128(y16 + 3));
-      _mm_storeu_si128(x16, x0);
-      _mm_storeu_si128(x16 + 1, x1);
-      _mm_storeu_si128(x16 + 2, x2);
-      _mm_storeu_si128(x16 + 3, x3);
-      x16 += 4, y16 += 4;
-      bytes -= 64;
-  } while (bytes > 0);
+#if defined(LEO_TRY_SSSE3)
+  if (CpuHasSSSE3) {
+    LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(vx);
+    const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(vy);
+    do
+    {
+        const LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16),     _mm_loadu_si128(y16));
+        const LEO_M128 x1 = _mm_xor_si128(_mm_loadu_si128(x16 + 1), _mm_loadu_si128(y16 + 1));
+        const LEO_M128 x2 = _mm_xor_si128(_mm_loadu_si128(x16 + 2), _mm_loadu_si128(y16 + 2));
+        const LEO_M128 x3 = _mm_xor_si128(_mm_loadu_si128(x16 + 3), _mm_loadu_si128(y16 + 3));
+        _mm_storeu_si128(x16, x0);
+        _mm_storeu_si128(x16 + 1, x1);
+        _mm_storeu_si128(x16 + 2, x2);
+        _mm_storeu_si128(x16 + 3, x3);
+        x16 += 4, y16 += 4;
+        bytes -= 64;
+    } while (bytes > 0);
+    return;
+  }
+#endif
+
+  // Simple reference version:
+  uint8_t * LEO_RESTRICT x8 = (uint8_t *)(vx);
+  const uint8_t * LEO_RESTRICT y8 = (const uint8_t *)(vy);
+  do { *x8++ ^= *y8++; } while (--bytes > 0);
+  return;
 }
 
 #ifdef LEO_M1_OPT
@@ -2419,26 +2380,38 @@ void xor_mem_2to1(
   }
 #endif // LEO_TRY_AVX2
 
-  LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
-  const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(y);
-  const LEO_M128 * LEO_RESTRICT z16 = (const LEO_M128 *)(z);
-  do
-  {
-      LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16), _mm_loadu_si128(y16));
-      x0 = _mm_xor_si128(x0, _mm_loadu_si128(z16));
-      LEO_M128 x1 = _mm_xor_si128(_mm_loadu_si128(x16 + 1), _mm_loadu_si128(y16 + 1));
-      x1 = _mm_xor_si128(x1, _mm_loadu_si128(z16 + 1));
-      LEO_M128 x2 = _mm_xor_si128(_mm_loadu_si128(x16 + 2), _mm_loadu_si128(y16 + 2));
-      x2 = _mm_xor_si128(x2, _mm_loadu_si128(z16 + 2));
-      LEO_M128 x3 = _mm_xor_si128(_mm_loadu_si128(x16 + 3), _mm_loadu_si128(y16 + 3));
-      x3 = _mm_xor_si128(x3, _mm_loadu_si128(z16 + 3));
-      _mm_storeu_si128(x16, x0);
-      _mm_storeu_si128(x16 + 1, x1);
-      _mm_storeu_si128(x16 + 2, x2);
-      _mm_storeu_si128(x16 + 3, x3);
-      x16 += 4, y16 += 4, z16 += 4;
-      bytes -= 64;
-  } while (bytes > 0);
+#if defined(LEO_TRY_SSSE3)
+  if (CpuHasSSSE3) {
+    LEO_M128 * LEO_RESTRICT x16 = (LEO_M128 *)(x);
+    const LEO_M128 * LEO_RESTRICT y16 = (const LEO_M128 *)(y);
+    const LEO_M128 * LEO_RESTRICT z16 = (const LEO_M128 *)(z);
+    do
+    {
+        LEO_M128 x0 = _mm_xor_si128(_mm_loadu_si128(x16), _mm_loadu_si128(y16));
+        x0 = _mm_xor_si128(x0, _mm_loadu_si128(z16));
+        LEO_M128 x1 = _mm_xor_si128(_mm_loadu_si128(x16 + 1), _mm_loadu_si128(y16 + 1));
+        x1 = _mm_xor_si128(x1, _mm_loadu_si128(z16 + 1));
+        LEO_M128 x2 = _mm_xor_si128(_mm_loadu_si128(x16 + 2), _mm_loadu_si128(y16 + 2));
+        x2 = _mm_xor_si128(x2, _mm_loadu_si128(z16 + 2));
+        LEO_M128 x3 = _mm_xor_si128(_mm_loadu_si128(x16 + 3), _mm_loadu_si128(y16 + 3));
+        x3 = _mm_xor_si128(x3, _mm_loadu_si128(z16 + 3));
+        _mm_storeu_si128(x16, x0);
+        _mm_storeu_si128(x16 + 1, x1);
+        _mm_storeu_si128(x16 + 2, x2);
+        _mm_storeu_si128(x16 + 3, x3);
+        x16 += 4, y16 += 4, z16 += 4;
+        bytes -= 64;
+    } while (bytes > 0);
+    return;
+  }
+#endif
+
+  // Simple reference version:
+  uint8_t * LEO_RESTRICT x8 = (uint8_t *)(x);
+  const uint8_t * LEO_RESTRICT y8 = (const uint8_t *)(y);
+  const uint8_t * LEO_RESTRICT z8 = (const uint8_t *)(z);
+  do { *x8++ ^= *y8++ ^ *z8++; } while (--bytes > 0);
+  return;
 }
 
 #endif // LEO_M1_OPT
@@ -2525,54 +2498,77 @@ void xor_mem4(
       return;
   }
 #endif // LEO_TRY_AVX2
-  LEO_M128 * LEO_RESTRICT       x16_0 = (LEO_M128 *)      (vx_0);
-  const LEO_M128 * LEO_RESTRICT y16_0 = (const LEO_M128 *)(vy_0);
-  LEO_M128 * LEO_RESTRICT       x16_1 = (LEO_M128 *)      (vx_1);
-  const LEO_M128 * LEO_RESTRICT y16_1 = (const LEO_M128 *)(vy_1);
-  LEO_M128 * LEO_RESTRICT       x16_2 = (LEO_M128 *)      (vx_2);
-  const LEO_M128 * LEO_RESTRICT y16_2 = (const LEO_M128 *)(vy_2);
-  LEO_M128 * LEO_RESTRICT       x16_3 = (LEO_M128 *)      (vx_3);
-  const LEO_M128 * LEO_RESTRICT y16_3 = (const LEO_M128 *)(vy_3);
+
+#if defined(LEO_TRY_SSSE3)
+  if (CpuHasSSSE3) {
+    LEO_M128 * LEO_RESTRICT       x16_0 = (LEO_M128 *)      (vx_0);
+    const LEO_M128 * LEO_RESTRICT y16_0 = (const LEO_M128 *)(vy_0);
+    LEO_M128 * LEO_RESTRICT       x16_1 = (LEO_M128 *)      (vx_1);
+    const LEO_M128 * LEO_RESTRICT y16_1 = (const LEO_M128 *)(vy_1);
+    LEO_M128 * LEO_RESTRICT       x16_2 = (LEO_M128 *)      (vx_2);
+    const LEO_M128 * LEO_RESTRICT y16_2 = (const LEO_M128 *)(vy_2);
+    LEO_M128 * LEO_RESTRICT       x16_3 = (LEO_M128 *)      (vx_3);
+    const LEO_M128 * LEO_RESTRICT y16_3 = (const LEO_M128 *)(vy_3);
+    do
+    {
+        const LEO_M128 x0_0 = _mm_xor_si128(_mm_loadu_si128(x16_0),     _mm_loadu_si128(y16_0));
+        const LEO_M128 x1_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 1), _mm_loadu_si128(y16_0 + 1));
+        const LEO_M128 x2_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 2), _mm_loadu_si128(y16_0 + 2));
+        const LEO_M128 x3_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 3), _mm_loadu_si128(y16_0 + 3));
+        _mm_storeu_si128(x16_0, x0_0);
+        _mm_storeu_si128(x16_0 + 1, x1_0);
+        _mm_storeu_si128(x16_0 + 2, x2_0);
+        _mm_storeu_si128(x16_0 + 3, x3_0);
+        x16_0 += 4, y16_0 += 4;
+        const LEO_M128 x0_1 = _mm_xor_si128(_mm_loadu_si128(x16_1),     _mm_loadu_si128(y16_1));
+        const LEO_M128 x1_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 1), _mm_loadu_si128(y16_1 + 1));
+        const LEO_M128 x2_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 2), _mm_loadu_si128(y16_1 + 2));
+        const LEO_M128 x3_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 3), _mm_loadu_si128(y16_1 + 3));
+        _mm_storeu_si128(x16_1, x0_1);
+        _mm_storeu_si128(x16_1 + 1, x1_1);
+        _mm_storeu_si128(x16_1 + 2, x2_1);
+        _mm_storeu_si128(x16_1 + 3, x3_1);
+        x16_1 += 4, y16_1 += 4;
+        const LEO_M128 x0_2 = _mm_xor_si128(_mm_loadu_si128(x16_2),     _mm_loadu_si128(y16_2));
+        const LEO_M128 x1_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 1), _mm_loadu_si128(y16_2 + 1));
+        const LEO_M128 x2_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 2), _mm_loadu_si128(y16_2 + 2));
+        const LEO_M128 x3_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 3), _mm_loadu_si128(y16_2 + 3));
+        _mm_storeu_si128(x16_2, x0_2);
+        _mm_storeu_si128(x16_2 + 1, x1_2);
+        _mm_storeu_si128(x16_2 + 2, x2_2);
+        _mm_storeu_si128(x16_2 + 3, x3_2);
+        x16_2 += 4, y16_2 += 4;
+        const LEO_M128 x0_3 = _mm_xor_si128(_mm_loadu_si128(x16_3),     _mm_loadu_si128(y16_3));
+        const LEO_M128 x1_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 1), _mm_loadu_si128(y16_3 + 1));
+        const LEO_M128 x2_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 2), _mm_loadu_si128(y16_3 + 2));
+        const LEO_M128 x3_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 3), _mm_loadu_si128(y16_3 + 3));
+        _mm_storeu_si128(x16_3,     x0_3);
+        _mm_storeu_si128(x16_3 + 1, x1_3);
+        _mm_storeu_si128(x16_3 + 2, x2_3);
+        _mm_storeu_si128(x16_3 + 3, x3_3);
+        x16_3 += 4, y16_3 += 4;
+        bytes -= 64;
+    } while (bytes > 0);
+  }
+#endif
+
+  // Simple reference version:
+  uint8_t * LEO_RESTRICT x8_0 = (uint8_t *)(vx_0);
+  const uint8_t * LEO_RESTRICT y8_0 = (const uint8_t *)(vy_0);
+  uint8_t * LEO_RESTRICT x8_1 = (uint8_t *)(vx_1);
+  const uint8_t * LEO_RESTRICT y8_1 = (const uint8_t *)(vy_1);
+  uint8_t * LEO_RESTRICT x8_2 = (uint8_t *)(vx_2);
+  const uint8_t * LEO_RESTRICT y8_2 = (const uint8_t *)(vy_2);
+  uint8_t * LEO_RESTRICT x8_3 = (uint8_t *)(vx_3);
+  const uint8_t * LEO_RESTRICT y8_3 = (const uint8_t *)(vy_3);
   do
   {
-      const LEO_M128 x0_0 = _mm_xor_si128(_mm_loadu_si128(x16_0),     _mm_loadu_si128(y16_0));
-      const LEO_M128 x1_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 1), _mm_loadu_si128(y16_0 + 1));
-      const LEO_M128 x2_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 2), _mm_loadu_si128(y16_0 + 2));
-      const LEO_M128 x3_0 = _mm_xor_si128(_mm_loadu_si128(x16_0 + 3), _mm_loadu_si128(y16_0 + 3));
-      _mm_storeu_si128(x16_0, x0_0);
-      _mm_storeu_si128(x16_0 + 1, x1_0);
-      _mm_storeu_si128(x16_0 + 2, x2_0);
-      _mm_storeu_si128(x16_0 + 3, x3_0);
-      x16_0 += 4, y16_0 += 4;
-      const LEO_M128 x0_1 = _mm_xor_si128(_mm_loadu_si128(x16_1),     _mm_loadu_si128(y16_1));
-      const LEO_M128 x1_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 1), _mm_loadu_si128(y16_1 + 1));
-      const LEO_M128 x2_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 2), _mm_loadu_si128(y16_1 + 2));
-      const LEO_M128 x3_1 = _mm_xor_si128(_mm_loadu_si128(x16_1 + 3), _mm_loadu_si128(y16_1 + 3));
-      _mm_storeu_si128(x16_1, x0_1);
-      _mm_storeu_si128(x16_1 + 1, x1_1);
-      _mm_storeu_si128(x16_1 + 2, x2_1);
-      _mm_storeu_si128(x16_1 + 3, x3_1);
-      x16_1 += 4, y16_1 += 4;
-      const LEO_M128 x0_2 = _mm_xor_si128(_mm_loadu_si128(x16_2),     _mm_loadu_si128(y16_2));
-      const LEO_M128 x1_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 1), _mm_loadu_si128(y16_2 + 1));
-      const LEO_M128 x2_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 2), _mm_loadu_si128(y16_2 + 2));
-      const LEO_M128 x3_2 = _mm_xor_si128(_mm_loadu_si128(x16_2 + 3), _mm_loadu_si128(y16_2 + 3));
-      _mm_storeu_si128(x16_2, x0_2);
-      _mm_storeu_si128(x16_2 + 1, x1_2);
-      _mm_storeu_si128(x16_2 + 2, x2_2);
-      _mm_storeu_si128(x16_2 + 3, x3_2);
-      x16_2 += 4, y16_2 += 4;
-      const LEO_M128 x0_3 = _mm_xor_si128(_mm_loadu_si128(x16_3),     _mm_loadu_si128(y16_3));
-      const LEO_M128 x1_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 1), _mm_loadu_si128(y16_3 + 1));
-      const LEO_M128 x2_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 2), _mm_loadu_si128(y16_3 + 2));
-      const LEO_M128 x3_3 = _mm_xor_si128(_mm_loadu_si128(x16_3 + 3), _mm_loadu_si128(y16_3 + 3));
-      _mm_storeu_si128(x16_3,     x0_3);
-      _mm_storeu_si128(x16_3 + 1, x1_3);
-      _mm_storeu_si128(x16_3 + 2, x2_3);
-      _mm_storeu_si128(x16_3 + 3, x3_3);
-      x16_3 += 4, y16_3 += 4;
-      bytes -= 64;
-  } while (bytes > 0);
+      *x8_0++ ^= *y8_0++;
+      *x8_1++ ^= *y8_1++;
+      *x8_2++ ^= *y8_2++;
+      *x8_3++ ^= *y8_3++;
+  } while (--bytes > 0);
+  return;
 }
 
 #endif // LEO_USE_VECTOR4_OPT
