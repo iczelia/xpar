@@ -2305,7 +2305,7 @@ void InitializeCPUArch()
   CpuHasSSSE3 = false;
   CpuHasAVX2 = false;
 
-#if !defined(LEO_TARGET_MOBILE)
+#if !defined(LEO_TARGET_MOBILE) && defined(LEO_TRY_SSSE3)
   unsigned int cpu_info[4];
 
   _cpuid(cpu_info, 1);

@@ -24,6 +24,7 @@ section .text
   global _rse32_x86_64_generic
   global _rse32_x86_64_avx512
   global _crc32c_32k_x86_64_sse42
+  global _xpar_leo_x86_64_cpuflags
   extern _PROD_GEN
 
   %define xpar_x86_64_cpuflags _xpar_x86_64_cpuflags
@@ -32,12 +33,14 @@ section .text
   %define rse32_x86_64_avx512 _rse32_x86_64_avx512
   %define PROD_GEN _PROD_GEN
   %define crc32c_32k_x86_64_sse42 _crc32c_32k_x86_64_sse42
+  %define xpar_leo_x86_64_cpuflags _xpar_leo_x86_64_cpuflags
 %else
   global xpar_x86_64_cpuflags
   global crc32c_small_x86_64_sse42
   global rse32_x86_64_generic
   global rse32_x86_64_avx512
   global crc32c_32k_x86_64_sse42
+  global xpar_leo_x86_64_cpuflags
   extern PROD_GEN
 %endif
 
@@ -93,6 +96,38 @@ xpar_x86_64_cpuflags:
 .no_osxsave:
   mov eax, esi
   pop rbx
+  ret
+
+; =============================================================================
+;  Probe for SSSE3 and AVX2. Returns a tuple of boolean flags with
+;  rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
+; =============================================================================
+xpar_leo_x86_64_cpuflags:
+  xor edi, edi
+  xor ecx, ecx
+  mov eax, 1
+  xchg rsi, rbx
+  cpuid
+  xchg rsi, rbx
+  mov esi, ecx
+  xor ecx, ecx
+  mov eax, 7
+  xchg r8, rbx
+  cpuid
+  xchg r8, rbx
+  test r8b, 32
+  je .skip_oscheck
+  xor ecx, ecx
+  xgetbv
+  not eax
+  xor edi, edi
+  test al, 6
+  sete dil
+.skip_oscheck:
+  shr esi, 8
+  and esi, 2
+  or esi, edi
+  mov eax, esi
   ret
 
 ; =============================================================================
