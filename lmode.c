@@ -715,34 +715,28 @@ static LEO_FORCE_INLINE void RefMul(
 
 static void InitializeMultiplyTables()
 {
-  // If we cannot use the PSHUFB instruction, generate Multiply8LUT:
-  if (!CpuHasSSSE3)
+  Multiply8LUT = calloc(256, 256);
+
+  // For each left-multiplicand:
+  for (unsigned x = 0; x < 256; ++x)
   {
-      Multiply8LUT = calloc(256, 256);
+      ffe_t* lut = (ffe_t*)Multiply8LUT + x;
 
-      // For each left-multiplicand:
-      for (unsigned x = 0; x < 256; ++x)
+      if (x == 0)
       {
-          ffe_t* lut = (ffe_t*)Multiply8LUT + x;
+          for (unsigned log_y = 0; log_y < 256; ++log_y, lut += 256)
+              *lut = 0;
+      }
+      else
+      {
+          const ffe_t log_x = LogLUT[x];
 
-          if (x == 0)
+          for (unsigned log_y = 0; log_y < 256; ++log_y, lut += 256)
           {
-              for (unsigned log_y = 0; log_y < 256; ++log_y, lut += 256)
-                  *lut = 0;
-          }
-          else
-          {
-              const ffe_t log_x = LogLUT[x];
-
-              for (unsigned log_y = 0; log_y < 256; ++log_y, lut += 256)
-              {
-                  const ffe_t prod = ExpLUT[AddMod(log_x, log_y)];
-                  *lut = prod;
-              }
+              const ffe_t prod = ExpLUT[AddMod(log_x, log_y)];
+              *lut = prod;
           }
       }
-
-      return;
   }
 
 #ifdef LEO_TRY_AVX2
