@@ -48,6 +48,47 @@ if test "x$enable_x86_64" = "xyes"; then
   AM_CONDITIONAL([XPAR_X86_64], [true])
   AX_PROG_NASM
   AX_GCC_FUNC_ATTRIBUTE([sysv_abi])
+
+  # Save user flags
+  save_CFLAGS="$CFLAGS"
+
+  # ---- SSSE3 ----
+  CFLAGS="$save_CFLAGS -mssse3"
+  AC_MSG_CHECKING([for SSSE3 intrinsics with $CC])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[
+      #include <tmmintrin.h>
+    ]], [[
+      __m128i a = _mm_set1_epi8(1);
+      __m128i b = _mm_shuffle_epi8(a,a);
+      return _mm_extract_epi16(b,0);
+    ]])],
+    [AC_MSG_RESULT([yes])
+    AC_DEFINE([HAVE_SSSE3], [1], [Define if SSSE3 intrinsics are available])
+    SSSE3_CFLAGS="-mssse3"],
+    [AC_MSG_RESULT([no])
+    SSSE3_CFLAGS=""]
+  )
+
+  # ---- AVX2 ----
+  CFLAGS="$save_CFLAGS -mavx2"
+  AC_MSG_CHECKING([for AVX2 intrinsics with $CC])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[
+      #include <immintrin.h>
+    ]], [[
+      __m256i a = _mm256_set1_epi32(1);
+      __m256i b = _mm256_add_epi32(a,a);
+      return _mm256_extract_epi32(b,0);
+    ]])],
+    [AC_MSG_RESULT([yes])
+    AC_DEFINE([HAVE_AVX2], [1], [Define if AVX2 intrinsics are available])
+    AVX2_CFLAGS="-mavx2"],
+    [AC_MSG_RESULT([no])
+    AVX2_CFLAGS=""]
+  )
+
+  CFLAGS="$save_CFLAGS $SSSE3_CFLAGS $AVX2_CFLAGS"
 else
   AM_CONDITIONAL([XPAR_X86_64], [false])
 fi

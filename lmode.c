@@ -71,10 +71,6 @@ typedef enum LeopardResultT
 //------------------------------------------------------------------------------
 // Constants
 
-// Enable using SIMD instructions
-#define LEO_USE_SSSE3_OPT
-#define LEO_USE_AVX2_OPT
-
 // Avoid calculating final FFT values in decoder using bitfield
 #define LEO_ERROR_BITFIELD_OPT
 
@@ -105,7 +101,7 @@ typedef enum LeopardResultT
 #endif // ANDROID
 
 // todo: replace this:
-#if 1
+#if HAVE_AVX2
   #define LEO_TRY_AVX2 /* 256-bit */
   #include <immintrin.h>
   #define LEO_ALIGN_BYTES 32
@@ -2300,6 +2296,9 @@ void InitializeCPUArch()
   }
 #endif
 
+  CpuHasSSSE3 = false;
+  CpuHasAVX2 = false;
+
 #if !defined(LEO_TARGET_MOBILE)
   unsigned int cpu_info[4];
 
@@ -2310,13 +2309,6 @@ void InitializeCPUArch()
   _cpuid(cpu_info, 7);
   CpuHasAVX2 = ((cpu_info[1] & CPUID_EBX_AVX2) != 0);
 #endif // LEO_TRY_AVX2
-
-#ifndef LEO_USE_SSSE3_OPT
-  CpuHasSSSE3 = false;
-#endif // LEO_USE_SSSE3_OPT
-#ifndef LEO_USE_AVX2_OPT
-  CpuHasAVX2 = false;
-#endif // LEO_USE_AVX2_OPT
 
 #endif // LEO_TARGET_MOBILE
 }
