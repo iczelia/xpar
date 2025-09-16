@@ -186,17 +186,8 @@ void InitializeCPUArch();
 # endif
 #endif
 
-#if !defined(LEO_TARGET_MOBILE)
-# if defined(LEO_TRY_AVX2)
-  // Does CPU support AVX2?
-  extern bool CpuHasAVX2;
-# endif
-  // Does CPU support SSSE3?
-  extern bool CpuHasSSSE3;
-#elif defined(LEO_USE_SSE2NEON)
-  extern bool CpuHasSSSE3;
-#endif // LEO_TARGET_MOBILE
-
+extern bool CpuHasAVX2;
+extern bool CpuHasSSSE3;
 
 //------------------------------------------------------------------------------
 // Portable Intrinsics
@@ -2228,10 +2219,7 @@ bool Initialize()
   #pragma warning(disable: 4752) // found Intel(R) Advanced Vector Extensions; consider using /arch:AVX
 #endif
 
-#ifdef LEO_TRY_AVX2
-  bool CpuHasAVX2 = false;
-#endif
-
+bool CpuHasAVX2 = false;
 bool CpuHasSSSE3 = false;
 
 #define CPUID_EBX_AVX2    0x00000020
