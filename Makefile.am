@@ -1,7 +1,7 @@
 EXTRA_DIST = README.md
 bin_PROGRAMS = xpar
-noinst_HEADERS = platform.h crc32c.h jmode.h smode.h common.h yarg.h
-xpar_SOURCES = platform.c xpar.c crc32c.c jmode.c smode.c
+noinst_HEADERS = platform.h crc32c.h jmode.h vmode.h lmode.h common.h yarg.h sharding.h
+xpar_SOURCES = platform.c xpar.c crc32c.c jmode.c vmode.c lmode.c
 
 if XPAR_X86_64
 xpar_SOURCES += xpar-x86_64.asm
@@ -29,8 +29,23 @@ self-check:
 	./xpar -Jef -i 2 xpar && ./xpar -Jdf xpar.xpa xpar.org \
 		&& cmp xpar xpar.org && rm xpar.org xpar.xpa
 	./xpar -Sef --dshards=4 --pshards=2 xpar \
-	  && ./xpar -Sdf xpar.org xpar.xpa.0* \
-		&& cmp xpar xpar.org && rm xpar.org xpar.xpa.0*
+	  && ./xpar -Sdf xpar.org xpar.xpa.* \
+		&& cmp xpar xpar.org
+	rm xpar.org xpar.xpa*
 	./xpar -Sef --dshards=4 --pshards=2 xpar && rm -f xpar.xpa.000 \
-	  && ./xpar -Sdf xpar.org xpar.xpa.0* \
-		&& cmp xpar xpar.org && rm xpar.org xpar.xpa.0*
+	  && ./xpar -Sdf xpar.org xpar.xpa.* \
+		&& cmp xpar xpar.org
+	rm xpar.org xpar.xpa*
+	./xpar -Lef --dshards=4 --pshards=2 xpar \
+	  && ./xpar -Ldf xpar.org xpar.xpa.* \
+		&& cmp xpar xpar.org
+	rm xpar.org xpar.xpa*
+	./xpar -Lef --dshards=4 --pshards=2 xpar && rm -f xpar.xpa.000 \
+	  && ./xpar -Ldf xpar.org xpar.xpa.* \
+		&& cmp xpar xpar.org
+	rm xpar.org xpar.xpa*
+	./xpar -Lef --dshards=16 --pshards=8 xpar && rm -f xpar.xpa.000 \
+	  && ./xpar -Ldf xpar.org xpar.xpa.* \
+		&& cmp xpar xpar.org
+	rm xpar.org xpar.xpa*
+	

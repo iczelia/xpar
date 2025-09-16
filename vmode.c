@@ -15,7 +15,7 @@
    along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "smode.h"
+#include "vmode.h"
 #include "crc32c.h"
 #include "platform.h"
 
@@ -50,17 +50,18 @@ static u8 gf256_exp(u8 a, int n) {
 }
 
 // ============================================================================
-//  Implementation of RS sharding erasure codes.
+//  Implementation of RS sharding erasure codes via the Vandermonde matrix
+//  This implementation is O(n^3), using the Berlekamp-Welch algorithm.
 // ============================================================================
 typedef struct {
   int n, m; // n x m (rows x cols) matrix; v[row][col]
   u8 ** v, * bp;
 } gf256mat;
 static gf256mat * gf256mat_init(int n, int m) {
-  gf256mat * mat = malloc(sizeof(gf256mat));
+  gf256mat * mat = xmalloc(sizeof(gf256mat));
   mat->n = n; mat->m = m;
-  mat->bp = calloc(n, m);
-  mat->v = calloc(n, sizeof(u8 *));
+  mat->bp = xmalloc(n * m);
+  mat->v = xmalloc(n * sizeof(u8 *));
   Fi(n, mat->v[i] = mat->bp + i * m)
   return mat;
 }
@@ -131,7 +132,7 @@ typedef struct {
   uint8_t ** rows;
 } rs;
 static rs * rs_init(int data_shards, int parity_shards) {
-  rs * r = malloc(sizeof(rs));
+  rs * r = xmalloc(sizeof(rs));
   r->data = data_shards; r->parity = parity_shards;
   r->total = data_shards + parity_shards;
   gf256mat * v, * vsq, * vi;
@@ -181,7 +182,7 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, size_t l
   gf256mat_free(inv);  free(shards);
   return true;
 }
-void rs_destroy(rs * r) {
+static void rs_destroy(rs * r) {
   gf256mat_free(r->matrix);
   free(r->rows); free(r);
 }
@@ -203,7 +204,14 @@ static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
   )
   u8 * shards[MAX_TOTAL_SHARDS];
   sz shard_size = (size + o.dshards - 1) / o.dshards;
-  Fi(o.dshards, shards[i] = buf + i * shard_size);
+  if (shard_size <= 128)
+    FATAL("Input file too small to be sharded with the given parameters.");
+  Fi(o.dshards - 1, shards[i] = buf + i * shard_size);
+  // last shard: use a temporary buffer to avoid overflowing
+  shards[o.dshards - 1] = xmalloc(shard_size);
+  if (size > (o.dshards - 1) * shard_size)
+    memcpy(shards[o.dshards - 1], buf + (o.dshards - 1) * shard_size,
+      size - (o.dshards - 1) * shard_size);
   Fi0(o.dshards + o.pshards, o.dshards, shards[i] = xmalloc(shard_size));
   rs * r = rs_init(o.dshards, o.pshards);
   rs_encode(r, shards, shard_size);
@@ -223,6 +231,7 @@ static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
   )
   Fi(o.dshards + o.pshards, xfclose(out[i]));
   Fi0(o.dshards + o.pshards, o.dshards, free(shards[i]));
+  free(shards[o.dshards - 1]);
 }
 
 void sharded_encode(sharded_encoding_options_t o) {
@@ -247,9 +256,8 @@ void sharded_encode(sharded_encoding_options_t o) {
   // which will imply that the last shard will be smaller.
   // If we overallocate and wipe out the last page, we can
   // (controllably) overflow this buffer.
-  u8 * buffer = xmalloc(size + 4096);
+  u8 * buffer = xmalloc(size);
   if (xfread(buffer, size, in) != size) FATAL("Short read.");
-  memset(buffer + size, 0, 4096);
   fclose(in);
   do_sharded_encode(o, buffer, size);
   free(buffer);
@@ -257,10 +265,23 @@ void sharded_encode(sharded_encoding_options_t o) {
 
 #define SHARD_HEADER_SIZE 19
 typedef struct {
-  bool valid; u32 crc; u8 * buf;
+  bool valid, mapped; u32 crc; u8 * buf;
   u8 shard_number, dshards, pshards;
   sz shard_size, total_size;
+#if defined(XPAR_ALLOW_MAPPING)
+  mmap_t map;
+#endif
 } sharded_hv_result_t;
+static void unmap_shard(sharded_hv_result_t * res) {
+  if (res->mapped && res->buf) {
+    #if defined(XPAR_ALLOW_MAPPING)
+    xpar_unmap(&res->map);
+    res->buf = NULL;  res->mapped = false;
+    #endif
+  } else {
+    free(res->buf);  res->buf = NULL;
+  }
+}
 static sharded_hv_result_t validate_shard_header(bool may_map,
     const char * file_name, sharded_decoding_options_t opt) {
   sharded_hv_result_t res;  memset(&res, 0, sizeof(res));
@@ -294,7 +315,8 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
       if (crc != res.crc) {
         xpar_unmap(&map);  return res;
       }
-      res.valid = true;  xpar_unmap(&map);  return res;
+      res.valid = true;  res.mapped = true;
+      res.buf = map.map;   res.map = map;  return res;
     }
     #endif
   }
@@ -367,7 +389,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
       "yet. Please throw away some of the input shards and try again.\n"
     );
   Fi(opt.n_input_shards,
-    res[i] = validate_shard_header(opt.no_map, opt.input_files[i], opt);
+    res[i] = validate_shard_header(!opt.no_map, opt.input_files[i], opt);
     if (!res[i].valid) {
       if (!opt.quiet)
         fprintf(stderr,
@@ -425,7 +447,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
   ))
   // Free the invalid buffers, compact the valid ones.
   Fi(opt.n_input_shards,
-    if (!res[i].valid) free(res[i].buf), res[i].shard_number = 0xFF);
+    if (!res[i].valid) unmap_shard(&res[i]), res[i].shard_number = 0xFF);
   int n_valid_shards = 0;
   Fi(opt.n_input_shards, if (res[i].valid) {
     n_valid_shards++;
@@ -463,7 +485,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
       sz w = MIN(consensus_size, consensus_shard_size);
       xfwrite(res[i].buf + SHARD_HEADER_SIZE, w, out);
       consensus_size -= w)
-    Fi(n_valid_shards, free(res[i].buf));
+    Fi(n_valid_shards, unmap_shard(&res[i]));
     return;
   }
   rs * r = rs_init(consensus_dshards, consensus_pshards);
@@ -482,6 +504,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
     xfwrite(buffers[i], w, out);
     consensus_size -= w)
   xfclose(out);
-  Fi(n_valid_shards, free(res[i].buf));
+  rs_destroy(r);
+  Fi(n_valid_shards, unmap_shard(&res[i]));
   Fi(consensus_dshards + consensus_pshards, if (!pres[i]) free(buffers[i]));
 }

@@ -18,15 +18,14 @@
 #include "config.h"
 #include "common.h"
 #include "jmode.h"
-#include "smode.h"
+#include "vmode.h"
+#include "lmode.h"
 #include "platform.h"
-#include "crc32c.h"
 #include "yarg.h"
 
 #include <limits.h>
 #include <assert.h>
 #include <stdint.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -63,6 +62,7 @@ static void help() {
     "Mode selection:\n"
     "  -J,   --joint        use the joint mode (default)\n"
     "  -S,   --sharded      use the sharded mode\n"
+    "  -L,   --log-sharded  use the log-sharded mode\n"
     "  -e,   --encode       add parity bits to a specified file\n"
     "  -d,   --decode       recover the original data\n"
     "Options:\n"
@@ -98,7 +98,7 @@ static void help() {
 }
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
 int main(int argc, char * argv[]) {
-  jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);
+  jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);  lmode_gentab();
   platform_init();
   enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
          FLAG_OUT_PREFIX };
@@ -107,6 +107,7 @@ int main(int argc, char * argv[]) {
     { 'v', no_argument, "verbose" },
     { 'J', no_argument, "joint" },
     { 'S', no_argument, "sharded" },
+    { 'L', no_argument, "log-sharded" },
 #if defined(XPAR_OPENMP)
     { 'j', required_argument, "jobs" },
 #endif
@@ -127,7 +128,7 @@ int main(int argc, char * argv[]) {
   };
   yarg_settings settings = { .style = YARG_STYLE_UNIX, .dash_dash = true };
   bool verbose = false, quiet = false, force = false, force_stdout = false;
-  bool no_map = false, joint = false, sharded = false;
+  bool no_map = false, joint = false, sharded = false, log_sharded = false;
   int mode = MODE_NONE, interlacing = -1, dshards = -1, pshards = -1, jobs = -1;
   const char * out_prefix = NULL;
   yarg_result * res = yarg_parse(argc, argv, opt, settings);
@@ -139,9 +140,11 @@ int main(int argc, char * argv[]) {
       case 'j':
         if (jobs != -1) goto conflict;  jobs = atoi(o.arg); break;
       case 'J':
-        if (sharded) goto conflict;  joint = true; break;
+        if (sharded || log_sharded) goto conflict;  joint = true; break;
       case 'S':
-        if (joint) goto conflict;  sharded = true; break;
+        if (joint || log_sharded) goto conflict;  sharded = true; break;
+      case 'L':
+        if (joint || sharded) goto conflict;  log_sharded = true; break;
       case 'v':
         if (quiet) goto conflict;  verbose = true; break;
       case 'q':
@@ -182,7 +185,7 @@ int main(int argc, char * argv[]) {
 #endif
   if (mode == MODE_NONE)
     FATAL("No operation mode specified.");
-  if (!joint && !sharded) joint = true;
+  if (!joint && !sharded && !log_sharded) joint = true;
   if (joint) {
     if (dshards != -1 || pshards != -1 || out_prefix)
       FATAL("Sharded mode options in joint mode.");
@@ -235,9 +238,10 @@ int main(int argc, char * argv[]) {
       printf("Elapsed time: %.6f seconds.\n", elapsed);
     }
     if (output_file != f2) free(output_file);
-  } else {
+  } else if(sharded || log_sharded) {
     if (interlacing != -1 || force_stdout)
-      FATAL("Joint mode options in sharded mode.");
+      FATAL(sharded ? "Joint mode options in sharded mode."
+                    : "Joint mode options in log-sharded mode.");
     volatile struct timeval start, end;
     gettimeofday((struct timeval *) &start, NULL);
     switch(mode) {
@@ -254,7 +258,7 @@ int main(int argc, char * argv[]) {
           .force = force, .quiet = quiet, .verbose = verbose,
           .no_map = no_map
         };
-        sharded_encode(opt);
+        if (log_sharded) log_sharded_encode(opt); else sharded_encode(opt);
         break;
       }
       case MODE_DECODING: {
@@ -267,7 +271,7 @@ int main(int argc, char * argv[]) {
           .force = force, .quiet = quiet, .verbose = verbose,
           .no_map = no_map, .n_input_shards = res->pos_argc - 1
         };
-        sharded_decode(opt);
+        if (log_sharded) log_sharded_decode(opt); else sharded_decode(opt);
         break;
       }
     }

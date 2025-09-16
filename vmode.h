@@ -19,28 +19,12 @@
 #define _SMODE_H_
 
 #include "common.h"
+#include "sharding.h"
 
 // ============================================================================
-//  Shared mode encoding and decoding.
+//  Vandermonde-type shared mode encoding and decoding.
 // ============================================================================
-#define MAX_DATA_SHARDS 128
-#define MAX_PARITY_SHARDS 64
-#define MAX_TOTAL_SHARDS (MAX_DATA_SHARDS + MAX_PARITY_SHARDS)
-
-typedef struct {
-  const char * input_name, * output_prefix;
-  bool force, quiet, verbose, no_map;
-  u8 dshards, pshards;
-} sharded_encoding_options_t;
-
-typedef struct {
-  const char * output_file, ** input_files;
-  bool force, quiet, verbose, no_map;
-  sz n_input_shards;
-} sharded_decoding_options_t;
-
 void smode_gf256_gentab(u8 poly);
-
 void sharded_encode(sharded_encoding_options_t o);
 void sharded_decode(sharded_decoding_options_t o);
 

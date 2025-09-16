@@ -61,13 +61,6 @@ int asprintf(char **strp, const char *fmt, ...) {
 #endif
 
 #if defined(HAVE_MMAP) || defined(HAVE_CREATEFILEMAPPINGA)
-// Both of the functions below add a single page (4K) of 
-// padding to the end of the file. Some of the code performs
-// controlled buffer overflows by a few bytes (i.e. when
-// the total # of shards doesn't divide the size of the file
-// evenly), so we need to make sure that we don't run into
-// any issues with the last page.
-
 mmap_t xpar_map(const char * filename) {
   mmap_t mappedFile = { NULL, 0 };
 #if defined(HAVE_CREATEFILEMAPPINGA)
@@ -80,7 +73,6 @@ mmap_t xpar_map(const char * filename) {
   if (!GetFileSizeEx(fileHandle, &fileSize)) {
     CloseHandle(fileHandle); return mappedFile;
   }
-  fileSize.QuadPart += 4096;
   HANDLE fileMapping = CreateFileMappingA(
     fileHandle, NULL, PAGE_READONLY,
     fileSize.HighPart, fileSize.LowPart, NULL
@@ -103,7 +95,7 @@ mmap_t xpar_map(const char * filename) {
     close(fd); return mappedFile;
   }
   mappedFile.size = (size_t) st.st_size;
-  mappedFile.map = mmap(NULL, mappedFile.size + 4096, PROT_READ, MAP_SHARED, fd, 0);
+  mappedFile.map = mmap(NULL, mappedFile.size, PROT_READ, MAP_SHARED, fd, 0);
   if (mappedFile.map == MAP_FAILED) {
     close(fd); return mappedFile;
   }
@@ -116,7 +108,7 @@ mmap_t xpar_map(const char * filename) {
 
 void xpar_unmap(mmap_t * file) {
   #if defined(HAVE_MMAP)
-    if (file->map) munmap(file->map, file->size + 4096);
+    if (file->map) munmap(file->map, file->size);
   #else
     if (file->map) UnmapViewOfFile(file->map);
   #endif
@@ -160,7 +152,7 @@ sz xfread(void * ptr, sz size, FILE * stream) {
   return n;
 }
 void * xmalloc(sz size) {
-  void * ptr = malloc(size);
+  void * ptr = calloc(size, 1);
   if (!ptr) FATAL_PERROR("malloc");
   return ptr;
 }
