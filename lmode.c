@@ -1538,8 +1538,7 @@ static void IFFT_DIT_Decoder(
   const uint64_t bytes,
   const unsigned m_truncated,
   void** work,
-  const unsigned m,
-  const ffe_t* skewLUT)
+  const unsigned m)
 {
   // Decimation in time: Unroll 2 layers at a time
   unsigned dist = 1, dist4 = 4;
@@ -1549,9 +1548,9 @@ static void IFFT_DIT_Decoder(
       for (unsigned r = 0; r < m_truncated; r += dist4)
       {
           const unsigned i_end = r + dist;
-          const ffe_t log_m01 = skewLUT[i_end];
-          const ffe_t log_m02 = skewLUT[i_end + dist];
-          const ffe_t log_m23 = skewLUT[i_end + dist * 2];
+          const ffe_t log_m01 = FFTSkew[i_end - 1];
+          const ffe_t log_m02 = FFTSkew[i_end + dist - 1];
+          const ffe_t log_m23 = FFTSkew[i_end + dist * 2 - 1];
 
           // For each set of dist elements:
           for (unsigned i = r; i < i_end; ++i)
@@ -1571,7 +1570,7 @@ static void IFFT_DIT_Decoder(
   if (dist < m)
   {
       // Assuming that dist = m / 2
-      const ffe_t log_m = skewLUT[dist];
+      const ffe_t log_m = FFTSkew[dist - 1];
 
       if (log_m == kModulus)
           VectorXOR(bytes, dist, work + dist, work);
@@ -1823,8 +1822,7 @@ static void FFT_DIT(
   const uint64_t bytes,
   void** work,
   const unsigned m_truncated,
-  const unsigned m,
-  const ffe_t* skewLUT)
+  const unsigned m)
 {
   // Decimation in time: Unroll 2 layers at a time
   unsigned dist4 = m, dist = m >> 2;
@@ -1834,9 +1832,9 @@ static void FFT_DIT(
       for (unsigned r = 0; r < m_truncated; r += dist4)
       {
           const unsigned i_end = r + dist;
-          const ffe_t log_m01 = skewLUT[i_end];
-          const ffe_t log_m02 = skewLUT[i_end + dist];
-          const ffe_t log_m23 = skewLUT[i_end + dist * 2];
+          const ffe_t log_m01 = FFTSkew[i_end - 1];
+          const ffe_t log_m02 = FFTSkew[i_end + dist - 1];
+          const ffe_t log_m23 = FFTSkew[i_end + dist * 2 - 1];
 
           // For each set of dist elements:
           for (unsigned i = r; i < i_end; ++i)
@@ -1857,7 +1855,7 @@ static void FFT_DIT(
   {
       for (unsigned r = 0; r < m_truncated; r += 2)
       {
-          const ffe_t log_m = skewLUT[r + 1];
+          const ffe_t log_m = FFTSkew[r];
 
           if (log_m == kModulus)
               xor_mem(work[r + 1], work[r], bytes);
@@ -1945,8 +1943,7 @@ skip_body:
       buffer_bytes,
       work,
       recovery_count,
-      m,
-      FFTSkew - 1);
+      m);
 }
 
 
@@ -2017,7 +2014,6 @@ static void FFT_DIT_ErrorBits(
   void** work,
   const unsigned n_truncated,
   const unsigned n,
-  const ffe_t* skewLUT,
   const ErrorBitfield *error_bits)
 {
   unsigned mip_level = LastNonzeroBit32(n);
@@ -2032,9 +2028,9 @@ static void FFT_DIT_ErrorBits(
           if (!ErrorBitfield_IsNeeded(error_bits, mip_level, r))
               continue;
 
-          const ffe_t log_m01 = skewLUT[r + dist];
-          const ffe_t log_m23 = skewLUT[r + dist * 3];
-          const ffe_t log_m02 = skewLUT[r + dist * 2];
+          const ffe_t log_m01 = FFTSkew[r + dist - 1];
+          const ffe_t log_m23 = FFTSkew[r + dist * 3 - 1];
+          const ffe_t log_m02 = FFTSkew[r + dist * 2 - 1];
 
           // For each set of dist elements:
           for (unsigned i = r; i < r + dist; ++i)
@@ -2058,7 +2054,7 @@ static void FFT_DIT_ErrorBits(
           if (!ErrorBitfield_IsNeeded(error_bits, mip_level, r))
               continue;
 
-          const ffe_t log_m = skewLUT[r + 1];
+          const ffe_t log_m = FFTSkew[r];
 
           if (log_m == kModulus)
               xor_mem(work[r + 1], work[r], bytes);
@@ -2156,8 +2152,7 @@ void ReedSolomonDecode(
       buffer_bytes,
       m + original_count,
       work,
-      n,
-      FFTSkew - 1);
+      n);
 
   // work <- FormalDerivative(work, n)
 
@@ -2177,9 +2172,9 @@ void ReedSolomonDecode(
   const unsigned output_count = m + original_count;
 
 #ifdef LEO_ERROR_BITFIELD_OPT
-  FFT_DIT_ErrorBits(buffer_bytes, work, output_count, n, FFTSkew - 1, &error_bits);
+  FFT_DIT_ErrorBits(buffer_bytes, work, output_count, n, &error_bits);
 #else
-  FFT_DIT(buffer_bytes, work, output_count, n, FFTSkew - 1);
+  FFT_DIT(buffer_bytes, work, output_count, n);
 #endif
 
   // Reveal erasures
