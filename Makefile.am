@@ -1,6 +1,6 @@
 EXTRA_DIST = README.md
 bin_PROGRAMS = xpar
-noinst_HEADERS = platform.h crc32c.h jmode.h vmode.h lmode.h common.h yarg.h sharding.h
+noinst_HEADERS = platform.h crc32c.h jmode.h vmode.h lmode.h common.h yarg.h sharding.h sse2neon.h
 xpar_SOURCES = platform.c xpar.c crc32c.c jmode.c vmode.c lmode.c
 
 if XPAR_X86_64

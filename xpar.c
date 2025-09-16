@@ -1,5 +1,5 @@
 /*
-   Copyright (C) 2022-2024 Kamila Szewczyk
+   Copyright (C) 2022-2025 Kamila Szewczyk
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -40,7 +40,7 @@
 // ============================================================================
 static void version() {
   printf(
-    "xpar %d.%d. Copyright (C) by Kamila Szewczyk, 2022-2024.\n"
+    "xpar %d.%d. Copyright (C) by Kamila Szewczyk, 2022-2025.\n"
     "Licensed under the terms of GNU GPL version 3, available online at:\n"
     " <https://www.gnu.org/licenses/gpl-3.0.en.html>\n"
     "This is free software: you are free to change and redistribute it.\n"
