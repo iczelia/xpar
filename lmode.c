@@ -2664,7 +2664,7 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len) 
   Fi(r->data, if (!dshards[i]) { ++original_loss_count; original_loss_i = i; })
   unsigned recovery_got_count = 0;
   unsigned recovery_got_i = 0;
-  Fi(r->parity, if (!pshards[i]) { ++recovery_got_count; recovery_got_i = i; })
+  Fi(r->parity, if (pshards[i]) { ++recovery_got_count; recovery_got_i = i; })
   if (recovery_got_count < original_loss_count)
     FATAL("Not enough recovery data received: lost %u, got %u\n",
           original_loss_count, recovery_got_count);
