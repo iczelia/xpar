@@ -241,8 +241,8 @@ static block_hdr parse_block_header(u8 b[8], bool force) {
     FATAL_UNLESS("Invalid block header.", !force);
     h.bytes = 0xFFFFFF; h.crc = 0; return h;
   } else {
-    h.bytes = (b[1] << 16) | (b[2] << 8) | b[3];
-    h.crc = (b[4] << 24) | (b[5] << 16) | (b[6] << 8) | b[7];
+    h.bytes = (((uint32_t) b[1]) << 16) | (((uint32_t) b[2]) << 8) | b[3];
+    h.crc = (((uint32_t) b[4]) << 24) | (((uint32_t) b[5]) << 16) | (((uint32_t) b[6]) << 8) | b[7];
     return h;
   }
 }

@@ -83,7 +83,7 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=clang --${{ matrix.feature }}
+      run: ./configure CC=clang "CFLAGS=-O3 -g3 -fsanitize=address,undefined" --${{ matrix.feature }}
     - name: Make
       run: make all self-check
   
