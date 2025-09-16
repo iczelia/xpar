@@ -28,12 +28,12 @@ self-check:
 		&& cmp xpar xpar.org && rm xpar.org xpar.xpa
 	./xpar -Jef -i 2 xpar && ./xpar -Jdf xpar.xpa xpar.org \
 		&& cmp xpar xpar.org && rm xpar.org xpar.xpa
-	./xpar -Sef --dshards=4 --pshards=2 xpar \
-	  && ./xpar -Sdf xpar.org xpar.xpa.* \
+	./xpar -Wef --dshards=4 --pshards=2 xpar \
+	  && ./xpar -Wdf xpar.org xpar.xpa.* \
 		&& cmp xpar xpar.org
 	rm xpar.org xpar.xpa*
-	./xpar -Sef --dshards=4 --pshards=2 xpar && rm -f xpar.xpa.000 \
-	  && ./xpar -Sdf xpar.org xpar.xpa.* \
+	./xpar -Wef --dshards=4 --pshards=2 xpar && rm -f xpar.xpa.000 \
+	  && ./xpar -Wdf xpar.org xpar.xpa.* \
 		&& cmp xpar xpar.org
 	rm xpar.org xpar.xpa*
 	./xpar -Lef --dshards=4 --pshards=2 xpar \

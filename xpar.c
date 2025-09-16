@@ -61,8 +61,8 @@ static void help() {
     "\n"
     "Mode selection:\n"
     "  -J,   --joint        use the joint mode (default)\n"
-    "  -S,   --sharded      use the sharded mode\n"
-    "  -L,   --log-sharded  use the log-sharded mode\n"
+    "  -W,   --van-sharded  use the (Vandermonde) sharded mode\n"
+    "  -L,   --fft-sharded  use the (FFT) sharded mode\n"
     "  -e,   --encode       add parity bits to a specified file\n"
     "  -d,   --decode       recover the original data\n"
     "Options:\n"
@@ -106,8 +106,8 @@ int main(int argc, char * argv[]) {
     { 'V', no_argument, "version" },
     { 'v', no_argument, "verbose" },
     { 'J', no_argument, "joint" },
-    { 'S', no_argument, "sharded" },
-    { 'L', no_argument, "log-sharded" },
+    { 'W', no_argument, "van-sharded" },
+    { 'L', no_argument, "fft-sharded" },
 #if defined(XPAR_OPENMP)
     { 'j', required_argument, "jobs" },
 #endif
