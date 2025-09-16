@@ -44,7 +44,7 @@ self-check:
 	  && ./xpar -Ldf xpar.org xpar.xpa.* \
 		&& cmp xpar xpar.org
 	rm xpar.org xpar.xpa*
-	./xpar -Lef --dshards=16 --pshards=8 xpar && rm -f xpar.xpa.000 \
+	./xpar -Lef --dshards=12 --pshards=8 xpar && rm -f xpar.xpa.000 \
 	  && ./xpar -Ldf xpar.org xpar.xpa.* \
 		&& cmp xpar xpar.org
 	rm xpar.org xpar.xpa*
