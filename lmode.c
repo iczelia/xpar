@@ -109,6 +109,10 @@ typedef enum LeopardResultT
   #define LEO_ALIGN_BYTES 16
 #endif // __AVX2__
 
+#if HAVE_SSSE3
+  #define LEO_TRY_SSSE3 /* 128-bit */
+#endif
+
 #if !defined(LEO_TARGET_MOBILE)
   // Note: MSVC currently only supports SSSE3 but not AVX2
   #include <tmmintrin.h> // SSSE3: _mm_shuffle_epi8
@@ -817,6 +821,7 @@ static void mul_mem(
   }
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 table_lo_y = _mm_loadu_si128(&Multiply128LUT[log_m].Value[0]);
@@ -849,6 +854,7 @@ static void mul_mem(
 
       return;
   }
+#endif
 
   // Reference version:
   RefMul(x, y, log_m, bytes);
@@ -946,6 +952,7 @@ static void IFFT_DIT2(
   }
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 table_lo_y = _mm_loadu_si128(&Multiply128LUT[log_m].Value[0]);
@@ -977,6 +984,7 @@ static void IFFT_DIT2(
 
       return;
   }
+#endif
 
   // Reference version:
   xor_mem(y, x, bytes);
@@ -1053,6 +1061,7 @@ static void IFFT_DIT4(
 
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 t01_lo = _mm_loadu_si128(&Multiply128LUT[log_m01].Value[0]);
@@ -1106,6 +1115,7 @@ static void IFFT_DIT4(
 
       return;
   }
+#endif
 
 #endif // LEO_INTERLEAVE_BUTTERFLY4_OPT
 
@@ -1178,6 +1188,7 @@ static void IFFT_DIT2_xor(
   }
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 table_lo_y = _mm_loadu_si128(&Multiply128LUT[log_m].Value[0]);
@@ -1215,6 +1226,7 @@ static void IFFT_DIT2_xor(
 
       return;
   }
+#endif
 
   // Reference version:
   xor_mem(y_in, x_in, bytes);
@@ -1305,6 +1317,7 @@ static void IFFT_DIT4_xor(
 
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 t01_lo = _mm_loadu_si128(&Multiply128LUT[log_m01].Value[0]);
@@ -1369,6 +1382,7 @@ static void IFFT_DIT4_xor(
 
       return;
   }
+#endif
 
 #endif // LEO_INTERLEAVE_BUTTERFLY4_OPT
 
@@ -1613,6 +1627,7 @@ static void FFT_DIT2(
   }
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 table_lo_y = _mm_loadu_si128(&Multiply128LUT[log_m].Value[0]);
@@ -1644,6 +1659,7 @@ static void FFT_DIT2(
 
       return;
   }
+#endif
 
   // Reference version:
   RefMulAdd(x, y, log_m, bytes);
@@ -1719,6 +1735,7 @@ static void FFT_DIT4(
   }
 #endif // LEO_TRY_AVX2
 
+#if defined(LEO_TRY_SSSE3)
   if (CpuHasSSSE3)
   {
       const LEO_M128 t01_lo = _mm_loadu_si128(&Multiply128LUT[log_m01].Value[0]);
@@ -1773,6 +1790,7 @@ static void FFT_DIT4(
 
       return;
   }
+#endif
 
 #endif // LEO_INTERLEAVE_BUTTERFLY4_OPT
 
