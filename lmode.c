@@ -1844,11 +1844,8 @@ void ReedSolomonDecode(
 #endif  // LEO_ERROR_BITFIELD_OPT
 
   ffe_t error_locations[kOrder] = {};
-  for (unsigned i = 0; i < recovery_count; ++i)
-    if (!recovery[i])
-      error_locations[i] = 1;
-  for (unsigned i = recovery_count; i < m; ++i)
-    error_locations[i] = 1;
+  Fi(recovery_count, if (!recovery[i]) error_locations[i] = 1)
+  Fi0(m, recovery_count, error_locations[i] = 1)
   for (unsigned i = 0; i < original_count; ++i) {
     if (!original[i]) {
       error_locations[i + m] = 1;
@@ -1866,33 +1863,26 @@ void ReedSolomonDecode(
 
   FWHT(error_locations, kOrder, m + original_count);
 
-  for (unsigned i = 0; i < kOrder; ++i)
-    error_locations[i] =
-        ((unsigned)error_locations[i] * (unsigned)LogWalsh[i]) % kModulus;
-
+  Fi(kOrder,
+    error_locations[i] = ((unsigned)error_locations[i] * (unsigned)LogWalsh[i]) % kModulus)
   FWHT(error_locations, kOrder, kOrder);
 
   // work <- recovery data
-
-  for (unsigned i = 0; i < recovery_count; ++i) {
+  Fi(recovery_count,
     if (recovery[i])
       mul_mem(work[i], recovery[i], error_locations[i], buffer_bytes);
     else
-      memset(work[i], 0, buffer_bytes);
-  }
-  for (unsigned i = recovery_count; i < m; ++i)
-    memset(work[i], 0, buffer_bytes);
+      memset(work[i], 0, buffer_bytes))
+  Fi0(m, recovery_count, memset(work[i], 0, buffer_bytes))
 
   // work <- original data
-
-  for (unsigned i = 0; i < original_count; ++i) {
+  Fi(original_count,
     if (original[i])
       mul_mem(work[m + i], original[i], error_locations[m + i], buffer_bytes);
     else
-      memset(work[m + i], 0, buffer_bytes);
-  }
-  for (unsigned i = m + original_count; i < n; ++i)
-    memset(work[i], 0, buffer_bytes);
+      memset(work[m + i], 0, buffer_bytes))
+
+  Fi0(n, m + original_count, memset(work[i], 0, buffer_bytes))
 
   // work <- IFFT(work, n, 0)
 
@@ -1900,12 +1890,10 @@ void ReedSolomonDecode(
 
   // work <- FormalDerivative(work, n)
 
-  for (unsigned i = 1; i < n; ++i) {
+  Fi0(n, 1,
     const unsigned width = ((i ^ (i - 1)) + 1) >> 1;
-
-    VectorXOR(buffer_bytes, width, work + i - width, work + i);
-  }
-
+    VectorXOR(buffer_bytes, width, work + i - width, work + i))
+  
   // work <- FFT(work, n, 0) truncated to m + original_count
 
   const unsigned output_count = m + original_count;
@@ -1917,11 +1905,8 @@ void ReedSolomonDecode(
 #endif
 
   // Reveal erasures
-
-  for (unsigned i = 0; i < original_count; ++i)
-    if (!original[i])
-      mul_mem(work[i], work[i + m], kModulus - error_locations[i + m],
-              buffer_bytes);
+  Fi(original_count, if (!original[i])
+    mul_mem(work[i], work[i + m], kModulus - error_locations[i + m], buffer_bytes))
 }
 
 //------------------------------------------------------------------------------
@@ -1987,9 +1972,7 @@ void xor_mem(void* restrict vx, const void* restrict vy, uint64_t bytes) {
   // Simple reference version:
   uint8_t* restrict x8 = (uint8_t*)(vx);
   const uint8_t* restrict y8 = (const uint8_t*)(vy);
-  do {
-    *x8++ ^= *y8++;
-  } while (--bytes > 0);
+  do *x8++ ^= *y8++; while (--bytes > 0);
   return;
 }
 
@@ -2072,9 +2055,7 @@ void xor_mem_2to1(void* restrict x,
   uint8_t* restrict x8 = (uint8_t*)(x);
   const uint8_t* restrict y8 = (const uint8_t*)(y);
   const uint8_t* restrict z8 = (const uint8_t*)(z);
-  do {
-    *x8++ ^= *y8++ ^ *z8++;
-  } while (--bytes > 0);
+  do *x8++ ^= *y8++ ^ *z8++; while (--bytes > 0);
   return;
 }
 
@@ -2289,8 +2270,7 @@ void VectorXOR(const uint64_t bytes, unsigned count, void** x, void** y) {
   }
 #endif  // LEO_USE_VECTOR4_OPT
 
-  for (unsigned i = 0; i < count; ++i)
-    xor_mem(x[i], y[i], bytes);
+  Fi(count, xor_mem(x[i], y[i], bytes))
 } 
 
 void lmode_gentab() {
@@ -2314,13 +2294,17 @@ static rs * rs_init(int data_shards, int parity_shards) {
   rs * r = xmalloc(sizeof(rs));
   r->data = data_shards; r->parity = parity_shards;
   r->total = data_shards + parity_shards;
-  r->ebuf = data_shards == 1 ? parity_shards : parity_shards == 1 ? 1 : NextPow2(parity_shards) * 2;
-  r->dbuf = data_shards == 1 || parity_shards == 1 ? data_shards : NextPow2(data_shards + NextPow2(parity_shards));
+  r->ebuf = data_shards == 1 ? parity_shards :
+              parity_shards == 1 ? 1 : NextPow2(parity_shards) * 2;
+  r->dbuf = data_shards == 1 || parity_shards == 1 ? data_shards :
+              NextPow2(data_shards + NextPow2(parity_shards));
   return r;
 }
-static void rs_encode(rs * r, uint8_t ** in, sz len) {
-  void ** ework = xmalloc(r->ebuf * sizeof(void*));  Fi(r->ebuf, ework[i] = xmalloc(len))
-  printf("The workspace is r->ebuf * len = %d * %zu = %zu bytes\n", r->ebuf, len, r->ebuf * len);
+static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
+  void ** ework = xmalloc(r->ebuf * sizeof(void *));  Fi(r->ebuf, ework[i] = xmalloc(len))
+  if (verbose)
+    fprintf(stderr, "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
+            r->ebuf, len, r->ebuf * len);
   if (r->data == 1) {
     Fi(r->parity, memcpy(ework[i], in[i], len))
   } else if (r->parity == 1) {
@@ -2332,46 +2316,39 @@ static void rs_encode(rs * r, uint8_t ** in, sz len) {
   Fi(r->parity, in[r->data + i] = ework[i])
   Fi0(r->ebuf, r->parity, free(ework[i]))  free(ework);
 }
-static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len) {
+static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len, bool verbose) {
   int present = 0, di = 0, pi = 0;
   Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
   if (present == r->total) return true;
-  printf("The workspace is r->dbuf * len = %d * %zu = %zu bytes\n", r->dbuf, len, r->dbuf * len);
+  if (verbose)
+    fprintf(stderr, "The workspace is r->dbuf * len = %d * %zu = %zu bytes\n",
+                    r->dbuf, len, r->dbuf * len);
   void ** dwork = xmalloc(r->dbuf * sizeof(void*));  Fi(r->dbuf, dwork[i] = xmalloc(len))
   void ** dshards = xmalloc(r->data * sizeof(void*));
   void ** pshards = xmalloc(r->parity * sizeof(void*));
   Fi(r->total, 
-    if (shards_present[i]) {
-      if (i < r->data) dshards[di++] = in[i];
-      else pshards[pi++] = in[i];
-    } else {
-      if (i < r->data) dshards[di++] = NULL;
-      else pshards[pi++] = NULL;
-    }
+    void * ptr = shards_present[i] ? in[i] : NULL;
+    if (i < r->data) dshards[di++] = ptr; else pshards[pi++] = ptr;
   )
   // Check if not enough recovery data arrived
-  unsigned original_loss_count = 0;
-  unsigned original_loss_i = 0;
-  Fi(r->data, if (!dshards[i]) { ++original_loss_count; original_loss_i = i; })
-  unsigned recovery_got_count = 0;
-  unsigned recovery_got_i = 0;
-  Fi(r->parity, if (pshards[i]) { ++recovery_got_count; recovery_got_i = i; })
-  if (recovery_got_count < original_loss_count)
-    FATAL("Not enough recovery data received: lost %u, got %u\n",
-          original_loss_count, recovery_got_count);
+  sz orig_lost = 0, recovery_got = 0, recovery_got_i = 0;
+  Fi(r->data, if (!dshards[i]) ++orig_lost)
+  Fi(r->parity, if (pshards[i]) { ++recovery_got; recovery_got_i = i; })
+  if (recovery_got < orig_lost)
+    FATAL("Not enough recovery data received: lost %lu, got %lu\n",
+          orig_lost, recovery_got);
   if (r->data == 1) {
     memcpy(dwork[0], pshards[recovery_got_i], len);
-  } else if (original_loss_count == 0) {
+  } else if (orig_lost == 0) {
     Fi(r->data, memcpy(dwork[i], dshards[i], len))
   } else if (r->parity == 1) {
     DecodeM1(
         len, r->data,
         (const void * const * const) dshards,
-        pshards[0], dwork[original_loss_i]);
+        pshards[0], dwork[orig_lost]);
   } else {
-    const unsigned m = NextPow2(r->parity);
-    const unsigned n = NextPow2(m + r->data);
+    const sz m = NextPow2(r->parity), n = NextPow2(m + r->data);
     ReedSolomonDecode(
         len, r->data, r->parity, m, n,
         (const void * const * const) dshards,
@@ -2411,7 +2388,7 @@ static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
     memcpy(shards[o.dshards - 1], buf + (o.dshards - 1) * shard_size,
       size - (o.dshards - 1) * shard_size);
   rs * r = rs_init(o.dshards, o.pshards);
-  rs_encode(r, shards, shard_size);
+  rs_encode(r, shards, shard_size, o.verbose);
   rs_destroy(r);
   u8 size_bytes[8] = { 0 };
   Fj(8, size_bytes[j] = size >> (56 - 8 * j));
@@ -2695,7 +2672,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     buffers[i] = xmalloc(consensus_shard_size);
     memset(buffers[i], 0, consensus_shard_size);
   })
-  if(!rs_correct(r, buffers, pres, consensus_shard_size))
+  if(!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose))
     FATAL("Failed to correct the data.");
   Fi(consensus_dshards,
     sz w = MIN(consensus_size, consensus_shard_size);
