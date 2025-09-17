@@ -100,7 +100,7 @@ static void help() {
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
 int main(int argc, char * argv[]) {
   jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);  lmode_gentab();
-  platform_init();
+  cmode_gf256_gentab(0x87);  platform_init();
   enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
          FLAG_OUT_PREFIX };
   yarg_options opt[] = {
