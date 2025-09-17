@@ -133,7 +133,7 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
   if (size < SHARD_HEADER_SIZE) {
     fclose(in);  return res;
   }
-  u8 * buffer = xmalloc(size);
+  u8 * buffer = (u8 *) xmalloc(size); // LSP doesn't know it's C.
   if (xfread(buffer, size, in) != size) {
     free(buffer);  fclose(in);  return res;
   }
