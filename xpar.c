@@ -20,7 +20,6 @@
 #include "jmode.h"
 #include "vmode.h"
 #include "lmode.h"
-#include "cmode.h"
 #include "platform.h"
 #include "yarg.h"
 
@@ -53,18 +52,17 @@ static void help() {
   printf(
     "xpar - an error/erasure code system guarding data integrity.\n"
     "Usage (joint mode):\n"
-    "  xpar -Je/-Jd [...] <in>                      (adds/removes .xpa)\n"
-    "  xpar -Je/-Jd [...] <in> <out>                (produces <out>)\n"
+    "  xpar -Je/-Jd [...] <in>              (adds/removes .xpa in output)\n"
+    "  xpar -Je/-Jd [...] <in> <out>        (produces <out>)\n"
     "Usage (sharded mode):\n"
-    "  xpar -We/-Le/-Ce [...] <in>                  (produces <in>.xpa.XXX)\n"
-    "  xpar -We/-Le/-Ce --out-prefix=# [...] <in>   (produces #.xpa.XXX)\n"
-    "  xpar -Wd/-Le/-Cd [...] <out> <in>.001 ...    (produces <out>)\n"
+    "  xpar -Se [...] <in>                  (produces <in>.xpa.XXX)\n"
+    "  xpar -Se --out-prefix=# [...] <in>   (produces #.xpa.XXX)\n"
+    "  xpar -Sd [...] <out> <in>.001 ...    (produces <out>)\n"
     "\n"
     "Mode selection:\n"
     "  -J,   --joint        use the joint mode (default)\n"
     "  -W,   --van-sharded  use the (Vandermonde) sharded mode\n"
     "  -L,   --fft-sharded  use the (FFT) sharded mode\n"
-    "  -C,   --cau-sharded  use the (Cauchy) sharded mode\n"
     "  -e,   --encode       add parity bits to a specified file\n"
     "  -d,   --decode       recover the original data\n"
     "Options:\n"
@@ -101,7 +99,7 @@ static void help() {
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
 int main(int argc, char * argv[]) {
   jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);  lmode_gentab();
-  cmode_gf256_gentab(0x87);  platform_init();
+  platform_init();
   enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
          FLAG_OUT_PREFIX };
   yarg_options opt[] = {
@@ -110,7 +108,6 @@ int main(int argc, char * argv[]) {
     { 'J', no_argument, "joint" },
     { 'W', no_argument, "van-sharded" },
     { 'L', no_argument, "fft-sharded" },
-    { 'C', no_argument, "cau-sharded" },
 #if defined(XPAR_OPENMP)
     { 'j', required_argument, "jobs" },
 #endif
@@ -132,7 +129,6 @@ int main(int argc, char * argv[]) {
   yarg_settings settings = { .style = YARG_STYLE_UNIX, .dash_dash = true };
   bool verbose = false, quiet = false, force = false, force_stdout = false;
   bool no_map = false, joint = false, sharded = false, log_sharded = false;
-  bool cau_sharded = false;
   int mode = MODE_NONE, interlacing = -1, dshards = -1, pshards = -1;
   int jobs = -1;
   const char * out_prefix = NULL;
@@ -145,17 +141,11 @@ int main(int argc, char * argv[]) {
       case 'j':
         if (jobs != -1) goto conflict;  jobs = atoi(o.arg); break;
       case 'J':
-        if (sharded || log_sharded || cau_sharded) goto conflict;
-        joint = true; break;
+        if (sharded || log_sharded) goto conflict;  joint = true; break;
       case 'W':
-        if (joint || log_sharded || cau_sharded) goto conflict;
-        sharded = true; break;
+        if (joint || log_sharded) goto conflict;  sharded = true; break;
       case 'L':
-        if (joint || sharded || cau_sharded) goto conflict;
-        log_sharded = true; break;
-      case 'C':
-        if (joint || sharded || log_sharded) goto conflict;
-        cau_sharded = true; break;
+        if (joint || sharded) goto conflict;  log_sharded = true; break;
       case 'v':
         if (quiet) goto conflict;  verbose = true; break;
       case 'q':
@@ -196,7 +186,7 @@ int main(int argc, char * argv[]) {
 #endif
   if (mode == MODE_NONE)
     FATAL("No operation mode specified.");
-  if (!joint && !sharded && !log_sharded && !cau_sharded) joint = true;
+  if (!joint && !sharded && !log_sharded) joint = true;
   if (joint) {
     if (dshards != -1 || pshards != -1 || out_prefix)
       FATAL("Sharded mode options in joint mode.");
@@ -252,8 +242,7 @@ int main(int argc, char * argv[]) {
   } else if(sharded || log_sharded) {
     if (interlacing != -1 || force_stdout)
       FATAL(sharded ? "Joint mode options in sharded mode."
-      : log_sharded ? "Joint mode options in log-sharded mode."
-                    : "Joint mode options in Cauchy-sharded mode.");
+                    : "Joint mode options in log-sharded mode.");
     volatile struct timeval start, end;
     gettimeofday((struct timeval *) &start, NULL);
     switch(mode) {
@@ -270,9 +259,7 @@ int main(int argc, char * argv[]) {
           .force = force, .quiet = quiet, .verbose = verbose,
           .no_map = no_map
         };
-        if (log_sharded) log_sharded_encode(opt);
-        else if(cau_sharded) cauchy_sharded_encode(opt);
-        else sharded_encode(opt);
+        if (log_sharded) log_sharded_encode(opt); else sharded_encode(opt);
         break;
       }
       case MODE_DECODING: {
@@ -285,9 +272,7 @@ int main(int argc, char * argv[]) {
           .force = force, .quiet = quiet, .verbose = verbose,
           .no_map = no_map, .n_input_shards = res->pos_argc - 1
         };
-        if (log_sharded) log_sharded_decode(opt);
-        else if(cau_sharded) cauchy_sharded_decode(opt);
-        else sharded_decode(opt);
+        if (log_sharded) log_sharded_decode(opt); else sharded_decode(opt);
         break;
       }
     }
