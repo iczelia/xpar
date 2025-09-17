@@ -97,7 +97,7 @@ typedef enum LeopardResultT {
   Leopard_Platform = -6,       // Platform is unsupported
 } LeopardResult;
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Constants
 
 // Avoid calculating final FFT values in decoder using bitfield
@@ -115,19 +115,19 @@ typedef enum LeopardResultT {
 // Define if unaligned accesses are undesired.
 // #define LEO_ALIGNED_ACCESSES
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Platform/Architecture
 
 #define LEO_FORCE_INLINE inline __attribute__((always_inline))
 #define LEO_ALIGNED __attribute__((aligned(LEO_ALIGN_BYTES)))
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Runtime CPU Architecture Check
 
 static bool CpuHasAVX2 = false;
 static bool CpuHasSSSE3 = false;
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Portable Intrinsics
 
 // Returns highest bit index 0..31 where the first non-zero bit is found
@@ -141,7 +141,7 @@ LEO_FORCE_INLINE uint32_t NextPow2(uint32_t n) {
   return 2UL << LastNonzeroBit32(n - 1);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // XOR Memory
 //
 // This works for both 8-bit and 16-bit finite fields
@@ -177,7 +177,7 @@ void xor_mem4(void* restrict x_0,
 // x[] ^= y[]
 void VectorXOR(const uint64_t bytes, unsigned count, void** x, void** y);
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // XORSummer
 
 typedef struct {
@@ -212,7 +212,7 @@ LEO_FORCE_INLINE void XORSummer_Finalize(XORSummer* summer,
 #endif  // LEO_M1_OPT
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // SIMD-Safe Aligned Memory Allocations
 
 static const unsigned kAlignmentBytes = LEO_ALIGN_BYTES;
@@ -248,7 +248,7 @@ static LEO_FORCE_INLINE void SIMDSafeFree(void* ptr) {
   Algorithms are described in LeopardCommon.h
 */
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Datatypes and Constants
 
 // Finite field element type
@@ -266,7 +266,7 @@ typedef uint8_t ffe_t;
 // LFSR Polynomial that generates the field elements
 #define kPolynomial 0x11D
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // API
 
 // Returns false if the self-test fails
@@ -291,7 +291,7 @@ void ReedSolomonDecode(
 
 #include <string.h>
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Encoder API
 
 // recovery_data = parity of original_data (xor sum)
@@ -310,7 +310,7 @@ static void EncodeM1(uint64_t buffer_bytes,
   XORSummer_Finalize(&summer, buffer_bytes);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Decoder API
 static void DecodeM1(uint64_t buffer_bytes,
                      unsigned original_count,
@@ -329,7 +329,7 @@ static void DecodeM1(uint64_t buffer_bytes,
   XORSummer_Finalize(&summer, buffer_bytes);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Datatypes and Constants
 
 // Basis used for generating logarithm tables
@@ -338,7 +338,7 @@ static const ffe_t kCantorBasis[kBits] = {1, 214, 152, 146, 86, 200, 88, 230};
 // Using the Cantor basis {2} here enables us to avoid a lot of extra
 // calculations when applying the formal derivative in decoding.
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Field Operations
 
 // z = x + y (mod kModulus)
@@ -357,7 +357,7 @@ static inline ffe_t SubMod(const ffe_t a, const ffe_t b) {
   return (ffe_t)(dif + (dif >> kBits));
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Fast Walsh-Hadamard Transform (FWHT) (mod kModulus)
 
 #define FWHT_2(a, b)                \
@@ -408,7 +408,7 @@ static void FWHT(ffe_t* data, const unsigned m, const unsigned m_truncated) {
       FWHT_2(data[i], data[i + dist]);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Logarithm Tables
 
 static ffe_t LogLUT[kOrder];
@@ -465,7 +465,7 @@ static void InitializeLogarithmTables() {
   ExpLUT[kModulus] = ExpLUT[0];
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Multiplies
 
 /*
@@ -743,7 +743,7 @@ static void mul_mem(void* restrict x,
   RefMul(x, y, log_m, bytes);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // FFT
 
 // Twisted factors used in FFT
@@ -1321,8 +1321,8 @@ static void IFFT_DIT_Encoder(const uint64_t bytes,
       if (dist4 == m && xor_result) {
         // For each set of dist elements:
         for (unsigned i = r; i < i_end; ++i) {
-          IFFT_DIT4_xor(bytes, work + i, xor_result + i, dist, log_m01, log_m23,
-                        log_m02);
+          IFFT_DIT4_xor(bytes, work + i, xor_result + i, dist, log_m01,
+                        log_m23, log_m02);
         }
       } else {
         // For each set of dist elements:
@@ -1333,8 +1333,8 @@ static void IFFT_DIT_Encoder(const uint64_t bytes,
     }
 
     // I tried alternating sweeps left->right and right->left to reduce cache
-    // misses. It provides about 1% performance boost when done for both FFT and
-    // IFFT, so it does not seem to be worth the extra complexity.
+    // misses. It provides about 1% performance boost when done for both FFT
+    // and IFFT, so it does not seem to be worth the extra complexity.
   }
 
   // If there is one layer left:
@@ -1663,7 +1663,7 @@ static void FFT_DIT(const uint64_t bytes,
   }
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Reed-Solomon Encode
 
 void ReedSolomonEncode(uint64_t buffer_bytes,
@@ -1721,7 +1721,7 @@ skip_body:
   FFT_DIT(buffer_bytes, work, recovery_count, m);
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // ErrorBitfield
 
 #ifdef LEO_ERROR_BITFIELD_OPT
@@ -1822,7 +1822,7 @@ static void FFT_DIT_ErrorBits(const uint64_t bytes,
 
 #endif  // LEO_ERROR_BITFIELD_OPT
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Reed-Solomon Decode
 
 void ReedSolomonDecode(
@@ -1862,8 +1862,8 @@ void ReedSolomonDecode(
 
   FWHT(error_locations, kOrder, m + original_count);
 
-  Fi(kOrder,
-    error_locations[i] = ((unsigned)error_locations[i] * (unsigned)LogWalsh[i]) % kModulus)
+  Fi(kOrder, error_locations[i] =
+      ((unsigned)error_locations[i] * (unsigned)LogWalsh[i]) % kModulus)
   FWHT(error_locations, kOrder, kOrder);
 
   // work <- recovery data
@@ -1905,10 +1905,11 @@ void ReedSolomonDecode(
 
   // Reveal erasures
   Fi(original_count, if (!original[i])
-    mul_mem(work[i], work[i + m], kModulus - error_locations[i + m], buffer_bytes))
+    mul_mem(work[i], work[i + m], kModulus - error_locations[i + m],
+        buffer_bytes))
 }
 
-//------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // XOR Memory
 
 void xor_mem(void* restrict vx, const void* restrict vy, uint64_t bytes) {
@@ -2274,7 +2275,8 @@ void VectorXOR(const uint64_t bytes, unsigned count, void** x, void** y) {
 
 void lmode_gentab() {
 #if defined(LEO_TRY_SSSE3) || defined(LEO_TRY_AVX2)
-  int flags = xpar_leo_x86_64_cpuflags(); // rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
+  int flags = xpar_leo_x86_64_cpuflags();
+  // rax := (CpuHasSSSE3 << 1) | CpuHasAVX2.
   CpuHasSSSE3 = (flags & 2) != 0;
   CpuHasAVX2 = (flags & 1) != 0;
 #endif
@@ -2300,7 +2302,8 @@ static rs * rs_init(int data_shards, int parity_shards) {
   return r;
 }
 static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
-  void ** ework = xmalloc(r->ebuf * sizeof(void *));  Fi(r->ebuf, ework[i] = xmalloc(len))
+  void ** ework = xmalloc(r->ebuf * sizeof(void *));
+  Fi(r->ebuf, ework[i] = xmalloc(len))
   if (verbose)
     fprintf(stderr, "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
             r->ebuf, len, r->ebuf * len);
@@ -2310,12 +2313,13 @@ static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
     EncodeM1(len, r->data, (const void * const * const) in, ework[0]);
   } else {
     const unsigned m = NextPow2(r->parity);
-    ReedSolomonEncode(len, r->data, r->parity, m, (const void * const * const) in, ework);
+    ReedSolomonEncode(len, r->data, r->parity, m, (const void **) in, ework);
   }
   Fi(r->parity, in[r->data + i] = ework[i])
   Fi0(r->ebuf, r->parity, free(ework[i]))  free(ework);
 }
-static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len, bool verbose) {
+static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
+                       sz len, bool verbose) {
   int present = 0, di = 0, pi = 0;
   Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
@@ -2323,7 +2327,8 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, sz len, 
   if (verbose)
     fprintf(stderr, "The workspace is r->dbuf * len = %d * %zu = %zu bytes\n",
                     r->dbuf, len, r->dbuf * len);
-  void ** dwork = xmalloc(r->dbuf * sizeof(void*));  Fi(r->dbuf, dwork[i] = xmalloc(len))
+  void ** dwork = xmalloc(r->dbuf * sizeof(void*));
+  Fi(r->dbuf, dwork[i] = xmalloc(len))
   void ** dshards = xmalloc(r->data * sizeof(void*));
   void ** pshards = xmalloc(r->parity * sizeof(void*));
   Fi(r->total, 
@@ -2363,7 +2368,8 @@ static void rs_destroy(rs * r) { free(r); }
 // ============================================================================
 //  Sharded mode encoders/decoders.
 // ============================================================================
-static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
+static void do_sharded_encode(sharded_encoding_options_t o,
+                              u8 * buf, sz size) {
   FILE * out[MAX_TOTAL_SHARDS] = { NULL };
   if (o.pshards >= o.dshards) FATAL("Too many parity shards.");
   Fi(o.dshards + o.pshards,
@@ -2392,9 +2398,9 @@ static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
   u8 size_bytes[8] = { 0 };
   Fj(8, size_bytes[j] = size >> (56 - 8 * j));
   Fi(o.dshards + o.pshards,
-    u32 checksum = crc32c(shards[i], shard_size);
+    u32 checksum = crc32c(shards[i], shard_size);  u8 checksum_bytes[4];
     xfwrite("XPAL", 4, out[i]);
-    u8 checksum_bytes[4];  Fj(4, checksum_bytes[j] = checksum >> (24 - 8 * j));
+    Fj(4, checksum_bytes[j] = checksum >> (24 - 8 * j));
     xfwrite(checksum_bytes, 4, out[i]);
     xfwrite(&o.dshards, 1, out[i]);
     xfwrite(&o.pshards, 1, out[i]);
@@ -2439,7 +2445,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
       "yet. Please throw away some of the input shards and try again.\n"
     );
   Fi(opt.n_input_shards,
-    res[i] = validate_shard_header(!opt.no_map, opt.input_files[i], opt, "XPAL");
+    res[i] = validate_shard_header(opt.input_files[i], opt, "XPAL");
     if (!res[i].valid) {
       if (!opt.quiet)
         fprintf(stderr,
@@ -2453,9 +2459,9 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
   {
     u8 b[MAX_TOTAL_SHARDS];
     Fi(opt.n_input_shards, b[i] = res[i].dshards);
-    consensus_dshards = *(u8 *) most_frequent((u8 *) b, opt.n_input_shards, 1);
+    consensus_dshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
     Fi(opt.n_input_shards, b[i] = res[i].pshards);
-    consensus_pshards = *(u8 *) most_frequent((u8 *) b, opt.n_input_shards, 1);
+    consensus_pshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
   }
   {
     sz b[MAX_TOTAL_SHARDS];

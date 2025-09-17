@@ -242,7 +242,8 @@ static block_hdr parse_block_header(u8 b[8], bool force) {
     h.bytes = 0xFFFFFF; h.crc = 0; return h;
   } else {
     h.bytes = (((uint32_t) b[1]) << 16) | (((uint32_t) b[2]) << 8) | b[3];
-    h.crc = (((uint32_t) b[4]) << 24) | (((uint32_t) b[5]) << 16) | (((uint32_t) b[6]) << 8) | b[7];
+    h.crc = (((uint32_t) b[4]) << 24) | (((uint32_t) b[5]) << 16)
+          | (((uint32_t) b[6]) << 8) | b[7];
     return h;
   }
 }
@@ -295,7 +296,8 @@ static void decode4(FILE * in, FILE * out, int force, int ifactor_override,
   block_hdr bhdr; u8 tmp[8];
   int ifactor = read_header(in, force, ifactor_override);
   sz ibs = compute_interlacing_bs(ifactor);
-  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N), out_buffer = xmalloc(ibs * K);
+  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N);
+  out_buffer = xmalloc(ibs * K);
   for (sz n; n = xfread(in1, ibs * N, in); laces++) {
     if(n < ibs * N) {
       if (!quiet)
@@ -353,7 +355,8 @@ static void decode3(mmap_t in, FILE * out, int force, int ifactor_override,
   int ifactor = read_header_from_map(in, force, ifactor_override);
   in.size -= 5 + N - K; in.map += 5 + N - K; // Skip the header.
   sz ibs = compute_interlacing_bs(ifactor);
-  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N), out_buffer = xmalloc(ibs * K);
+  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N);
+  out_buffer = xmalloc(ibs * K);
   for (sz n;
       n = MIN(in.size, ibs * N), memcpy(in1, in.map, n),
           in.size -= n, in.map += n, n

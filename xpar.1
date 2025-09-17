@@ -71,26 +71,27 @@ extension to the input filename.
 .PP
 In joint mode, the flag
 .B \-i/\-\-interlacing
-can be used to specify the interlacing factor. This does not affect the nominal
-error correction capability (in the sense of a noisy memory-less channel model),
-but can be used to increase the robustness against burst errors. The default
-interlacing factor is 1 and the maximum correctible burst error length is
-16 (as given by the Singleton bound). The interlacing factor of 2 transposes
-65025-byte blocks of data and hence can correct burst errors of length 4080. The
-interlacing factor of 3 transposes approx. 16MB blocks of data and can correct
-burst errors of length approx. 1MB. In theory, with the interlacing factor of
-one, up to 32 burst errors could be corrected - this problem is however NP-hard
-and reduces to polynomial reconstruction (the basis of e.g. Shamir's secret
-sharing scheme). As an added benefit, higher interlacing factors tend to result
-in faster processing (up to 50%) as the workload is more parallelisable.
+can be used to specify the interlacing factor. This does not affect the
+nominal error correction capability (in the sense of a noisy memory-less
+channel model), but can be used to increase the robustness against burst
+errors. The default interlacing factor is 1 and the maximum correctible burst
+error length is 16 (as given by the Singleton bound). The interlacing factor
+of 2 transposes 65025-byte blocks of data and hence can correct burst errors
+of length 4080. The interlacing factor of 3 transposes approx. 16MB blocks of
+data and can correct burst errors of length approx. 1MB. In theory, with the
+interlacing factor of one, up to 32 burst errors could be corrected - this
+problem is however NP-hard and reduces to polynomial reconstruction (the basis
+of e.g. Shamir's secret sharing scheme). As an added benefit, higher
+interlacing factors tend to result in faster processing (up to 50%) as the
+workload is more parallelisable.
 .PP
 .B xpar
 in sharded encoding mode (
 .B \-We
 or
 .B \-Le
-) generates a set of parity-guarded files from a given data file. The amount of
-files generated is given by the sum of the mandatory parameters
+) generates a set of parity-guarded files from a given data file. The amount
+of files generated is given by the sum of the mandatory parameters
 .B \--dshards
 and
 .B \--pshards
@@ -142,13 +143,13 @@ Write resultant data to standard output. Joint mode only.
 Specify the interlacing factor. Joint mode only.
 .TP
 .B \--no-mmap
-Disable memory mapping. Generally results in worse performance, as the fallback
-method is to read the file in chunks using the standard I/O library.
+Disable memory mapping. Generally results in worse performance, as the
+fallback method is to read the file in chunks using the standard I/O library.
 .TP
 .B \-j --jobs
-Specify the amount of CPU cores to use. Not setting this value or setting it to
-zero will result in the program automatically deciding the amount of cores to
-use. Setting it to one will disable parallel processing.
+Specify the amount of CPU cores to use. Not setting this value or setting it
+to zero will result in the program automatically deciding the amount of cores
+to use. Setting it to one will disable parallel processing.
 .TP
 .B \--out-prefix
 Specify the prefix for the output files (shards). Sharded mode only.
@@ -164,20 +165,21 @@ at https://github.com/iczelia/xpar.
 .SH COPYRIGHT NOTICE
 Copyright \(co 2022-2025 Kamila Szewczyk
 .PP
-Thanks to: Phil Karn (KA9Q), for the original implementation of the Reed-Solomon
-code, licensed under the GPLv2-or-later license. Marshall Lochbaum for noticing
-an optimisation to the syndrome computaton code. Chris A. Taylor for the FFT-based
-Leopard algorithm.
+Thanks to: Phil Karn (KA9Q), for the original implementation of the RS-joint
+code, licensed under the GPLv2-or-later license. Marshall Lochbaum for
+noticing an optimisation to the syndrome computaton code. Chris A. Taylor for
+the FFT-based Leopard algorithm.
 .PP
 Permission is granted to make and distribute verbatim copies of
 this manual provided the copyright notice and this permission notice
-are preserved on all copies. Permission is granted to process this file through troff and print the
-results, provided the printed document carries copying permission
-notice identical to this one except for the removal of this paragraph
-(this paragraph not being relevant to the printed manual). Permission is granted to copy and distribute modified versions of this
+are preserved on all copies. Permission is granted to process this file
+through troff and print the results, provided the printed document carries
+copying permission notice identical to this one except for the removal of
+this paragraph (this paragraph not being relevant to the printed manual).
+Permission is granted to copy and distribute modified versions of this
 manual under the conditions for verbatim copying, provided that the entire
 resulting derived work is distributed under the terms of a permission
-notice identical to this one. Permission is granted to copy and distribute translations of this manual
-into another language, under the above conditions for modified versions,
-except that this permission notice may be stated in a translation approved
-by the Foundation.
+notice identical to this one. Permission is granted to copy and distribute
+translations of this manual into another language, under the above conditions
+for modified versions, except that this permission notice may be stated in a
+translation approved by the Foundation.

@@ -129,7 +129,8 @@ int main(int argc, char * argv[]) {
   yarg_settings settings = { .style = YARG_STYLE_UNIX, .dash_dash = true };
   bool verbose = false, quiet = false, force = false, force_stdout = false;
   bool no_map = false, joint = false, sharded = false, log_sharded = false;
-  int mode = MODE_NONE, interlacing = -1, dshards = -1, pshards = -1, jobs = -1;
+  int mode = MODE_NONE, interlacing = -1, dshards = -1, pshards = -1;
+  int jobs = -1;
   const char * out_prefix = NULL;
   yarg_result * res = yarg_parse(argc, argv, opt, settings);
   if (res->error) { fputs(res->error, stderr); exit(1); }

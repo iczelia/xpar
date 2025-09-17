@@ -33,6 +33,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define MiB(x) ((x) * 1024 * 1024)
+#define KiB(x) ((x) * 1024)
+
 #define FATAL(msg, ...) do { \
   fprintf(stderr, msg "\n", ##__VA_ARGS__); exit(1); \
 } while (0)

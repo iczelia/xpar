@@ -87,10 +87,10 @@ static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
   return best;
 }
 
-static sharded_hv_result_t validate_shard_header(bool may_map,
-    const char * file_name, sharded_decoding_options_t opt, const char * hdr) {
+static sharded_hv_result_t validate_shard_header(const char * file_name,
+    sharded_decoding_options_t opt, const char * hdr) {
   sharded_hv_result_t res;  memset(&res, 0, sizeof(res));
-  if (may_map) {
+  if (!opt.no_map) {
     #if defined(XPAR_ALLOW_MAPPING)
     mmap_t map = xpar_map(file_name);
     if (map.map) {
@@ -109,7 +109,7 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
         if (map.map[11] || map.map[12] || map.map[13] || map.map[14]) {
           if(!opt.quiet)
             fprintf(stderr,
-              "Shard `%s' has a total size that is too large for 32-bit architectures.\n",
+              "Shard `%s' is too large for 32-bit architectures.\n",
               file_name);
           xpar_unmap(&map);  return res;
         }
@@ -150,7 +150,7 @@ static sharded_hv_result_t validate_shard_header(bool may_map,
     if (buffer[11] || buffer[12] || buffer[13] || buffer[14]) {
       if(!opt.quiet)
         fprintf(stderr,
-          "Shard `%s' has a total size that is too large for 32-bit architectures.\n",
+          "Shard `%s' is too large for 32-bit architectures.\n",
           file_name);
       free(buffer);  return res;
     }

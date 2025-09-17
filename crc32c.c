@@ -114,7 +114,8 @@ u32 crc32c(u8 * data, sz length) {
     if (length >= 32767)
       return crc32c_32k_x86_64_sse42(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
     else
-      return crc32c_small_x86_64_sse42(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
+      return crc32c_small_x86_64_sse42(0xFFFFFFFFL, data, length)
+                ^ 0xFFFFFFFFL;
   } else
     return crc32c_tabular(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
 #elif defined(XPAR_AARCH64)
