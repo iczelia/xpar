@@ -2432,28 +2432,9 @@ void log_sharded_encode(sharded_encoding_options_t o) {
   free(buffer);
 }
 
-#define SHARD_HEADER_SIZE 19
-typedef struct {
-  bool valid, mapped; u32 crc; u8 * buf;
-  u8 shard_number, dshards, pshards;
-  sz shard_size, total_size;
-#if defined(XPAR_ALLOW_MAPPING)
-  mmap_t map;
-#endif
-} log_hv_result_t;
-static void unmap_shard(log_hv_result_t * res) {
-  if (res->mapped && res->buf) {
-    #if defined(XPAR_ALLOW_MAPPING)
-    xpar_unmap(&res->map);
-    res->buf = NULL;  res->mapped = false;
-    #endif
-  } else {
-    free(res->buf);  res->buf = NULL;
-  }
-}
-static log_hv_result_t validate_shard_header(bool may_map,
+static sharded_hv_result_t validate_shard_header(bool may_map,
     const char * file_name, sharded_decoding_options_t opt) {
-  log_hv_result_t res;  memset(&res, 0, sizeof(res));
+  sharded_hv_result_t res;  memset(&res, 0, sizeof(res));
   if (may_map) {
     #if defined(XPAR_ALLOW_MAPPING)
     mmap_t map = xpar_map(file_name);
@@ -2526,31 +2507,8 @@ static log_hv_result_t validate_shard_header(bool may_map,
   }
   res.buf = buffer; res.valid = true;  return res;
 }
-static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
-  assert(size < 16);  u8 tmp[16]; sz i, j;
-  Fi0(nmemb, 1,
-    for (j = i;
-         j && memcmp(&tab[j * size], &tab[(j - 1) * size], size) < 0;
-         j--) {
-      memcpy(tmp, tab + j * size, size);
-      memcpy(tab + j * size, tab + (j - 1) * size, size);
-      memcpy(tab + (j - 1) * size, tmp, size);
-    }
-  )
-  u8 * best = tab;  sz best_count = 1, current_count = 1;
-  Fi0(nmemb, 1,
-    if (!memcmp(tab + i * size, tab + (i - 1) * size, size))
-      current_count++;
-    else {
-      if (current_count > best_count)
-        best = tab + (i - 1) * size, best_count = current_count;
-      current_count = 1;
-    }
-  )
-  return best;
-}
 void log_sharded_decode(sharded_decoding_options_t opt) {
-  log_hv_result_t res[MAX_TOTAL_SHARDS];
+  sharded_hv_result_t res[MAX_TOTAL_SHARDS];
   if (opt.n_input_shards > MAX_TOTAL_SHARDS)
     FATAL(
       "Too many input shards. While many of them may be wrong and\n"
@@ -2627,7 +2585,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
   Fi(opt.n_input_shards, if (res[i].valid) {
     n_valid_shards++;
     for (int j = i; j && res[j].shard_number < res[j - 1].shard_number; j--) {
-      log_hv_result_t tmp = res[j];
+      sharded_hv_result_t tmp = res[j];
       res[j] = res[j - 1];
       res[j - 1] = tmp;
     }

@@ -19,6 +19,9 @@
 #define _SHARDING_H_
 
 #include "common.h"
+#include "platform.h"
+
+#include <assert.h>
 
 // ============================================================================
 //  General shared (Vandermonde, Log-time, Gao) mode encoding and decoding
@@ -39,5 +42,48 @@ typedef struct {
   bool force, quiet, verbose, no_map;
   sz n_input_shards;
 } sharded_decoding_options_t;
+
+#define SHARD_HEADER_SIZE 19
+typedef struct {
+  bool valid, mapped; u32 crc; u8 * buf;
+  u8 shard_number, dshards, pshards;
+  sz shard_size, total_size;
+#if defined(XPAR_ALLOW_MAPPING)
+  mmap_t map;
+#endif
+} sharded_hv_result_t;
+static void unmap_shard(sharded_hv_result_t * res) {
+  if (res->mapped && res->buf) {
+    #if defined(XPAR_ALLOW_MAPPING)
+    xpar_unmap(&res->map);
+    res->buf = NULL;  res->mapped = false;
+    #endif
+  } else {
+    free(res->buf);  res->buf = NULL;
+  }
+}
+static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
+  assert(size < 16);  u8 tmp[16]; sz i, j;
+  Fi0(nmemb, 1,
+    for (j = i;
+         j && memcmp(&tab[j * size], &tab[(j - 1) * size], size) < 0;
+         j--) {
+      memcpy(tmp, tab + j * size, size);
+      memcpy(tab + j * size, tab + (j - 1) * size, size);
+      memcpy(tab + (j - 1) * size, tmp, size);
+    }
+  )
+  u8 * best = tab;  sz best_count = 1, current_count = 1;
+  Fi0(nmemb, 1,
+    if (!memcmp(tab + i * size, tab + (i - 1) * size, size))
+      current_count++;
+    else {
+      if (current_count > best_count)
+        best = tab + (i - 1) * size, best_count = current_count;
+      current_count = 1;
+    }
+  )
+  return best;
+}
 
 #endif
