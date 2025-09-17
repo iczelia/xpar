@@ -20,6 +20,7 @@
 #include "jmode.h"
 #include "vmode.h"
 #include "lmode.h"
+#include "cmode.h"
 #include "platform.h"
 #include "yarg.h"
 
@@ -52,17 +53,18 @@ static void help() {
   printf(
     "xpar - an error/erasure code system guarding data integrity.\n"
     "Usage (joint mode):\n"
-    "  xpar -Je/-Jd [...] <in>              (adds/removes .xpa in output)\n"
-    "  xpar -Je/-Jd [...] <in> <out>        (produces <out>)\n"
+    "  xpar -Je/-Jd [...] <in>                      (adds/removes .xpa)\n"
+    "  xpar -Je/-Jd [...] <in> <out>                (produces <out>)\n"
     "Usage (sharded mode):\n"
-    "  xpar -Se [...] <in>                  (produces <in>.xpa.XXX)\n"
-    "  xpar -Se --out-prefix=# [...] <in>   (produces #.xpa.XXX)\n"
-    "  xpar -Sd [...] <out> <in>.001 ...    (produces <out>)\n"
+    "  xpar -Se/-We/-Le [...] <in>                  (produces <in>.xpa.XXX)\n"
+    "  xpar -Se/-We/-Le --out-prefix=# [...] <in>   (produces #.xpa.XXX)\n"
+    "  xpar -Sd/-Wd/-Ld [...] <out> <in>.001 ...    (produces <out>)\n"
     "\n"
     "Mode selection:\n"
     "  -J,   --joint        use the joint mode (default)\n"
     "  -W,   --van-sharded  use the (Vandermonde) sharded mode\n"
     "  -L,   --fft-sharded  use the (FFT) sharded mode\n"
+    "  -C,   --cau-sharded  use the (Cauchy) sharded mode\n"
     "  -e,   --encode       add parity bits to a specified file\n"
     "  -d,   --decode       recover the original data\n"
     "Options:\n"
@@ -99,7 +101,7 @@ static void help() {
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
 int main(int argc, char * argv[]) {
   jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);  lmode_gentab();
-  platform_init();
+  cmode_gf256_gentab(0x87);  platform_init();
   enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
          FLAG_OUT_PREFIX };
   yarg_options opt[] = {
@@ -108,6 +110,7 @@ int main(int argc, char * argv[]) {
     { 'J', no_argument, "joint" },
     { 'W', no_argument, "van-sharded" },
     { 'L', no_argument, "fft-sharded" },
+    { 'C', no_argument, "cau-sharded" },
 #if defined(XPAR_OPENMP)
     { 'j', required_argument, "jobs" },
 #endif
