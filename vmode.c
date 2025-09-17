@@ -106,7 +106,7 @@ static gf256mat * gf256mat_inv(gf256mat * a) {
     int r = i;
     while (r < c->n && c->v[r][i] == 0)
       r++;
-    if (r == c->n) { gf256mat_free(c); return NULL; }
+    if (r == c->n) { gf256mat_free(c); gf256mat_free(b); return NULL; }
     gf256mat_swaprows(c, i, r);
     u8 inv = gf256_div(1, c->v[i][i]);
     Fj(c->m,c->v[i][j] = PROD[inv][c->v[i][j]])
@@ -116,6 +116,7 @@ static gf256mat * gf256mat_inv(gf256mat * a) {
     }))
   gf256mat * d = gf256mat_submat(c, 0, a->n, a->n, a->n);
   gf256mat_free(c);
+  gf256mat_free(b);
   return d;
 }
 static gf256mat * vandermonde(int row, int col) {
