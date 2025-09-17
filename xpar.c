@@ -99,36 +99,36 @@ static void help() {
   );
 }
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
+enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
+        FLAG_OUT_PREFIX };
+static yarg_options opt[] = {
+  { 'V', no_argument, "version" },
+  { 'v', no_argument, "verbose" },
+  { 'J', no_argument, "joint" },
+  { 'W', no_argument, "van-sharded" },
+  { 'L', no_argument, "fft-sharded" },
+  { 'C', no_argument, "cau-sharded" },
+#if defined(XPAR_OPENMP)
+  { 'j', required_argument, "jobs" },
+#endif
+  { 'c', no_argument, "stdout" },
+  { 'q', no_argument, "quiet" },
+  { 'h', no_argument, "help" },
+  { 'e', no_argument, "encode" },
+  { 'd', no_argument, "decode" },
+  { 'f', no_argument, "force" },
+  { FLAG_DSHARDS, required_argument, "dshards" },
+  { FLAG_PSHARDS, required_argument, "pshards" },
+  { FLAG_OUT_PREFIX, required_argument, "out-prefix" },
+#if defined(XPAR_ALLOW_MAPPING)
+  { FLAG_NO_MMAP, no_argument, "no-mmap" },
+#endif
+  { 'i', required_argument, "interlacing" },
+  { 0, 0, NULL }
+};
 int main(int argc, char * argv[]) {
   jmode_gf256_gentab(0x87);  smode_gf256_gentab(0x87);  lmode_gentab();
   cmode_gf256_gentab(0x87);  platform_init();
-  enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
-         FLAG_OUT_PREFIX };
-  yarg_options opt[] = {
-    { 'V', no_argument, "version" },
-    { 'v', no_argument, "verbose" },
-    { 'J', no_argument, "joint" },
-    { 'W', no_argument, "van-sharded" },
-    { 'L', no_argument, "fft-sharded" },
-    { 'C', no_argument, "cau-sharded" },
-#if defined(XPAR_OPENMP)
-    { 'j', required_argument, "jobs" },
-#endif
-    { 'c', no_argument, "stdout" },
-    { 'q', no_argument, "quiet" },
-    { 'h', no_argument, "help" },
-    { 'e', no_argument, "encode" },
-    { 'd', no_argument, "decode" },
-    { 'f', no_argument, "force" },
-    { FLAG_DSHARDS, required_argument, "dshards" },
-    { FLAG_PSHARDS, required_argument, "pshards" },
-    { FLAG_OUT_PREFIX, required_argument, "out-prefix" },
-#if defined(XPAR_ALLOW_MAPPING)
-    { FLAG_NO_MMAP, no_argument, "no-mmap" },
-#endif
-    { 'i', required_argument, "interlacing" },
-    { 0, 0, NULL }
-  };
   yarg_settings settings = { .style = YARG_STYLE_UNIX, .dash_dash = true };
   bool verbose = false, quiet = false, force = false, force_stdout = false;
   bool no_map = false, joint = false, sharded = false, log_sharded = false;
