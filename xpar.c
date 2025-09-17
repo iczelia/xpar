@@ -56,14 +56,15 @@ static void help() {
     "  xpar -Je/-Jd [...] <in>                    (adds/removes .xpa)\n"
     "  xpar -Je/-Jd [...] <in> <out>              (produces <out>)\n"
     "Usage (sharded mode):\n"
-    "  xpar -Se/-We/-Le [...] <in>                (produces <in>.xpa.XXX)\n"
-    "  xpar -Se/-We/-Le --out-prefix=# [...] <in> (produces #.xpa.XXX)\n"
-    "  xpar -Sd/-Wd/-Ld [...] <out> <in>.001 ...  (produces <out>)\n"
+    "  xpar -[SWLC]e [...] <in>                   (produces <in>.xpa.XXX)\n"
+    "  xpar -[SWLC]e --out-prefix=# [...] <in>    (produces #.xpa.XXX)\n"
+    "  xpar -[SWLC]d [...] <out> <in>.001 ...     (produces <out>)\n"
     "\n"
     "Mode selection:\n"
     "  -J,   --joint        use the joint mode (default)\n"
     "  -W,   --van-sharded  use the (Vandermonde) sharded mode\n"
     "  -L,   --fft-sharded  use the (FFT) sharded mode\n"
+    "  -C,   --cau-sharded  use the (Cauchy) sharded mode\n"
     "  -e,   --encode       add parity bits to a specified file\n"
     "  -d,   --decode       recover the original data\n"
     "Options:\n"
@@ -109,6 +110,7 @@ int main(int argc, char * argv[]) {
     { 'J', no_argument, "joint" },
     { 'W', no_argument, "van-sharded" },
     { 'L', no_argument, "fft-sharded" },
+    { 'C', no_argument, "cau-sharded" },
 #if defined(XPAR_OPENMP)
     { 'j', required_argument, "jobs" },
 #endif
