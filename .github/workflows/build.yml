@@ -44,7 +44,7 @@ jobs:
     - name: Configure
       run: ./configure CC=${{ matrix.compiler }} --${{ matrix.feature1 }} --${{ matrix.feature2 }}
     - name: Make
-      run: make all self-check
+      run: make -j4 all self-check
   
   build-macos-x86_64:
     name: Compile (MacOS clang, x86_64)
@@ -65,7 +65,7 @@ jobs:
     - name: Configure
       run: ./configure CC=clang --${{ matrix.feature }}
     - name: Make
-      run: make all self-check
+      run: make -j4 all self-check
   
   build-macos-aarch64:
     name: Compile (MacOS clang, aarch64)
@@ -85,7 +85,7 @@ jobs:
     - name: Configure
       run: ./configure CC=clang --${{ matrix.feature }}
     - name: Make
-      run: make all self-check
+      run: make -j4 all self-check
   
   build-windows-x86_64:
     name: Compile (Windows x86_64)
@@ -113,7 +113,7 @@ jobs:
     - name: Configure
       run: ./configure CC=gcc --${{ matrix.feature }}
     - name: Make
-      run: make all self-check
+      run: make -j4 all self-check
 
   build-windows-i686:
     name: Compile (Windows i686)
@@ -137,4 +137,4 @@ jobs:
     - name: Configure
       run: ./configure CC=gcc --${{ matrix.feature }}
     - name: Make
-      run: make all self-check
+      run: make -j4 all self-check
