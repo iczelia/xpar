@@ -50,3 +50,7 @@ self-check:
 		&& cmp xpar xpar.org
 	rm xpar.org xpar.xpa*
 	
+.PHONY: cloc
+cloc:
+	cloc $(xpar_SOURCES) Makefile.am configure.ac xpar-aarch64.S \
+		xpar-x86_64.asm
