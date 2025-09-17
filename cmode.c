@@ -15,7 +15,9 @@
    along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "vmode.h"
+// TODO.
+
+#include "cmode.h"
 
 #include <sys/stat.h>
 
@@ -149,20 +151,19 @@ static void gf256_prod(uint8_t * restrict dst, uint8_t a,
 static void rs_encode(rs * r, uint8_t ** in, size_t len) {
   Fj(r->parity, memset(in[r->data + j], 0, len));
 #if defined(XPAR_OPENMP)
-  #pragma omp parallel for if(r->data + r->parity > 8 && len > MiB(100))
+  #pragma omp parallel for if((r->data + r->parity) > 8 && len > 100 * 1024 * 1024)
 #endif
-  Fj(r->parity, Fk(r->data,
-    gf256_prod(in[r->data + j], r->rows[j][k], in[k], len)))
+  Fj(r->parity, Fk(r->data, gf256_prod(in[r->data + j], r->rows[j][k], in[k], len)))
 }
-static bool rs_correct(rs * r, uint8_t ** in, uint8_t * presence, size_t len) {
+static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present, size_t len) {
   int present = 0;
-  Fi(r->total, present += !!presence[i])
+  Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
   if (present == r->total) return true;
   gf256mat * mat = gf256mat_init(r->data, r->data);
   uint8_t ** shards = calloc(r->data, sizeof(uint8_t *));
   for (int i = 0, k = 0; i < r->total && k < r->data; i++)
-    if (presence[i]) {
+    if (shards_present[i]) {
       Fj(r->data, mat->v[k][j] = r->matrix->v[i][j]);
       shards[k++] = in[i];
     }
@@ -172,10 +173,10 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * presence, size_t len) {
   gf256mat_trans(inv);
 
 #if defined(XPAR_OPENMP)
-  #pragma omp parallel for if((r->data + r->parity) > 8 && len > MiB(100))
+  #pragma omp parallel for if((r->data + r->parity) > 8 && len > 100 * 1024 * 1024)
 #endif
   Fi(r->data, Fj(r->data,
-    if(!presence[i]) gf256_prod(in[i], inv->v[j][i], shards[j], len)
+    if(!shards_present[i]) gf256_prod(in[i], inv->v[j][i], shards[j], len)
   ))
   gf256mat_free(inv);  free(shards);
   return true;
@@ -188,8 +189,7 @@ static void rs_destroy(rs * r) {
 // ============================================================================
 //  Sharded mode encoders/decoders.
 // ============================================================================
-static void do_sharded_encode(sharded_encoding_options_t o,
-                              u8 * buf, sz size) {
+static void do_sharded_encode(sharded_encoding_options_t o, u8 * buf, sz size) {
   FILE * out[MAX_TOTAL_SHARDS];
   if (o.pshards >= o.dshards) FATAL("Too many parity shards.");
   Fi(o.dshards + o.pshards,
@@ -218,9 +218,9 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   u8 size_bytes[8] = { 0 };
   Fj(8, size_bytes[j] = size >> (56 - 8 * j));
   Fi(o.dshards + o.pshards,
-    u32 checksum = crc32c(shards[i], shard_size);  u8 checksum_bytes[4];
-    xfwrite("XPAS", 4, out[i]);
-    Fj(4, checksum_bytes[j] = checksum >> (24 - 8 * j));
+    u32 checksum = crc32c(shards[i], shard_size);
+    xfwrite("XPAC", 4, out[i]);
+    u8 checksum_bytes[4];  Fj(4, checksum_bytes[j] = checksum >> (24 - 8 * j));
     xfwrite(checksum_bytes, 4, out[i]);
     xfwrite(&o.dshards, 1, out[i]);
     xfwrite(&o.pshards, 1, out[i]);
@@ -232,6 +232,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   Fi0(o.dshards + o.pshards, o.dshards, free(shards[i]));
   free(shards[o.dshards - 1]);
 }
+
 void cauchy_sharded_encode(sharded_encoding_options_t o) {
   if(!o.no_map) {
     #if defined(XPAR_ALLOW_MAPPING)
@@ -269,7 +270,7 @@ void cauchy_sharded_decode(sharded_decoding_options_t opt) {
       "yet. Please throw away some of the input shards and try again.\n"
     );
   Fi(opt.n_input_shards,
-    res[i] = validate_shard_header(opt.input_files[i], opt, "XPAS");
+    res[i] = validate_shard_header(opt.input_files[i], opt, "XPAC");
     if (!res[i].valid) {
       if (!opt.quiet)
         fprintf(stderr,
@@ -283,9 +284,9 @@ void cauchy_sharded_decode(sharded_decoding_options_t opt) {
   {
     u8 b[MAX_TOTAL_SHARDS];
     Fi(opt.n_input_shards, b[i] = res[i].dshards);
-    consensus_dshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
+    consensus_dshards = *(u8 *) most_frequent((u8 *) b, opt.n_input_shards, 1);
     Fi(opt.n_input_shards, b[i] = res[i].pshards);
-    consensus_pshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
+    consensus_pshards = *(u8 *) most_frequent((u8 *) b, opt.n_input_shards, 1);
   }
   {
     sz b[MAX_TOTAL_SHARDS];
