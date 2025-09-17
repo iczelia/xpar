@@ -44,7 +44,6 @@
 */
 
 #include "lmode.h"
-#include "crc32c.h"
 #include "platform.h"
 
 #include <assert.h>
@@ -2431,82 +2430,6 @@ void log_sharded_encode(sharded_encoding_options_t o) {
   do_sharded_encode(o, buffer, size);
   free(buffer);
 }
-
-static sharded_hv_result_t validate_shard_header(bool may_map,
-    const char * file_name, sharded_decoding_options_t opt) {
-  sharded_hv_result_t res;  memset(&res, 0, sizeof(res));
-  if (may_map) {
-    #if defined(XPAR_ALLOW_MAPPING)
-    mmap_t map = xpar_map(file_name);
-    if (map.map) {
-      if (map.size < SHARD_HEADER_SIZE) {
-        xpar_unmap(&map);  return res;
-      }
-      if (memcmp(map.map, "XPAL", 4)) {
-        xpar_unmap(&map);  return res;
-      }
-      Fi(4, res.crc |= ((sz) map.map[4 + i]) << (24 - 8 * i))
-      res.dshards = map.map[8];
-      res.pshards = map.map[9];
-      res.shard_number = map.map[10];
-      Fi(8, res.total_size |= ((sz) map.map[11 + i]) << (56 - 8 * i))
-      if (SIZEOF_SIZE_T == 4) {
-        if (map.map[11] || map.map[12] || map.map[13] || map.map[14]) {
-          if(!opt.quiet)
-            fprintf(stderr,
-              "Shard `%s' has a total size that is too large for 32-bit architectures.\n",
-              file_name);
-          xpar_unmap(&map);  return res;
-        }
-      }
-      res.shard_size = map.size - SHARD_HEADER_SIZE;
-      // Check the CRC.
-      u32 crc = crc32c(map.map + SHARD_HEADER_SIZE, res.shard_size);
-      if (crc != res.crc) {
-        xpar_unmap(&map);  return res;
-      }
-      res.valid = true;  res.mapped = true;
-      res.buf = map.map;   res.map = map;  return res;
-    }
-    #endif
-  }
-  FILE * in = fopen(file_name, "rb");
-  if (!in) return res;
-  fseek(in, 0, SEEK_END);
-  sz size = ftell(in);
-  fseek(in, 0, SEEK_SET);
-  if (size < SHARD_HEADER_SIZE) {
-    fclose(in);  return res;
-  }
-  u8 * buffer = xmalloc(size);
-  if (xfread(buffer, size, in) != size) {
-    free(buffer);  fclose(in);  return res;
-  }
-  fclose(in);
-  if (memcmp(buffer, "XPAL", 4)) {
-    free(buffer);  return res;
-  }
-  Fi(4, res.crc |= ((sz) buffer[4 + i]) << (24 - 8 * i));
-  res.dshards = buffer[8];
-  res.pshards = buffer[9];
-  res.shard_number = buffer[10];
-  Fi(8, res.total_size |= ((sz) buffer[11 + i]) << (56 - 8 * i));
-  if (SIZEOF_SIZE_T == 4) {
-    if (buffer[11] || buffer[12] || buffer[13] || buffer[14]) {
-      if(!opt.quiet)
-        fprintf(stderr,
-          "Shard `%s' has a total size that is too large for 32-bit architectures.\n",
-          file_name);
-      free(buffer);  return res;
-    }
-  }
-  res.shard_size = size - SHARD_HEADER_SIZE;
-  u32 crc = crc32c(buffer + SHARD_HEADER_SIZE, res.shard_size);
-  if (crc != res.crc) {
-    free(buffer);  return res;
-  }
-  res.buf = buffer; res.valid = true;  return res;
-}
 void log_sharded_decode(sharded_decoding_options_t opt) {
   sharded_hv_result_t res[MAX_TOTAL_SHARDS];
   if (opt.n_input_shards > MAX_TOTAL_SHARDS)
@@ -2516,7 +2439,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
       "yet. Please throw away some of the input shards and try again.\n"
     );
   Fi(opt.n_input_shards,
-    res[i] = validate_shard_header(!opt.no_map, opt.input_files[i], opt);
+    res[i] = validate_shard_header(!opt.no_map, opt.input_files[i], opt, "XPAL");
     if (!res[i].valid) {
       if (!opt.quiet)
         fprintf(stderr,
