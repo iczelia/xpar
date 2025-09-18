@@ -102,11 +102,12 @@ static void gf256mat_trans(gf256mat * a) {
 static gf256mat * gf256mat_inv(gf256mat * a) {
   gf256mat * b = gf256mat_eye(a->n);
   gf256mat * c = gf256mat_cat(a, b);
+  gf256mat_free(b);
   Fi(c->n,
     int r = i;
     while (r < c->n && c->v[r][i] == 0)
       r++;
-    if (r == c->n) { gf256mat_free(c); gf256mat_free(b); return NULL; }
+    if (r == c->n) { gf256mat_free(c); return NULL; }
     gf256mat_swaprows(c, i, r);
     u8 inv = gf256_div(1, c->v[i][i]);
     Fj(c->m,c->v[i][j] = PROD[inv][c->v[i][j]])
@@ -116,7 +117,6 @@ static gf256mat * gf256mat_inv(gf256mat * a) {
     }))
   gf256mat * d = gf256mat_submat(c, 0, a->n, a->n, a->n);
   gf256mat_free(c);
-  gf256mat_free(b);
   return d;
 }
 static gf256mat * vandermonde(int row, int col) {
@@ -139,7 +139,7 @@ static rs * rs_init(int data_shards, int parity_shards) {
   vi = gf256mat_inv(vsq);
   r->matrix = gf256mat_prod(v, vi);
   gf256mat_free(v);  gf256mat_free(vsq);  gf256mat_free(vi);
-  r->rows = calloc(parity_shards, sizeof(uint8_t *));
+  r->rows = xmalloc(parity_shards * sizeof(uint8_t *));
   Fi(parity_shards, r->rows[i] = r->matrix->v[data_shards + i])
   return r;
 }
@@ -161,7 +161,7 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * presence, size_t len) {
   if (present < r->data) return false;
   if (present == r->total) return true;
   gf256mat * mat = gf256mat_init(r->data, r->data);
-  uint8_t ** shards = calloc(r->data, sizeof(uint8_t *));
+  uint8_t ** shards = xmalloc(r->data * sizeof(uint8_t *));
   for (int i = 0, k = 0; i < r->total && k < r->data; i++)
     if (presence[i]) {
       Fj(r->data, mat->v[k][j] = r->matrix->v[i][j]);
@@ -191,7 +191,7 @@ static void rs_destroy(rs * r) {
 // ============================================================================
 static void do_sharded_encode(sharded_encoding_options_t o,
                               u8 * buf, sz size) {
-  FILE * out[MAX_TOTAL_SHARDS];
+  FILE ** out = xmalloc(MAX_TOTAL_SHARDS * sizeof(FILE *));
   if (o.pshards >= o.dshards) FATAL("Too many parity shards.");
   Fi(o.dshards + o.pshards,
     char * name; asprintf(&name, "%s.xpa.%03d", o.output_prefix, i);
@@ -202,7 +202,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     if (!(out[i] = fopen(name, "wb"))) FATAL_PERROR("fopen");
     free(name);
   )
-  u8 * shards[MAX_TOTAL_SHARDS];
+  u8 ** shards = xmalloc(MAX_TOTAL_SHARDS * sizeof(u8 *));
   sz shard_size = (size + o.dshards - 1) / o.dshards;
   if (shard_size <= 128)
     FATAL("Input file too small to be sharded with the given parameters.");
@@ -231,7 +231,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   )
   Fi(o.dshards + o.pshards, xfclose(out[i]));
   Fi0(o.dshards + o.pshards, o.dshards, free(shards[i]));
-  free(shards[o.dshards - 1]);
+  free(shards[o.dshards - 1]);  free(out);  free(shards);
 }
 
 void sharded_encode(sharded_encoding_options_t o) {
@@ -263,7 +263,7 @@ void sharded_encode(sharded_encoding_options_t o) {
   free(buffer);
 }
 void sharded_decode(sharded_decoding_options_t opt) {
-  sharded_hv_result_t res[MAX_TOTAL_SHARDS];
+  sharded_hv_result_t * res = xmalloc(MAX_TOTAL_SHARDS * sizeof(sharded_hv_result_t));
   if (opt.n_input_shards > MAX_TOTAL_SHARDS)
     FATAL(
       "Too many input shards. While many of them may be wrong and\n"
@@ -276,7 +276,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
       if (!opt.quiet)
         fprintf(stderr,
           "Invalid shard header in `%s', skipping.\n", opt.input_files[i]);
-      if (!opt.force) exit(1);
+      if (!opt.force) { free(res); exit(1); }
     }
   )
   // Consensus voting.
@@ -309,7 +309,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
         fprintf(stderr,
           "Shard `%s' does not match the consensus, skipping.\n",
           opt.input_files[i]);
-      if (!opt.force) exit(1);
+      if (!opt.force) { free(res); exit(1); }
     }
   )
   // Check if we have a duplicate of any shard.
@@ -385,8 +385,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
     sz w = MIN(consensus_size, consensus_shard_size);
     xfwrite(buffers[i], w, out);
     consensus_size -= w)
-  xfclose(out);
-  rs_destroy(r);
+  xfclose(out);  rs_destroy(r);
   Fi(n_valid_shards, unmap_shard(&res[i]));
   Fi(consensus_dshards + consensus_pshards, if (!pres[i]) free(buffers[i]));
+  free(res);
 }
