@@ -75,7 +75,7 @@ static char * yarg_strdup(const char * str) {
   return new_str;
 }
 
-static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
+static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
                            yarg_result * res, bool dash_dash) {
   int no_args = 0, no_pos_args = 0;
   for (int i = 1; i < argc; i++) {
@@ -83,7 +83,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
       if (argv[i][1] == '-') {
         if (dash_dash && argv[i][2] == '\0')
           { no_pos_args += argc - i - 1; break; }
-        char * long_opt = argv[i] + 2; yarg_options * o = NULL;
+        char * long_opt = argv[i] + 2; const yarg_options * o = NULL;
         int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
         for (int j = 0; opt[j].opt; j++)
           if (opt[j].long_opt && !strncmp(opt[j].long_opt, long_opt, len))
@@ -112,7 +112,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         no_args++;
       } else {
         for (int j = 1; argv[i][j]; j++) {
-          char c = argv[i][j]; yarg_options * o = NULL;
+          char c = argv[i][j]; const yarg_options * o = NULL;
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
@@ -166,7 +166,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
             }
           break;
         }
-        char * long_opt = argv[i] + 2; yarg_options * o = NULL;
+        char * long_opt = argv[i] + 2; const yarg_options * o = NULL;
         int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
         for (int j = 0; opt[j].opt; j++)
           if (opt[j].long_opt && !strncmp(opt[j].long_opt, long_opt, len))
@@ -189,7 +189,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         res->argc++;
       } else {
         for (int j = 1; argv[i][j]; j++) {
-          char c = argv[i][j]; yarg_options * o = NULL;
+          char c = argv[i][j]; const yarg_options * o = NULL;
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
@@ -224,7 +224,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
   return 1;
 }
 
-static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
+static int yarg_parse_unix_short(int argc, char * argv[], const yarg_options opt[],
                                  yarg_result * res, bool dash_dash,
                                  char opt_char) {
   int no_args = 0, no_pos_args = 0;
@@ -234,7 +234,7 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
         no_pos_args += argc - i - 1;
         break;
       }
-      char * long_opt = argv[i] + 1; yarg_options * o = NULL;
+      char * long_opt = argv[i] + 1; const yarg_options * o = NULL;
       int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
       for (int j = 0; opt[j].opt; j++)
         if (opt[j].long_opt && !strncmp(opt[j].long_opt, long_opt, len))
@@ -282,7 +282,7 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
           }
         break;
       }
-      char * long_opt = argv[i] + 1; yarg_options * o = NULL;
+      char * long_opt = argv[i] + 1; const yarg_options * o = NULL;
       int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
       for (int j = 0; opt[j].opt; j++)
         if (opt[j].long_opt && !strncmp(opt[j].long_opt, long_opt, len))
@@ -332,7 +332,7 @@ void yarg_destroy(yarg_result * r) {
   free(r);
 }
 
-static yarg_result * yarg_parse(int argc, char * argv[], yarg_options opt[],
+static yarg_result * yarg_parse(int argc, char * argv[], const yarg_options opt[],
                          yarg_settings settings) {
   yarg_result * res = (yarg_result *) calloc(sizeof(yarg_result), 1);
   if (!res) return NULL;
