@@ -2,6 +2,26 @@ This file contains release notes for major and minor releases of xpar.
 For a complete list of source-level changes, consult the ChangeLog file.
 
 ===============================================================================
+v0.7 (xx-09-2025)
+- Rename the sharded mode to Vandermonde-sharded mode (-S => -W).
+- Update building instructions for specific architecture and operating system
+  combinations.
+- Include benchmarks in the repository.
+- Add Cauchy matrix-based sharded mode - O(n^2) - as opposed to the Vandermonde
+  sharding mode - O(n^3).
+- Introduce minimum shard size.
+- Improve stability without --no-mmap.
+- Add FFT-based Reed-Solomon encoders and decoders that operate in
+  linearithmic time (@catid).
+- Fix a memory leak in gf256mat_inv used by the Vandermonde-sharded mode.
+- Update and reflow the man-page.
+
+===============================================================================
+v0.6 (10-09-2025)
+- Move the project page to iczelia/xpar.
+- Minor style changes and fixes to command parsing.
+
+===============================================================================
 v0.6 (10-09-2025)
 - Move the project page to iczelia/xpar.
 - Minor style changes and fixes to command parsing.
