@@ -1,4 +1,7 @@
 # xpar
+
+[![Build](https://github.com/iczelia/xpar/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/iczelia/xpar/actions/workflows/build.yml)
+
 xpar - an error/erasure code system guarding data integrity.
 Licensed under the terms of GNU GPL version 3 or later - see COPYING.
 Report issues to Kamila Szewczyk <k@iczelia.net>.
