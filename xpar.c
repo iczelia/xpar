@@ -101,7 +101,7 @@ static void help() {
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING };
 enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
         FLAG_OUT_PREFIX };
-static yarg_options opt[] = {
+static const yarg_options opt[] = {
   { 'V', no_argument, "version" },
   { 'v', no_argument, "verbose" },
   { 'J', no_argument, "joint" },
