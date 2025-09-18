@@ -97,6 +97,29 @@ AC_ARG_ENABLE([aarch64], [AS_HELP_STRING([--enable-aarch64], [Enable aarch64 pla
 if test "x$enable_aarch64" = "xyes"; then
   AC_DEFINE([XPAR_AARCH64], [1], [Enable aarch64 platform specific code.])
   AM_CONDITIONAL([XPAR_AARCH64], [true])
+
+  # Save user flags
+  save_CFLAGS="$CFLAGS"
+
+  # ---- NEON (mandatory on AArch64) ----
+  CFLAGS="$save_CFLAGS -march=armv8-a"
+  AC_MSG_CHECKING([for NEON intrinsics with $CC])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[
+      #include <arm_neon.h>
+    ]], [[
+      uint8x16_t a = vdupq_n_u8(1);
+      uint8x16_t b = vrev64q_u8(a);
+      return vgetq_lane_u8(b,0);
+    ]])],
+    [AC_MSG_RESULT([yes])
+     AC_DEFINE([HAVE_NEON], [1], [Define if NEON intrinsics are available])
+     NEON_CFLAGS="-march=armv8-a"],
+    [AC_MSG_RESULT([no])
+     NEON_CFLAGS=""]
+  )
+
+  CFLAGS="$save_CFLAGS $NEON_CFLAGS"
 else
   AM_CONDITIONAL([XPAR_AARCH64], [false])
 fi
