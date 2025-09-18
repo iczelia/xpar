@@ -65,6 +65,7 @@ jobs:
     - name: Verify x86_64 parity files
       run: |
         tar --strip-components=1 -xf xpar-${{ github.sha }}-guarded.tar.gz
+        ls -la
         ./xpar -Jd xpar.xpa xpar.new.org
         cmp xpar.new.org xpar.org
   
