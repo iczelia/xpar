@@ -20,6 +20,17 @@ jobs:
         path: xpar-${{ github.sha }}.tar.gz
     - name: Run distcheck
       run: make distcheck
+    - name: Create x86_64 parity files
+      run:
+        make -j16 all
+        ./xpar -Jef xpar
+        cp xpar xpar.org
+        tar -czf xpar-${{ github.sha }}-guarded.tar.gz xpar.xpa xpar.org
+    - name: Upload x86_64 parity files artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}-guarded
+        path: xpar-${{ github.sha }}-guarded.tar.gz
 
   build-ubuntu-x86_64:
     name: Compile (Ubuntu clang/gcc, x86_64)
@@ -37,6 +48,10 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: xpar-${{ github.sha }}
+    - name: Download parity files artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}-guarded
     - name: Install OpenMP
       run: sudo apt-get install -y libomp-dev
     - name: Extract source package
@@ -47,6 +62,11 @@ jobs:
       run: make -j4 all
     - name: Self-check
       run: make self-check
+    - name: Verify x86_64 parity files
+      run: |
+        tar --strip-components=1 -xf xpar-${{ github.sha }}-guarded.tar.gz
+        ./xpar -Jd xpar.xpa xpar.new.org
+        cmp xpar.new.org xpar.org
   
   build-macos-x86_64:
     name: Compile (MacOS clang, x86_64)
@@ -62,6 +82,10 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: xpar-${{ github.sha }}
+    - name: Download parity files artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
@@ -70,6 +94,11 @@ jobs:
       run: make -j4 all
     - name: Self-check
       run: make self-check
+    - name: Verify x86_64 parity files
+      run: |
+        tar --strip-components=1 -xf xpar-${{ github.sha }}-guarded.tar.gz
+        ./xpar -Jd xpar.xpa xpar.new.org
+        cmp xpar.new.org xpar.org
   
   build-macos-aarch64:
     name: Compile (MacOS clang, aarch64)
@@ -84,6 +113,10 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: xpar-${{ github.sha }}
+    - name: Download parity files artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
@@ -92,6 +125,11 @@ jobs:
       run: make -j4 all
     - name: Self-check
       run: make self-check
+    - name: Verify x86_64 parity files
+      run: |
+        tar --strip-components=1 -xf xpar-${{ github.sha }}-guarded.tar.gz
+        ./xpar -Jd xpar.xpa xpar.new.org
+        cmp xpar.new.org xpar.org
   
   build-windows-x86_64:
     name: Compile (Windows x86_64)
