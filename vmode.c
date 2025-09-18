@@ -363,6 +363,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
       xfwrite(res[i].buf + SHARD_HEADER_SIZE, w, out);
       consensus_size -= w)
     Fi(n_valid_shards, unmap_shard(&res[i]));
+    xfclose(out);
+    free(res);
     return;
   }
   rs * r = rs_init(consensus_dshards, consensus_pshards);
