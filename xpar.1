@@ -14,7 +14,7 @@ xpar \- an error/erasure code system guarding data integrity
 .ll -8
 .br
 .B xpar
-.RB [ " \-We " / " \-Le " / " \-Ce " ]
+.RB [ " \-We " / " \-Le " ]
 .RB [ " \-hfvqV " ]
 .RB [ " \--out-prefix\ # ", " \--dshards\ # ", " \--pshards\ # " ]
 .RB [ " \--no-mmap\ " ]
@@ -23,7 +23,7 @@ xpar \- an error/erasure code system guarding data integrity
 ]
 .br
 .B xpar
-.RB [ " \-Wd " / " \-Ld " / " \-Cd " ]
+.RB [ " \-Wd " / " \-Ld " ]
 .RB [ " \-hfvqV " ]
 [
 .I "names \&..."
@@ -90,8 +90,6 @@ in sharded encoding mode (
 .B \-We
 or
 .B \-Le
-or
-.B \-Ce
 ) generates a set of parity-guarded files from a given data file. The amount
 of files generated is given by the sum of the mandatory parameters
 .B \--dshards
@@ -112,9 +110,6 @@ Berlekamp-Welch algorithm. Slowest sharded mode, parallelisable.
 .B \-L --fft-sharded
 Enable sharded processing mode using FFT in O(n log n) via the Leopard
 algorithm. Fastest sharded mode.
-.B \-C --cauchy-sharded
-Enable sharded processing mode using Cauchy matrices in O(n^2). Medium-speed.
-Likely faster than the FFT for small files.
 .TP
 .B \-J --joint
 Enable joint processing mode.
