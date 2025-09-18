@@ -11,6 +11,8 @@ code over an 8-bit Galois field.
 
 can be consiered a sibling project of par2.
 
+[![Packaging status](https://repology.org/badge/vertical-allrepos/xpar.svg)](https://repology.org/project/xpar/versions)
+
 ## Building
 
 ```
