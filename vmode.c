@@ -251,11 +251,6 @@ void sharded_encode(sharded_encoding_options_t o) {
   fseek(in, 0, SEEK_END);
   sz size = ftell(in);
   fseek(in, 0, SEEK_SET);
-  // Allocate a page more to avoid a problem with
-  // the total # of shards not being a multiple of the size,
-  // which will imply that the last shard will be smaller.
-  // If we overallocate and wipe out the last page, we can
-  // (controllably) overflow this buffer.
   u8 * buffer = xmalloc(size);
   if (xfread(buffer, size, in) != size) FATAL("Short read.");
   fclose(in);
