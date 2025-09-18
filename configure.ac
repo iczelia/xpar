@@ -1,5 +1,5 @@
 m4_define([xpar_version_major], [0])
-m4_define([xpar_version_minor], [6])
+m4_define([xpar_version_minor], [7])
 m4_define([xpar_version], [xpar_version_major.xpar_version_minor])
 
 AC_PREREQ([2.69])
