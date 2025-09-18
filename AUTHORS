@@ -5,6 +5,8 @@ Acknowledgements:
 - Marshall Lochbaum (improved syndrome calculation).
 - Phil Karn (KA9Q) originally implemented the error+erasure
   correction codec used by xpar (GPLv2).
+- Chris A. Taylor (catid) for the FFT-based Reed-Solomon codec
+  used by xpar, licensed under 3-BSD.
 
 License: GNU General Public License version 3 or later.
 
