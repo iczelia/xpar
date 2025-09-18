@@ -103,3 +103,8 @@ Numbers:
 - Encode + Decode speed on random data (most adversarial scenario; joint mode, no interlacing): 244MB/s, 132MB/s respectively.
 - Encode + Decode speed on random data (sharded mode, 50 + 4): 1231MB/s, 34482MB/s respectively.
 - PAR2 Encode + Decode speed on random data (sharded mode): 153MB/s, 277MB/s.
+
+## TO-DO
+
+- Hook up sse2neon inside lmode.c
+- Implement Cauchy matrix-based RS codes.
