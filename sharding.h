@@ -25,7 +25,7 @@
 #include <assert.h>
 
 // ============================================================================
-//  General shared (Vandermonde, Log-time, Cauchy) mode encoding and decoding
+//  General shared (Vandermonde, Log-time) mode encoding and decoding
 //  utilities.
 // ============================================================================
 #define MAX_DATA_SHARDS 128

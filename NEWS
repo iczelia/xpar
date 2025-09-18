@@ -7,8 +7,6 @@ v0.7 (xx-09-2025)
 - Update building instructions for specific architecture and operating system
   combinations.
 - Include benchmarks in the repository.
-- Add Cauchy matrix-based sharded mode - O(n^2) - as opposed to the Vandermonde
-  sharding mode - O(n^3).
 - Introduce minimum shard size.
 - Improve stability without --no-mmap.
 - Add FFT-based Reed-Solomon encoders and decoders that operate in

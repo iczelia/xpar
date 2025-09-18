@@ -112,4 +112,4 @@ Numbers:
 ## TO-DO
 
 - Hook up sse2neon inside lmode.c
-- Implement Cauchy matrix-based RS codes.
+- GPU-based jmode.c
