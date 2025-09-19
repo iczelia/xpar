@@ -2,10 +2,12 @@
 .vscode/
 attic/
 autom4te.cache/
+ar-lib
 config.h
 config.log
 config.status
 Makefile
+*.a
 *.o
 xpar
 configure~
@@ -24,3 +26,4 @@ missing
 stamp-h1
 config.guess
 ChangeLog.tmp
+inject-errors

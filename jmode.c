@@ -1,43 +1,33 @@
-/*
-   Copyright (C) 2022-2025 Kamila Szewczyk
+/*  Copyright (C) 2022-2026 Kamila Szewczyk
 
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 3 of the License, or
-   (at your option) any later version.
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
 
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+    You should have received a copy of the GNU General Public License
+    along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "jmode.h"
 #include "crc32c.h"
 #include "platform.h"
-
-#if defined(XPAR_OPENMP)
-  #include <omp.h>
+#ifdef HAVE_BLAKE2B
+  #include "blake2b.h"
 #endif
 
-#include <sys/types.h>
-#include <sys/stat.h>
 
-// ============================================================================
-//  Reed-Solomon code parameters (223 bytes of input, 32 bytes of parity).
-// ============================================================================
+
+/*  Reed-Solomon (K=223 data, T=32 parity, N=255 codeword).  */
 #define K 223
 #define N 255
 #define T 32
 
-// ============================================================================
-//  Implementation of Reed-Solomon codes. Follows the BCH view. Original code
-//  was written by Phil Karn, KA9Q, in 1999. This is a modified version due to
-//  Kamila Szewczyk which exhibits significantly better performance.
-// ============================================================================
+/*  BCH view; originally Phil Karn KA9Q (1999), restructured for speed.  */
 static u8 LOG[256], EXP[256], PROD[256][256], DP[256][256];
 u8 PROD_GEN[256][32];
 void jmode_gf256_gentab(u8 poly) {
@@ -69,26 +59,61 @@ static u8 gf256_div(u8 a, u8 b) {
 #endif
 
 extern EXTERNAL_ABI int xpar_x86_64_cpuflags(void);
-extern EXTERNAL_ABI void rse32_x86_64_avx512(u8 data[K], u8 out[N]);
-extern EXTERNAL_ABI void rse32_x86_64_generic(u8 data[K], u8 out[N]);
-void rse32(u8 data[K], u8 out[N]) {
-  static int cpuflags = -1;
-  if (cpuflags == -1) cpuflags = xpar_x86_64_cpuflags();
-  if (cpuflags & 0xC) rse32_x86_64_avx512(data, out);
-  else rse32_x86_64_generic(data, out);
+extern EXTERNAL_ABI void rse32_inplace_x86_64_avx512(u8 out[N]);
+extern EXTERNAL_ABI void rse32_inplace_x86_64_generic(u8 out[N]);
+extern EXTERNAL_ABI void rse32_scatter_x86_64(const u8 * data, u8 * out, sz n);
+
+static int rse32_cpuflags(void) {
+  static int flags = -1;
+  if (flags == -1) flags = xpar_x86_64_cpuflags();
+  return flags;
+}
+void rse32_inplace(u8 out[N]) {
+  if (rse32_cpuflags() & 0xC) rse32_inplace_x86_64_avx512(out);
+  else rse32_inplace_x86_64_generic(out);
+}
+void rse32_scatter(const u8 * data, u8 * out, sz n) {
+  rse32_scatter_x86_64(data, out, n);
 }
 #else
-void rse32(u8 data[K], u8 out[N]) {
-  memset(out + K, 0, N - K);
+static void rse32_inplace_c(u8 out[N]) {
+  xpar_memset(out + K, 0, N - K);
   for (int i = K - 1; i >= 0; i--) {
-    u8 x = data[i] ^ out[K + T - 1];
+    u8 x = out[i] ^ out[K + T - 1];
     for (int j = T - 1; j > 0; j--)
       out[K + j] = out[K + j - 1] ^ PROD_GEN[x][j];
     out[K] = PROD_GEN[x][0];
   }
-  memcpy(out, data, K);
+}
+void rse32_inplace(u8 out[N]) { rse32_inplace_c(out); }
+void rse32_scatter(const u8 * data, u8 * out, sz n) {
+  for (sz i = 0; i < n; i++) xpar_memcpy(out + i * N, data + i * K, K);
 }
 #endif
+
+void rse32(const u8 data[K], u8 out[N]) {
+  rse32_scatter(data, out, 1);
+  rse32_inplace(out);
+}
+
+/*  Scatter src into K-strided slots of out, zero-padding the tail.
+    Parity region untouched. Requires src_len <= n_blocks * K.  */
+void rse32_scatter_pad(const u8 * src, sz src_len, u8 * out, sz n_blocks) {
+  sz full_blocks = src_len / K;
+  if (full_blocks > n_blocks) full_blocks = n_blocks;
+  if (full_blocks) rse32_scatter(src, out, full_blocks);
+  if (full_blocks >= n_blocks) return;
+  sz remainder = src_len - full_blocks * K;
+  u8 * blk = out + full_blocks * N;
+  if (remainder) {
+    xpar_memcpy(blk, src + full_blocks * K, remainder);
+    xpar_memset(blk + remainder, 0, K - remainder);
+  } else {
+    xpar_memset(blk, 0, K);
+  }
+  for (sz i = full_blocks + 1; i < n_blocks; i++)
+    xpar_memset(out + i * N, 0, K);
+}
 int rsd32(u8 data[N]) {
   int deg_lambda, el, deg_omega = 0;
   int i, j, r, k, syn_error, count;
@@ -96,24 +121,24 @@ int rsd32(u8 data[N]) {
   u8 lambda[T + 1] = { 0 }, omega[T + 1] = { 0 }, eras_pos[T] = { 0 };
   u8 t[T + 1], s[T], root[T], reg[T + 1] = { 0 };
   u8 b_backing[3 * T + 1] = { 0 }, * b = b_backing + 2 * T;
-  memset(s, data[0], T);
-  // Fast syndrome computation: idea discovered by Marshall Lochbaum.
+  xpar_memset(s, data[0], T);
+  /*   Fast syndrome computation: idea discovered by Marshall Lochbaum.  */
   for (int jb = 0; jb < 51; jb++) {
     u8 a5 = 255, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0;
     for (j = jb; j < 255; j += 51) {
       if (j == 0 || !data[j]) continue;
       tmp = data[j];
       tmp = PROD[EXP[(212 * j) % 255]][tmp];
-      u8 a1 = EXP[(11 * j) % 255]; // a_j1
-      u8 a2 = PROD[a1][a1];        // a_j2
+      u8 a1 = EXP[(11 * j) % 255]; /*  a_j1  */
+      u8 a2 = PROD[a1][a1]; /*  a_j2  */
       if (a5 == 255) a5 = PROD[a2][PROD[a1][a2]];
-      t1 ^=                tmp;  // t1 = sum of t_j1, j = jb (mod 51)
-      t2 ^=       PROD[a1][tmp]; // etc.
+      t1 ^=                tmp; /*  t1 = sum of t_j1, j = jb (mod 51)  */
+      t2 ^=       PROD[a1][tmp]; /*  etc.  */
       t3 ^= tmp = PROD[a2][tmp];
       t4 ^=       PROD[a1][tmp];
       t5 ^=       PROD[a2][tmp];
     }
-    if (a5 == 255) continue; // No j values do anything (unlikely)
+    if (a5 == 255) continue; /*  No j values do anything (unlikely)  */
     for (i = 0; ; i += 5) {
       s[i ] ^= t1; t1 = PROD[a5][t1];
       s[i+1] ^= t2; t2 = PROD[a5][t2];
@@ -125,7 +150,7 @@ int rsd32(u8 data[N]) {
   }
   syn_error = 0; Fi(T, syn_error |= s[i])
   if (!syn_error) return 0;
-  lambda[0] = 1;  r = el = 0;  memcpy(b, lambda, T + 1);
+  lambda[0] = 1;  r = el = 0;  xpar_memcpy(b, lambda, T + 1);
   while (++r <= T) {
     for (discr_r = 0, i = 0; i < r; i++)
       discr_r ^= PROD[lambda[i]][s[r - i - 1]];
@@ -136,7 +161,7 @@ int rsd32(u8 data[N]) {
         el = r - el;
         Fi(T + 1, b[i] = gf256_div(lambda[i], discr_r))
       } else --b;
-      memcpy(lambda, t, T + 1);
+      xpar_memcpy(lambda, t, T + 1);
     }
   }
   deg_lambda = 0;
@@ -146,7 +171,7 @@ int rsd32(u8 data[N]) {
       q ^= reg[j] = DP[j][reg[j]];
     if (q) continue;
     root[count] = i, eras_pos[count] = k;
-    if (++count == deg_lambda) break; // Early exit.
+    if (++count == deg_lambda) break; /*  Early exit.  */
   }
   if (deg_lambda != count) return -1;
   Fi(T,
@@ -164,14 +189,7 @@ int rsd32(u8 data[N]) {
   return count;
 }
 
-// ============================================================================
-//  Processing. We apply a few strategies that depend on some specifics of the
-//  process at hand:
-//  - If we can map the file to memory but can not perform parallel encoding,
-//    we encode the data in a serial fashion (3).
-//  - If the file can not be mapped, we assume that the output also can not be
-//    mapped (4).
-// ============================================================================
+/*  Strategies: mapped+serial encode (3); unmapped in/out (4).  */
 static int compute_interlacing_bs(int ifactor) {
   switch (ifactor) {
     default: case 1: return 1; break;
@@ -182,288 +200,995 @@ static int compute_interlacing_bs(int ifactor) {
 static void trans2D(u8 * restrict in, u8 * restrict out) {
   Fi(N, Fj(N, out[j * N + i] = in[i * N + j]))
 }
+struct _pf_ctx_trans3D { u8 * restrict in; u8 * restrict out; };
+static void _pf_fn_trans3D(sz i, void * p) {
+  struct _pf_ctx_trans3D * c = p;
+  Fj(N, Fk(N, c->out[k * N * N + j * N + i] = c->in[i * N * N + j * N + k]))
+}
 static void trans3D(u8 * restrict in, u8 * restrict out) {
-#if defined(XPAR_OPENMP)
-  #pragma omp parallel for
-#endif
-  Fi(N, Fj(N, Fk(N, out[k * N * N + j * N + i] = in[i * N * N + j * N + k])))
+  struct _pf_ctx_trans3D ctx = { in, out };
+  xpar_parallel_for(N, _pf_fn_trans3D, &ctx);
+}
+
+/*  Shared per-lace RS encode kernel: rse32_inplace on o1 + i*N.  */
+struct _pf_ctx_rse32 { u8 * o1; };
+static void _pf_fn_rse32(sz i, void * p) {
+  struct _pf_ctx_rse32 * c = p;
+  rse32_inplace(c->o1 + i * N);
+}
+
+/*  Per-lace RS decode: rsd32 then copy K corrected bytes.
+    Accumulates ecc; unrecoverable blocks bump bad (soft) or exit (strict).  */
+struct _pf_ctx_decode {
+  u8 * in2;
+  u8 * out_buffer;
+  xpar_atomic_int * ecc;
+  xpar_atomic_int * bad;   /*  NULL means strict: exit on failure  */
+  unsigned laces;
+  int ibs;
+  bool quiet;
+  bool force;
+  bool terse;              /*  true: "Block U (lace V)"; false: with byte range.  */
+};
+static void _pf_fn_decode(sz i, void * p) {
+  struct _pf_ctx_decode * c = p;
+  int n = rsd32(c->in2 + i * N);
+  if (n < 0) {
+    const unsigned lace_ibs = c->laces * (unsigned) c->ibs + (unsigned) i;
+    if (!c->quiet) {
+      if (c->terse)
+        xpar_fprintf(xpar_stderr,
+          "Block %u (lace %u) irrecoverable.\n", lace_ibs, c->laces);
+      else
+        xpar_fprintf(xpar_stderr,
+          "Block %u (lace %u, bytes %u-%u) irrecoverable.\n",
+          lace_ibs, c->laces, lace_ibs * N, lace_ibs * N + N - 1);
+    }
+    if (c->bad) xpar_atomic_add_int(c->bad, 1);
+    else if (!c->force) xpar_exit(1);
+  } else {
+    xpar_atomic_add_int(c->ecc, n);
+  }
+  xpar_memcpy(c->out_buffer + i * K, c->in2 + i * N, K);
 }
 static void do_interlacing(u8 * restrict in, u8 * restrict out, int ifactor) {
   switch (ifactor) {
-    case 1: memcpy(out, in, N); break;
+    case 1: xpar_memcpy(out, in, N); break;
     case 2: trans2D(in, out); break;
     case 3: trans3D(in, out); break;
   }
 }
-static void write_header(FILE * des, int ifactor) {
+/*  v1.0 header: 5 payload + 32 RS-parity = 37 bytes on disk.
+    Extra payload h[5..15) is recovered implicitly via rsd32 on decode.
+    Layout: "XP"|major|minor|ifactor('1'..'4','4'=systematic)
+            |integrity|auth|total_bytes(u64 BE, ~0=unknown)|reserved0.  */
+typedef struct {
+  int ifactor;
+  int integrity;
+  int auth_flag;
+  u64 total_bytes;
+} file_hdr;
+static void pack_u64_be(u8 * b, u64 v) {
+  for (int i = 0; i < 8; i++) b[i] = (u8)(v >> (56 - 8 * i));
+}
+static u64 unpack_u64_be(const u8 * b) {
+  u64 v = 0;
+  for (int i = 0; i < 8; i++) v |= ((u64) b[i]) << (56 - 8 * i);
+  return v;
+}
+static void write_header(xpar_file * des, file_hdr fh) {
   u8 h[K] = { 0 }, out[N];
   h[0] = 'X'; h[1] = 'P'; h[2] = XPAR_MAJOR; h[3] = XPAR_MINOR;
-  h[4] = ifactor + '0';
-  rse32(h, out); xfwrite(h, 5, des); xfwrite(out + K, N - K, des);
+  h[4] = fh.ifactor + '0';
+  h[5] = (u8) fh.integrity;
+  h[6] = (u8) fh.auth_flag;
+  pack_u64_be(h + 7, fh.total_bytes);
+  rse32(h, out); xpar_xwrite(des, h, 5); xpar_xwrite(des, out + K, N - K);
 }
-static int parse_header(u8 out[N], int force, int ifactor_override) {
+static file_hdr parse_header(u8 out[N], int force, int ifactor_override) {
+  file_hdr fh = { .ifactor = ifactor_override, .integrity = INTEGRITY_CRC32C,
+                  .auth_flag = 0, .total_bytes = (u64) -1 };
   if (out[0] != 'X' || out[1] != 'P')
     FATAL_UNLESS("Invalid header.", !force);
-  out[0] = 'X'; out[1] = 'P'; memset(out + 5, 0, K - 5);
-  if(rsd32(out) < 0)
+  out[0] = 'X'; out[1] = 'P'; xpar_memset(out + 5, 0, K - 5);
+  if (rsd32(out) < 0)
     FATAL_UNLESS("Invalid header.", !force);
-  int ifactor = out[4] - '0';
-  if (ifactor < 1 || ifactor > 3) {
-    FATAL_UNLESS("Invalid header.", !force);
-    if (force) return ifactor_override;
+  if (out[2] != XPAR_MAJOR) {
+    FATAL_UNLESS("File was produced by an incompatible xpar major version.",
+                 !force);
+    if (force) return fh;
   }
-  return ifactor;
+  int ifactor = out[4] - '0';
+  if (ifactor < 1 || ifactor > 4) {
+    FATAL_UNLESS("Invalid header.", !force);
+    if (force) ifactor = ifactor_override;
+  }
+  fh.ifactor = ifactor;
+  fh.integrity = out[5];
+  fh.auth_flag = out[6];
+  fh.total_bytes = unpack_u64_be(out + 7);
+  if (fh.integrity != INTEGRITY_CRC32C && fh.integrity != INTEGRITY_BLAKE2B) {
+    FATAL_UNLESS("Unknown integrity algorithm in header.", !force);
+    if (force) fh.integrity = INTEGRITY_CRC32C;
+  }
+#ifndef HAVE_BLAKE2B
+  if (fh.integrity == INTEGRITY_BLAKE2B) {
+    FATAL("This file uses BLAKE2b integrity, but xpar was built with "
+          "BLAKE2b support disabled (configure --enable-blake2b).");
+  }
+#endif
+  return fh;
 }
-static int read_header(FILE * des, int force, int ifactor_override) {
-  u8 out[N]; xfread(out, 5, des); xfread(out + K, N - K, des);
+static file_hdr read_header(xpar_file * des, int force, int ifactor_override) {
+  u8 out[N]; xpar_xread(des, out, 5); xpar_xread(des, out + K, N - K);
   return parse_header(out, force, ifactor_override);
 }
 #ifdef XPAR_ALLOW_MAPPING
-static int read_header_from_map(mmap_t map, int force, int ifactor_override) {
+static file_hdr read_header_from_map(xpar_mmap map, int force,
+                                     int ifactor_override) {
   if (map.size < 5 + N - K)
     FATAL("Truncated file.");
-  u8 out[N]; memcpy(out, map.map, 5); memcpy(out + K, map.map + 5, N - K);
+  u8 out[N]; xpar_memcpy(out, map.map, 5); xpar_memcpy(out + K, map.map + 5, N - K);
   return parse_header(out, force, ifactor_override);
 }
 #endif
-typedef struct { u32 bytes, crc; } block_hdr;
-static void write_block_header(FILE * des, block_hdr h) {
-  u8 b[8]; b[0] = 'X';
+
+/*  Block header:  CRC32C  12B: 'X'+bytes(3 BE)+seq(4 BE)+crc(4 BE);
+                    BLAKE2B 24B: 'X'+bytes(3 BE)+seq(4 BE)+tag(16).  */
+#define BHDR_HASH_MAX 16
+typedef struct { u32 bytes, seq; u8 hash[BHDR_HASH_MAX]; } block_hdr;
+static inline sz bhdr_size(int algo) {
+  return algo == INTEGRITY_CRC32C ? 12 : 24;
+}
+static void write_block_header(xpar_file * des, block_hdr h, int algo) {
+  u8 b[24];
   if (h.bytes > 0xFFFFFF)
     FATAL("Could not write the header: block too big.");
-  b[1] = h.bytes >> 16; b[2] = h.bytes >> 8; b[3] = h.bytes;
-  b[4] = h.crc >> 24; b[5] = h.crc >> 16; b[6] = h.crc >> 8; b[7] = h.crc;
-  xfwrite(b, 8, des);
-}
-static block_hdr parse_block_header(u8 b[8], bool force) {
-  block_hdr h;  bool valid = b[0] == 'X';
-  if (!valid) {
-    FATAL_UNLESS("Invalid block header.", !force);
-    h.bytes = 0xFFFFFF; h.crc = 0; return h;
+  b[0] = 'X';
+  b[1] = (u8)(h.bytes >> 16); b[2] = (u8)(h.bytes >> 8); b[3] = (u8) h.bytes;
+  b[4] = (u8)(h.seq   >> 24); b[5] = (u8)(h.seq   >> 16);
+  b[6] = (u8)(h.seq   >>  8); b[7] = (u8) h.seq;
+  if (algo == INTEGRITY_CRC32C) {
+    xpar_memcpy(b + 8, h.hash, 4);
+    xpar_xwrite(des, b, 12);
   } else {
-    h.bytes = (((uint32_t) b[1]) << 16) | (((uint32_t) b[2]) << 8) | b[3];
-    h.crc = (((uint32_t) b[4]) << 24) | (((uint32_t) b[5]) << 16)
-          | (((uint32_t) b[6]) << 8) | b[7];
+    xpar_memcpy(b + 8, h.hash, 16);
+    xpar_xwrite(des, b, 24);
+  }
+}
+static block_hdr parse_block_header(const u8 * b, int algo, bool force) {
+  block_hdr h;
+  if (b[0] != 'X') {
+    FATAL_UNLESS("Invalid block header.", !force);
+    h.bytes = 0xFFFFFF; h.seq = 0;
+    xpar_memset(h.hash, 0, BHDR_HASH_MAX);
     return h;
   }
+  h.bytes = ((u32) b[1] << 16) | ((u32) b[2] << 8) | b[3];
+  h.seq   = ((u32) b[4] << 24) | ((u32) b[5] << 16)
+          | ((u32) b[6] <<  8) | b[7];
+  if (algo == INTEGRITY_CRC32C) {
+    xpar_memcpy(h.hash, b + 8, 4);
+    xpar_memset(h.hash + 4, 0, BHDR_HASH_MAX - 4);
+  } else {
+    xpar_memcpy(h.hash, b + 8, 16);
+  }
+  return h;
 }
-static void encode4(FILE * in, FILE * out, int ifactor) {
-  notty(out);
+/*  Per-lace integrity tag into dst[16]: CRC32C writes 4 (BE),
+    BLAKE2b writes 16 (raw).  */
+static void integrity_tag(u8 * dst, int algo,
+                          const u8 * key, sz keylen,
+                          const void * buf, sz len) {
+  if (algo == INTEGRITY_CRC32C) {
+    u32 c = crc32c(buf, len);
+    dst[0] = (u8)(c >> 24); dst[1] = (u8)(c >> 16);
+    dst[2] = (u8)(c >>  8); dst[3] = (u8) c;
+  } else {
+#ifdef HAVE_BLAKE2B
+    blake2b(dst, 16, buf, len, keylen ? key : NULL, keylen);
+#else
+    (void) dst; (void) key; (void) keylen; (void) buf; (void) len;
+    FATAL("This build has BLAKE2b integrity disabled (configure with "
+          "--enable-blake2b).");
+#endif
+  }
+}
+static bool integrity_match(const u8 a[BHDR_HASH_MAX],
+                            const u8 b[BHDR_HASH_MAX], int algo) {
+  return !xpar_memcmp(a, b, algo == INTEGRITY_CRC32C ? 4 : 16);
+}
+static void encode4(xpar_file * in, xpar_file * out, int ifactor,
+                    int algo, const u8 * key, sz keylen, u64 total_bytes) {
+  xpar_notty(out);
   u8 * in_buffer, * o1, * o2;
   int ibs = compute_interlacing_bs(ifactor);
-  in_buffer = xmalloc(ibs * K), o1 = xmalloc(ibs * N), o2 = xmalloc(ibs * N);
-  block_hdr bhdr;  write_header(out, ifactor);
-  for (size_t n; n = xfread(in_buffer, ibs * K, in); ) {
-    if(n < ibs * K) memset(in_buffer + n, 0, ibs * K - n);
-  #if defined(XPAR_OPENMP)
-    #pragma omp parallel for if(ifactor == 3)
-  #endif
-    Fi(ibs, rse32(in_buffer + i * K, o1 + i * N));
+  in_buffer = xpar_malloc(ibs * K), o1 = xpar_malloc(ibs * N), o2 = xpar_malloc(ibs * N);
+  block_hdr bhdr;
+  file_hdr fh = { .ifactor = ifactor, .integrity = algo,
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
+  write_header(out, fh);
+  u32 seq = 0;
+  for (size_t n; n = xpar_xread(in, in_buffer, ibs * K); seq++) {
+    if(n < ibs * K) xpar_memset(in_buffer + n, 0, ibs * K - n);
+    rse32_scatter(in_buffer, o1, ibs);
+    if (ifactor == 3) {
+      struct _pf_ctx_rse32 c = { o1 };
+      xpar_parallel_for(ibs, _pf_fn_rse32, &c);
+    } else {
+      Fi(ibs, rse32_inplace(o1 + i * N));
+    }
     do_interlacing(o1, o2, ifactor);
-    xfwrite(o2, ibs * N, out);
-    bhdr.bytes = n; bhdr.crc = crc32c(in_buffer, n);
-    write_block_header(out, bhdr);
+    xpar_xwrite(out, o2, ibs * N);
+    bhdr.bytes = n; bhdr.seq = seq;
+    integrity_tag(bhdr.hash, algo, key, keylen, in_buffer, n);
+    write_block_header(out, bhdr, algo);
   }
-  free(in_buffer), free(o1), free(o2); xfclose(out);
+  xpar_free(in_buffer), xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
-static void encode3(mmap_t in, FILE * out, int ifactor) {
-  notty(out);
-  u8 * in_buffer, * o1, * o2;
+static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
+                    int algo, const u8 * key, sz keylen) {
+  xpar_notty(out);
+  u8 * o1, * o2;
   int ibs = compute_interlacing_bs(ifactor);
-  in_buffer = xmalloc(ibs * K), o1 = xmalloc(ibs * N), o2 = xmalloc(ibs * N);
-  block_hdr bhdr;  write_header(out, ifactor);
-  for (sz n;
-       n = MIN(in.size, ibs * K), memcpy(in_buffer, in.map, n), n;
-       in.size -= n, in.map += n) {
-    if(n < ibs * K) memset(in_buffer + n, 0, ibs * K - n);
-  #if defined(XPAR_OPENMP)
-    #pragma omp parallel for if(ifactor == 3)
-  #endif
-    Fi(ibs, rse32(in_buffer + i * K, o1 + i * N));
+  o1 = xpar_malloc(ibs * N), o2 = xpar_malloc(ibs * N);
+  block_hdr bhdr;
+  file_hdr fh = { .ifactor = ifactor, .integrity = algo,
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
+  write_header(out, fh);
+  u32 seq = 0;
+  for (sz n; n = MIN(in.size, ibs * K), n; in.size -= n, in.map += n, seq++) {
+    rse32_scatter_pad(in.map, n, o1, ibs);
+    if (ifactor == 3) {
+      struct _pf_ctx_rse32 c = { o1 };
+      xpar_parallel_for(ibs, _pf_fn_rse32, &c);
+    } else {
+      Fi(ibs, rse32_inplace(o1 + i * N));
+    }
     do_interlacing(o1, o2, ifactor);
-    xfwrite(o2, ibs * N, out);
-    bhdr.bytes = n; bhdr.crc = crc32c(in_buffer, n);
-    write_block_header(out, bhdr);
+    xpar_xwrite(out, o2, ibs * N);
+    bhdr.bytes = n; bhdr.seq = seq;
+    integrity_tag(bhdr.hash, algo, key, keylen, in.map, n);
+    write_block_header(out, bhdr, algo);
   }
-  free(in_buffer), free(o1), free(o2); xfclose(out);
+  xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #endif
-static void decode4(FILE * in, FILE * out, int force, int ifactor_override,
-             bool quiet, bool verbose) {
-  notty(in);
-  u8 * in1, * in2, * out_buffer;  int laces = 0, ecc = 0;
-  block_hdr bhdr; u8 tmp[8];
-  int ifactor = read_header(in, force, ifactor_override);
-  sz ibs = compute_interlacing_bs(ifactor);
-  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N);
-  out_buffer = xmalloc(ibs * K);
-  for (sz n; n = xfread(in1, ibs * N, in); laces++) {
+static void decode4(xpar_file * in, xpar_file * out, int force, int ifactor_override,
+             bool quiet, bool verbose, const u8 * key, sz keylen) {
+  xpar_notty(in);
+  u8 * in1, * in2, * out_buffer;  u32 laces = 0;
+  xpar_atomic_int ecc = 0;
+  u64 bytes_out = 0;
+  block_hdr bhdr; u8 tmp[24];
+  file_hdr fh = read_header(in, force, ifactor_override);
+  if (fh.ifactor == 4)
+    FATAL("File is a systematic .xpa; pass -s to decode it.");
+  if (fh.auth_flag && !keylen) FATAL("File requires --auth=<keyfile>.");
+  if (!fh.auth_flag && keylen) FATAL("File is not authenticated; drop --auth.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  sz ibs = compute_interlacing_bs(fh.ifactor);
+  in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
+  out_buffer = xpar_malloc(ibs * K);
+  for (sz n; n = xpar_xread(in, in1, ibs * N); laces++) {
     if(n < ibs * N) {
       if (!quiet)
-        fprintf(stderr, "Short read, lace %u (bytes %zu-%zu).\n",
+        xpar_fprintf(xpar_stderr, "Short read, lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
-      if (!force) exit(1);
-      memset(in1 + n, 0, ibs * N - n);
+      if (!force) xpar_exit(1);
+      xpar_memset(in1 + n, 0, ibs * N - n);
     }
-    if(xfread(tmp, 8, in) != 8) {
+    if(xpar_xread(in, tmp, bsize) != bsize) {
       if (!quiet)
-        fprintf(stderr,
+        xpar_fprintf(xpar_stderr,
           "Short read (block header), lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
-      if (!force) exit(1);
+      if (!force) xpar_exit(1);
     }
-    bhdr = parse_block_header(tmp, force);
-    do_interlacing(in1, in2, ifactor);
-  #if defined(XPAR_OPENMP)
-    #pragma omp parallel for if(ifactor == 3)
-  #endif
-    Fi(ibs,
-      int n = rsd32(in2 + i * N);
-      if (n < 0) {
-        // POSIX requires single I/O function calls to be thread-safe.
-        {
-        const unsigned lace_ibs = laces * ibs + i;
-        if (!quiet)
-          fprintf(stderr,
-            "Block %u (lace %u, bytes %u-%u) irrecoverable.\n",
-            lace_ibs, laces, lace_ibs * N, lace_ibs * N + N - 1);
-        if (!force) exit(1);
-        }
-      } else ecc += n;
-      memcpy(out_buffer + i * K, in2 + i * N, K);
-    )
-    sz size = MIN(ibs * K, bhdr.bytes);
-    u32 crc = crc32c(out_buffer, size);
-    if (crc != bhdr.crc) {
+    bhdr = parse_block_header(tmp, algo, force);
+    if (bhdr.seq != laces) {
       if (!quiet)
-        fprintf(stderr, "CRC mismatch, block %zu (lace %u, bytes %zu-%zu).\n",
-          laces * ibs, laces, laces * ibs * N, laces * ibs * N + size - 1);
-      if (!force) exit(1);
+        xpar_fprintf(xpar_stderr, "Lace %u out of order (header says %u).\n",
+          laces, bhdr.seq);
+      if (!force) xpar_exit(1);
     }
-    xfwrite(out_buffer, size, out);
+    do_interlacing(in1, in2, fh.ifactor);
+    struct _pf_ctx_decode c = {
+      in2, out_buffer, &ecc, NULL, laces, (int) ibs, quiet, force, false
+    };
+    if (fh.ifactor == 3) xpar_parallel_for(ibs, _pf_fn_decode, &c);
+    else                 Fi(ibs, _pf_fn_decode(i, &c));
+    sz size = MIN(ibs * K, bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "%s mismatch, lace %u (bytes %zu-%zu).\n",
+          fh.auth_flag ? "MAC" : "Integrity",
+          laces, laces * ibs * N, laces * ibs * N + size - 1);
+      if (!force) xpar_exit(1);
+    }
+    xpar_xwrite(out, out_buffer, size);
+    bytes_out += size;
   }
-  free(in1), free(in2), free(out_buffer); xfclose(out);
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: decoded %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    if (!force) xpar_exit(1);
+  }
+  xpar_free(in1), xpar_free(in2), xpar_free(out_buffer); xpar_xclose(out);
   if (!quiet && verbose)
-    fprintf(stderr, "Decoded %u laces, %u errors corrected.\n", laces, ecc);
+    xpar_fprintf(xpar_stderr, "Decoded %u laces, %u errors corrected.\n",
+                 laces, (unsigned) xpar_atomic_load_int(&ecc));
 }
 #ifdef XPAR_ALLOW_MAPPING
-static void decode3(mmap_t in, FILE * out, int force, int ifactor_override,
-             bool quiet, bool verbose) {
-  u8 * in1, * in2, * out_buffer;  int laces = 0, ecc = 0;
-  block_hdr bhdr; u8 tmp[8];
-  int ifactor = read_header_from_map(in, force, ifactor_override);
-  in.size -= 5 + N - K; in.map += 5 + N - K; // Skip the header.
-  sz ibs = compute_interlacing_bs(ifactor);
-  in1 = xmalloc(ibs * N), in2 = xmalloc(ibs * N);
-  out_buffer = xmalloc(ibs * K);
+static void decode3(xpar_mmap in, xpar_file * out, int force, int ifactor_override,
+             bool quiet, bool verbose, const u8 * key, sz keylen) {
+  u8 * in1, * in2, * out_buffer;  u32 laces = 0;
+  xpar_atomic_int ecc = 0;
+  u64 bytes_out = 0;
+  block_hdr bhdr; u8 tmp[24];
+  file_hdr fh = read_header_from_map(in, force, ifactor_override);
+  if (fh.ifactor == 4)
+    FATAL("File is a systematic .xpa; pass -s to decode it.");
+  if (fh.auth_flag && !keylen) FATAL("File requires --auth=<keyfile>.");
+  if (!fh.auth_flag && keylen) FATAL("File is not authenticated; drop --auth.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  in.size -= 5 + N - K; in.map += 5 + N - K; /*  Skip the header.  */
+  sz ibs = compute_interlacing_bs(fh.ifactor);
+  in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
+  out_buffer = xpar_malloc(ibs * K);
   for (sz n;
-      n = MIN(in.size, ibs * N), memcpy(in1, in.map, n),
+      n = MIN(in.size, ibs * N), xpar_memcpy(in1, in.map, n),
           in.size -= n, in.map += n, n
       ; laces++) {
     if(n < ibs * N) {
       if (!quiet)
-        fprintf(stderr, "Short read, lace %u (bytes %zu-%zu).\n",
+        xpar_fprintf(xpar_stderr, "Short read, lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
-      if (!force) exit(1);
-      memset(in1 + n, 0, ibs * N - n);
+      if (!force) xpar_exit(1);
+      xpar_memset(in1 + n, 0, ibs * N - n);
     }
-    if (in.size < 8) {
+    if (in.size < bsize) {
       if (!quiet)
-        fprintf(stderr,
+        xpar_fprintf(xpar_stderr,
           "Short read (block header), lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
-      if (!force) exit(1);
-      memcpy(tmp, in.map, in.size); in.map += in.size; in.size = 0;
+      if (!force) xpar_exit(1);
+      xpar_memcpy(tmp, in.map, in.size); in.map += in.size; in.size = 0;
     } else {
-      memcpy(tmp, in.map, 8); in.size -= 8; in.map += 8;
+      xpar_memcpy(tmp, in.map, bsize); in.size -= bsize; in.map += bsize;
     }
-    bhdr = parse_block_header(tmp, force);
-    do_interlacing(in1, in2, ifactor);
-  #if defined(XPAR_OPENMP)
-    #pragma omp parallel for if(ifactor == 3)
-  #endif
-    Fi(ibs,
-      int n = rsd32(in2 + i * N);
-      if (n < 0) {
-        {
-        const unsigned lace_ibs = laces * ibs + i;
-        if (!quiet)
-          fprintf(stderr,
-            "Block %u (lace %u, bytes %u-%u) irrecoverable.\n",
-            lace_ibs, laces, lace_ibs * N, lace_ibs * N + N - 1);
-        if (!force) exit(1);
-        }
-      } else ecc += n;
-      memcpy(out_buffer + i * K, in2 + i * N, K);
-    )
-    sz size = MIN(ibs * K, bhdr.bytes);
-    u32 crc = crc32c(out_buffer, size);
-    if (crc != bhdr.crc) {
+    bhdr = parse_block_header(tmp, algo, force);
+    if (bhdr.seq != laces) {
       if (!quiet)
-        fprintf(stderr, "CRC mismatch, block %zu (lace %u, bytes %zu-%zu).\n",
-          laces * ibs, laces, laces * ibs * N, laces * ibs * N + size - 1);
-      if (!force) exit(1);
+        xpar_fprintf(xpar_stderr, "Lace %u out of order (header says %u).\n",
+          laces, bhdr.seq);
+      if (!force) xpar_exit(1);
     }
-    xfwrite(out_buffer, size, out);
+    do_interlacing(in1, in2, fh.ifactor);
+    struct _pf_ctx_decode c = {
+      in2, out_buffer, &ecc, NULL, laces, (int) ibs, quiet, force, false
+    };
+    if (fh.ifactor == 3) xpar_parallel_for(ibs, _pf_fn_decode, &c);
+    else                 Fi(ibs, _pf_fn_decode(i, &c));
+    sz size = MIN(ibs * K, bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "%s mismatch, lace %u (bytes %zu-%zu).\n",
+          fh.auth_flag ? "MAC" : "Integrity",
+          laces, laces * ibs * N, laces * ibs * N + size - 1);
+      if (!force) xpar_exit(1);
+    }
+    xpar_xwrite(out, out_buffer, size);
+    bytes_out += size;
   }
-  free(in1), free(in2), free(out_buffer); xfclose(out);
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: decoded %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    if (!force) xpar_exit(1);
+  }
+  xpar_free(in1), xpar_free(in2), xpar_free(out_buffer); xpar_xclose(out);
   if (!quiet && verbose)
-    fprintf(stderr, "Decoded %u laces, %u errors corrected.\n", laces, ecc);
+    xpar_fprintf(xpar_stderr, "Decoded %u laces, %u errors corrected.\n",
+                 laces, (unsigned) xpar_atomic_load_int(&ecc));
 }
 #endif
 
-static struct stat validate_file(const char * filename) {
-  struct stat st;
-  if (stat(filename, &st) == -1) FATAL_PERROR("stat");
-  if (S_ISDIR(st.st_mode)) FATAL("Input is a directory.");
+static void encode_systematic4(xpar_file * in, xpar_file * out,
+                               int algo, const u8 * key, sz keylen,
+                               u64 total_bytes) {
+  xpar_notty(out);
+  u8 buf[K], block[N];  block_hdr bhdr;
+  file_hdr fh = { .ifactor = 4, .integrity = algo,
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
+  write_header(out, fh);
+  u32 seq = 0;
+  for (sz n; (n = xpar_xread(in, buf, K)); seq++) {
+    if (n < K) xpar_memset(buf + n, 0, K - n);
+    rse32(buf, block);
+    xpar_xwrite(out, block + K, N - K);
+    bhdr.bytes = n; bhdr.seq = seq;
+    integrity_tag(bhdr.hash, algo, key, keylen, buf, n);
+    write_block_header(out, bhdr, algo);
+    if (n < K) break;
+  }
+  xpar_xclose(out);
+}
+#ifdef XPAR_ALLOW_MAPPING
+static void encode_systematic3(xpar_mmap in, xpar_file * out,
+                               int algo, const u8 * key, sz keylen) {
+  xpar_notty(out);
+  u8 buf[K], block[N];  block_hdr bhdr;
+  file_hdr fh = { .ifactor = 4, .integrity = algo,
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
+  write_header(out, fh);
+  u32 seq = 0;
+  while (in.size) {
+    sz n = MIN(in.size, (sz)K);
+    xpar_memcpy(buf, in.map, n);
+    if (n < K) xpar_memset(buf + n, 0, K - n);
+    rse32(buf, block);
+    xpar_xwrite(out, block + K, N - K);
+    bhdr.bytes = n; bhdr.seq = seq++;
+    integrity_tag(bhdr.hash, algo, key, keylen, in.map, n);
+    write_block_header(out, bhdr, algo);
+    in.size -= n; in.map += n;
+  }
+  xpar_xclose(out);
+}
+#endif
+static void decode_systematic4(xpar_file * data_in, xpar_file * parity_in, xpar_file * out,
+                     bool force, bool quiet, bool verbose,
+                     const u8 * key, sz keylen) {
+  xpar_notty(parity_in);
+  u8 block[N], tmp[24];  u32 blk = 0, ecc = 0;  u64 bytes_out = 0;
+  file_hdr fh = read_header(parity_in, force, 4);
+  if (fh.ifactor != 4)
+    FATAL("File is not a systematic .xpa; omit -s to decode it.");
+  if (fh.auth_flag && !keylen) FATAL("File requires --auth=<keyfile>.");
+  if (!fh.auth_flag && keylen) FATAL("File is not authenticated; drop --auth.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  for (;;) {
+    sz pn = xpar_xread(parity_in, block + K, N - K);
+    if (!pn) break;
+    if (pn < (sz)(N - K)) {
+      FATAL_UNLESS("Short parity block.", !force);
+      xpar_memset(block + K + pn, 0, (N - K) - pn);
+    }
+    if (xpar_xread(parity_in, tmp, bsize) != bsize)
+      FATAL_UNLESS("Short block header.", !force);
+    block_hdr bhdr = parse_block_header(tmp, algo, force);
+    if (bhdr.seq != blk) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "Block %u out of order (header says %u).\n",
+          blk, bhdr.seq);
+      if (!force) xpar_exit(1);
+    }
+    sz dn = xpar_xread(data_in, block, K);
+    if (dn < (sz)K) xpar_memset(block + dn, 0, K - dn);
+    int n = rsd32(block);
+    if (n < 0) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u irrecoverable.\n", blk);
+      if (!force) xpar_exit(1);
+    } else ecc += n;
+    sz size = MIN((sz)K, (sz)bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, block, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
+          fh.auth_flag ? "MAC" : "Integrity", blk);
+      if (!force) xpar_exit(1);
+    }
+    xpar_xwrite(out, block, size);
+    bytes_out += size;
+    blk++;
+    if (size < (sz)K) break;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: decoded %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    if (!force) xpar_exit(1);
+  }
+  xpar_xclose(out);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Decoded %u blocks, %u errors corrected.\n", blk, ecc);
+}
+#ifdef XPAR_ALLOW_MAPPING
+static void decode_systematic3(xpar_mmap data_in, xpar_file * parity_in, xpar_file * out,
+                     bool force, bool quiet, bool verbose,
+                     const u8 * key, sz keylen) {
+  xpar_notty(parity_in);
+  u8 block[N], tmp[24];  u32 blk = 0, ecc = 0;  u64 bytes_out = 0;
+  file_hdr fh = read_header(parity_in, force, 4);
+  if (fh.ifactor != 4)
+    FATAL("File is not a systematic .xpa; omit -s to decode it.");
+  if (fh.auth_flag && !keylen) FATAL("File requires --auth=<keyfile>.");
+  if (!fh.auth_flag && keylen) FATAL("File is not authenticated; drop --auth.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  for (;;) {
+    sz pn = xpar_xread(parity_in, block + K, N - K);
+    if (!pn) break;
+    if (pn < (sz)(N - K)) {
+      FATAL_UNLESS("Short parity block.", !force);
+      xpar_memset(block + K + pn, 0, (N - K) - pn);
+    }
+    if (xpar_xread(parity_in, tmp, bsize) != bsize)
+      FATAL_UNLESS("Short block header.", !force);
+    block_hdr bhdr = parse_block_header(tmp, algo, force);
+    if (bhdr.seq != blk) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "Block %u out of order (header says %u).\n",
+          blk, bhdr.seq);
+      if (!force) xpar_exit(1);
+    }
+    sz dn = MIN(data_in.size, (sz)K);
+    xpar_memcpy(block, data_in.map, dn);
+    if (dn < (sz)K) xpar_memset(block + dn, 0, K - dn);
+    data_in.size -= dn; data_in.map += dn;
+    int n = rsd32(block);
+    if (n < 0) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u irrecoverable.\n", blk);
+      if (!force) xpar_exit(1);
+    } else ecc += n;
+    sz size = MIN((sz)K, (sz)bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, block, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet)
+        xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
+          fh.auth_flag ? "MAC" : "Integrity", blk);
+      if (!force) xpar_exit(1);
+    }
+    xpar_xwrite(out, block, size);
+    bytes_out += size;
+    blk++;
+    if (size < (sz)K) break;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: decoded %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    if (!force) xpar_exit(1);
+  }
+  xpar_xclose(out);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Decoded %u blocks, %u errors corrected.\n", blk, ecc);
+}
+#endif
+
+/*  Integrity check: decode path sans output write, continues on errors.  */
+static int test4(xpar_file * in, int ifactor_override, bool quiet, bool verbose,
+                 const u8 * key, sz keylen) {
+  xpar_notty(in);
+  u8 * in1, * in2, * out_buffer;
+  u32 laces = 0;
+  xpar_atomic_int ecc = 0, bad = 0;
+  u64 bytes_out = 0;
+  block_hdr bhdr; u8 tmp[24];
+  file_hdr fh = read_header(in, true, ifactor_override);
+  if (fh.ifactor == 4)
+    FATAL("File is a systematic .xpa; pass -s to test it.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  sz ibs = compute_interlacing_bs(fh.ifactor);
+  in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
+  out_buffer = xpar_malloc(ibs * K);
+  for (sz n; n = xpar_xread(in, in1, ibs * N); laces++) {
+    if (n < ibs * N) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Short read, lace %u.\n", laces);
+      xpar_atomic_add_int(&bad, 1); xpar_memset(in1 + n, 0, ibs * N - n);
+    }
+    if (xpar_xread(in, tmp, bsize) != bsize) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Short block header, lace %u.\n", laces);
+      xpar_atomic_add_int(&bad, 1);
+    }
+    bhdr = parse_block_header(tmp, algo, true);
+    if (bhdr.seq != laces) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Lace %u out of order (header says %u).\n",
+        laces, bhdr.seq);
+      xpar_atomic_add_int(&bad, 1);
+    }
+    do_interlacing(in1, in2, fh.ifactor);
+    struct _pf_ctx_decode c = {
+      in2, out_buffer, &ecc, &bad, laces, (int) ibs, quiet, false, true
+    };
+    if (fh.ifactor == 3) xpar_parallel_for(ibs, _pf_fn_decode, &c);
+    else                 Fi(ibs, _pf_fn_decode(i, &c));
+    sz size = MIN(ibs * K, bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, lace %u.\n",
+        fh.auth_flag ? "MAC" : "Integrity", laces);
+      xpar_atomic_add_int(&bad, 1);
+    }
+    bytes_out += size;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: tested %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    xpar_atomic_add_int(&bad, 1);
+  }
+  xpar_free(in1), xpar_free(in2), xpar_free(out_buffer);
+  int ecc_val = xpar_atomic_load_int(&ecc), bad_val = xpar_atomic_load_int(&bad);
+  if (ecc_val && !quiet)
+    xpar_fprintf(xpar_stderr,
+      "%u byte(s) needed RS correction: file is not pristine.\n",
+      (unsigned) ecc_val);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Tested %u laces, %u errors corrected.\n",
+                 laces, (unsigned) ecc_val);
+  return bad_val + (ecc_val ? 1 : 0);
+}
+#ifdef XPAR_ALLOW_MAPPING
+static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
+                 const u8 * key, sz keylen) {
+  u8 * in1, * in2, * out_buffer;
+  u32 laces = 0;
+  xpar_atomic_int ecc = 0, bad = 0;
+  u64 bytes_out = 0;
+  block_hdr bhdr; u8 tmp[24];
+  file_hdr fh = read_header_from_map(in, true, ifactor_override);
+  if (fh.ifactor == 4)
+    FATAL("File is a systematic .xpa; pass -s to test it.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  in.size -= 5 + N - K; in.map += 5 + N - K;
+  sz ibs = compute_interlacing_bs(fh.ifactor);
+  in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
+  out_buffer = xpar_malloc(ibs * K);
+  for (sz n;
+      n = MIN(in.size, ibs * N), xpar_memcpy(in1, in.map, n),
+          in.size -= n, in.map += n, n
+      ; laces++) {
+    if (n < ibs * N) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Short read, lace %u.\n", laces);
+      xpar_atomic_add_int(&bad, 1); xpar_memset(in1 + n, 0, ibs * N - n);
+    }
+    if (in.size < bsize) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Short block header, lace %u.\n", laces);
+      xpar_atomic_add_int(&bad, 1);
+      xpar_memcpy(tmp, in.map, in.size); in.map += in.size; in.size = 0;
+    } else {
+      xpar_memcpy(tmp, in.map, bsize); in.size -= bsize; in.map += bsize;
+    }
+    bhdr = parse_block_header(tmp, algo, true);
+    if (bhdr.seq != laces) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Lace %u out of order (header says %u).\n",
+        laces, bhdr.seq);
+      xpar_atomic_add_int(&bad, 1);
+    }
+    do_interlacing(in1, in2, fh.ifactor);
+    struct _pf_ctx_decode c = {
+      in2, out_buffer, &ecc, &bad, laces, (int) ibs, quiet, false, true
+    };
+    if (fh.ifactor == 3) xpar_parallel_for(ibs, _pf_fn_decode, &c);
+    else                 Fi(ibs, _pf_fn_decode(i, &c));
+    sz size = MIN(ibs * K, bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, lace %u.\n",
+        fh.auth_flag ? "MAC" : "Integrity", laces);
+      xpar_atomic_add_int(&bad, 1);
+    }
+    bytes_out += size;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: tested %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    xpar_atomic_add_int(&bad, 1);
+  }
+  xpar_free(in1), xpar_free(in2), xpar_free(out_buffer);
+  int ecc_val = xpar_atomic_load_int(&ecc), bad_val = xpar_atomic_load_int(&bad);
+  if (ecc_val && !quiet)
+    xpar_fprintf(xpar_stderr,
+      "%u byte(s) needed RS correction: file is not pristine.\n",
+      (unsigned) ecc_val);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Tested %u laces, %u errors corrected.\n",
+                 laces, (unsigned) ecc_val);
+  return bad_val + (ecc_val ? 1 : 0);
+}
+#endif
+static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
+                             bool quiet, bool verbose,
+                             const u8 * key, sz keylen) {
+  xpar_notty(parity_in);
+  u8 block[N], tmp[24];  u32 blk = 0, ecc = 0, bad = 0;  u64 bytes_out = 0;
+  file_hdr fh = read_header(parity_in, true, 4);
+  if (fh.ifactor != 4)
+    FATAL("File is not a systematic .xpa; omit -s to test it.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  for (;;) {
+    sz pn = xpar_xread(parity_in, block + K, N - K);
+    if (!pn) break;
+    if (pn < (sz)(N - K)) { bad++; break; }
+    if (xpar_xread(parity_in, tmp, bsize) != bsize) { bad++; break; }
+    block_hdr bhdr = parse_block_header(tmp, algo, true);
+    if (bhdr.seq != blk) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u out of order (header says %u).\n",
+        blk, bhdr.seq);
+      bad++;
+    }
+    sz dn = xpar_xread(data_in, block, K);
+    if (dn < (sz)K) xpar_memset(block + dn, 0, K - dn);
+    int n = rsd32(block);
+    if (n < 0) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u irrecoverable.\n", blk);
+      bad++;
+    } else ecc += n;
+    sz size = MIN((sz)K, (sz)bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, block, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
+        fh.auth_flag ? "MAC" : "Integrity", blk);
+      bad++;
+    }
+    bytes_out += size;
+    blk++;
+    if (size < (sz)K) break;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: tested %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    bad++;
+  }
+  if (ecc && !quiet)
+    xpar_fprintf(xpar_stderr,
+      "%u byte(s) needed RS correction: file is not pristine.\n", ecc);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Tested %u blocks, %u errors corrected.\n", blk, ecc);
+  return bad + (ecc ? 1 : 0);
+}
+#ifdef XPAR_ALLOW_MAPPING
+static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
+                             bool quiet, bool verbose,
+                             const u8 * key, sz keylen) {
+  xpar_notty(parity_in);
+  u8 block[N], tmp[24];  u32 blk = 0, ecc = 0, bad = 0;  u64 bytes_out = 0;
+  file_hdr fh = read_header(parity_in, true, 4);
+  if (fh.ifactor != 4)
+    FATAL("File is not a systematic .xpa; omit -s to test it.");
+  int algo = fh.integrity;
+  sz bsize = bhdr_size(algo);
+  for (;;) {
+    sz pn = xpar_xread(parity_in, block + K, N - K);
+    if (!pn) break;
+    if (pn < (sz)(N - K)) { bad++; break; }
+    if (xpar_xread(parity_in, tmp, bsize) != bsize) { bad++; break; }
+    block_hdr bhdr = parse_block_header(tmp, algo, true);
+    if (bhdr.seq != blk) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u out of order (header says %u).\n",
+        blk, bhdr.seq);
+      bad++;
+    }
+    sz dn = MIN(data_in.size, (sz)K);
+    xpar_memcpy(block, data_in.map, dn);
+    if (dn < (sz)K) xpar_memset(block + dn, 0, K - dn);
+    data_in.size -= dn; data_in.map += dn;
+    int n = rsd32(block);
+    if (n < 0) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "Block %u irrecoverable.\n", blk);
+      bad++;
+    } else ecc += n;
+    sz size = MIN((sz)K, (sz)bhdr.bytes);
+    u8 tag[BHDR_HASH_MAX];
+    integrity_tag(tag, algo, key, keylen, block, size);
+    if (!integrity_match(tag, bhdr.hash, algo)) {
+      if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
+        fh.auth_flag ? "MAC" : "Integrity", blk);
+      bad++;
+    }
+    bytes_out += size;
+    blk++;
+    if (size < (sz)K) break;
+  }
+  if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
+    if (!quiet)
+      xpar_fprintf(xpar_stderr,
+        "File truncated: tested %llu bytes, header declared %llu.\n",
+        (unsigned long long) bytes_out,
+        (unsigned long long) fh.total_bytes);
+    bad++;
+  }
+  if (ecc && !quiet)
+    xpar_fprintf(xpar_stderr,
+      "%u byte(s) needed RS correction: file is not pristine.\n", ecc);
+  if (!quiet && verbose)
+    xpar_fprintf(xpar_stderr, "Tested %u blocks, %u errors corrected.\n", blk, ecc);
+  return bad + (ecc ? 1 : 0);
+}
+#endif
+
+static xpar_stat_t validate_file(const char * filename) {
+  xpar_stat_t st;
+  if (xpar_stat_path(filename, &st) != 0) FATAL_PERROR("stat");
+  if (st.is_dir) FATAL("Input is a directory.");
+  if (!st.is_regular) FATAL("Input is not a regular file.");
   return st;
 }
-static FILE * open_output(joint_options_t o) {
-  FILE * out = stdout;
+static xpar_file * open_output(joint_options_t o) {
+  xpar_file * out = xpar_stdout;
   if (o.output_name) {
-    struct stat st;
-    memset(&st, 0, sizeof(struct stat));
-    int exists = stat(o.output_name, &st);
-    if ((st.st_size || S_ISDIR(st.st_mode)) && exists != -1 && !o.force)
+    xpar_stat_t st;
+    int exists = xpar_stat_path(o.output_name, &st);
+    if (exists == 0 && (st.size || st.is_dir) && !o.force)
       FATAL("Output file `%s' exists and is not empty.", o.output_name);
-    if (!(out = fopen(o.output_name, "wb"))) FATAL_PERROR("fopen");
+    /*  Refuse to truncate the input via O_TRUNCATE before we've read it.  */
+    if (exists == 0 && o.input_name
+        && xpar_same_file(o.input_name, o.output_name) == 1)
+      FATAL("Input and output refer to the same file.");
+    if (!(out = xpar_open(o.output_name, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE))) FATAL_PERROR("fopen");
   }
   return out;
 }
 void do_joint_encode(joint_options_t o) {
-  FILE * out = open_output(o), * in = stdin;
+  xpar_file * out = open_output(o), * in = xpar_stdin;
+  u64 total = (u64) -1;
   if (o.input_name) {
-    struct stat st = validate_file(o.input_name);
+    xpar_stat_t st = validate_file(o.input_name);
+    total = (u64) st.size;
     if(!o.no_map) {
       #if defined(XPAR_ALLOW_MAPPING)
-      mmap_t map = xpar_map(o.input_name);
+      xpar_mmap map = xpar_map(o.input_name);
       if (map.map) {
-        encode3(map, out, o.interlacing);
+        if (o.interlacing == 4)
+          encode_systematic3(map, out, o.integrity, o.auth_key, o.auth_keylen);
+        else
+          encode3(map, out, o.interlacing,
+                  o.integrity, o.auth_key, o.auth_keylen);
         xpar_unmap(&map);
         return;
       }
       #endif
     }
-    if (!(in = fopen(o.input_name, "rb"))) FATAL_PERROR("fopen");
+    if (!(in = xpar_open(o.input_name, XPAR_O_READ))) FATAL_PERROR("fopen");
   }
-  encode4(in, out, o.interlacing);
+  if (o.interlacing == 4)
+    encode_systematic4(in, out, o.integrity, o.auth_key, o.auth_keylen, total);
+  else
+    encode4(in, out, o.interlacing,
+            o.integrity, o.auth_key, o.auth_keylen, total);
 }
 void do_joint_decode(joint_options_t o) {
-  FILE * out = open_output(o), * in = stdin;
+  if (o.interlacing == 4) {
+    if (!o.output_name)
+      FATAL("Systematic mode requires a parity .xpa file.");
+    xpar_file * parity = xpar_open(o.output_name, XPAR_O_READ);
+    if (!parity) FATAL_PERROR("fopen");
+    if (o.input_name) {
+      validate_file(o.input_name);
+      if (!o.no_map) {
+        #if defined(XPAR_ALLOW_MAPPING)
+        xpar_mmap map = xpar_map(o.input_name);
+        if (map.map) {
+          decode_systematic3(map, parity, xpar_stdout,
+                             o.force, o.quiet, o.verbose,
+                             o.auth_key, o.auth_keylen);
+          xpar_unmap(&map);
+          xpar_close(parity);
+          return;
+        }
+        #endif
+      }
+      xpar_file * data = xpar_open(o.input_name, XPAR_O_READ);
+      if (!data) FATAL_PERROR("fopen");
+      decode_systematic4(data, parity, xpar_stdout, o.force, o.quiet, o.verbose,
+                         o.auth_key, o.auth_keylen);
+      xpar_close(data);
+    } else {
+      decode_systematic4(xpar_stdin, parity, xpar_stdout, o.force, o.quiet, o.verbose,
+                         o.auth_key, o.auth_keylen);
+    }
+    xpar_close(parity);
+    return;
+  }
+  xpar_file * out = open_output(o), * in = xpar_stdin;
   if (o.input_name) {
-    struct stat st = validate_file(o.input_name);
+    xpar_stat_t st = validate_file(o.input_name);
     if(!o.no_map) {
       #if defined(XPAR_ALLOW_MAPPING)
-      mmap_t map = xpar_map(o.input_name);
+      xpar_mmap map = xpar_map(o.input_name);
       if (map.map) {
-        decode3(map, out, o.force, o.interlacing, o.quiet, o.verbose);
+        decode3(map, out, o.force, o.interlacing, o.quiet, o.verbose,
+                o.auth_key, o.auth_keylen);
         xpar_unmap(&map);
         return;
       }
       #endif
     }
-    if (!(in = fopen(o.input_name, "rb"))) FATAL_PERROR("fopen");
+    if (!(in = xpar_open(o.input_name, XPAR_O_READ))) FATAL_PERROR("fopen");
   }
-  decode4(in, out, o.force, o.interlacing, o.quiet, o.verbose);
+  decode4(in, out, o.force, o.interlacing, o.quiet, o.verbose,
+          o.auth_key, o.auth_keylen);
+}
+void do_joint_test(joint_options_t o) {
+  int bad;
+  if (o.interlacing == 4) {
+    if (!o.output_name)
+      FATAL("Systematic mode requires a parity .xpa file.");
+    xpar_file * parity = xpar_open(o.output_name, XPAR_O_READ);
+    if (!parity) FATAL_PERROR("fopen");
+    if (o.input_name) {
+      validate_file(o.input_name);
+      if (!o.no_map) {
+        #if defined(XPAR_ALLOW_MAPPING)
+        xpar_mmap map = xpar_map(o.input_name);
+        if (map.map) {
+          bad = test_systematic3(map, parity, o.quiet, o.verbose,
+                                 o.auth_key, o.auth_keylen);
+          xpar_unmap(&map);
+          xpar_close(parity);
+          goto done;
+        }
+        #endif
+      }
+      xpar_file * data = xpar_open(o.input_name, XPAR_O_READ);
+      if (!data) FATAL_PERROR("fopen");
+      bad = test_systematic4(data, parity, o.quiet, o.verbose,
+                             o.auth_key, o.auth_keylen);
+      xpar_close(data);
+    } else {
+      bad = test_systematic4(xpar_stdin, parity, o.quiet, o.verbose,
+                             o.auth_key, o.auth_keylen);
+    }
+    xpar_close(parity);
+    goto done;
+  }
+  if (o.input_name) {
+    validate_file(o.input_name);
+    if (!o.no_map) {
+      #if defined(XPAR_ALLOW_MAPPING)
+      xpar_mmap map = xpar_map(o.input_name);
+      if (map.map) {
+        bad = test3(map, o.interlacing, o.quiet, o.verbose,
+                    o.auth_key, o.auth_keylen);
+        xpar_unmap(&map);
+        goto done;
+      }
+      #endif
+    }
+    xpar_file * in = xpar_open(o.input_name, XPAR_O_READ);
+    if (!in) FATAL_PERROR("fopen");
+    bad = test4(in, o.interlacing, o.quiet, o.verbose,
+                o.auth_key, o.auth_keylen);
+    xpar_close(in);
+  } else {
+    bad = test4(xpar_stdin, o.interlacing, o.quiet, o.verbose,
+                o.auth_key, o.auth_keylen);
+  }
+done:
+  if (bad) xpar_exit(1);
 }

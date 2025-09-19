@@ -21,24 +21,27 @@ section .text
 %ifdef MACHO
   global _xpar_x86_64_cpuflags
   global _crc32c_small_x86_64_sse42
-  global _rse32_x86_64_generic
-  global _rse32_x86_64_avx512
+  global _rse32_inplace_x86_64_generic
+  global _rse32_inplace_x86_64_avx512
+  global _rse32_scatter_x86_64
   global _crc32c_32k_x86_64_sse42
   global _xpar_leo_x86_64_cpuflags
   extern _PROD_GEN
 
   %define xpar_x86_64_cpuflags _xpar_x86_64_cpuflags
   %define crc32c_small_x86_64_sse42 _crc32c_small_x86_64_sse42
-  %define rse32_x86_64_generic _rse32_x86_64_generic
-  %define rse32_x86_64_avx512 _rse32_x86_64_avx512
+  %define rse32_inplace_x86_64_generic _rse32_inplace_x86_64_generic
+  %define rse32_inplace_x86_64_avx512 _rse32_inplace_x86_64_avx512
+  %define rse32_scatter_x86_64 _rse32_scatter_x86_64
   %define PROD_GEN _PROD_GEN
   %define crc32c_32k_x86_64_sse42 _crc32c_32k_x86_64_sse42
   %define xpar_leo_x86_64_cpuflags _xpar_leo_x86_64_cpuflags
 %else
   global xpar_x86_64_cpuflags
   global crc32c_small_x86_64_sse42
-  global rse32_x86_64_generic
-  global rse32_x86_64_avx512
+  global rse32_inplace_x86_64_generic
+  global rse32_inplace_x86_64_avx512
+  global rse32_scatter_x86_64
   global crc32c_32k_x86_64_sse42
   global xpar_leo_x86_64_cpuflags
   extern PROD_GEN
@@ -301,8 +304,14 @@ rse32_wipe_mask:
   db 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
 K equ 223
 T equ 32
-rse32_x86_64_generic:
-  mov rax, rsi
+N equ 255
+rse32_inplace_x86_64_generic:
+  ; Reserve 24 bytes of scratch (16 for xmm4 spill + 8 to realign rsp to 16).
+  ; SysV's red zone would let us use [rsp - 24] directly, but Win64 has no
+  ; red zone (writes below rsp can be clobbered by APCs or fault against the
+  ; stack guard page). The explicit slot works under both ABIs.
+  sub rsp, 24
+  mov rax, rdi
   mov rsi, rdi
   pxor xmm0, xmm0
   movdqu [rax + K + (T / 2)], xmm0
@@ -356,13 +365,11 @@ rse32_x86_64_generic:
   movdqa xmm3, xmm4
   pslld xmm3, 8
   por xmm3, xmm5
-  movdqa [rsp - 24], xmm4
-  movzx r10d, byte [rsp - 21]
+  movdqa [rsp], xmm4
+  movzx r10d, byte [rsp + 3]
   dec rdi
   jne .rse32_K_loop
-  mov ecx, K
-  mov rdi, rax
-  rep movsb
+  add rsp, 24
   ret
 
 ; =============================================================================
@@ -375,7 +382,8 @@ align 16
 rse32_shuf_mask:
   db 1, 0, 2, 4, 0, 0, 0, 0
   db 0, 0, 0, 0, 0, 0, 0, 0
-rse32_x86_64_avx512:
+rse32_inplace_x86_64_avx512:
+  mov rsi, rdi
   vxorps xmm0, xmm0, xmm0
   vmovups [rsi + K], ymm0
   movzx ecx, byte [rsi + K + T - 1]
@@ -420,12 +428,55 @@ rse32_x86_64_avx512:
   vpextrb r10d, xmm4, 3
   dec r8
   jne .rse32_K_loop
-  mov ecx, K
-  xchg rdi, rsi
-  rep movsb
   vzeroupper ; <-- If you remove this because you don't understand what it
   ret        ;     does, I will find you, and it will not end well for you.
 ; Unlike some people say, this is still necessary on AVX512 CPUs.
+
+; =============================================================================
+;  rse32_scatter_x86_64(const u8 * data, u8 * out, sz n_blocks):
+;  for i in [0, n_blocks), copy K=223 bytes from data+i*K to out+i*N. The
+;  tail store at offset 207 covers bytes [207..223), overlapping the
+;  preceding store by one byte and landing exactly at the K/N boundary
+;  (so the parity region at out+K is never touched).
+; =============================================================================
+rse32_scatter_x86_64:
+  test rdx, rdx
+  jz .scatter_done
+.scatter_loop:
+  movdqu xmm0, [rdi + 0]
+  movdqu [rsi + 0], xmm0
+  movdqu xmm0, [rdi + 16]
+  movdqu [rsi + 16], xmm0
+  movdqu xmm0, [rdi + 32]
+  movdqu [rsi + 32], xmm0
+  movdqu xmm0, [rdi + 48]
+  movdqu [rsi + 48], xmm0
+  movdqu xmm0, [rdi + 64]
+  movdqu [rsi + 64], xmm0
+  movdqu xmm0, [rdi + 80]
+  movdqu [rsi + 80], xmm0
+  movdqu xmm0, [rdi + 96]
+  movdqu [rsi + 96], xmm0
+  movdqu xmm0, [rdi + 112]
+  movdqu [rsi + 112], xmm0
+  movdqu xmm0, [rdi + 128]
+  movdqu [rsi + 128], xmm0
+  movdqu xmm0, [rdi + 144]
+  movdqu [rsi + 144], xmm0
+  movdqu xmm0, [rdi + 160]
+  movdqu [rsi + 160], xmm0
+  movdqu xmm0, [rdi + 176]
+  movdqu [rsi + 176], xmm0
+  movdqu xmm0, [rdi + 192]
+  movdqu [rsi + 192], xmm0
+  movdqu xmm0, [rdi + 207]
+  movdqu [rsi + 207], xmm0
+  add rdi, K
+  add rsi, N
+  dec rdx
+  jnz .scatter_loop
+.scatter_done:
+  ret
 
 ; Need .GNU-stack to mark the stack as non-executable on ELF targets.
 %ifdef ELF

@@ -1,19 +1,17 @@
-/*
-   Copyright (C) 2022-2025 Kamila Szewczyk
+/*  Copyright (C) 2022-2026 Kamila Szewczyk
 
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 3 of the License, or
-   (at your option) any later version.
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
 
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+    You should have received a copy of the GNU General Public License
+    along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "crc32c.h"
 
@@ -84,12 +82,10 @@ static const uint32_t crc32c_table[256] = {
   0xBE2DA0A5L, 0x4C4623A6L, 0x5F16D052L, 0xAD7D5351L
 };
 
-u32 crc32c_tabular(u32 crc, u8 * data, sz length) {
+u32 crc32c_tabular(u32 crc, const u8 * data, sz length) {
   Fi(length, crc = crc32c_table[(crc ^ data[i]) & 0xFFL] ^ (crc >> 8));
   return crc;
 }
-
-typedef u32 (*crc32c_func)(u32, u8 *, sz);
 
 #if defined(XPAR_X86_64)
   #ifdef HAVE_FUNC_ATTRIBUTE_SYSV_ABI
@@ -99,32 +95,30 @@ typedef u32 (*crc32c_func)(u32, u8 *, sz);
   #endif
 
   extern EXTERNAL_ABI int xpar_x86_64_cpuflags(void);
-  extern EXTERNAL_ABI u32 crc32c_small_x86_64_sse42(u32, u8 *, sz);
-  extern EXTERNAL_ABI u32 crc32c_32k_x86_64_sse42(u32, u8 *, sz);
+  extern EXTERNAL_ABI u32 crc32c_small_x86_64_sse42(u32, const u8 *, sz);
+  extern EXTERNAL_ABI u32 crc32c_32k_x86_64_sse42(u32, const u8 *, sz);
 #elif defined(XPAR_AARCH64)
   extern int crc32c_aarch64_cpuflags(void);
-  extern u32 crc32c_small_aarch64_neon(u32, u8 *, sz);
+  extern u32 crc32c_small_aarch64_neon(u32, const u8 *, sz);
 #endif
 
-u32 crc32c(u8 * data, sz length) {
+u32 crc32c_partial(u32 crc, const u8 * data, sz length) {
   static int cpuflags = -1;
 #if defined(XPAR_X86_64)
   if (cpuflags == -1) cpuflags = xpar_x86_64_cpuflags();
   if (cpuflags & 1) {
-    if (length >= 32767)
-      return crc32c_32k_x86_64_sse42(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
-    else
-      return crc32c_small_x86_64_sse42(0xFFFFFFFFL, data, length)
-                ^ 0xFFFFFFFFL;
-  } else
-    return crc32c_tabular(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
+    if (length >= 32767) return crc32c_32k_x86_64_sse42(crc, data, length);
+    else                 return crc32c_small_x86_64_sse42(crc, data, length);
+  }
+  return crc32c_tabular(crc, data, length);
 #elif defined(XPAR_AARCH64)
   if (cpuflags == -1) cpuflags = crc32c_aarch64_cpuflags();
-  if (cpuflags)
-    return crc32c_small_aarch64_neon(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
-  else
-    return crc32c_tabular(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
+  if (cpuflags) return crc32c_small_aarch64_neon(crc, data, length);
+  return crc32c_tabular(crc, data, length);
 #else
-  return crc32c_tabular(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
+  return crc32c_tabular(crc, data, length);
 #endif
+}
+u32 crc32c(const u8 * data, sz length) {
+  return crc32c_partial(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
 }

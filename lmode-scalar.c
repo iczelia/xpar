@@ -10,17 +10,10 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with this program. If not, see <http://www.gnu.org/licenses/>.  */
+    Portable scalar fallback for lmode. Compiled at x86_64 baseline.  */
 
-#ifndef _CRC32C_H_
-#define _CRC32C_H_
+#include "platform.h"
 
-#include "common.h"
+#define LEO_FUNC(n) n ## _scalar
 
-u32 crc32c(const u8 * data, sz length);
-
-/*  Streaming CRC; init with 0xFFFFFFFF, finalize by XORing it back.  */
-u32 crc32c_partial(u32 crc, const u8 * data, sz length);
-
-#endif
+#include "lmode-impl.h"

@@ -2,7 +2,54 @@ This file contains release notes for major and minor releases of xpar.
 For a complete list of source-level changes, consult the ChangeLog file.
 
 ===============================================================================
-v0.7 (xx-09-2025)
+v1.0 (16-04-2026)
+- File-format bump to v1.0. v0.x archives are rejected; re-encode any data
+  you still need. Future v1.x minors stay decodable by v1.0+ tools.
+- Joint header now records total input size and each lace carries a
+  sequence number, so a .xpa truncated at a lace boundary or with laces
+  reordered is detected and refused rather than silently decoding to
+  garbage.
+- Sharded header CRC32C now covers the version, shard count, shard
+  number, and total size fields in addition to the body, so a
+  shard_number bit-flip or a header-field swap between shards is
+  detected.
+- New '-H / --integrity' flag selects the per-lace / per-shard tag
+  algorithm: 'crc32c' (default, 32-bit hardware-accelerated) or
+  'blake2b' (128-bit BLAKE2b, 2^64 birthday-bound collision resistance
+  instead of 2^16). Supported in joint, systematic, and sharded
+  (Vandermonde + Leopard) modes.
+- New '--auth=<keyfile>' flag reads a 1-64 byte key and switches the
+  tag to a keyed BLAKE2b-128 MAC, implying '-H blake2b'. Decoders
+  require the same key; wrong / missing / spurious keys are all
+  rejected.
+- New '-s / --systematic' joint mode: encoder writes a parity-only .xpa
+  (about 18% of input) and the original file stays on disk unchanged.
+  Decoder reads the (possibly corrupted) original plus the parity file
+  and emits the corrected data to stdout. Incompatible with
+  --interlacing.
+- New '-t / --test' integrity-check mode for '-J', '-Js', '-W', and
+  '-L'. Runs the full correction pipeline but writes nothing; exits
+  non-zero on any unrecoverable block, shard shortfall, or tag
+  mismatch, and also flags pristine-but-corrected archives.
+- BLAKE2b has hand-vectorised SSE4.1 (also used on AArch64 via
+  sse2neon) and AVX2 kernels with runtime CPUID dispatch; a portable
+  reference C implementation is the fallback. '--disable-blake2b' at
+  configure time strips BLAKE2b and MAC support entirely.
+- Leopard-sharded decode is faster on aarch64 (Linux and Apple Silicon)
+  via sse2neon. Fix a missing return in the SSSE3 xor_mem4 path that
+  caused a latent heap overflow (surfaced as a segfault on Apple
+  Silicon, caught by ASan in CI) when reconstructing from missing
+  shards.
+- Self-check now covers the new features, including truncation-,
+  reorder-, and shard-number-swap rejection; the error-injection
+  helper is rewritten in C so Python is no longer required to run the
+  suite.
+- CI builds additionally run under Address and Undefined-Behaviour
+  sanitizers on Linux and macOS, catching regressions in the hot
+  decoder paths.
+
+===============================================================================
+v0.7 (19-09-2025)
 - Rename the sharded mode to Vandermonde-sharded mode (-S => -W).
 - Update building instructions for specific architecture and operating system
   combinations.
@@ -13,11 +60,6 @@ v0.7 (xx-09-2025)
   linearithmic time (@catid).
 - Fix a memory leak in gf256mat_inv used by the Vandermonde-sharded mode.
 - Update and reflow the man-page.
-
-===============================================================================
-v0.6 (10-09-2025)
-- Move the project page to iczelia/xpar.
-- Minor style changes and fixes to command parsing.
 
 ===============================================================================
 v0.6 (10-09-2025)

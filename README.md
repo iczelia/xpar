@@ -38,15 +38,23 @@ $ ./configure --enable-aarch64 && make && sudo make install
 $ ./configure && make && sudo make install
 ```
 
+NOTE TO LINUX DISTRIBUTION MAINTAINERS: Simple builds with no configure flags will likely max out at a couple hundred megabytes of encoding and decoding and miss out on most assembly-level optimisations to the tool. They are provided for compatibility with simple systems (Amiga, MS-DOS, etc). To get suitable performance as indicated with the benchmarks, build with OpenMP and follow the instructions above.
+
+### MS-DOS (DJGPP)
+
+xpar builds for MS-DOS via the DJGPP cross-toolchain, producing a 32-bit
+protected-mode binary that runs on Windows 9x DOS box, FreeDOS, DOSEMU2,
+DOSBox-X, or a real DOS machine with any DPMI host (CWSDPMI is bundled
+in the stubified `xpar.exe`). Configure with `--host=i586-pc-msdosdjgpp`.
+Limitations: single-threaded, no SIMD dispatch (i386 baseline), maximum
+file size 2 GiB (DJGPP's 32-bit `off_t`; FAT32's 4 GiB ceiling makes
+the remaining 2-4 GiB window narrow enough to punt on). Long-filename
+paths work on hosts with an LFN driver (Win9x, DOSEMU2, DOSBox-X,
+FreeDOS + DOSLFN); pure DOS is stuck with 8.3.
+
 ## Usage
 
 Consult the man page.
-
-## Disclaimer
-
-The file format will change until the stable version v1.0 is reached.
-Do not use xpar for critical data, do not expect backwards or forwards
-compatibility until then.
 
 ## Development 
 
@@ -80,28 +88,28 @@ InstalledDir: /usr/lib/llvm-19/bin
 % head -c 1000000000 /dev/urandom > data.bin   # 1 GB of random data to protect.
 % hyperfine './xpar -Jef data.bin'
 Benchmark 1: ./xpar -Jef data.bin
-  Time (mean ± σ):      5.508 s ±  0.055 s    [User: 4.093 s, System: 0.903 s]
-  Range (min … max):    5.360 s …  5.562 s    10 runs
+  Time (mean +/- stddev):      5.508 s +/- 0.055 s    [User: 4.093 s, System: 0.903 s]
+  Range (min ... max):       5.360 s ... 5.562 s    10 runs
 % hyperfine './xpar -Jdf data.bin.xpa'
 Benchmark 1: ./xpar -Jdf data.bin.xpa
-  Time (mean ± σ):      8.772 s ±  0.110 s    [User: 7.554 s, System: 0.783 s]
-  Range (min … max):    8.478 s …  8.893 s    10 runs
+  Time (mean +/- stddev):      8.772 s +/- 0.110 s    [User: 7.554 s, System: 0.783 s]
+  Range (min ... max):       8.478 s ... 8.893 s    10 runs
 % hyperfine 'rm -f *.par2 && par2create data.bin'
 Benchmark 1: rm -f *.par2 && par2create data.bin
-  Time (mean ± σ):      6.529 s ±  0.043 s    [User: 154.445 s, System: 0.217 s]
-  Range (min … max):    6.474 s …  6.624 s    10 runs
+  Time (mean +/- stddev):      6.529 s +/- 0.043 s    [User: 154.445 s, System: 0.217 s]
+  Range (min ... max):       6.474 s ... 6.624 s    10 runs
 % hyperfine 'par2 verify data.bin.par2'
 Benchmark 1: par2 verify data.bin.par2
-  Time (mean ± σ):      3.659 s ±  0.011 s    [User: 3.605 s, System: 0.058 s]
-  Range (min … max):    3.653 s …  3.688 s    10 runs
+  Time (mean +/- stddev):      3.659 s +/- 0.011 s    [User: 3.605 s, System: 0.058 s]
+  Range (min ... max):       3.653 s ... 3.688 s    10 runs
 % hyperfine 'rm data.bin.xpa* && ./xpar -Sef --dshards=50 --pshards=4 --out-prefix=data.bin.xpa data.bin'
 Benchmark 1: rm data.bin.xpa* && ./xpar -Sef --dshards=50 --pshards=4 --out-prefix=data.bin.xpa data.bin
-  Time (mean ± σ):      2.154 s ±  0.016 s    [User: 0.812 s, System: 0.782 s]
-  Range (min … max):    2.135 s …  2.188 s    10 runs
+  Time (mean +/- stddev):      2.154 s +/- 0.016 s    [User: 0.812 s, System: 0.782 s]
+  Range (min ... max):       2.135 s ... 2.188 s    10 runs
 % hyperfine './xpar -Sdf data.org data.bin.xpa*'
 Benchmark 1: ./xpar -Sdf data.org data.bin.xpa*
-  Time (mean ± σ):      1.480 s ±  0.014 s    [User: 0.029 s, System: 0.999 s]
-  Range (min … max):    1.464 s …  1.505 s    10 runs
+  Time (mean +/- stddev):      1.480 s +/- 0.014 s    [User: 0.029 s, System: 0.999 s]
+  Range (min ... max):       1.464 s ... 1.505 s    10 runs
 ```
 
 Numbers:
@@ -109,6 +117,3 @@ Numbers:
 - Encode + Decode speed on random data (sharded mode, 50 + 4): 1231MB/s, 34482MB/s respectively.
 - PAR2 Encode + Decode speed on random data (sharded mode): 153MB/s, 277MB/s.
 
-## TO-DO
-
-- Hook up sse2neon inside lmode.c

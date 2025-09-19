@@ -7,6 +7,8 @@ xpar \- an error/erasure code system guarding data integrity
 .RB [ " \-Je " / " \-Jd " ]
 .RB [ " \-hfvqVc " ]
 .RB [ " \-i/--interlacing\ # " ]
+.RB [ " \-H/--integrity=<algo> " ]
+.RB [ " \--auth=<keyfile> " ]
 .RB [ " \--no-mmap\ " ]
 [
 .I "names \&..."
@@ -14,17 +16,28 @@ xpar \- an error/erasure code system guarding data integrity
 .ll -8
 .br
 .B xpar
-.RB [ " \-We " / " \-Le " ]
-.RB [ " \-hfvqV " ]
-.RB [ " \--out-prefix\ # ", " \--dshards\ # ", " \--pshards\ # " ]
+.RB [ " \-Jse " / " \-Jsd " ]
+.RB [ " \-hfvqVc " ]
 .RB [ " \--no-mmap\ " ]
 [
 .I "names \&..."
 ]
 .br
 .B xpar
-.RB [ " \-Wd " / " \-Ld " ]
+.RB [ " \-We " / " \-Le " ]
 .RB [ " \-hfvqV " ]
+.RB [ " \--out-prefix\ # ", " \--dshards\ # ", " \--pshards\ # " ]
+.RB [ " \-H/--integrity=<algo> " ]
+.RB [ " \--auth=<keyfile> " ]
+.RB [ " \--no-mmap\ " ]
+[
+.I "names \&..."
+]
+.br
+.B xpar
+.RB [ " \-Wd " / " \-Ld " / " \-Wt " / " \-Lt " ]
+.RB [ " \-hfvqV " ]
+.RB [ " \--auth=<keyfile> " ]
 [
 .I "names \&..."
 ]
@@ -85,6 +98,87 @@ of e.g. Shamir's secret sharing scheme). As an added benefit, higher
 interlacing factors tend to result in faster processing (up to 50%) as the
 workload is more parallelisable.
 .PP
+The joint\-mode flag
+.B \-s/\-\-systematic
+switches to a systematic output layout. The encoder writes only the 32
+parity bytes per 223-byte input block (plus an 8-byte block header) into
+the
+.I .xpa
+file; the original data file is not copied and remains on disk under its
+original name, directly accessible without any decoding step. The
+.I .xpa
+is consequently around 18% of the input size rather than 114%. On decode,
+.B xpar
+reads the (possibly corrupted) original as the first positional argument
+and the parity
+.I .xpa
+as the second (inferred as
+.I original.xpa
+when only one argument is given), and writes the corrected data to
+standard output. Systematic mode is incompatible with
+.BR \-\-interlacing :
+each 223-byte block is handled independently and can correct up to 16
+byte errors. A file produced with
+.B \-s
+cannot be decoded without
+.BR \-s ,
+and vice versa;
+.B xpar
+detects the mismatch and refuses with a clear error.
+.PP
+The joint\-mode file format binds each lace to its position via a
+sequence number in the block header and records the total input size in
+the file header. Truncation at a lace boundary and lace reordering are
+both detected on decode and rejected with a clear error. By default, the
+per-lace integrity tag is a 32-bit CRC32C. The
+.B \-H/\-\-integrity
+flag selects the tag algorithm:
+.B crc32c
+(default) or
+.B blake2b
+(128-bit BLAKE2b tag, giving 2\[ha]64 birthday-bound collision resistance
+instead of CRC32C's 2\[ha]16). BLAKE2b mode grows the per-lace block
+header from 12 to 24 bytes; at interlacing factor 1 this raises the
+.I .xpa
+overhead from ~18% to ~24%; at factors 2 and 3 the change is
+negligible (one header per 65 kB or 16 MB respectively).
+.PP
+The
+.B \-H/\-\-integrity
+flag picks the per-lace / per-shard integrity tag: the default
+.B crc32c
+is a 32-bit hardware-accelerated CRC, and
+.B blake2b
+produces an unkeyed 128-bit BLAKE2b hash instead. In sharded modes
+this grows each shard header from 20 to 32 bytes.
+.PP
+The
+.B \-\-auth=<keyfile>
+flag reads a 1\(en64-byte key from
+.I keyfile
+and switches the integrity tag to a keyed BLAKE2b-128 MAC. It implies
+.BR "\-H blake2b" .
+An encode with
+.B \-\-auth
+can only be decoded with the same key; decoders presented with the
+wrong key, no key, or an extra key against a non-keyed file all refuse.
+Keep the key file outside the
+.I .xpa
+(xpar never embeds it). All three modes (CRC32C, BLAKE2b hash, BLAKE2b
+MAC) are supported in both joint and sharded modes, selected by the
+version byte of the file/shard header so decoders auto-detect.
+.PP
+The v1.0 file format is incompatible with v0.x tools: magic bytes and
+header fields moved, and a version check in the decoder rejects older
+archives. Re-encode anything you still need.
+.PP
+The sharded modes' per-shard header also changed at v1.0. The integrity
+tag (CRC32C, BLAKE2b hash, or BLAKE2b MAC) now covers the full header
+(version byte, shard count, shard number, total size) as well as the
+shard body, so a
+.I shard_number
+bit-flip or a header-field swap between shards is detected.
+.PP
 .B xpar
 in sharded encoding mode (
 .B \-We
@@ -120,6 +214,20 @@ Enable encoding mode.
 .B \-d --decode
 Enable decoding mode.
 .TP
+.B \-t --test
+Enable integrity-check mode. Reads the same inputs as
+.B \-d
+and writes no output; exits non-zero if the input cannot be recovered.
+For joint mode, runs the full error-correction pipeline and reports any
+unrecoverable block or CRC mismatch. For sharded mode, validates each
+shard's header and CRC and verifies that enough valid shards remain to
+reconstruct the original. Works with
+.BR \-J ,
+.BR \-Js ,
+.BR \-W ,
+and
+.BR \-L .
+.TP
 .B \-h --help
 Print a help message and exit.
 .TP
@@ -142,6 +250,35 @@ Write resultant data to standard output. Joint mode only.
 .B \-i --interlacing
 Specify the interlacing factor. Joint mode only.
 .TP
+.B \-s --systematic
+Joint mode only. Write a parity-only
+.I .xpa
+file that does not contain the original data; pair with
+.B \-e
+to encode. On decode, pass the (possibly corrupted) original and the
+parity
+.I .xpa
+as positional arguments; corrected data is written to standard output.
+Incompatible with
+.BR \-\-interlacing .
+.TP
+.B \-H --integrity=<algo>
+Joint mode only. Selects the per-lace integrity algorithm:
+.B crc32c
+(default, 32-bit hardware-accelerated CRC) or
+.B blake2b
+(128-bit BLAKE2b tag). BLAKE2b gives stronger collision resistance at a
+modest encode-time throughput cost and a larger per-lace block-header
+footprint.
+.TP
+.B \--auth=<keyfile>
+Joint mode only. Reads a 1\(en64-byte key from
+.I keyfile
+and enables keyed-MAC mode (implies
+.BR "\-H blake2b" ).
+Encode writes a keyed BLAKE2b tag per lace; decode requires the same
+key and rejects any mismatch.
+.TP
 .B \--no-mmap
 Disable memory mapping. Generally results in worse performance, as the
 fallback method is to read the file in chunks using the standard I/O library.
@@ -163,7 +300,7 @@ Specify the number of parity shards. Sharded mode only. Mandatory.
 Report bugs to: k@iczelia.net or open a ticket
 at https://github.com/iczelia/xpar.
 .SH COPYRIGHT NOTICE
-Copyright \(co 2022-2025 Kamila Szewczyk
+Copyright \(co 2022-2026 Kamila Szewczyk
 .PP
 Thanks to: Phil Karn (KA9Q), for the original implementation of the RS-joint
 code, licensed under the GPLv2-or-later license. Marshall Lochbaum for

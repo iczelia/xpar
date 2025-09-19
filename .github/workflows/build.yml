@@ -41,6 +41,7 @@ jobs:
         compiler: [ clang, gcc ]
         feature1: [ enable-x86_64, disable-x86_64 ]
         feature2: [ enable-openmp, disable-openmp ]
+        sanitizer: [ "none", "asan-ubsan" ]
     runs-on: ubuntu-latest
     steps:
     - uses: ilammy/setup-nasm@v1
@@ -57,12 +58,25 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=${{ matrix.compiler }} --${{ matrix.feature1 }} --${{ matrix.feature2 }}
+      run: |
+        if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
+          SAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+          ./configure CC=${{ matrix.compiler }} --${{ matrix.feature1 }} --${{ matrix.feature2 }} \
+            CFLAGS="-O1 $SAN" LDFLAGS="$SAN"
+        else
+          ./configure CC=${{ matrix.compiler }} --${{ matrix.feature1 }} --${{ matrix.feature2 }}
+        fi
     - name: Make
       run: make -j4 all
     - name: Self-check
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: make self-check
     - name: Verify x86_64 parity files
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: |
         tar -xvf xpar-${{ github.sha }}-guarded.tar.gz
         ./xpar -Jd xpar.xpa xpar.new.org
@@ -75,7 +89,8 @@ jobs:
       fail-fast: false
       matrix:
         feature: [ enable-x86_64, disable-x86_64 ]
-    runs-on: macOS-13
+        sanitizer: [ "none", "asan-ubsan" ]
+    runs-on: macos-26-intel
     steps:
     - uses: ilammy/setup-nasm@v1
     - name: Download source package artifact
@@ -89,12 +104,25 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=clang --${{ matrix.feature }}
+      run: |
+        if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
+          SAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+          ./configure CC=clang --${{ matrix.feature }} \
+            CFLAGS="-O1 $SAN" LDFLAGS="$SAN"
+        else
+          ./configure CC=clang --${{ matrix.feature }}
+        fi
     - name: Make
       run: make -j4 all
     - name: Self-check
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: make self-check
     - name: Verify x86_64 parity files
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: |
         tar -xvf xpar-${{ github.sha }}-guarded.tar.gz
         ./xpar -Jd xpar.xpa xpar.new.org
@@ -108,6 +136,7 @@ jobs:
       fail-fast: false
       matrix:
         feature: [ enable-aarch64, disable-aarch64 ]
+        sanitizer: [ "none", "asan-ubsan" ]
     steps:
     - name: Download source package artifact
       uses: actions/download-artifact@v4
@@ -120,12 +149,25 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=clang --${{ matrix.feature }}
+      run: |
+        if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
+          SAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+          ./configure CC=clang --${{ matrix.feature }} \
+            CFLAGS="-O1 $SAN" LDFLAGS="$SAN"
+        else
+          ./configure CC=clang --${{ matrix.feature }}
+        fi
     - name: Make
       run: make -j4 all
     - name: Self-check
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: make self-check
     - name: Verify x86_64 parity files
+      env:
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: |
         tar -xvf xpar-${{ github.sha }}-guarded.tar.gz
         ./xpar -Jd xpar.xpa xpar.new.org
@@ -159,7 +201,7 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=gcc --${{ matrix.feature }}
+      run: ./configure CC=gcc --${{ matrix.feature }} --enable-static
     - name: Make
       run: make -j4 all
     - name: Self-check
@@ -194,7 +236,7 @@ jobs:
     - name: Extract source package
       run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
     - name: Configure
-      run: ./configure CC=gcc --${{ matrix.feature }}
+      run: ./configure CC=gcc --enable-static
     - name: Make
       run: make -j4 all
     - name: Self-check
@@ -204,3 +246,107 @@ jobs:
         tar -xvf xpar-${{ github.sha }}-guarded.tar.gz
         ./xpar -Jd xpar.xpa xpar.new.org
         cmp xpar.new.org xpar.org
+
+  build-windows-i386-win95:
+    name: Compile (Windows i386, Win95 target)
+    needs: [ dist ]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      # inject-errors needs host mmap/pthread; keep CC_FOR_BUILD on MSYS2 gcc.
+      CC_FOR_BUILD: /usr/bin/gcc
+    steps:
+    - name: Download source package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}
+    - name: Download parity files artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}-guarded
+    - uses: msys2/setup-msys2@v2
+      with:
+        update: true
+        msystem: MINGW32
+        install: >-
+          make tar gzip diffutils file
+          gcc
+          mingw-w64-i686-gcc
+          mingw-w64-i686-binutils
+    - name: Extract source package
+      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+    - name: Configure
+      run: ./configure CC=/mingw32/bin/gcc --enable-static --with-windows-target=win95
+    - name: Make
+      run: make -j4 all
+    - name: Verify PE subsystem/OS version is 4.0
+      run: |
+        file xpar.exe
+        file xpar.exe | grep -q 'MS Windows 4\.00'
+    - name: Verify only kernel32 imports remain
+      run: |
+        imports=$(objdump -p xpar.exe | awk '/DLL Name:/ {print tolower($3)}' | sort -u)
+        echo "Imports: $imports"
+        test "$imports" = "kernel32.dll"
+    - name: Self-check
+      run: make self-check
+    - name: Verify x86_64 parity files
+      run: |
+        tar -xvf xpar-${{ github.sha }}-guarded.tar.gz
+        ./xpar -Jd xpar.xpa xpar.new.org
+        cmp xpar.new.org xpar.org
+
+  build-dos-djgpp:
+    name: Compile (MS-DOS i386, DJGPP)
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    env:
+      DJGPP_RELEASE: "v3.4"
+      DJGPP_GCC: "1220"
+      # inject-errors runs on the host; keep CC_FOR_BUILD off the cross-gcc.
+      CC_FOR_BUILD: /usr/bin/gcc
+      CFLAGS_FOR_BUILD: -O2
+    steps:
+    - name: Download source package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: xpar-${{ github.sha }}
+    - name: Install DJGPP cross-toolchain
+      run: |
+        curl -fL -o /tmp/djgpp.tar.bz2 \
+          "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
+        tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
+        echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+        # Symlink exe2coff into <prefix>/bin; don't PATH its own dir (plain as/ld/ar would shadow the host binutils).
+        exe2coff=$(find "$HOME/djgpp" -name exe2coff -type f -print -quit)
+        if [ -z "$exe2coff" ]; then
+          echo "exe2coff not found in the DJGPP tarball -- aborting" >&2
+          find "$HOME/djgpp" -maxdepth 3 -type d >&2
+          exit 1
+        fi
+        ln -sf "$exe2coff" "$HOME/djgpp/bin/exe2coff"
+    - name: Install CWSDPMI (for bundling into the .exe stub)
+      run: |
+        curl -fL -o /tmp/csdpmi.zip http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
+        unzip -j -d "$HOME/csdpmi" /tmp/csdpmi.zip 'bin/CWSDSTUB.EXE'
+        echo "CWSDSTUB=$HOME/csdpmi/CWSDSTUB.EXE" >> $GITHUB_ENV
+    - name: Install DOSBox-X
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dosbox-x
+    - name: Extract source package
+      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+    - name: Configure
+      run: |
+        ./configure --host=i586-pc-msdosdjgpp --disable-x86_64 \
+                    CC=i586-pc-msdosdjgpp-gcc
+    - name: Make
+      run: make -j4 all
+    - name: Verify DOS binary format
+      run: |
+        file xpar.exe
+        file xpar.exe | grep -Eq 'MS-DOS executable|COFF'
+    - name: Self-check (xpar runs under DOSBox-X, inject-errors on host)
+      run: make self-check
