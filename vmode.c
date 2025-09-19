@@ -70,13 +70,13 @@ static gf256mat * gf256mat_eye(int n) {
   Fi(n, mat->v[i][i] = 1)
   return mat;
 }
-static gf256mat * gf256mat_prod(gf256mat * a, gf256mat * b) {
+static gf256mat * gf256mat_prod(gf256mat * restrict a, gf256mat * restrict b) {
   gf256mat * c = gf256mat_init(a->n, b->m);
   Fi(a->n, Fk(a->m, Fj(b->m,
       c->v[i][j] ^= PROD[a->v[i][k]][b->v[k][j]])))
   return c;
 }
-static gf256mat * gf256mat_cat(gf256mat * a, gf256mat * b) {
+static gf256mat * gf256mat_cat(gf256mat * restrict a, gf256mat * restrict b) {
   gf256mat * c = gf256mat_init(a->n, a->m + b->m);
   Fi(a->n,
     memcpy(c->v[i], a->v[i], a->m);
@@ -127,7 +127,7 @@ static gf256mat * vandermonde(int row, int col) {
 typedef struct {
   int data, parity, total;
   gf256mat * matrix;
-  uint8_t ** rows;
+  uint8_t * restrict * restrict rows;
 } rs;
 static rs * rs_init(int data_shards, int parity_shards) {
   rs * r = xmalloc(sizeof(rs));
@@ -147,7 +147,7 @@ static void gf256_prod(uint8_t * restrict dst, uint8_t a,
                        uint8_t * restrict b, size_t len) {
   Fi(len, dst[i] ^= PROD[a][b[i]]);
 }
-static void rs_encode(rs * r, uint8_t ** in, size_t len) {
+static void rs_encode(rs * r, uint8_t * restrict * restrict in, size_t len) {
   Fj(r->parity, memset(in[r->data + j], 0, len));
 #if defined(XPAR_OPENMP)
   #pragma omp parallel for if(r->data + r->parity > 8 && len > MiB(100))
@@ -155,7 +155,8 @@ static void rs_encode(rs * r, uint8_t ** in, size_t len) {
   Fj(r->parity, Fk(r->data,
     gf256_prod(in[r->data + j], r->rows[j][k], in[k], len)))
 }
-static bool rs_correct(rs * r, uint8_t ** in, uint8_t * presence, size_t len) {
+static bool rs_correct(rs * r, uint8_t * restrict * restrict in,
+                       uint8_t * presence, size_t len) {
   int present = 0;
   Fi(r->total, present += !!presence[i])
   if (present < r->data) return false;
