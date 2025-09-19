@@ -2,7 +2,7 @@ This file contains release notes for major and minor releases of xpar.
 For a complete list of source-level changes, consult the ChangeLog file.
 
 ===============================================================================
-v0.7 (xx-09-2025)
+v0.7 (19-09-2025)
 - Rename the sharded mode to Vandermonde-sharded mode (-S => -W).
 - Update building instructions for specific architecture and operating system
   combinations.
