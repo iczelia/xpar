@@ -112,4 +112,3 @@ Numbers:
 ## TO-DO
 
 - Hook up sse2neon inside lmode.c
-- GPU-based jmode.c
