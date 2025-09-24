@@ -38,6 +38,8 @@ $ ./configure --enable-aarch64 && make && sudo make install
 $ ./configure && make && sudo make install
 ```
 
+NOTE TO LINUX DISTRIBUTION MAINTAINERS: Simple builds with no configure flags will likely max out at a couple hundred megabytes of encoding and decoding and miss out on most assembly-level optimisations to the tool. They are provided for compatibility with simple systems (Amiga, MS-DOS, etc). To get suitable performance as indicated with the benchmarks, build with OpenMP and follow the instructions above.
+
 ## Usage
 
 Consult the man page.
