@@ -20,11 +20,6 @@ v0.6 (10-09-2025)
 - Minor style changes and fixes to command parsing.
 
 ===============================================================================
-v0.6 (10-09-2025)
-- Move the project page to iczelia/xpar.
-- Minor style changes and fixes to command parsing.
-
-===============================================================================
 v0.5 (17-10-2024)
 - OpenMP support for sharded mode (which unfortunately seems bottlenecked by
   I/O). 
