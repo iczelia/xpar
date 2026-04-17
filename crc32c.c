@@ -69,7 +69,7 @@ static const uint32_t crc32c_table[256] = {
     0x988C474DL, 0x6AE7C44EL, 0xBE2DA0A5L, 0x4C4623A6L, 0x5F16D052L,
     0xAD7D5351L};
 
-u32 crc32c_tabular(u32 crc, const u8 *data, sz length) {
+u32 crc32c_tabular(u32 crc, const u8 * data, sz length) {
   Fi(length, crc = crc32c_table[(crc ^ data[i]) & 0xFFL] ^ (crc >> 8));
   return crc;
 }
@@ -89,7 +89,7 @@ extern int crc32c_aarch64_cpuflags(void);
 extern u32 crc32c_small_aarch64_neon(u32, const u8 *, sz);
 #endif
 
-u32 crc32c_partial(u32 crc, const u8 *data, sz length) {
+u32 crc32c_partial(u32 crc, const u8 * data, sz length) {
   static int cpuflags = -1;
 #if defined(XPAR_X86_64)
   if (cpuflags == -1)
@@ -111,6 +111,6 @@ u32 crc32c_partial(u32 crc, const u8 *data, sz length) {
   return crc32c_tabular(crc, data, length);
 #endif
 }
-u32 crc32c(const u8 *data, sz length) {
+u32 crc32c(const u8 * data, sz length) {
   return crc32c_partial(0xFFFFFFFFL, data, length) ^ 0xFFFFFFFFL;
 }

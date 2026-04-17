@@ -25,9 +25,8 @@
 
 #include <limits.h>
 
-/*   ============================================================================
-      Command-line stub.
-     ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Command-line stub.  */
 static void version() {
   xpar_fprintf(xpar_stdout, 
     "xpar %d.%d. Copyright (C) by Kamila Szewczyk, 2022-2026.\n"
@@ -149,13 +148,13 @@ int xpar_main(int argc, char ** argv) {
         if (verbose) goto conflict;  quiet = true; break;
       case 'h': help(); return 0;
       case 'e':
-        if(mode == MODE_NONE) mode = MODE_ENCODING;
+        if (mode == MODE_NONE) mode = MODE_ENCODING;
         else goto opmode_conflict;  break;
       case 'd':
-        if(mode == MODE_NONE) mode = MODE_DECODING;
+        if (mode == MODE_NONE) mode = MODE_DECODING;
         else goto opmode_conflict;  break;
       case 't':
-        if(mode == MODE_NONE) mode = MODE_TESTING;
+        if (mode == MODE_NONE) mode = MODE_TESTING;
         else goto opmode_conflict;  break;
       case 'f': force = true; break;
       case 'c': force_stdout = true; break;
@@ -300,7 +299,7 @@ int xpar_main(int argc, char ** argv) {
                    (unsigned long long)(us % 1000000ULL));
     }
     if (output_file != f2) xpar_free(output_file);
-  } else if(sharded || log_sharded) {
+  } else if (sharded || log_sharded) {
     if (interlacing != -1 || force_stdout)
       FATAL(sharded ? "Joint mode options in sharded mode."
                     : "Joint mode options in log-sharded mode.");

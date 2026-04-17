@@ -36,7 +36,7 @@ static u8 gf256_exp(u8 a, int n) {
   if (n == 0) return 1;
   if (a == 0) return 0;
   int r = LOG[a] * n;
-  while(255 <= r) r -= 255;
+  while (255 <= r) r -= 255;
   return EXP[r];
 }
 
@@ -195,9 +195,8 @@ static void rs_destroy(rs * r) {
   xpar_free(r->rows); xpar_free(r);
 }
 
-/*  ============================================================================
-    Sharded mode encoders/decoders.
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Sharded mode encoders/decoders.  */
 static void do_sharded_encode(sharded_encoding_options_t o,
                               u8 * buf, sz size) {
   xpar_file ** out = xpar_malloc(MAX_TOTAL_SHARDS * sizeof(xpar_file *));
@@ -215,7 +214,9 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     int exists = xpar_stat_path(name, &st);
     if (exists == 0 && (st.size || st.is_dir) && !o.force)
       FATAL("Output file `%s' exists and is not empty.", name);
-    if (!(out[i] = xpar_open(name, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE))) FATAL_PERROR("fopen");
+    out[i] = xpar_open(name,
+      XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
+    if (!out[i]) FATAL_PERROR("fopen");
     xpar_free(name);
   )
   u8 ** shards = xpar_malloc(MAX_TOTAL_SHARDS * sizeof(u8 *));
@@ -246,7 +247,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
 }
 
 void sharded_encode(sharded_encoding_options_t o) {
-  if(!o.no_map) {
+  if (!o.no_map) {
     #if defined(XPAR_ALLOW_MAPPING)
     xpar_mmap map = xpar_map(o.input_name);
     if (map.map) {
@@ -271,7 +272,8 @@ void sharded_encode(sharded_encoding_options_t o) {
   xpar_free(buffer);
 }
 void sharded_decode(sharded_decoding_options_t opt) {
-  sharded_hv_result_t * res = xpar_malloc(MAX_TOTAL_SHARDS * sizeof(sharded_hv_result_t));
+  sharded_hv_result_t * res =
+    xpar_malloc(MAX_TOTAL_SHARDS * sizeof(sharded_hv_result_t));
   if (opt.n_input_shards > MAX_TOTAL_SHARDS)
     FATAL(
       "Too many input shards. While many of them may be wrong and\n"
@@ -368,7 +370,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
       "requires %u shards, but only %d are available.\n",
       consensus_dshards, n_valid_shards);
   }
-  xpar_file * out = xpar_open(opt.output_file, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
+  xpar_file * out = xpar_open(opt.output_file,
+    XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
   if (!out) FATAL_PERROR("fopen");
   if (n_valid_shards == consensus_dshards + consensus_pshards) {
     Fi(consensus_dshards,
@@ -389,7 +392,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
     buffers[i] = xpar_malloc(consensus_shard_size);
     xpar_memset(buffers[i], 0, consensus_shard_size);
   })
-  if(!rs_correct(r, buffers, pres, consensus_shard_size))
+  if (!rs_correct(r, buffers, pres, consensus_shard_size))
     FATAL("Failed to correct the data.");
   Fi(consensus_dshards,
     sz w = MIN(consensus_size, consensus_shard_size);
@@ -397,7 +400,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
     consensus_size -= w)
   xpar_xclose(out);  rs_destroy(r);
   Fi(n_valid_shards, unmap_shard(&res[i]));
-  Fi(consensus_dshards + consensus_pshards, if (!pres[i]) xpar_free(buffers[i]));
+  Fi(consensus_dshards + consensus_pshards,
+    if (!pres[i]) xpar_free(buffers[i]));
   xpar_free(res);
 }
 /*  Dry-run of sharded_decode; returns invalid-or-missing count.
@@ -406,7 +410,8 @@ void sharded_test(sharded_decoding_options_t opt) {
   sharded_hv_result_t * res = xpar_malloc(MAX_TOTAL_SHARDS * sizeof(*res));
   if (opt.n_input_shards > MAX_TOTAL_SHARDS) {
     if (!opt.quiet)
-      xpar_fprintf(xpar_stderr, "Too many input shards (max %d).\n", MAX_TOTAL_SHARDS);
+      xpar_fprintf(xpar_stderr,
+        "Too many input shards (max %d).\n", MAX_TOTAL_SHARDS);
     xpar_free(res); xpar_exit(1);
   }
   Fi(opt.n_input_shards,

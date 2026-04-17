@@ -128,7 +128,7 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
             }
             no_args++;
             break;
-          } else if(o->type == optional_argument) {
+          } else if (o->type == optional_argument) {
             if (argv[i][j + 1]) {
               /*  Ignore.  */
               no_args++;
@@ -147,7 +147,7 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
 
   res->args = (yarg_option *) xpar_malloc((no_args + 1) * sizeof(yarg_option));
   res->pos_args = (char **) xpar_malloc((no_pos_args + 1) * sizeof(char *));
-  if(!res->args || !res->pos_args) {
+  if (!res->args || !res->pos_args) {
     yarg_asprintf(&res->error, yarg_oom);
     return 0;
   }
@@ -157,7 +157,7 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
       if (argv[i][1] == '-') {
         if (dash_dash && argv[i][2] == '\0') {
           for (int j = i + 1; j < argc; j++)
-            if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j]))) {
+            if (!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j]))) {
               yarg_asprintf(&res->error, yarg_oom);
               return 0;
             }
@@ -172,12 +172,14 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
         res->args[res->argc].long_opt = o->long_opt;
         if (o->type == required_argument || o->type == optional_argument) {
           if (long_opt[len] == '=') {
-            if(!(res->args[res->argc].arg = yarg_strdup(long_opt + len + 1))) {
+            res->args[res->argc].arg =
+              yarg_strdup(long_opt + len + 1);
+            if (!res->args[res->argc].arg) {
               yarg_asprintf(&res->error, yarg_oom);
               return 0;
             }
           } else if (argv[i + 1] && argv[i + 1][0] != '-') {
-            if(!(res->args[res->argc].arg = yarg_strdup(argv[++i]))) {
+            if (!(res->args[res->argc].arg = yarg_strdup(argv[++i]))) {
               yarg_asprintf(&res->error, yarg_oom);
               return 0;
             }
@@ -198,11 +200,11 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
           res->args[res->argc].long_opt = o->long_opt;
           if (o->type == required_argument || o->type == optional_argument) {
             if (argv[i][j + 1]) {
-              if(!(res->args[res->argc++].arg = yarg_strdup(argv[i] + j + 1)))
+              if (!(res->args[res->argc++].arg = yarg_strdup(argv[i] + j + 1)))
                 { yarg_asprintf(&res->error, yarg_oom); return 0; }
               break;
             } else if (argv[i + 1] && argv[i + 1][0] != '-') {
-              if(!(res->args[res->argc++].arg = yarg_strdup(argv[++i]))) {
+              if (!(res->args[res->argc++].arg = yarg_strdup(argv[++i]))) {
                 yarg_asprintf(&res->error, yarg_oom);
                 return 0;
               }
@@ -212,7 +214,7 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
           res->argc++;
         }
       }
-    } else if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i]))) {
+    } else if (!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i]))) {
       yarg_asprintf(&res->error, yarg_oom);
       return 0;
     }
@@ -221,9 +223,9 @@ static int yarg_parse_unix(int argc, char * argv[], const yarg_options opt[],
   return 1;
 }
 
-static int yarg_parse_unix_short(int argc, char * argv[], const yarg_options opt[],
-                                 yarg_result * res, bool dash_dash,
-                                 char opt_char) {
+static int yarg_parse_unix_short(int argc, char * argv[],
+    const yarg_options opt[], yarg_result * res,
+    bool dash_dash, char opt_char) {
   int no_args = 0, no_pos_args = 0;
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == opt_char) {
@@ -273,7 +275,7 @@ static int yarg_parse_unix_short(int argc, char * argv[], const yarg_options opt
     if (argv[i][0] == opt_char) {
       if (dash_dash && argv[i][1] == '\0') {
         for (int j = i + 1; j < argc; j++)
-          if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j]))) {
+          if (!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j]))) {
             yarg_asprintf(&res->error, yarg_oom);
             return 0;
           }
@@ -288,19 +290,19 @@ static int yarg_parse_unix_short(int argc, char * argv[], const yarg_options opt
       res->args[res->argc].long_opt = o->long_opt;
       if (o->type == required_argument || o->type == optional_argument) {
         if (long_opt[len] == '=') {
-          if(!(res->args[res->argc].arg = yarg_strdup(long_opt + len + 1))) {
+          if (!(res->args[res->argc].arg = yarg_strdup(long_opt + len + 1))) {
             yarg_asprintf(&res->error, yarg_oom);
             return 0;
           }
         } else if (argv[i + 1] && argv[i + 1][0] != opt_char) {
-          if(!(res->args[res->argc].arg = yarg_strdup(argv[++i]))) {
+          if (!(res->args[res->argc].arg = yarg_strdup(argv[++i]))) {
             yarg_asprintf(&res->error, yarg_oom);
             return 0;
           }
         }
       }
       res->argc++;
-    } else if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i]))) {
+    } else if (!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i]))) {
       yarg_asprintf(&res->error, yarg_oom);
       return 0;
     }
@@ -310,14 +312,14 @@ static int yarg_parse_unix_short(int argc, char * argv[], const yarg_options opt
 }
 
 void yarg_destroy(yarg_result * r) {
-  if(r) {
-    if(r->args) {
+  if (r) {
+    if (r->args) {
       for (int i = 0; i < r->argc; i++) {
         xpar_free(r->args[i].arg);
       }
     }
     xpar_free(r->args);
-    if(r->pos_args) {
+    if (r->pos_args) {
       for (int i = 0; i < r->pos_argc; i++) {
         xpar_free(r->pos_args[i]);
       }
@@ -329,8 +331,8 @@ void yarg_destroy(yarg_result * r) {
   xpar_free(r);
 }
 
-static yarg_result * yarg_parse(int argc, char * argv[], const yarg_options opt[],
-                         yarg_settings settings) {
+static yarg_result * yarg_parse(int argc, char * argv[],
+    const yarg_options opt[], yarg_settings settings) {
   yarg_result * res = (yarg_result *) xpar_malloc(sizeof(yarg_result));
   if (!res) return NULL;
   switch (settings.style) {

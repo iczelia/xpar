@@ -58,8 +58,8 @@
   extern EXTERNAL_ABI int xpar_leo_x86_64_cpuflags(void);
 #endif
 
-/*  ----------------------------------------------------------------------------
-    Constants / field shape.  */
+/*  -----------------------------------------------------------------------
+  Constants / field shape.  */
 
 typedef uint8_t ffe_t;
 
@@ -71,8 +71,8 @@ typedef uint8_t ffe_t;
 /*  32-byte align for AVX2; at most 16B waste on 128-bit-only paths.  */
 #define kAlignmentBytes 32
 
-/*  ----------------------------------------------------------------------------
-    Runtime CPU dispatch state.  */
+/*  -----------------------------------------------------------------------
+  Runtime CPU dispatch state.  */
 
 bool CpuHasAVX2 = false;
 bool CpuHasSSSE3 = false;
@@ -155,8 +155,8 @@ static inline uint32_t NextPow2(uint32_t n) {
   return 2UL << LastNonzeroBit32(n - 1);
 }
 
-/*  ----------------------------------------------------------------------------
-    SIMD-safe aligned allocation. Pure pointer arithmetic, no intrinsics.  */
+/*  -----------------------------------------------------------------------
+  SIMD-safe aligned allocation. Pure pointer arithmetic, no intrinsics.  */
 
 static inline uint8_t * SIMDSafeAllocate(size_t size) {
   uint8_t * data = (uint8_t *) xpar_malloc(kAlignmentBytes + size);
@@ -256,8 +256,8 @@ extern void DecodeM1_avx2(uint64_t buffer_bytes,
 extern void FillPshufbTables_avx2(void);
 #endif
 
-/*  ----------------------------------------------------------------------------
-    Table initialization.  */
+/*  -----------------------------------------------------------------------
+  Table initialization.  */
 
 static void InitializeLogarithmTables(void) {
   unsigned state = 1;
@@ -468,9 +468,8 @@ static void DecodeM1(uint64_t buffer_bytes,
                   work_data);
 }
 
-/*   ============================================================================
-      Implementation of RS sharding erasure codes in O(n log n).
-     ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Implementation of RS sharding erasure codes in O(n log n).  */
 typedef struct {
   int data, parity, total, ebuf, dbuf;
 } rs;
@@ -488,8 +487,9 @@ static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
   void ** ework = xpar_malloc(r->ebuf * sizeof(void *));
   Fi(r->ebuf, ework[i] = xpar_malloc(len))
   if (verbose)
-    xpar_fprintf(xpar_stderr, "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
-            r->ebuf, len, r->ebuf * len);
+    xpar_fprintf(xpar_stderr,
+      "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
+      r->ebuf, len, r->ebuf * len);
   if (r->data == 1) {
     Fi(r->parity, xpar_memcpy(ework[i], in[i], len))
   } else if (r->parity == 1) {
@@ -508,8 +508,9 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
   if (present < r->data) return false;
   if (present == r->total) return true;
   if (verbose)
-    xpar_fprintf(xpar_stderr, "The workspace is r->dbuf * len = %d * %zu = %zu bytes\n",
-                    r->dbuf, len, r->dbuf * len);
+    xpar_fprintf(xpar_stderr,
+      "The workspace is r->dbuf * len = %d * %zu = %zu bytes\n",
+      r->dbuf, len, r->dbuf * len);
   void ** dwork = xpar_malloc(r->dbuf * sizeof(void*));
   Fi(r->dbuf, dwork[i] = xpar_malloc(len))
   void ** dshards = xpar_malloc(r->data * sizeof(void*));
@@ -543,14 +544,14 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
         dwork);
   }
   Fi(r->total, if (!shards_present[i]) xpar_memcpy(in[i], dwork[i], len))
-  Fi(r->dbuf, xpar_free(dwork[i]))  xpar_free(dwork); xpar_free(dshards);  xpar_free(pshards);
+  Fi(r->dbuf, xpar_free(dwork[i]))
+  xpar_free(dwork);  xpar_free(dshards);  xpar_free(pshards);
   return true;
 }
 static void rs_destroy(rs * r) { xpar_free(r); }
 
-/*   ============================================================================
-      Sharded mode encoders/decoders.
-     ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Sharded mode encoders/decoders.  */
 static void do_sharded_encode(sharded_encoding_options_t o,
                               u8 * buf, sz size) {
   xpar_file * out[MAX_TOTAL_SHARDS] = { NULL };
@@ -568,7 +569,9 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     int exists = xpar_stat_path(name, &st);
     if (exists == 0 && (st.size || st.is_dir) && !o.force)
       FATAL("Output file `%s' exists and is not empty.", name);
-    if (!(out[i] = xpar_open(name, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE))) FATAL_PERROR("fopen");
+    if (!(out[i] = xpar_open(name,
+        XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE)))
+      FATAL_PERROR("fopen");
     xpar_free(name);
   )
   u8 * shards[MAX_TOTAL_SHARDS] = { NULL };
@@ -599,7 +602,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
 }
 
 void log_sharded_encode(sharded_encoding_options_t o) {
-  if(!o.no_map) {
+  if (!o.no_map) {
     #if defined(XPAR_ALLOW_MAPPING)
     xpar_mmap map = xpar_map(o.input_name);
     if (map.map) {
@@ -727,7 +730,8 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
       "requires %u shards, but only %d are available.\n",
       consensus_dshards, n_valid_shards);
   }
-  xpar_file * out = xpar_open(opt.output_file, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
+  xpar_file * out = xpar_open(opt.output_file,
+    XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
   if (!out) FATAL_PERROR("fopen");
   if (n_valid_shards == consensus_dshards + consensus_pshards) {
     Fi(consensus_dshards,
@@ -746,7 +750,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     buffers[i] = xpar_malloc(consensus_shard_size);
     xpar_memset(buffers[i], 0, consensus_shard_size);
   })
-  if(!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose))
+  if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose))
     FATAL("Failed to correct the data.");
   Fi(consensus_dshards,
     sz w = MIN(consensus_size, consensus_shard_size);
@@ -755,7 +759,8 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
   xpar_xclose(out);
   rs_destroy(r);
   Fi(n_valid_shards, unmap_shard(&res[i]));
-  Fi(consensus_dshards + consensus_pshards, if (!pres[i]) xpar_free(buffers[i]));
+  Fi(consensus_dshards + consensus_pshards,
+    if (!pres[i]) xpar_free(buffers[i]));
 }
 /*  Dry-run of log_sharded_decode; returns invalid-or-missing count.
     Exits 1 when unrecoverable.  */
@@ -763,7 +768,8 @@ void log_sharded_test(sharded_decoding_options_t opt) {
   sharded_hv_result_t * res = xpar_malloc(MAX_TOTAL_SHARDS * sizeof(*res));
   if (opt.n_input_shards > MAX_TOTAL_SHARDS) {
     if (!opt.quiet)
-      xpar_fprintf(xpar_stderr, "Too many input shards (max %d).\n", MAX_TOTAL_SHARDS);
+      xpar_fprintf(xpar_stderr,
+        "Too many input shards (max %d).\n", MAX_TOTAL_SHARDS);
     xpar_free(res); xpar_exit(1);
   }
   Fi(opt.n_input_shards,

@@ -118,8 +118,8 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
   }
   if (has_key && !has_b2b) {
     if (!opt.quiet)
-      xpar_fprintf(xpar_stderr, "Shard `%s': invalid keyed-without-BLAKE2b mode.\n",
-        file_name);
+      xpar_fprintf(xpar_stderr,
+        "Shard `%s': invalid keyed-without-BLAKE2b mode.\n", file_name);
     return false;
   }
   sz hdr_size = has_b2b ? SHARD_HEADER_BLAKE2B_SIZE : SHARD_HEADER_SIZE;

@@ -35,9 +35,8 @@
 #include <time.h>
 #include <unistd.h>
 
-/*  ============================================================================
-    xpar_file wrapping FILE *
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  xpar_file wrapping FILE *  */
 
 struct xpar_file { FILE * fp; bool owned; };
 
@@ -55,9 +54,8 @@ void xpar_host_init(void) {
   g_stderr.fp = stderr;
 }
 
-/*  ============================================================================
-    Open / close
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Open / close  */
 
 xpar_file * xpar_open(const char * path, int flags) {
   const char * mode;
@@ -84,9 +82,8 @@ int xpar_close(xpar_file * f) {
   return r;
 }
 
-/*  ============================================================================
-    Read / write / seek / tell
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Read / write / seek / tell  */
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   return fread(buf, 1, n, f->fp);
@@ -122,9 +119,8 @@ bool xpar_is_tty(xpar_file * f) {
 bool xpar_eof(xpar_file * f)  { return feof(f->fp); }
 int  xpar_error(xpar_file * f) { return ferror(f->fp); }
 
-/*  ============================================================================
-    Safe helpers (FATAL on error)
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Safe helpers (FATAL on error)  */
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = fread(p, 1, n, f->fp);
@@ -152,9 +148,8 @@ void xpar_notty(xpar_file * f) {
   errno = 0;
 }
 
-/*  ============================================================================
-    Filesystem
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Filesystem  */
 
 int xpar_stat_path(const char * path, xpar_stat_t * out) {
   struct stat st;
@@ -171,9 +166,8 @@ int xpar_same_file(const char * a, const char * b) {
   return (sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino) ? 1 : 0;
 }
 
-/*  ============================================================================
-    Memory map
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Memory map  */
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m = { NULL, 0 };
@@ -194,9 +188,8 @@ void xpar_unmap(xpar_mmap * m) {
   m->map = NULL; m->size = 0;
 }
 
-/*  ============================================================================
-    Allocation
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Allocation  */
 
 void * xpar_malloc(sz n) {
   void * p = calloc(n ? n : 1, 1);
@@ -215,7 +208,7 @@ void * xpar_realloc(void * p, sz n) {
 }
 void xpar_free(void * p) { free(p); }
 
-/*  Strings: only strdup/strndup; mem... and str... go via builtins -> libc.  */
+/*  Strings: strdup/strndup only; mem.../str... go via builtins->libc.  */
 
 char * xpar_strdup(const char * s) {
   sz n = strlen(s) + 1;
@@ -232,9 +225,8 @@ char * xpar_strndup(const char * s, sz n) {
   return c;
 }
 
-/*  ============================================================================
-    Numeric parsing
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Numeric parsing  */
 
 int xpar_parse_i64(const char * s, i64 * out) {
   char * end;
@@ -253,9 +245,8 @@ int xpar_parse_u64(const char * s, u64 * out) {
   return 0;
 }
 
-/*  ============================================================================
-    Formatted output
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Formatted output  */
 
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
   return vsnprintf(buf, cap, fmt, ap);
@@ -288,9 +279,8 @@ int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
 }
 int xpar_fputs(const char * s, xpar_file * f) { return fputs(s, f->fp); }
 
-/*  ============================================================================
-    Process / errors / time
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Process / errors / time  */
 
 void xpar_exit(int code) { exit(code); }
 
@@ -308,9 +298,8 @@ u64 xpar_usec_now(void) {
   return (u64) tv.tv_sec * 1000000ULL + (u64) tv.tv_usec;
 }
 
-/*  ============================================================================
-    Thread / mutex / condvar primitives (pthread-backed)
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Thread / mutex / condvar primitives (pthread-backed)  */
 
 struct xpar_mutex  { pthread_mutex_t m; };
 struct xpar_cond   { pthread_cond_t  c; };
@@ -335,9 +324,10 @@ xpar_cond * xpar_cond_new(void) {
 void xpar_cond_free(xpar_cond * c) {
   pthread_cond_destroy(&c->c); xpar_free(c);
 }
-void xpar_cond_wait     (xpar_cond * c, xpar_mutex * m) { pthread_cond_wait     (&c->c, &m->m); }
-void xpar_cond_signal   (xpar_cond * c)                 { pthread_cond_signal   (&c->c); }
-void xpar_cond_broadcast(xpar_cond * c)                 { pthread_cond_broadcast(&c->c); }
+void xpar_cond_wait(xpar_cond * c, xpar_mutex * m) {
+  pthread_cond_wait(&c->c, &m->m); }
+void xpar_cond_signal   (xpar_cond * c) { pthread_cond_signal   (&c->c); }
+void xpar_cond_broadcast(xpar_cond * c) { pthread_cond_broadcast(&c->c); }
 
 struct xpar_thread_shim { void (*fn)(void *); void * ctx; };
 static void * xpar_thread_trampoline(void * p) {

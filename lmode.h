@@ -19,9 +19,8 @@
 #include "common.h"
 #include "sharding.h"
 
-/*  ============================================================================
-    Linearithmic shared mode encoding and decoding.
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Linearithmic shared mode encoding and decoding.  */
 void lmode_gentab();
 void log_sharded_encode(sharded_encoding_options_t o);
 void log_sharded_decode(sharded_decoding_options_t o);

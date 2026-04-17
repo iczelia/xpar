@@ -34,9 +34,8 @@ typedef uint32_t u32;  typedef int32_t i32;
 typedef uint64_t u64;  typedef int64_t i64;
 typedef size_t   sz;
 
-/*  ============================================================================
-    File handle (opaque)
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  File handle (opaque)  */
 typedef struct xpar_file xpar_file;
 
 extern xpar_file * const xpar_stdin;
@@ -57,15 +56,13 @@ enum {
 /*  Whence constants for xpar_seek.  */
 enum { XPAR_SEEK_SET = 0, XPAR_SEEK_CUR = 1, XPAR_SEEK_END = 2 };
 
-/*  ============================================================================
-    Lifecycle
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Lifecycle  */
 void xpar_host_init(void);
 int  xpar_main(int argc, char ** argv);
 
-/*  ============================================================================
-    File I/O
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  File I/O  */
 xpar_file * xpar_open  (const char * path, int flags);
 int         xpar_close (xpar_file *);
 sz          xpar_read  (xpar_file *, void * buf, sz n);
@@ -87,9 +84,8 @@ void xpar_xwrite(xpar_file *, const void * p, sz n);
 void xpar_xclose(xpar_file *);
 void xpar_notty (xpar_file *);
 
-/*  ============================================================================
-    Filesystem queries / ops (without opening)
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Filesystem queries / ops (without opening)  */
 typedef struct { u64 size; bool is_dir; bool is_regular; } xpar_stat_t;
 int xpar_stat_path(const char * path, xpar_stat_t * out);
 int xpar_remove   (const char * path);
@@ -98,9 +94,8 @@ int xpar_remove   (const char * path);
     (e.g. either path does not exist).  */
 int xpar_same_file(const char * a, const char * b);
 
-/*  ============================================================================
-    Memory map
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Memory map  */
 typedef struct { u8 * map; sz size; } xpar_mmap;
 xpar_mmap xpar_map  (const char * path);
 void      xpar_unmap(xpar_mmap *);
@@ -181,17 +176,15 @@ int xpar_fprintf  (xpar_file *, const char * fmt, ...)
 int xpar_vfprintf (xpar_file *, const char * fmt, va_list ap);
 int xpar_fputs    (const char * s, xpar_file *);
 
-/*  ============================================================================
-    Process / errors / time
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Process / errors / time  */
 __attribute__((noreturn)) void xpar_exit(int code);
 const char * xpar_strerror(int err);
 int          xpar_errno(void);
 u64          xpar_usec_now(void);
 
-/*  ============================================================================
-    Threading primitives (host-provided)
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Threading primitives (host-provided)  */
 typedef struct xpar_mutex  xpar_mutex;
 typedef struct xpar_cond   xpar_cond;
 typedef struct xpar_thread xpar_thread;
@@ -232,9 +225,12 @@ void xpar_set_num_threads(int n);
     atomic_store_explicit((p), (v), memory_order_relaxed)
 #elif defined(__GNUC__) || defined(__clang__)
   typedef int xpar_atomic_int;
-  #define xpar_atomic_add_int(p, v) __atomic_fetch_add((p), (v), __ATOMIC_RELAXED)
-  #define xpar_atomic_load_int(p)   __atomic_load_n((p), __ATOMIC_RELAXED)
-  #define xpar_atomic_store_int(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)
+  #define xpar_atomic_add_int(p, v) \
+    __atomic_fetch_add((p), (v), __ATOMIC_RELAXED)
+  #define xpar_atomic_load_int(p) \
+    __atomic_load_n((p), __ATOMIC_RELAXED)
+  #define xpar_atomic_store_int(p, v) \
+    __atomic_store_n((p), (v), __ATOMIC_RELAXED)
 #else
   #error "Need C11 atomics or GCC/Clang __atomic_* builtins."
 #endif

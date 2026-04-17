@@ -19,9 +19,8 @@
 #include "common.h"
 #include "sharding.h"
 
-/*  ============================================================================
-    Vandermonde-type shared mode encoding and decoding.
-    ============================================================================  */
+/*  -----------------------------------------------------------------------
+  Vandermonde-type shared mode encoding and decoding.  */
 void smode_gf256_gentab(u8 poly);
 void sharded_encode(sharded_encoding_options_t o);
 void sharded_decode(sharded_decoding_options_t o);
