@@ -51,13 +51,20 @@ typedef struct {
 /*  v1.x shard header. Version byte picks plain(0x01,20B,CRC32C),
     hash(0x81,32B,BLAKE2b-128), or keyed(0xC1,32B,BLAKE2b-128 MAC).
     Layout: magic[4] | ver | dshards | pshards | shard# | total_size(u64 BE)
-            | tag(4 or 16) | body. All shards in a set share the mode.  */
+            | tag(4 or 16) | body | EOS. All shards in a set share the mode.
+    EOS trailer: magic "XPAE" | ver | shard# | 00 | 00 | tag (4 or 16).
+    EOS MAC domain: header[0..16) || eos[0..8).  */
 #define SHARD_HEADER_SIZE         20
 #define SHARD_HEADER_BLAKE2B_SIZE 32
+#define SHARD_EOS_SIZE            12
+#define SHARD_EOS_BLAKE2B_SIZE    24
 #define SHARD_VERSION             1
 #define SHARD_VERSION_BLAKE2B     0x80
 #define SHARD_VERSION_KEYED       0x40
 #define SHARD_VERSION_MASK        0x3F
+static inline sz shard_eos_size(bool has_b2b) {
+  return has_b2b ? SHARD_EOS_BLAKE2B_SIZE : SHARD_EOS_SIZE;
+}
 typedef struct {
   bool valid, mapped, auth; u32 crc; u8 * buf;
   u8 shard_number, dshards, pshards;
@@ -100,8 +107,39 @@ static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
   return best;
 }
 
+/*  Validate EOS trailer at buf[0..eos_size). Checks magic, version/shard#
+    match header, and MAC over header[0..16) || eos[0..8).  */
+static bool validate_eos_marker(const u8 * buf, const u8 header[16],
+    bool has_b2b, bool has_key,
+    const u8 * key, sz keylen) {
+  if (buf[0] != 'X' || buf[1] != 'P' || buf[2] != 'A' || buf[3] != 'E')
+    return false;
+  if (buf[4] != header[4] || buf[5] != header[7]) return false;
+  if (has_b2b) {
+#ifdef HAVE_BLAKE2B
+    u8 tag[16];
+    blake2b_state s;
+    if (has_key) blake2b_init_key(&s, 16, key, keylen);
+    else         blake2b_init(&s, 16);
+    blake2b_update(&s, header, 16);
+    blake2b_update(&s, buf, 8);
+    blake2b_final(&s, tag, 16);
+    u8 d = 0;
+    Fi(16, d |= tag[i] ^ buf[8 + i])
+    return d == 0;
+#else
+    (void) key; (void) keylen;  return false;
+#endif
+  }
+  u32 c = crc32c_partial(0xFFFFFFFFL, header, 16);
+  c = crc32c_partial(c, buf, 8) ^ 0xFFFFFFFFL;
+  u32 stored = 0;
+  Fi(4, stored |= ((u32) buf[8 + i]) << (24 - 8 * i))
+  return c == stored;
+}
+
 /*  Unpack+verify shard header; fills res. True iff version,
-    tag, and keyed-flag match the caller's opt.auth_key.  */
+    tag, keyed-flag, and EOS marker all match.  */
 static bool unpack_shard_header(const u8 * buf, sz file_size,
     sharded_decoding_options_t opt, const char * file_name,
     sharded_hv_result_t * res) {
@@ -123,7 +161,8 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
     return false;
   }
   sz hdr_size = has_b2b ? SHARD_HEADER_BLAKE2B_SIZE : SHARD_HEADER_SIZE;
-  if (file_size < hdr_size) return false;
+  sz eos_sz = shard_eos_size(has_b2b);
+  if (file_size < hdr_size + eos_sz) return false;
   if (has_key && !opt.auth_keylen)
     FATAL("Shard `%s' is authenticated; pass --auth=<keyfile>.", file_name);
   if (!has_key && opt.auth_keylen)
@@ -146,8 +185,9 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
   res->total_size = (sz) ts;
   res->auth = has_key;
   res->hdr_size = hdr_size;
-  res->shard_size = file_size - hdr_size;
+  res->shard_size = file_size - hdr_size - eos_sz;
   const u8 * body = buf + hdr_size;
+  const u8 * eos = buf + file_size - eos_sz;
   if (has_b2b) {
 #ifdef HAVE_BLAKE2B
     u8 tag[16];
@@ -169,6 +209,13 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
     u32 c = crc32c_partial(0xFFFFFFFFL, (u8 *) buf, 16);
     c = crc32c_partial(c, (u8 *) body, res->shard_size) ^ 0xFFFFFFFFL;
     if (c != res->crc) return false;
+  }
+  if (!validate_eos_marker(eos, buf, has_b2b, has_key,
+                           opt.auth_key, opt.auth_keylen)) {
+    if (!opt.quiet)
+      xpar_fprintf(xpar_stderr,
+        "Shard `%s': missing or invalid EOS trailer.\n", file_name);
+    return false;
   }
   return true;
 }
@@ -253,6 +300,37 @@ static sz pack_shard_header(u8 dst[SHARD_HEADER_BLAKE2B_SIZE],
   c = crc32c_partial(c, (u8 *) body, body_len) ^ 0xFFFFFFFFL;
   Fi(4, dst[16 + i] = (u8)(c >> (24 - 8 * i)));
   return SHARD_HEADER_SIZE;
+}
+
+/*  Build EOS trailer into dst, tag over header[0..16)+eos[0..8).
+    Returns bytes written: CRC32C=12, BLAKE2b=24.  */
+static sz pack_eos_marker(u8 dst[SHARD_EOS_BLAKE2B_SIZE],
+                          const u8 header[16], int algo,
+                          const u8 * key, sz keylen) {
+  dst[0] = 'X'; dst[1] = 'P'; dst[2] = 'A'; dst[3] = 'E';
+  dst[4] = header[4];  /*  version byte  */
+  dst[5] = header[7];  /*  shard_number  */
+  dst[6] = dst[7] = 0;
+  if (algo == INTEGRITY_BLAKE2B) {
+#ifdef HAVE_BLAKE2B
+    u8 tag[16];
+    blake2b_state s;
+    if (keylen) blake2b_init_key(&s, 16, key, keylen);
+    else        blake2b_init(&s, 16);
+    blake2b_update(&s, header, 16);
+    blake2b_update(&s, dst, 8);
+    blake2b_final(&s, tag, 16);
+    xpar_memcpy(dst + 8, tag, 16);
+    return SHARD_EOS_BLAKE2B_SIZE;
+#else
+    (void) key;
+    FATAL("BLAKE2b requested but disabled at configure time.");
+#endif
+  }
+  u32 c = crc32c_partial(0xFFFFFFFFL, header, 16);
+  c = crc32c_partial(c, dst, 8) ^ 0xFFFFFFFFL;
+  Fi(4, dst[8 + i] = (u8)(c >> (24 - 8 * i)));
+  return SHARD_EOS_SIZE;
 }
 
 #endif

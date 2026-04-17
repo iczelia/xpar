@@ -587,11 +587,15 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   rs_destroy(r);
   Fi(o.dshards + o.pshards,
     u8 hdr[SHARD_HEADER_BLAKE2B_SIZE];
+    u8 eos[SHARD_EOS_BLAKE2B_SIZE];
     sz hs = pack_shard_header(hdr, "XPAL", o.dshards, o.pshards, (u8) i,
                               size, shards[i], shard_size,
                               o.integrity, o.auth_key, o.auth_keylen);
+    sz es = pack_eos_marker(eos, hdr, o.integrity,
+                            o.auth_key, o.auth_keylen);
     xpar_xwrite(out[i], hdr, hs);
     xpar_xwrite(out[i], shards[i], shard_size);
+    xpar_xwrite(out[i], eos, es);
   )
   Fi(o.dshards + o.pshards, xpar_xclose(out[i]));
   Fi0(o.dshards + o.pshards, o.dshards, xpar_free(shards[i]));
