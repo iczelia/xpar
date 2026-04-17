@@ -46,7 +46,11 @@ v1.0 (16-04-2026)
   suite.
 - CI builds additionally run under Address and Undefined-Behaviour
   sanitizers on Linux and macOS, catching regressions in the hot
-  decoder paths.
+  decoder paths. Release artifacts now include a Win95-target i686
+  binary (xpar-i686-w95.exe, built with --with-windows-target=win95,
+  imports only KERNEL32.dll) and a DJGPP/MS-DOS binary (xpar-dos.exe,
+  CWSDPMI bundled via CWSDSTUB) alongside the existing i686/x86_64
+  Windows binaries.
 
 ===============================================================================
 v0.7 (19-09-2025)

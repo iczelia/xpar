@@ -1,4 +1,185 @@
+2026-04-17  Kamila Szewczyk  <k@iczelia.net>
+
+	w95/dos release workflows
+
+2026-04-17  Kamila Szewczyk  <k@iczelia.net>
+
+	v1.0
+	squash of 52 commits
+
+	doc sweep
+
+	continue sweep over docs
+
+	prevent overwrites via link follows
+
+2025-09-19  Kamila Szewczyk  <k@iczelia.net>
+
+	reorganise tasks
+
+	vmode restrict quantifier
+
+2025-09-18  Kamila Szewczyk  <k@iczelia.net>
+
+	unhook cmode.h/cmode.c
+
+	cauchy mode is aiming too high right now
+
+	Revert "cauchy-sharded mode dispatch"
+	This reverts commit c46cae4f4a0cabef3fb1b7fa40bcec3fbe358509.
+
+	remove cmode.c
+
+	Revert "-C in manpage"
+	This reverts commit d03652923e062072ea365a5b294a0cd4e3521a78.
+
+	fix leak in vmode
+
+	vmode.c: obsolete comment
+
+	constness guarantees
+
+	.bss => .data
+
+	bump major version number
+
+	configure: detect NEON
+
+	readme: add build status
+
+	packaging status
+
+	update the to-do list in README
+
+	update AUTHORS
+
+	update NEWS for latest commit
+
+	-C in manpage
+
+	extend cross-arch/os checking to windows
+
+	tar: don't strip path components
+
+	debug the action
+
+	yaml syntax
+
+	cross-arch testing in the CI
+
+	reduce stack pressure in vmode.c
+
+2025-09-17  Kamila Szewczyk  <k@iczelia.net>
+
+	more detail in ci runs
+
+	make jobs
+
+	cauchy-sharded mode dispatch
+
+	fix leak in gf256mat_inv
+
+	xpar.c: reduce stack pressure
+
+	cauchy sharding setting
+
+	this gonna break it
+
+	update the help message
+
+	start debugging the ci failure
+
+	Revert "re-check cauchy sharding wrapper"
+	This reverts commit f764eb1104533a460088d51daf85f206b067f555.
+
+	re-check cauchy sharding wrapper
+
+	Revert "hook up cauchy sharding to xpar"
+	This reverts commit 0f7f372092c0b048c97618c156d37daa69f0bc7b.
+
+	mingw64 => clang64
+
+	make: cloc target
+
+	hook up cauchy sharding to xpar
+
+	religiously obey the 80 column limit; check in cmode (stubbed out for now).
+
+	cosmetic
+
+	shard header validation in sharding.h
+
+	vmode/lmode code deduplication
+
+2025-09-16  Kamila Szewczyk  <k@iczelia.net>
+
+	Merge branch 'aarch64'
+
+	refactor
+
+	misc formatting
+
+	reorganise code
+
+	inline fftskew
+
+	unconditional multiply8lut generation
+
+	jmode UB fix
+
+	-fsanitize=address build
+
+	dshards on mac...
+
+	lmode: clean up platform detection code, still unsure about aarch64
+
+	xpar_leo_x86_64_cpuflags
+
+	fix
+
+	-S -> -W
+
+	gate away SSSE3 code
+
+	gate AVX2 availability check
+
+	unsure how this will play with feature detection
+
+	update the manpage
+
+	check in sse2neon, reformat, credit chris, update copy year
+
+	reformat
+
+	strip more cruft
+
+	log-time mode
+
+2025-09-14  Kamila Szewczyk  <k@iczelia.net>
+
+	cap # of parity shards
+
+2025-09-12  Kamila Szewczyk  <27734421+iczelia@users.noreply.github.com>
+
+	Update README.md
+
+	Update README with benchmark results and speeds
+
+	benchmarks
+
+	Update README.md
+
+	Update README.md
+
+2025-09-10  Kamila Szewczyk  <k@iczelia.net>
+
+	v4
+
+	update to v06
+
 2025-09-10  Kamila Szewczyk  <kspalaiologos@gmail.com>
+
+	update changelog
 
 	update news
 
