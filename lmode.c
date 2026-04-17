@@ -488,7 +488,7 @@ static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
       "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
       r->ebuf, len, r->ebuf * len);
   if (r->data == 1) {
-    Fi(r->parity, xpar_memcpy(ework[i], in[i], len))
+    Fi(r->parity, xpar_memcpy(ework[i], in[0], len))
   } else if (r->parity == 1) {
     EncodeM1(len, r->data, (const void * const * const) in, ework[0]);
   } else {
@@ -736,6 +736,8 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
       xpar_xwrite(out, res[i].buf + res[i].hdr_size, w);
       consensus_size -= w)
     Fi(n_valid_shards, unmap_shard(&res[i]));
+    xpar_xclose(out);
+    xpar_free(res);
     return;
   }
   rs * r = rs_init(consensus_dshards, consensus_pshards);
