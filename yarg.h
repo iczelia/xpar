@@ -263,7 +263,7 @@ static int yarg_parse_unix_short(int argc, char * argv[],
       no_args++;
     } else no_pos_args++;
   }
-  
+
   res->args = (yarg_option *) xpar_malloc((no_args + 1) * sizeof(yarg_option));
   res->pos_args = (char **) xpar_malloc((no_pos_args + 1) * sizeof(char *));
   if (!res->args || !res->pos_args) {

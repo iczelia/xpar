@@ -15,8 +15,6 @@
 
 #include "vmode.h"
 
-
-
 static u8 LOG[256], EXP[256], PROD[256][256];
 void smode_gf256_gentab(u8 poly) {
   for (int l = 0, b = 1; l < 255; l++) {
@@ -323,7 +321,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
     }
   )
   /*  Check if we have a duplicate of any shard.  */
-  Fi(opt.n_input_shards, Fj0(opt.n_input_shards, i + 1, 
+  Fi(opt.n_input_shards, Fj0(opt.n_input_shards, i + 1,
     if (res[i].shard_number == res[j].shard_number
       && res[i].valid && res[j].valid) {
       FATAL(
@@ -358,7 +356,7 @@ void sharded_decode(sharded_decoding_options_t opt) {
       "Sharding consensus: %zu bytes total, %zu bytes per shard\n",
       consensus_size, consensus_shard_size);
     xpar_fprintf(xpar_stderr, "Valid shards:\n");
-    Fi(n_valid_shards, 
+    Fi(n_valid_shards,
       xpar_fprintf(xpar_stderr,
         "  %s (#%d)\n",
         opt.input_files[i], res[i].shard_number);

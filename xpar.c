@@ -28,7 +28,7 @@
 /*  -----------------------------------------------------------------------
   Command-line stub.  */
 static void version() {
-  xpar_fprintf(xpar_stdout, 
+  xpar_fprintf(xpar_stdout,
     "xpar %d.%d. Copyright (C) by Kamila Szewczyk, 2022-2026.\n"
     "Licensed under the terms of GNU GPL version 3, available online at:\n"
     " <https://www.gnu.org/licenses/gpl-3.0.en.html>\n"
@@ -38,7 +38,7 @@ static void version() {
   );
 }
 static void help() {
-  xpar_fprintf(xpar_stdout, 
+  xpar_fprintf(xpar_stdout,
     "xpar - an error/erasure code system guarding data integrity.\n"
     "Usage (joint mode):\n"
     "  xpar -Je/-Jd [...] <in>                    (adds/removes .xpa)\n"

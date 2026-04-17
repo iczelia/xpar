@@ -68,9 +68,8 @@ static char * wide_to_utf8_heap(const wchar_t * w) {
 }
 #endif
 
-/*  =======================================================================
-    xpar_file: opaque wrapper around a Win32 HANDLE
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  xpar_file: opaque wrapper around a Win32 HANDLE  */
 
 struct xpar_file {
   HANDLE h;
@@ -102,9 +101,8 @@ void xpar_host_init(void) {
 #endif
 }
 
-/*  =======================================================================
-    Open / close
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Open / close  */
 
 xpar_file * xpar_open(const char * path, int flags) {
   DWORD access = 0, share = FILE_SHARE_READ, creation = 0;
@@ -150,9 +148,8 @@ int xpar_close(xpar_file * f) {
   return r;
 }
 
-/*  =======================================================================
-    read / write / seek
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  read / write / seek  */
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   /*  Loop for POSIX-fread-like semantics: partial pipe reads are stitched
@@ -249,15 +246,14 @@ bool xpar_is_seekable(xpar_file * f) { return f->kind == FILE_TYPE_DISK; }
 bool xpar_is_tty(xpar_file * f) {
   if (f->kind != FILE_TYPE_CHAR) return false;
   DWORD mode;
-  return GetConsoleMode(f->h, &mode) ? true : false;
+  return !!GetConsoleMode(f->h, &mode);
 }
 
 bool xpar_eof  (xpar_file * f) { return f->at_eof; }
 int  xpar_error(xpar_file * f) { return (int) f->last_err; }
 
-/*  =======================================================================
-    Safe helpers
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Safe helpers  */
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = xpar_read(f, p, n);
@@ -283,9 +279,8 @@ void xpar_notty(xpar_file * f) {
     FATAL("Refusing to read/write binary data from/to a terminal.");
 }
 
-/*  =======================================================================
-    Filesystem
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Filesystem  */
 
 int xpar_stat_path(const char * path, xpar_stat_t * out) {
 #if defined(XPAR_WIN_LEGACY)
@@ -365,9 +360,8 @@ int xpar_same_file(const char * a, const char * b) {
 #endif
 }
 
-/*  =======================================================================
-    Memory map
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Memory map  */
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m = { NULL, 0 };
@@ -421,9 +415,8 @@ void xpar_unmap(xpar_mmap * m) {
   m->map = NULL; m->size = 0;
 }
 
-/*  =======================================================================
-    Allocation
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Allocation  */
 
 void * xpar_malloc(sz n) {
   if (n == 0) n = 1;
@@ -447,8 +440,8 @@ void xpar_free(void * p) {
   if (p) HeapFree(GetProcessHeap(), 0, p);
 }
 
-/*  =======================================================================
-    Freestanding strings: byte-loop fallbacks for __builtin_str*.  */
+/*  -----------------------------------------------------------------------
+  Freestanding strings: byte-loop fallbacks for __builtin_str*.  */
 
 XPAR_KEEP sz strlen(const char * s) {
   const char * p = s;
@@ -562,9 +555,8 @@ XPAR_KEEP int memcmp(const void * a, const void * b, sz n) {
 /*  xpar_mem... and xpar_str... are macros over __builtin_* that route to
     the symbols above.  */
 
-/*  =======================================================================
-    Numeric parsing: decimal only
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Numeric parsing: decimal only  */
 
 int xpar_parse_i64(const char * s, i64 * out) {
   if (!s || !*s) return -1;
@@ -604,9 +596,8 @@ int xpar_parse_u64(const char * s, u64 * out) {
   return 0;
 }
 
-/*  =======================================================================
-    Mini-printf
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Mini-printf  */
 
 typedef struct {
   char * buf;
@@ -838,9 +829,8 @@ int xpar_asprintf(char ** out, const char * fmt, ...) {
   return n;
 }
 
-/*  =======================================================================
-    Console-aware output
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Console-aware output  */
 
 static void write_raw(xpar_file * f, const char * s, sz n) {
 #if !defined(XPAR_WIN_LEGACY)
@@ -903,9 +893,8 @@ int xpar_fputs(const char * s, xpar_file * f) {
   return (int) n;
 }
 
-/*  =======================================================================
-    Process, errors, time
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Process, errors, time  */
 
 __attribute__((noreturn)) void xpar_exit(int code) {
   ExitProcess((UINT) code);
@@ -963,9 +952,8 @@ u64 xpar_usec_now(void) {
   return q * 1000000ULL + r * 1000000ULL / (u64) freq.QuadPart;
 }
 
-/*  =======================================================================
-    Thread / mutex / condvar primitives (Win32-backed)
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Thread / mutex / condvar primitives (Win32-backed)  */
 
 #if defined(XPAR_WIN_LEGACY)
 struct xpar_thread { char _unused; };
@@ -1316,10 +1304,9 @@ int xpar_win_utf8_argv(int * argc_out, char *** argv_out) {
 
 #endif  /*  XPAR_WIN_LEGACY vs. modern argv split  */
 
-/*  =======================================================================
-    Entry point. Replaces mainCRTStartup entirely. Link with
-      -nostartfiles -Wl,-e,xpar_entry -nodefaultlibs -lgcc -lkernel32
-    =======================================================================  */
+/*  -----------------------------------------------------------------------
+  Entry point. Replaces mainCRTStartup entirely. Link with
+    -nostartfiles -Wl,-e,xpar_entry -nodefaultlibs -lgcc -lkernel32  */
 
 XPAR_KEEP __attribute__((noreturn)) void __cdecl xpar_entry(void) {
   xpar_host_init();

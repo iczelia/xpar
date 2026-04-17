@@ -45,9 +45,6 @@
 #include "lmode.h"
 #include "platform.h"
 
-
-
-
 #if defined(XPAR_X86_64)
   #ifdef HAVE_FUNC_ATTRIBUTE_SYSV_ABI
     #define EXTERNAL_ABI __attribute__((sysv_abi))

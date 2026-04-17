@@ -20,8 +20,6 @@
   #include "blake2b.h"
 #endif
 
-
-
 /*  Reed-Solomon (K=223 data, T=32 parity, N=255 codeword).  */
 #define K 223
 #define N 255

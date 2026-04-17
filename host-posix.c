@@ -155,8 +155,8 @@ int xpar_stat_path(const char * path, xpar_stat_t * out) {
   struct stat st;
   if (stat(path, &st) != 0) return -1;
   out->size       = (u64) st.st_size;
-  out->is_dir     = S_ISDIR(st.st_mode) ? true : false;
-  out->is_regular = S_ISREG(st.st_mode) ? true : false;
+  out->is_dir     = !!S_ISDIR(st.st_mode);
+  out->is_regular = !!S_ISREG(st.st_mode);
   return 0;
 }
 int xpar_remove(const char * path) { return unlink(path); }
@@ -325,7 +325,8 @@ void xpar_cond_free(xpar_cond * c) {
   pthread_cond_destroy(&c->c); xpar_free(c);
 }
 void xpar_cond_wait(xpar_cond * c, xpar_mutex * m) {
-  pthread_cond_wait(&c->c, &m->m); }
+  pthread_cond_wait(&c->c, &m->m);
+}
 void xpar_cond_signal   (xpar_cond * c) { pthread_cond_signal   (&c->c); }
 void xpar_cond_broadcast(xpar_cond * c) { pthread_cond_broadcast(&c->c); }
 
