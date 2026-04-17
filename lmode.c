@@ -572,16 +572,26 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     xpar_free(name);
   )
   u8 * shards[MAX_TOTAL_SHARDS] = { NULL };
+  bool owned[MAX_TOTAL_SHARDS] = { false };
   sz shard_size = (size + o.dshards - 1) / o.dshards;
   if (shard_size & 63) shard_size = (shard_size + 63) & ~63;
   if (shard_size <= 8192)
     FATAL("Input file too small to be sharded with the given parameters.");
-  Fi(o.dshards - 1, shards[i] = buf + i * shard_size);
-  /*   last shard: use a temporary buffer to avoid overflowing  */
-  shards[o.dshards - 1] = xpar_malloc(shard_size);
-  if (size > (o.dshards - 1) * shard_size)
-    xpar_memcpy(shards[o.dshards - 1], buf + (o.dshards - 1) * shard_size,
-      size - (o.dshards - 1) * shard_size);
+  /*   Any data shard whose slice would cross the input end (possible here
+       because shard_size is rounded up to 64) gets its own zeroed buffer
+       with the available bytes copied in: avoids OOB reads on `buf` and
+       keeps heap garbage out of the shard body / MAC domain.  */
+  Fi(o.dshards,
+    sz start = (sz) i * shard_size;
+    if (start + shard_size <= size)
+      shards[i] = buf + start;
+    else {
+      shards[i] = xpar_malloc(shard_size);
+      xpar_memset(shards[i], 0, shard_size);
+      if (start < size)
+        xpar_memcpy(shards[i], buf + start, size - start);
+      owned[i] = true;
+    })
   rs * r = rs_init(o.dshards, o.pshards);
   rs_encode(r, shards, shard_size, o.verbose);
   rs_destroy(r);
@@ -599,7 +609,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   )
   Fi(o.dshards + o.pshards, xpar_xclose(out[i]));
   Fi0(o.dshards + o.pshards, o.dshards, xpar_free(shards[i]));
-  xpar_free(shards[o.dshards - 1]);
+  Fi(o.dshards, if (owned[i]) xpar_free(shards[i]));
 }
 
 void log_sharded_encode(sharded_encoding_options_t o) {
@@ -663,6 +673,9 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     consensus_shard_size =
       *(sz *) most_frequent((u8 *) b, opt.n_input_shards, sizeof(sz));
   }
+  if (consensus_size > (sz) consensus_dshards * consensus_shard_size)
+    FATAL("Header total_size (%zu) exceeds %u data shards of %zu bytes.",
+          consensus_size, consensus_dshards, consensus_shard_size);
   /*   Kick out shards that don't match the consensus.  */
   Fi(opt.n_input_shards,
     if (res[i].dshards != consensus_dshards

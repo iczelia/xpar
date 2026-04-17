@@ -222,8 +222,10 @@ static void do_sharded_encode(sharded_encoding_options_t o,
   if (shard_size <= 128)
     FATAL("Input file too small to be sharded with the given parameters.");
   Fi(o.dshards - 1, shards[i] = buf + i * shard_size);
-  /*  last shard: use a temporary buffer to avoid overflowing  */
+  /*  last shard: zeroed scratch buffer so tail padding is deterministic
+      and heap contents never reach disk or the MAC domain.  */
   shards[o.dshards - 1] = xpar_malloc(shard_size);
+  xpar_memset(shards[o.dshards - 1], 0, shard_size);
   if (size > (o.dshards - 1) * shard_size)
     xpar_memcpy(shards[o.dshards - 1], buf + (o.dshards - 1) * shard_size,
       size - (o.dshards - 1) * shard_size);
@@ -310,6 +312,9 @@ void sharded_decode(sharded_decoding_options_t opt) {
     consensus_shard_size =
       *(sz *) most_frequent((u8 *) b, opt.n_input_shards, sizeof(sz));
   }
+  if (consensus_size > (sz) consensus_dshards * consensus_shard_size)
+    FATAL("Header total_size (%zu) exceeds %u data shards of %zu bytes.",
+          consensus_size, consensus_dshards, consensus_shard_size);
   /*  Kick out shards that don't match the consensus.  */
   Fi(opt.n_input_shards,
     if (res[i].dshards != consensus_dshards

@@ -319,6 +319,10 @@ static file_hdr parse_header(u8 out[N], int force, int ifactor_override) {
     FATAL_UNLESS("Unknown integrity algorithm in header.", !force);
     if (force) fh.integrity = INTEGRITY_CRC32C;
   }
+  if (fh.auth_flag != 0 && fh.auth_flag != 1) {
+    FATAL_UNLESS("Invalid auth flag in header.", !force);
+    if (force) fh.auth_flag = 0;
+  }
 #ifndef HAVE_BLAKE2B
   if (fh.integrity == INTEGRITY_BLAKE2B) {
     FATAL("This file uses BLAKE2b integrity, but xpar was built with "

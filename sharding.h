@@ -84,7 +84,7 @@ static void unmap_shard(sharded_hv_result_t * res) {
   }
 }
 static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
-  xpar_assert(size < 16);  u8 tmp[16]; sz i, j;
+  xpar_assert(size <= 16);  u8 tmp[16]; sz i, j;
   Fi0(nmemb, 1,
     for (j = i;
          j && xpar_memcmp(&tab[j * size], &tab[(j - 1) * size], size) < 0;
@@ -138,12 +138,13 @@ static bool validate_eos_marker(const u8 * buf, const u8 header[16],
   return c == stored;
 }
 
-/*  Unpack+verify shard header; fills res. True iff version,
+/*  Unpack+verify shard header; fills res. True iff magic, version,
     tag, keyed-flag, and EOS marker all match.  */
 static bool unpack_shard_header(const u8 * buf, sz file_size,
     sharded_decoding_options_t opt, const char * file_name,
-    sharded_hv_result_t * res) {
+    const char * magic, sharded_hv_result_t * res) {
   if (file_size < SHARD_HEADER_SIZE) return false;
+  if (xpar_memcmp(buf, magic, 4)) return false;
   u8 vb = buf[4];
   bool has_b2b = (vb & SHARD_VERSION_BLAKE2B) != 0;
   bool has_key = (vb & SHARD_VERSION_KEYED) != 0;
@@ -227,10 +228,7 @@ static sharded_hv_result_t validate_shard_header(const char * file_name,
     #if defined(XPAR_ALLOW_MAPPING)
     xpar_mmap map = xpar_map(file_name);
     if (map.map) {
-      if (map.size < SHARD_HEADER_SIZE || xpar_memcmp(map.map, hdr, 4)) {
-        xpar_unmap(&map);  return res;
-      }
-      if (!unpack_shard_header(map.map, map.size, opt, file_name, &res)) {
+      if (!unpack_shard_header(map.map, map.size, opt, file_name, hdr, &res)) {
         xpar_unmap(&map);  return res;
       }
       res.valid = true;  res.mapped = true;
@@ -251,8 +249,7 @@ static sharded_hv_result_t validate_shard_header(const char * file_name,
     xpar_free(buffer);  xpar_close(in);  return res;
   }
   xpar_close(in);
-  if (xpar_memcmp(buffer, hdr, 4)) { xpar_free(buffer);  return res; }
-  if (!unpack_shard_header(buffer, size, opt, file_name, &res)) {
+  if (!unpack_shard_header(buffer, size, opt, file_name, hdr, &res)) {
     xpar_free(buffer);  return res;
   }
   res.buf = buffer; res.valid = true;  return res;
