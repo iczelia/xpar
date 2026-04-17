@@ -123,8 +123,16 @@ int  xpar_error(xpar_file * f) { return ferror(f->fp); }
   Safe helpers (FATAL on error)  */
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
-  sz got = fread(p, 1, n, f->fp);
-  if (ferror(f->fp)) FATAL_PERROR("fread");
+  sz got = 0;
+  char * cp = (char *) p;
+  while (got < n) {
+    sz r = fread(cp + got, 1, n - got, f->fp);
+    got += r;
+    if (r == 0) {
+      if (ferror(f->fp)) FATAL_PERROR("fread");
+      break;
+    }
+  }
   return got;
 }
 void xpar_xwrite(xpar_file * f, const void * p, sz n) {
