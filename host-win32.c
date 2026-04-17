@@ -1069,11 +1069,20 @@ int xpar_cpu_count(void) {
 
 /*  Legacy: parse the A command line; bytes pass through as CP_ACP.  */
 
+static int grow_buf_a(char ** pbuf, sz * pbcap) {
+  if (*pbcap > ((sz)-1) / 2) return 0;
+  sz nc = *pbcap * 2;
+  char * nb = HeapReAlloc(GetProcessHeap(), 0, *pbuf, nc);
+  if (!nb) return 0;
+  *pbuf = nb; *pbcap = nc;
+  return 1;
+}
 static int split_cmdline_a(const char * cmd, char *** out_argv) {
   int argc = 0;
+  char ** argv = NULL;
+  char * buf = NULL;
   for (int pass = 0; pass < 2; pass++) {
     const char * p = cmd;
-    char ** argv = NULL;
     if (pass == 1) {
       argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                        (sz)(argc + 1) * sizeof(char *));
@@ -1083,11 +1092,12 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
     while (*p) {
       while (*p == ' ' || *p == '\t') p++;
       if (!*p) break;
-      char * buf = NULL; sz blen = 0, bcap = 0;
+      sz blen = 0, bcap = 0;
+      buf = NULL;
       if (pass == 1) {
         bcap = 64;
         buf = HeapAlloc(GetProcessHeap(), 0, bcap);
-        if (!buf) { HeapFree(GetProcessHeap(), 0, argv); return -1; }
+        if (!buf) goto fail;
       }
       int in_quote = 0;
       while (*p) {
@@ -1099,19 +1109,13 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
             int slashes = nbs / 2;
             if (pass == 1) {
               for (int i = 0; i < slashes; i++) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap);
-                }
+                if (blen + 1 >= bcap && !grow_buf_a(&buf, &bcap)) goto fail;
                 buf[blen++] = '\\';
               }
             }
             if (nbs & 1) {
               if (pass == 1) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap);
-                }
+                if (blen + 1 >= bcap && !grow_buf_a(&buf, &bcap)) goto fail;
                 buf[blen++] = '"';
               }
               p++;
@@ -1122,10 +1126,7 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
           } else {
             if (pass == 1) {
               for (int i = 0; i < nbs; i++) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap);
-                }
+                if (blen + 1 >= bcap && !grow_buf_a(&buf, &bcap)) goto fail;
                 buf[blen++] = '\\';
               }
             }
@@ -1133,10 +1134,7 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
         } else if (*p == '"') {
           if (in_quote && p[1] == '"') {
             if (pass == 1) {
-              if (blen + 1 >= bcap) {
-                bcap *= 2;
-                buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap);
-              }
+              if (blen + 1 >= bcap && !grow_buf_a(&buf, &bcap)) goto fail;
               buf[blen++] = '"';
             }
             p += 2;
@@ -1146,10 +1144,7 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
           }
         } else {
           if (pass == 1) {
-            if (blen + 1 >= bcap) {
-              bcap *= 2;
-              buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap);
-            }
+            if (blen + 1 >= bcap && !grow_buf_a(&buf, &bcap)) goto fail;
             buf[blen++] = *p;
           }
           p++;
@@ -1158,10 +1153,19 @@ static int split_cmdline_a(const char * cmd, char *** out_argv) {
       if (pass == 1) {
         buf[blen] = '\0';
         argv[argc] = buf;
+        buf = NULL;
       }
       argc++;
     }
     if (pass == 1) { *out_argv = argv; return argc; }
+  }
+  return -1;
+fail:
+  if (buf) HeapFree(GetProcessHeap(), 0, buf);
+  if (argv) {
+    for (int j = 0; j < argc; j++)
+      if (argv[j]) HeapFree(GetProcessHeap(), 0, argv[j]);
+    HeapFree(GetProcessHeap(), 0, argv);
   }
   return -1;
 }
@@ -1175,12 +1179,22 @@ int xpar_win_utf8_argv(int * argc_out, char *** argv_out) {
 
 #else
 
+static int grow_buf_w(wchar_t ** pbuf, sz * pbcap) {
+  if (*pbcap > ((sz)-1) / (2 * sizeof(wchar_t))) return 0;
+  sz nc = *pbcap * 2;
+  wchar_t * nb = HeapReAlloc(
+    GetProcessHeap(), 0, *pbuf, nc * sizeof(wchar_t));
+  if (!nb) return 0;
+  *pbuf = nb; *pbcap = nc;
+  return 1;
+}
 static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
   /*  Two passes: count args, then fill.  */
   int argc = 0;
+  wchar_t ** wargv = NULL;
+  wchar_t * buf = NULL;
   for (int pass = 0; pass < 2; pass++) {
     const wchar_t * p = cmd;
-    wchar_t ** wargv = NULL;
     if (pass == 1) {
       wargv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                         (sz)(argc + 1) * sizeof(wchar_t *));
@@ -1191,11 +1205,12 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
       while (*p == L' ' || *p == L'\t') p++;
       if (!*p) break;
       /*  Start a new arg. Collect into a buffer on pass 1.  */
-      wchar_t * buf = NULL; sz blen = 0, bcap = 0;
+      sz blen = 0, bcap = 0;
+      buf = NULL;
       if (pass == 1) {
         bcap = 64;
         buf = HeapAlloc(GetProcessHeap(), 0, bcap * sizeof(wchar_t));
-        if (!buf) { HeapFree(GetProcessHeap(), 0, wargv); return -1; }
+        if (!buf) goto fail;
       }
       int in_quote = 0;
       while (*p) {
@@ -1207,21 +1222,13 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
             int slashes = nbs / 2;
             if (pass == 1) {
               for (int i = 0; i < slashes; i++) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(
-                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
-                }
+                if (blen + 1 >= bcap && !grow_buf_w(&buf, &bcap)) goto fail;
                 buf[blen++] = L'\\';
               }
             }
             if (nbs & 1) {
               if (pass == 1) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(
-                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
-                }
+                if (blen + 1 >= bcap && !grow_buf_w(&buf, &bcap)) goto fail;
                 buf[blen++] = L'"';
               }
               p++;
@@ -1232,11 +1239,7 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
           } else {
             if (pass == 1) {
               for (int i = 0; i < nbs; i++) {
-                if (blen + 1 >= bcap) {
-                  bcap *= 2;
-                  buf = HeapReAlloc(
-                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
-                }
+                if (blen + 1 >= bcap && !grow_buf_w(&buf, &bcap)) goto fail;
                 buf[blen++] = L'\\';
               }
             }
@@ -1244,11 +1247,7 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
         } else if (*p == L'"') {
           if (in_quote && p[1] == L'"') {
             if (pass == 1) {
-              if (blen + 1 >= bcap) {
-                bcap *= 2;
-                buf = HeapReAlloc(
-                  GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
-              }
+              if (blen + 1 >= bcap && !grow_buf_w(&buf, &bcap)) goto fail;
               buf[blen++] = L'"';
             }
             p += 2;
@@ -1258,11 +1257,7 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
           }
         } else {
           if (pass == 1) {
-            if (blen + 1 >= bcap) {
-              bcap *= 2;
-              buf = HeapReAlloc(
-                GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
-            }
+            if (blen + 1 >= bcap && !grow_buf_w(&buf, &bcap)) goto fail;
             buf[blen++] = *p;
           }
           p++;
@@ -1271,10 +1266,19 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
       if (pass == 1) {
         buf[blen] = L'\0';
         wargv[argc] = buf;
+        buf = NULL;
       }
       argc++;
     }
     if (pass == 1) { *out_wargv = wargv; return argc; }
+  }
+  return -1;
+fail:
+  if (buf) HeapFree(GetProcessHeap(), 0, buf);
+  if (wargv) {
+    for (int j = 0; j < argc; j++)
+      if (wargv[j]) HeapFree(GetProcessHeap(), 0, wargv[j]);
+    HeapFree(GetProcessHeap(), 0, wargv);
   }
   return -1;
 }
