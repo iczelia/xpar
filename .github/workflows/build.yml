@@ -7,14 +7,14 @@ jobs:
     name: Package
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Configure
       run: |
         ./bootstrap && ./configure
     - name: Make source package
       run: make VERSION=${{ github.sha }} dist
     - name: Upload source package artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: xpar-${{ github.sha }}
         path: xpar-${{ github.sha }}.tar.gz
@@ -27,7 +27,7 @@ jobs:
         cp xpar xpar.org
         tar -czf xpar-${{ github.sha }}-guarded.tar.gz xpar.xpa xpar.org
     - name: Upload x86_64 parity files artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
         path: xpar-${{ github.sha }}-guarded.tar.gz
@@ -46,11 +46,11 @@ jobs:
     steps:
     - uses: ilammy/setup-nasm@v1
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - name: Install OpenMP
@@ -97,11 +97,11 @@ jobs:
     steps:
     - uses: ilammy/setup-nasm@v1
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
@@ -145,11 +145,11 @@ jobs:
         sanitizer: [ "none", "asan-ubsan" ]
     steps:
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
@@ -195,11 +195,11 @@ jobs:
         feature: [ enable-x86_64, disable-x86_64 ]
     steps:
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - uses: msys2/setup-msys2@v2
@@ -233,11 +233,11 @@ jobs:
         shell: msys2 {0}
     steps:
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - uses: msys2/setup-msys2@v2
@@ -274,11 +274,11 @@ jobs:
       CC_FOR_BUILD: /usr/bin/gcc
     steps:
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Download parity files artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}-guarded
     - uses: msys2/setup-msys2@v2
@@ -328,7 +328,7 @@ jobs:
       CFLAGS_FOR_BUILD: -O2
     steps:
     - name: Download source package artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: xpar-${{ github.sha }}
     - name: Install DJGPP cross-toolchain

@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Configure
         run: |
           ./bootstrap && ./configure
@@ -43,7 +43,7 @@ jobs:
             xpar-${{ github.ref_name }}.tar.zst
             xpar-${{ github.ref_name }}.zip
       - name: Upload source package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: xpar-${{ github.ref_name }}
           path: xpar-${{ github.ref_name }}.tar.gz
@@ -60,7 +60,7 @@ jobs:
           - [ "i686-w95", "CC=i686-w64-mingw32-gcc --host i686-w64-mingw32 --enable-static --enable-lto --with-windows-target=win95", "gcc-mingw-w64-i686" ]
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: xpar-${{ github.ref_name }}
       - name: Extract source package
@@ -98,7 +98,7 @@ jobs:
       CFLAGS_FOR_BUILD: -O2
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: xpar-${{ github.ref_name }}
       - name: Extract source package
