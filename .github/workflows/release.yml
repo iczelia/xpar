@@ -76,7 +76,7 @@ jobs:
       - name: Install nasm
         run: sudo apt-get install nasm -y
       - name: Configure
-        run: ./configure --bindir=/ --program-suffix=-${{ matrix.target[0] }} ${{ matrix.target[1] }}
+        run: ./configure --bindir=/ --program-suffix=-${{ matrix.target[0] }} ${{ matrix.target[1] }} CFLAGS=-O2 LDFLAGS=-s
       - name: Make
         run: |
           make
@@ -129,7 +129,8 @@ jobs:
         run: |
           ./configure --host=i586-pc-msdosdjgpp --disable-x86_64 \
                       --bindir=/ --program-suffix=-dos \
-                      CC=i586-pc-msdosdjgpp-gcc
+                      CC=i586-pc-msdosdjgpp-gcc \
+                      CFLAGS=-O2 LDFLAGS=-s
       - name: Make
         run: |
           make
