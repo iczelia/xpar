@@ -177,7 +177,7 @@ static bool rs_correct(rs * r, uint8_t ** in,
     }
   gf256mat * inv = gf256mat_inv(mat);
   gf256mat_free(mat);
-  if (!inv) return false;
+  if (!inv) { xpar_free(shards); return false; }
   gf256mat_trans(inv);
 
   struct _pf_ctx_rs_cor ctx = { r, in, presence, inv, shards, len };
