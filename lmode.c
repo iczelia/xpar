@@ -673,7 +673,8 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     consensus_shard_size =
       *(sz *) most_frequent((u8 *) b, opt.n_input_shards, sizeof(sz));
   }
-  if (consensus_size > (sz) consensus_dshards * consensus_shard_size)
+  if ((u64) consensus_size
+      > (u64) consensus_dshards * (u64) consensus_shard_size)
     FATAL("Header total_size (%zu) exceeds %u data shards of %zu bytes.",
           consensus_size, consensus_dshards, consensus_shard_size);
   /*   Kick out shards that don't match the consensus.  */
