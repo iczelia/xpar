@@ -18,9 +18,9 @@
 
 #include "common.h"
 
-u32 crc32c(const u8 * data, sz length);
+u32 crc32c(const u8 *data, sz length);
 
 /*  Streaming CRC; init with 0xFFFFFFFF, finalize by XORing it back.  */
-u32 crc32c_partial(u32 crc, const u8 * data, sz length);
+u32 crc32c_partial(u32 crc, const u8 *data, sz length);
 
 #endif

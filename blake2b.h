@@ -21,8 +21,8 @@
 #include "common.h"
 
 #define BLAKE2B_BLOCKBYTES 128
-#define BLAKE2B_OUTBYTES    64
-#define BLAKE2B_KEYBYTES    64
+#define BLAKE2B_OUTBYTES 64
+#define BLAKE2B_KEYBYTES 64
 
 typedef struct {
   u64 h[8];
@@ -33,14 +33,13 @@ typedef struct {
   sz outlen;
 } blake2b_state;
 
-int blake2b_init(blake2b_state * restrict s, sz outlen);
-int blake2b_init_key(blake2b_state * restrict s, sz outlen,
-                     const void * restrict key, sz keylen);
-int blake2b_update(blake2b_state * restrict s,
-                   const void * restrict in, sz inlen);
-int blake2b_final(blake2b_state * restrict s, void * restrict out, sz outlen);
-int blake2b(void * restrict out, sz outlen,
-            const void * restrict in, sz inlen,
-            const void * restrict key, sz keylen);
+int blake2b_init(blake2b_state *restrict s, sz outlen);
+int blake2b_init_key(blake2b_state *restrict s, sz outlen,
+                     const void *restrict key, sz keylen);
+int blake2b_update(blake2b_state *restrict s, const void *restrict in,
+                   sz inlen);
+int blake2b_final(blake2b_state *restrict s, void *restrict out, sz outlen);
+int blake2b(void *restrict out, sz outlen, const void *restrict in, sz inlen,
+            const void *restrict key, sz keylen);
 
 #endif
