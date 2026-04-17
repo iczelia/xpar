@@ -320,7 +320,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
     if (res[i].dshards != consensus_dshards
      || res[i].pshards != consensus_pshards
      || res[i].total_size != consensus_size
-     || res[i].shard_size != consensus_shard_size) {
+     || res[i].shard_size != consensus_shard_size
+     || res[i].shard_number >= consensus_dshards + consensus_pshards) {
       res[i].valid = false;
       if (!opt.quiet)
         xpar_fprintf(xpar_stderr,
@@ -458,7 +459,8 @@ void sharded_test(sharded_decoding_options_t opt) {
     rs * r = rs_init(consensus_dshards, consensus_pshards);
     u8 * buffers[MAX_TOTAL_SHARDS] = { NULL };
     u8 pres[MAX_TOTAL_SHARDS] = { 0 };
-    Fi(opt.n_input_shards, if (res[i].valid) {
+    Fi(opt.n_input_shards, if (res[i].valid &&
+        res[i].shard_number < consensus_dshards + consensus_pshards) {
       buffers[res[i].shard_number] = res[i].buf + res[i].hdr_size;
       pres[res[i].shard_number] = 1;
     })

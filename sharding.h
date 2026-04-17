@@ -171,6 +171,13 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
   res->dshards = buf[5];
   res->pshards = buf[6];
   res->shard_number = buf[7];
+  if (res->shard_number >= MAX_TOTAL_SHARDS) {
+    if (!opt.quiet)
+      xpar_fprintf(xpar_stderr,
+        "Shard `%s': invalid shard number %u (max %d).\n",
+        file_name, res->shard_number, MAX_TOTAL_SHARDS - 1);
+    return false;
+  }
   /*  Read into u64 (sz may be 32-bit; shifts >=32 would be UB),
       check for overflow, then narrow.  */
   u64 ts = 0;
