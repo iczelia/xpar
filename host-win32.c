@@ -32,6 +32,16 @@
 #include <windows.h>
 #include "common.h"
 
+/*  Symbols only the linker / libmingw32 startup shims reference
+    (xpar_entry via -Wl,-e,...; mem... and str... via compiler-emitted
+    calls from pesect.o and pseudo-reloc.o). Under -flto the plugin
+    sees them as unused and discards them -- `used` keeps them emitted.  */
+#if defined(__GNUC__) || defined(__clang__)
+  #define XPAR_KEEP __attribute__((used))
+#else
+  #define XPAR_KEEP
+#endif
+
 /*  UTF-8 <-> UTF-16 helpers; modern (wide) path only. Legacy uses -A APIs.  */
 
 #if !defined(XPAR_WIN_LEGACY)
@@ -435,16 +445,16 @@ void xpar_free(void * p) {
 /*  ============================================================================
     Freestanding strings: byte-loop fallbacks for __builtin_str*.  */
 
-sz strlen(const char * s) {
+XPAR_KEEP sz strlen(const char * s) {
   const char * p = s;
   while (*p) p++;
   return (sz)(p - s);
 }
-int strcmp(const char * a, const char * b) {
+XPAR_KEEP int strcmp(const char * a, const char * b) {
   while (*a && *a == *b) { a++; b++; }
   return (int)(u8)*a - (int)(u8)*b;
 }
-int strncmp(const char * a, const char * b, sz n) {
+XPAR_KEEP int strncmp(const char * a, const char * b, sz n) {
   while (n && *a && *a == *b) { a++; b++; n--; }
   if (n == 0) return 0;
   return (int)(u8)*a - (int)(u8)*b;
@@ -469,7 +479,7 @@ char * xpar_strndup(const char * s, sz n) {
 
 #if defined(__x86_64__)
 
-void * memcpy(void * d, const void * s, sz n) {
+XPAR_KEEP void * memcpy(void * d, const void * s, sz n) {
   void * ret = d;
   __asm__ volatile ("rep movsb"
     : "+D"(d), "+S"(s), "+c"(n)
@@ -478,7 +488,7 @@ void * memcpy(void * d, const void * s, sz n) {
   return ret;
 }
 
-void * memset(void * d, int c, sz n) {
+XPAR_KEEP void * memset(void * d, int c, sz n) {
   void * ret = d;
   __asm__ volatile ("rep stosb"
     : "+D"(d), "+c"(n)
@@ -487,7 +497,7 @@ void * memset(void * d, int c, sz n) {
   return ret;
 }
 
-void * memmove(void * d, const void * s, sz n) {
+XPAR_KEEP void * memmove(void * d, const void * s, sz n) {
   void * ret = d;
   if ((const unsigned char *) d < (const unsigned char *) s ||
       (const unsigned char *) d >= (const unsigned char *) s + n) {
@@ -506,7 +516,7 @@ void * memmove(void * d, const void * s, sz n) {
   return ret;
 }
 
-int memcmp(const void * a, const void * b, sz n) {
+XPAR_KEEP int memcmp(const void * a, const void * b, sz n) {
   if (n == 0) return 0;
   const unsigned char * ap = a;
   const unsigned char * bp = b;
@@ -520,23 +530,23 @@ int memcmp(const void * a, const void * b, sz n) {
 
 #else  /*  portable fallback; dead path on mingw-w64.  */
 
-void * memcpy(void * d, const void * s, sz n) {
+XPAR_KEEP void * memcpy(void * d, const void * s, sz n) {
   unsigned char * dp = d; const unsigned char * sp = s;
   while (n--) *dp++ = *sp++;
   return d;
 }
-void * memmove(void * d, const void * s, sz n) {
+XPAR_KEEP void * memmove(void * d, const void * s, sz n) {
   unsigned char * dp = d; const unsigned char * sp = s;
   if (dp < sp || dp >= sp + n) { while (n--) *dp++ = *sp++; }
   else { dp += n; sp += n; while (n--) *--dp = *--sp; }
   return d;
 }
-void * memset(void * d, int c, sz n) {
+XPAR_KEEP void * memset(void * d, int c, sz n) {
   unsigned char * dp = d; unsigned char v = (unsigned char) c;
   while (n--) *dp++ = v;
   return d;
 }
-int memcmp(const void * a, const void * b, sz n) {
+XPAR_KEEP int memcmp(const void * a, const void * b, sz n) {
   const unsigned char * ap = a; const unsigned char * bp = b;
   while (n--) { if (*ap != *bp) return (int)*ap - (int)*bp; ap++; bp++; }
   return 0;
@@ -1292,7 +1302,7 @@ int xpar_win_utf8_argv(int * argc_out, char *** argv_out) {
       -nostartfiles -Wl,-e,xpar_entry -nodefaultlibs -lgcc -lkernel32
     ============================================================================  */
 
-__attribute__((noreturn)) void __cdecl xpar_entry(void) {
+XPAR_KEEP __attribute__((noreturn)) void __cdecl xpar_entry(void) {
   xpar_host_init();
   int argc; char ** argv;
   if (xpar_win_utf8_argv(&argc, &argv) < 0) ExitProcess(2);
