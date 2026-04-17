@@ -127,7 +127,7 @@ jobs:
           echo "CWSDSTUB=$HOME/csdpmi/CWSDSTUB.EXE" >> $GITHUB_ENV
       - name: Configure
         run: |
-          ./configure --host=i586-pc-msdosdjgpp --disable-x86_64 \
+          ./configure --host=i586-pc-msdosdjgpp --disable-x86_64 --enable-lto \
                       --bindir=/ --program-suffix=-dos \
                       CC=i586-pc-msdosdjgpp-gcc \
                       CFLAGS=-O2 LDFLAGS=-s
