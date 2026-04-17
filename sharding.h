@@ -157,7 +157,9 @@ static bool unpack_shard_header(const u8 * buf, sz file_size,
     blake2b_update(&s, buf, 16);
     blake2b_update(&s, body, res->shard_size);
     blake2b_final(&s, tag, 16);
-    if (xpar_memcmp(tag, buf + 16, 16) != 0) return false;
+    u8 d = 0;
+    Fi(16, d |= tag[i] ^ buf[16 + i])
+    if (d != 0) return false;
 #else
     FATAL("Shard `%s' uses BLAKE2b but that support was disabled at "
           "configure time.", file_name);

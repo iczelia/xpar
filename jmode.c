@@ -396,7 +396,10 @@ static void integrity_tag(u8 * dst, int algo,
 }
 static bool integrity_match(const u8 a[BHDR_HASH_MAX],
                             const u8 b[BHDR_HASH_MAX], int algo) {
-  return !xpar_memcmp(a, b, algo == INTEGRITY_CRC32C ? 4 : 16);
+  sz n = algo == INTEGRITY_CRC32C ? 4 : 16;
+  u8 d = 0;
+  Fi(n, d |= a[i] ^ b[i])
+  return d == 0;
 }
 static void encode4(xpar_file * in, xpar_file * out, int ifactor,
                     int algo, const u8 * key, sz keylen, u64 total_bytes) {
