@@ -230,7 +230,7 @@ static sz pack_shard_header(u8 dst[SHARD_HEADER_BLAKE2B_SIZE],
   dst[7] = shard_number;
   /*  Widen to u64 before shifting; sz may be 32-bit.  */
   { u64 ts = (u64) total_size;
-    for (int i = 0; i < 8; i++) dst[8 + i] = (u8)(ts >> (56 - 8 * i)); }
+    Fi(8, dst[8 + i] = (u8)(ts >> (56 - 8 * i))); }
   if (algo == INTEGRITY_BLAKE2B) {
 #ifdef HAVE_BLAKE2B
     u8 tag[16];
@@ -249,7 +249,7 @@ static sz pack_shard_header(u8 dst[SHARD_HEADER_BLAKE2B_SIZE],
   }
   u32 c = crc32c_partial(0xFFFFFFFFL, dst, 16);
   c = crc32c_partial(c, (u8 *) body, body_len) ^ 0xFFFFFFFFL;
-  for (int i = 0; i < 4; i++) dst[16 + i] = (u8)(c >> (24 - 8 * i));
+  Fi(4, dst[16 + i] = (u8)(c >> (24 - 8 * i)));
   return SHARD_HEADER_SIZE;
 }
 

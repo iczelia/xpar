@@ -33,9 +33,9 @@
 #include <time.h>
 #include <unistd.h>
 
-/*  ============================================================================
+/*  =======================================================================
     xpar_file wrapping FILE *
-    ============================================================================  */
+    =======================================================================  */
 
 struct xpar_file { FILE * fp; bool owned; };
 
@@ -58,9 +58,9 @@ void xpar_host_init(void) {
   _use_lfn(".");
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Open / close
-    ============================================================================  */
+    =======================================================================  */
 
 xpar_file * xpar_open(const char * path, int flags) {
   const char * mode;
@@ -87,9 +87,9 @@ int xpar_close(xpar_file * f) {
   return r;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Read / write / seek / tell
-    ============================================================================  */
+    =======================================================================  */
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   return fread(buf, 1, n, f->fp);
@@ -123,9 +123,9 @@ bool xpar_is_tty(xpar_file * f) {
 bool xpar_eof(xpar_file * f)  { return feof(f->fp) ? true : false; }
 int  xpar_error(xpar_file * f) { return ferror(f->fp); }
 
-/*  ============================================================================
+/*  =======================================================================
     Safe helpers (FATAL on error)
-    ============================================================================  */
+    =======================================================================  */
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = fread(p, 1, n, f->fp);
@@ -151,9 +151,9 @@ void xpar_notty(xpar_file * f) {
   errno = 0;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Filesystem
-    ============================================================================  */
+    =======================================================================  */
 
 int xpar_stat_path(const char * path, xpar_stat_t * out) {
   struct stat st;
@@ -179,9 +179,9 @@ xpar_mmap xpar_map(const char * path) {
 }
 void xpar_unmap(xpar_mmap * m) { m->map = NULL; m->size = 0; }
 
-/*  ============================================================================
+/*  =======================================================================
     Allocation
-    ============================================================================  */
+    =======================================================================  */
 
 void * xpar_malloc(sz n) {
   void * p = calloc(n ? n : 1, 1);
@@ -200,7 +200,7 @@ void * xpar_realloc(void * p, sz n) {
 }
 void xpar_free(void * p) { free(p); }
 
-/*  Strings: only strdup/strndup; mem... and str... go via builtins -> libc.  */
+/*  Strings: strdup/strndup only; mem... and str... go via builtins.  */
 
 char * xpar_strdup(const char * s) {
   sz n = strlen(s) + 1;
@@ -217,9 +217,9 @@ char * xpar_strndup(const char * s, sz n) {
   return c;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Numeric parsing
-    ============================================================================  */
+    =======================================================================  */
 
 int xpar_parse_i64(const char * s, i64 * out) {
   char * end;
@@ -238,9 +238,9 @@ int xpar_parse_u64(const char * s, u64 * out) {
   return 0;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Formatted output
-    ============================================================================  */
+    =======================================================================  */
 
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
   return vsnprintf(buf, cap, fmt, ap);
@@ -273,9 +273,9 @@ int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
 }
 int xpar_fputs(const char * s, xpar_file * f) { return fputs(s, f->fp); }
 
-/*  ============================================================================
+/*  =======================================================================
     Process / errors / time
-    ============================================================================  */
+    =======================================================================  */
 
 void xpar_exit(int code) { exit(code); }
 
@@ -297,12 +297,16 @@ struct xpar_mutex { char _unused; };
 struct xpar_cond  { char _unused; };
 struct xpar_thread { char _unused; };
 
-xpar_mutex * xpar_mutex_new(void)    { return xpar_alloc_raw(sizeof(xpar_mutex)); }
+xpar_mutex * xpar_mutex_new(void) {
+  return xpar_alloc_raw(sizeof(xpar_mutex));
+}
 void xpar_mutex_free(xpar_mutex * m) { xpar_free(m); }
 void xpar_mutex_lock  (xpar_mutex * m) { (void) m; }
 void xpar_mutex_unlock(xpar_mutex * m) { (void) m; }
 
-xpar_cond * xpar_cond_new(void)      { return xpar_alloc_raw(sizeof(xpar_cond)); }
+xpar_cond * xpar_cond_new(void) {
+  return xpar_alloc_raw(sizeof(xpar_cond));
+}
 void xpar_cond_free(xpar_cond * c)   { xpar_free(c); }
 void xpar_cond_wait(xpar_cond * c, xpar_mutex * m) {
   (void) c; (void) m;

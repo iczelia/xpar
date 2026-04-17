@@ -114,7 +114,8 @@ static void do_truncate(const char * path, i64 delta) {
   i64 newsize = size - delta;
   if (newsize < 0) die("truncation below zero");
   u8 * buf = newsize ? xpar_alloc_raw((sz) newsize) : NULL;
-  if (newsize && xpar_read(r, buf, (sz) newsize) != (sz) newsize) die("short read");
+  if (newsize && xpar_read(r, buf, (sz) newsize) != (sz) newsize)
+    die("short read");
   xpar_xclose(r);
   xpar_file * w = xopen(path, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
   if (newsize) xwrite_or_die(w, buf, (sz) newsize);

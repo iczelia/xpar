@@ -809,7 +809,8 @@ static void LEO_FUNC(IFFT_DIT_Encoder)(const uint64_t bytes,
         }
       } else {
         for (unsigned i = r; i < i_end; ++i) {
-          LEO_FUNC(IFFT_DIT4)(bytes, work + i, dist, log_m01, log_m23, log_m02);
+          LEO_FUNC(IFFT_DIT4)(
+            bytes, work + i, dist, log_m01, log_m23, log_m02);
         }
       }
     }
@@ -821,7 +822,8 @@ static void LEO_FUNC(IFFT_DIT_Encoder)(const uint64_t bytes,
     if (xor_result) {
       if (log_m == kModulus) {
         for (unsigned i = 0; i < dist; ++i)
-          LEO_FUNC(xor_mem_2to1)(xor_result[i], work[i], work[i + dist], bytes);
+          LEO_FUNC(xor_mem_2to1)(
+            xor_result[i], work[i], work[i + dist], bytes);
       } else {
         for (unsigned i = 0; i < dist; ++i) {
           LEO_FUNC(IFFT_DIT2_xor)(work[i], work[i + dist], xor_result[i],
@@ -1128,7 +1130,8 @@ typedef struct {
   uint64_t Words[7][kWords];
 } ErrorBitfield;
 
-static LEO_FORCE_INLINE void ErrorBitfield_Set(ErrorBitfield * bf, unsigned i) {
+static LEO_FORCE_INLINE void
+ErrorBitfield_Set(ErrorBitfield * bf, unsigned i) {
   bf->Words[0][i / 64] |= (uint64_t) 1 << (i % 64);
 }
 
@@ -1251,7 +1254,8 @@ void LEO_FUNC(ReedSolomonDecode)(
 
   Fi(recovery_count,
     if (recovery[i])
-      LEO_FUNC(mul_mem)(work[i], recovery[i], error_locations[i], buffer_bytes);
+      LEO_FUNC(mul_mem)(
+        work[i], recovery[i], error_locations[i], buffer_bytes);
     else
       memset(work[i], 0, buffer_bytes))
   Fi0(m, recovery_count, memset(work[i], 0, buffer_bytes))
@@ -1274,7 +1278,8 @@ void LEO_FUNC(ReedSolomonDecode)(
   const unsigned output_count = m + original_count;
 
 #ifdef LEO_ERROR_BITFIELD_OPT
-  LEO_FUNC(FFT_DIT_ErrorBits)(buffer_bytes, work, output_count, n, &error_bits);
+  LEO_FUNC(FFT_DIT_ErrorBits)(
+    buffer_bytes, work, output_count, n, &error_bits);
 #else
   LEO_FUNC(FFT_DIT)(buffer_bytes, work, output_count, n);
 #endif

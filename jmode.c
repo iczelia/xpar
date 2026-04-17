@@ -269,11 +269,11 @@ typedef struct {
   u64 total_bytes;
 } file_hdr;
 static void pack_u64_be(u8 * b, u64 v) {
-  for (int i = 0; i < 8; i++) b[i] = (u8)(v >> (56 - 8 * i));
+  Fi(8, b[i] = (u8)(v >> (56 - 8 * i)));
 }
 static u64 unpack_u64_be(const u8 * b) {
   u64 v = 0;
-  for (int i = 0; i < 8; i++) v |= ((u64) b[i]) << (56 - 8 * i);
+  Fi(8, v |= ((u64) b[i]) << (56 - 8 * i));
   return v;
 }
 static void write_header(xpar_file * des, file_hdr fh) {

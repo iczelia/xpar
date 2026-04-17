@@ -314,15 +314,11 @@ static int yarg_parse_unix_short(int argc, char * argv[],
 void yarg_destroy(yarg_result * r) {
   if (r) {
     if (r->args) {
-      for (int i = 0; i < r->argc; i++) {
-        xpar_free(r->args[i].arg);
-      }
+      Fi(r->argc, xpar_free(r->args[i].arg));
     }
     xpar_free(r->args);
     if (r->pos_args) {
-      for (int i = 0; i < r->pos_argc; i++) {
-        xpar_free(r->pos_args[i]);
-      }
+      Fi(r->pos_argc, xpar_free(r->pos_args[i]));
     }
     xpar_free(r->pos_args);
     if (r->error != yarg_oom)

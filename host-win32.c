@@ -20,7 +20,7 @@
 #error "host-win32.c compiled on a non-Windows target"
 #endif
 
-/*  Default to Vista baseline when no target set (authoritative: configure.ac).  */
+/*  Default to Vista baseline; see configure.ac for authoritative target.  */
 #if !defined(_WIN32_WINNT)
   #define _WIN32_WINNT 0x0600
 #endif
@@ -68,14 +68,14 @@ static char * wide_to_utf8_heap(const wchar_t * w) {
 }
 #endif
 
-/*  ============================================================================
+/*  =======================================================================
     xpar_file: opaque wrapper around a Win32 HANDLE
-    ============================================================================  */
+    =======================================================================  */
 
 struct xpar_file {
   HANDLE h;
   DWORD  kind;        /*  FILE_TYPE_DISK / PIPE / CHAR / UNKNOWN  */
-  bool   owned;       /*  true for xpar_open()'d, false for the 3 std handles  */
+  bool   owned;    /*  true for xpar_open()'d; false for std handles  */
   bool   at_eof;
   DWORD  last_err;
 };
@@ -102,9 +102,9 @@ void xpar_host_init(void) {
 #endif
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Open / close
-    ============================================================================  */
+    =======================================================================  */
 
 xpar_file * xpar_open(const char * path, int flags) {
   DWORD access = 0, share = FILE_SHARE_READ, creation = 0;
@@ -112,11 +112,16 @@ xpar_file * xpar_open(const char * path, int flags) {
   if (flags & XPAR_O_WRITE) access |= GENERIC_WRITE;
   if (flags & XPAR_O_APPEND) access |= FILE_APPEND_DATA;
 
-  if ((flags & XPAR_O_CREATE) && (flags & XPAR_O_EXCLUSIVE))    creation = CREATE_NEW;
-  else if ((flags & XPAR_O_CREATE) && (flags & XPAR_O_TRUNCATE)) creation = CREATE_ALWAYS;
-  else if (flags & XPAR_O_CREATE)                                creation = OPEN_ALWAYS;
-  else if (flags & XPAR_O_TRUNCATE)                              creation = TRUNCATE_EXISTING;
-  else                                                           creation = OPEN_EXISTING;
+  if ((flags & XPAR_O_CREATE) && (flags & XPAR_O_EXCLUSIVE))
+    creation = CREATE_NEW;
+  else if ((flags & XPAR_O_CREATE) && (flags & XPAR_O_TRUNCATE))
+    creation = CREATE_ALWAYS;
+  else if (flags & XPAR_O_CREATE)
+    creation = OPEN_ALWAYS;
+  else if (flags & XPAR_O_TRUNCATE)
+    creation = TRUNCATE_EXISTING;
+  else
+    creation = OPEN_EXISTING;
 
 #if defined(XPAR_WIN_LEGACY)
   HANDLE h = CreateFileA(path, access, share, NULL, creation,
@@ -129,7 +134,8 @@ xpar_file * xpar_open(const char * path, int flags) {
   HeapFree(GetProcessHeap(), 0, wpath);
 #endif
   if (h == INVALID_HANDLE_VALUE) return NULL;
-  struct xpar_file * f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
+  struct xpar_file * f =
+    HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
   if (!f) { CloseHandle(h); SetLastError(ERROR_OUTOFMEMORY); return NULL; }
   f->h = h;
   f->kind = GetFileType(h);
@@ -144,9 +150,9 @@ int xpar_close(xpar_file * f) {
   return r;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     read / write / seek
-    ============================================================================  */
+    =======================================================================  */
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   /*  Loop for POSIX-fread-like semantics: partial pipe reads are stitched
@@ -229,7 +235,7 @@ i64 xpar_size(xpar_file * f) {
   if (!GetFileSizeEx(f->h, &li)) return -1;
   return (i64) li.QuadPart;
 #else
-  /*  GetFileSize: low in return, high in *hi; disambiguate via GetLastError.  */
+  /*  GetFileSize: low-dword return, high in *hi; check GetLastError.  */
   DWORD hi = 0;
   SetLastError(NO_ERROR);
   DWORD lo = GetFileSize(f->h, &hi);
@@ -249,9 +255,9 @@ bool xpar_is_tty(xpar_file * f) {
 bool xpar_eof  (xpar_file * f) { return f->at_eof; }
 int  xpar_error(xpar_file * f) { return (int) f->last_err; }
 
-/*  ============================================================================
+/*  =======================================================================
     Safe helpers
-    ============================================================================  */
+    =======================================================================  */
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = xpar_read(f, p, n);
@@ -277,9 +283,9 @@ void xpar_notty(xpar_file * f) {
     FATAL("Refusing to read/write binary data from/to a terminal.");
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Filesystem
-    ============================================================================  */
+    =======================================================================  */
 
 int xpar_stat_path(const char * path, xpar_stat_t * out) {
 #if defined(XPAR_WIN_LEGACY)
@@ -289,7 +295,7 @@ int xpar_stat_path(const char * path, xpar_stat_t * out) {
   if (h != INVALID_HANDLE_VALUE) {
     FindClose(h);
     out->size = ((u64) fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-    out->is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? true : false;
+    out->is_dir = !!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
     out->is_regular = !out->is_dir;
     return 0;
   }
@@ -297,7 +303,7 @@ int xpar_stat_path(const char * path, xpar_stat_t * out) {
   DWORD attrs = GetFileAttributesA(path);
   if (attrs == INVALID_FILE_ATTRIBUTES) return -1;
   out->size = 0;
-  out->is_dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? true : false;
+  out->is_dir = !!(attrs & FILE_ATTRIBUTE_DIRECTORY);
   out->is_regular = !out->is_dir;
   return 0;
 #else
@@ -308,7 +314,7 @@ int xpar_stat_path(const char * path, xpar_stat_t * out) {
   HeapFree(GetProcessHeap(), 0, wpath);
   if (!ok) return -1;
   out->size = ((u64) info.nFileSizeHigh << 32) | info.nFileSizeLow;
-  out->is_dir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? true : false;
+  out->is_dir = !!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
   out->is_regular = !out->is_dir;
   return 0;
 #endif
@@ -336,11 +342,10 @@ int xpar_same_file(const char * a, const char * b) {
   if (!wa) return -1;
   wchar_t * wb = utf8_to_wide_heap(b);
   if (!wb) { HeapFree(GetProcessHeap(), 0, wa); return -1; }
-  HANDLE ha = CreateFileW(wa, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                          NULL, OPEN_EXISTING,
+  DWORD sh = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+  HANDLE ha = CreateFileW(wa, 0, sh, NULL, OPEN_EXISTING,
                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
-  HANDLE hb = CreateFileW(wb, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                          NULL, OPEN_EXISTING,
+  HANDLE hb = CreateFileW(wb, 0, sh, NULL, OPEN_EXISTING,
                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
   HeapFree(GetProcessHeap(), 0, wa);
   HeapFree(GetProcessHeap(), 0, wb);
@@ -360,9 +365,9 @@ int xpar_same_file(const char * a, const char * b) {
 #endif
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Memory map
-    ============================================================================  */
+    =======================================================================  */
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m = { NULL, 0 };
@@ -416,9 +421,9 @@ void xpar_unmap(xpar_mmap * m) {
   m->map = NULL; m->size = 0;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Allocation
-    ============================================================================  */
+    =======================================================================  */
 
 void * xpar_malloc(sz n) {
   if (n == 0) n = 1;
@@ -442,7 +447,7 @@ void xpar_free(void * p) {
   if (p) HeapFree(GetProcessHeap(), 0, p);
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Freestanding strings: byte-loop fallbacks for __builtin_str*.  */
 
 XPAR_KEEP sz strlen(const char * s) {
@@ -475,7 +480,7 @@ char * xpar_strndup(const char * s, sz n) {
   c[len] = '\0';
   return c;
 }
-/*  Unprefixed mem* for gcc-emitted calls; x86_64 uses rep movsb/stosb/cmpsb.  */
+/*  Unprefixed mem* for gcc-emitted calls (x86_64: rep movsb/stosb/cmpsb).  */
 
 #if defined(__x86_64__)
 
@@ -557,9 +562,9 @@ XPAR_KEEP int memcmp(const void * a, const void * b, sz n) {
 /*  xpar_mem... and xpar_str... are macros over __builtin_* that route to
     the symbols above.  */
 
-/*  ============================================================================
+/*  =======================================================================
     Numeric parsing: decimal only
-    ============================================================================  */
+    =======================================================================  */
 
 int xpar_parse_i64(const char * s, i64 * out) {
   if (!s || !*s) return -1;
@@ -599,14 +604,14 @@ int xpar_parse_u64(const char * s, u64 * out) {
   return 0;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Mini-printf
-    ============================================================================  */
+    =======================================================================  */
 
 typedef struct {
   char * buf;
   sz     cap;
-  sz     pos;       /*  total chars that WOULD be written, for snprintf-sizing  */
+  sz     pos;   /*  total bytes that WOULD be written (for snprintf sizing)  */
 } fmt_ctx;
 
 static void emit_c(fmt_ctx * c, char ch) {
@@ -634,7 +639,8 @@ static void emit_uint(fmt_ctx * c, u64 v, int base, int upper,
   int total = len + pad_zero;
   int pad_sp = width > total ? width - total : 0;
   if (!(flags & F_MINUS) && !(flags & F_ZERO)) emit_pad(c, pad_sp, ' ');
-  if (!(flags & F_MINUS) && (flags & F_ZERO) && prec < 0) emit_pad(c, pad_sp, '0');
+  if (!(flags & F_MINUS) && (flags & F_ZERO) && prec < 0)
+    emit_pad(c, pad_sp, '0');
   emit_pad(c, pad_zero, '0');
   while (n) emit_c(c, tmp[--n]);
   if (flags & F_MINUS) emit_pad(c, pad_sp, ' ');
@@ -652,7 +658,8 @@ static void emit_int(fmt_ctx * c, i64 v, int width, int prec, int flags) {
       /*  space-pad, then sign  */
       char tmp[32]; int n = 0;
       if (uv == 0 && prec == 0) n = 0;
-      else { u64 x = uv; do { tmp[n++] = '0' + (x % 10); x /= 10; } while (x); }
+      else { u64 x = uv;
+        do { tmp[n++] = '0' + (x % 10); x /= 10; } while (x); }
       int len = n;
       int pad_zero = prec > len ? prec - len : 0;
       int total = 1 + len + pad_zero;
@@ -673,7 +680,8 @@ static void emit_int(fmt_ctx * c, i64 v, int width, int prec, int flags) {
   emit_uint(c, uv, 10, 0, width, prec, flags);
 }
 
-static void emit_double(fmt_ctx * c, double v, int width, int prec, int flags) {
+static void emit_double(
+    fmt_ctx * c, double v, int width, int prec, int flags) {
   if (prec < 0) prec = 6;
   char sign = 0;
   if (v < 0)                      { sign = '-'; v = -v; }
@@ -723,12 +731,14 @@ int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
     }
     int width = 0;
     if (*fmt == '*') { width = va_arg(ap, int); fmt++; }
-    else while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
+    else while (*fmt >= '0' && *fmt <= '9')
+      { width = width * 10 + (*fmt - '0'); fmt++; }
     int prec = -1;
     if (*fmt == '.') {
       fmt++; prec = 0;
       if (*fmt == '*') { prec = va_arg(ap, int); fmt++; }
-      else while (*fmt >= '0' && *fmt <= '9') { prec = prec * 10 + (*fmt - '0'); fmt++; }
+      else while (*fmt >= '0' && *fmt <= '9')
+        { prec = prec * 10 + (*fmt - '0'); fmt++; }
     }
     int longness = 0;  /*  0 = int, 1 = long, 2 = long long, 3 = size_t  */
     if (*fmt == 'z') { longness = 3; fmt++; }
@@ -828,9 +838,9 @@ int xpar_asprintf(char ** out, const char * fmt, ...) {
   return n;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Console-aware output
-    ============================================================================  */
+    =======================================================================  */
 
 static void write_raw(xpar_file * f, const char * s, sz n) {
 #if !defined(XPAR_WIN_LEGACY)
@@ -893,11 +903,13 @@ int xpar_fputs(const char * s, xpar_file * f) {
   return (int) n;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Process, errors, time
-    ============================================================================  */
+    =======================================================================  */
 
-__attribute__((noreturn)) void xpar_exit(int code) { ExitProcess((UINT) code); }
+__attribute__((noreturn)) void xpar_exit(int code) {
+  ExitProcess((UINT) code);
+}
 
 static __declspec(thread) char tls_errbuf[256];
 
@@ -951,9 +963,9 @@ u64 xpar_usec_now(void) {
   return q * 1000000ULL + r * 1000000ULL / (u64) freq.QuadPart;
 }
 
-/*  ============================================================================
+/*  =======================================================================
     Thread / mutex / condvar primitives (Win32-backed)
-    ============================================================================  */
+    =======================================================================  */
 
 #if defined(XPAR_WIN_LEGACY)
 struct xpar_thread { char _unused; };
@@ -996,7 +1008,9 @@ void xpar_cond_broadcast(xpar_cond * c) { WakeAllConditionVariable(&c->cv); }
 struct xpar_mutex { char _unused; };
 struct xpar_cond  { char _unused; };
 
-xpar_mutex * xpar_mutex_new(void)  { return xpar_alloc_raw(sizeof(xpar_mutex)); }
+xpar_mutex * xpar_mutex_new(void) {
+  return xpar_alloc_raw(sizeof(xpar_mutex));
+}
 void xpar_mutex_free(xpar_mutex * m) { xpar_free(m); }
 void xpar_mutex_lock  (xpar_mutex * m) { (void) m; }
 void xpar_mutex_unlock(xpar_mutex * m) { (void) m; }
@@ -1207,7 +1221,8 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
               for (int i = 0; i < slashes; i++) {
                 if (blen + 1 >= bcap) {
                   bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
+                  buf = HeapReAlloc(
+                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
                 }
                 buf[blen++] = L'\\';
               }
@@ -1216,7 +1231,8 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
               if (pass == 1) {
                 if (blen + 1 >= bcap) {
                   bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
+                  buf = HeapReAlloc(
+                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
                 }
                 buf[blen++] = L'"';
               }
@@ -1230,7 +1246,8 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
               for (int i = 0; i < nbs; i++) {
                 if (blen + 1 >= bcap) {
                   bcap *= 2;
-                  buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
+                  buf = HeapReAlloc(
+                    GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
                 }
                 buf[blen++] = L'\\';
               }
@@ -1241,7 +1258,8 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
             if (pass == 1) {
               if (blen + 1 >= bcap) {
                 bcap *= 2;
-                buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
+                buf = HeapReAlloc(
+                  GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
               }
               buf[blen++] = L'"';
             }
@@ -1254,7 +1272,8 @@ static int split_cmdline_utf16(const wchar_t * cmd, wchar_t *** out_wargv) {
           if (pass == 1) {
             if (blen + 1 >= bcap) {
               bcap *= 2;
-              buf = HeapReAlloc(GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
+              buf = HeapReAlloc(
+                GetProcessHeap(), 0, buf, bcap * sizeof(wchar_t));
             }
             buf[blen++] = *p;
           }
@@ -1297,10 +1316,10 @@ int xpar_win_utf8_argv(int * argc_out, char *** argv_out) {
 
 #endif  /*  XPAR_WIN_LEGACY vs. modern argv split  */
 
-/*  ============================================================================
+/*  =======================================================================
     Entry point. Replaces mainCRTStartup entirely. Link with
       -nostartfiles -Wl,-e,xpar_entry -nodefaultlibs -lgcc -lkernel32
-    ============================================================================  */
+    =======================================================================  */
 
 XPAR_KEEP __attribute__((noreturn)) void __cdecl xpar_entry(void) {
   xpar_host_init();
