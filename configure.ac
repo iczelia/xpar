@@ -264,5 +264,12 @@ if test "x$enable_lto" = "xyes"; then
   AX_APPEND_LINK_FLAGS([-flto])
 fi
 
+# Size-reduction flags. -fdata-sections omitted: on COFF/DJGPP it
+# materialises .bss.* into file-backed .data and grows the binary.
+AX_APPEND_COMPILE_FLAGS([-ffunction-sections -fmerge-all-constants -fno-ident])
+AX_APPEND_LINK_FLAGS([-Wl,--gc-sections])
+
+AC_CHECK_PROGS([SIZE], [${host_alias}-size ${host}-size size], [:])
+
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

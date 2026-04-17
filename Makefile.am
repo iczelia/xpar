@@ -86,10 +86,14 @@ endif
 
 dist_man_MANS = xpar.1
 
+.PHONY: size-report
 if XPAR_DOS_HOST
 # Swap DJGPP's go32 stub for CWSDSTUB.EXE (CWSDPMI r7) and emit a ./xpar
 # wrapper that drives the binary headlessly via DOSBox-X for self-check.
-all-local: xpar.wrapper-stamp
+all-local: xpar.wrapper-stamp size-report
+size-report: xpar.wrapper-stamp
+	@$(SIZE) xpar$(EXEEXT) 2>/dev/null || :
+	@ls -l xpar$(EXEEXT) | awk '{printf "  xpar$(EXEEXT): %s bytes\n", $$5}'
 xpar.wrapper-stamp: xpar$(EXEEXT) $(srcdir)/contrib/dos/dosbox-x.conf
 	$(EXE2COFF) xpar$(EXEEXT)
 	cat $(CWSDSTUB) xpar > xpar$(EXEEXT).new
@@ -112,6 +116,10 @@ xpar.wrapper-stamp: xpar$(EXEEXT) $(srcdir)/contrib/dos/dosbox-x.conf
 	@touch $@
 DOS_WRAPPER_CLEAN = xpar xpar.wrapper-stamp
 else
+all-local: size-report
+size-report: xpar$(EXEEXT)
+	@$(SIZE) xpar$(EXEEXT) 2>/dev/null || :
+	@ls -l xpar$(EXEEXT) | awk '{printf "  xpar$(EXEEXT): %s bytes\n", $$5}'
 DOS_WRAPPER_CLEAN =
 endif
 EXTRA_DIST += contrib/dos/dosbox-x.conf
