@@ -64,7 +64,7 @@ jobs:
         with:
           name: xpar-${{ github.ref_name }}
       - name: Extract source package
-        run: tar --strip-components=1 -xf xpar-${{ github.ref_name }}.tar.gz
+        run: tar --strip-components=1 -mxf xpar-${{ github.ref_name }}.tar.gz
       - name: Install cross-compile dependencies
         if: ${{ matrix.target[2] }}
         run: |
@@ -99,7 +99,7 @@ jobs:
         with:
           name: xpar-${{ github.ref_name }}
       - name: Extract source package
-        run: tar --strip-components=1 -xf xpar-${{ github.ref_name }}.tar.gz
+        run: tar --strip-components=1 -mxf xpar-${{ github.ref_name }}.tar.gz
       - name: Install DJGPP cross-toolchain
         run: |
           curl -fL -o /tmp/djgpp.tar.bz2 \

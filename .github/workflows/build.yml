@@ -56,7 +56,7 @@ jobs:
     - name: Install OpenMP
       run: sudo apt-get install -y libomp-dev
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: |
         if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
@@ -102,7 +102,7 @@ jobs:
       with:
         name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: |
         if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
@@ -147,7 +147,7 @@ jobs:
       with:
         name: xpar-${{ github.sha }}-guarded
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: |
         if [ "${{ matrix.sanitizer }}" = "asan-ubsan" ]; then
@@ -199,7 +199,7 @@ jobs:
         msystem: clang64
         install: make gcc nasm tar gzip diffutils
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: ./configure CC=gcc --${{ matrix.feature }} --enable-static
     - name: Make
@@ -234,7 +234,7 @@ jobs:
         msystem: mingw32
         install: make gcc nasm tar gzip diffutils
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: ./configure CC=gcc --enable-static
     - name: Make
@@ -276,7 +276,7 @@ jobs:
           mingw-w64-i686-gcc
           mingw-w64-i686-binutils
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: ./configure CC=/mingw32/bin/gcc --enable-static --with-windows-target=win95
     - name: Make
@@ -337,7 +337,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y dosbox-x
     - name: Extract source package
-      run: tar --strip-components=1 -xf xpar-${{ github.sha }}.tar.gz
+      run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
     - name: Configure
       run: |
         ./configure --host=i586-pc-msdosdjgpp --disable-x86_64 \
