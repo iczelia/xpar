@@ -50,16 +50,17 @@ static int yarg_asprintf(char ** strp, const char * fmt, ...) {
   int len = xpar_vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
   if (len < 0) {
-    xpar_memcpy(*strp, yarg_oom, sizeof(yarg_oom));
+    *strp = (char *) yarg_oom;
     return sizeof(yarg_oom);
   }
-  *strp = (char *) xpar_alloc_raw(len + 1);
-  if (!*strp) {
-    xpar_memcpy(*strp, yarg_oom, sizeof(yarg_oom));
+  char * buf = (char *) xpar_alloc_raw(len + 1);
+  if (!buf) {
+    *strp = (char *) yarg_oom;
     return sizeof(yarg_oom);
   }
+  *strp = buf;
   va_start(ap, fmt);
-  len = xpar_vsnprintf(*strp, len + 1, fmt, ap);
+  len = xpar_vsnprintf(buf, len + 1, fmt, ap);
   va_end(ap);
   return len;
 }
