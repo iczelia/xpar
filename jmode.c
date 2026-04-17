@@ -256,15 +256,20 @@ static void do_interlacing(u8 * restrict in, u8 * restrict out, int ifactor) {
     case 3: trans3D(in, out); break;
   }
 }
-/*  v1.0 header: 5 payload + 32 RS-parity = 37 bytes on disk.
-    Extra payload h[5..15) is recovered implicitly via rsd32 on decode.
+/*  File header: 15 payload + 32 RS-parity = 47 bytes on disk.
+    Payload h[0..15) is recovered via rsd32 on decode; also bound into the
+    per-block MAC domain (ctx) so any tamper with header fields fails all
+    block/trailer MAC verifications.
     Layout: "XP"|major|minor|ifactor('1'..'4','4'=systematic)
-            |integrity|auth|total_bytes(u64 BE, ~0=unknown)|reserved0.  */
+            |integrity|auth|total_bytes(u64 BE, ~0=unknown).  */
+#define FHDR_PAYLOAD 15
+#define FHDR_DISK_SIZE (FHDR_PAYLOAD + (N - K))
 typedef struct {
   int ifactor;
   int integrity;
   int auth_flag;
   u64 total_bytes;
+  u8 ctx[FHDR_PAYLOAD];
 } file_hdr;
 static void pack_u64_be(u8 * b, u64 v) {
   Fi(8, b[i] = (u8)(v >> (56 - 8 * i)));
@@ -274,23 +279,28 @@ static u64 unpack_u64_be(const u8 * b) {
   Fi(8, v |= ((u64) b[i]) << (56 - 8 * i));
   return v;
 }
-static void write_header(xpar_file * des, file_hdr fh) {
+static void write_header(xpar_file * des, file_hdr * fh) {
   u8 h[K] = { 0 }, out[N];
   h[0] = 'X'; h[1] = 'P'; h[2] = XPAR_MAJOR; h[3] = XPAR_MINOR;
-  h[4] = fh.ifactor + '0';
-  h[5] = (u8) fh.integrity;
-  h[6] = (u8) fh.auth_flag;
-  pack_u64_be(h + 7, fh.total_bytes);
-  rse32(h, out); xpar_xwrite(des, h, 5); xpar_xwrite(des, out + K, N - K);
+  h[4] = fh->ifactor + '0';
+  h[5] = (u8) fh->integrity;
+  h[6] = (u8) fh->auth_flag;
+  pack_u64_be(h + 7, fh->total_bytes);
+  xpar_memcpy(fh->ctx, h, FHDR_PAYLOAD);
+  rse32(h, out);
+  xpar_xwrite(des, h, FHDR_PAYLOAD);
+  xpar_xwrite(des, out + K, N - K);
 }
 static file_hdr parse_header(u8 out[N], int force, int ifactor_override) {
   file_hdr fh = { .ifactor = ifactor_override, .integrity = INTEGRITY_CRC32C,
                   .auth_flag = 0, .total_bytes = (u64) -1 };
   if (out[0] != 'X' || out[1] != 'P')
     FATAL_UNLESS("Invalid header.", !force);
-  out[0] = 'X'; out[1] = 'P'; xpar_memset(out + 5, 0, K - 5);
+  out[0] = 'X'; out[1] = 'P'; xpar_memset(out + FHDR_PAYLOAD, 0,
+                                          K - FHDR_PAYLOAD);
   if (rsd32(out) < 0)
     FATAL_UNLESS("Invalid header.", !force);
+  xpar_memcpy(fh.ctx, out, FHDR_PAYLOAD);
   if (out[2] != XPAR_MAJOR) {
     FATAL_UNLESS("File was produced by an incompatible xpar major version.",
                  !force);
@@ -318,43 +328,51 @@ static file_hdr parse_header(u8 out[N], int force, int ifactor_override) {
   return fh;
 }
 static file_hdr read_header(xpar_file * des, int force, int ifactor_override) {
-  u8 out[N]; xpar_xread(des, out, 5); xpar_xread(des, out + K, N - K);
+  u8 out[N];
+  xpar_xread(des, out, FHDR_PAYLOAD);
+  xpar_xread(des, out + K, N - K);
   return parse_header(out, force, ifactor_override);
 }
 #ifdef XPAR_ALLOW_MAPPING
 static file_hdr read_header_from_map(xpar_mmap map, int force,
                                      int ifactor_override) {
-  if (map.size < 5 + N - K)
+  if (map.size < FHDR_DISK_SIZE)
     FATAL("Truncated file.");
   u8 out[N];
-  xpar_memcpy(out, map.map, 5);
-  xpar_memcpy(out + K, map.map + 5, N - K);
+  xpar_memcpy(out, map.map, FHDR_PAYLOAD);
+  xpar_memcpy(out + K, map.map + FHDR_PAYLOAD, N - K);
   return parse_header(out, force, ifactor_override);
 }
 #endif
 
 /*  Block header:  CRC32C  12B: 'X'+bytes(3 BE)+seq(4 BE)+crc(4 BE);
-                    BLAKE2B 24B: 'X'+bytes(3 BE)+seq(4 BE)+tag(16).  */
+                    BLAKE2B 24B: 'X'+bytes(3 BE)+seq(4 BE)+tag(16).
+    The 8-byte prefix is bound into the MAC domain along with the file
+    header payload, so any tamper with bytes/seq/header fails the MAC.
+    bytes=0 is reserved for the end-of-stream trailer frame.  */
+#define BHDR_PREFIX 8
 #define BHDR_HASH_MAX 16
 typedef struct { u32 bytes, seq; u8 hash[BHDR_HASH_MAX]; } block_hdr;
 static inline sz bhdr_size(int algo) {
-  return algo == INTEGRITY_CRC32C ? 12 : 24;
+  return BHDR_PREFIX + (algo == INTEGRITY_CRC32C ? 4 : 16);
 }
-static void write_block_header(xpar_file * des, block_hdr h, int algo) {
-  u8 b[24];
-  if (h.bytes > 0xFFFFFF)
+static void pack_bhdr_prefix(u8 prefix[BHDR_PREFIX], u32 bytes, u32 seq) {
+  if (bytes > 0xFFFFFF)
     FATAL("Could not write the header: block too big.");
-  b[0] = 'X';
-  b[1] = (u8)(h.bytes >> 16); b[2] = (u8)(h.bytes >> 8); b[3] = (u8) h.bytes;
-  b[4] = (u8)(h.seq   >> 24); b[5] = (u8)(h.seq   >> 16);
-  b[6] = (u8)(h.seq   >>  8); b[7] = (u8) h.seq;
-  if (algo == INTEGRITY_CRC32C) {
-    xpar_memcpy(b + 8, h.hash, 4);
-    xpar_xwrite(des, b, 12);
-  } else {
-    xpar_memcpy(b + 8, h.hash, 16);
-    xpar_xwrite(des, b, 24);
-  }
+  prefix[0] = 'X';
+  prefix[1] = (u8)(bytes >> 16);
+  prefix[2] = (u8)(bytes >>  8);
+  prefix[3] = (u8) bytes;
+  prefix[4] = (u8)(seq   >> 24);
+  prefix[5] = (u8)(seq   >> 16);
+  prefix[6] = (u8)(seq   >>  8);
+  prefix[7] = (u8) seq;
+}
+static void write_block_header(xpar_file * des,
+                               const u8 prefix[BHDR_PREFIX],
+                               const u8 hash[BHDR_HASH_MAX], int algo) {
+  xpar_xwrite(des, prefix, BHDR_PREFIX);
+  xpar_xwrite(des, hash, algo == INTEGRITY_CRC32C ? 4 : 16);
 }
 static block_hdr parse_block_header(const u8 * b, int algo, bool force) {
   block_hdr h;
@@ -368,27 +386,41 @@ static block_hdr parse_block_header(const u8 * b, int algo, bool force) {
   h.seq   = ((u32) b[4] << 24) | ((u32) b[5] << 16)
           | ((u32) b[6] <<  8) | b[7];
   if (algo == INTEGRITY_CRC32C) {
-    xpar_memcpy(h.hash, b + 8, 4);
+    xpar_memcpy(h.hash, b + BHDR_PREFIX, 4);
     xpar_memset(h.hash + 4, 0, BHDR_HASH_MAX - 4);
   } else {
-    xpar_memcpy(h.hash, b + 8, 16);
+    xpar_memcpy(h.hash, b + BHDR_PREFIX, 16);
   }
   return h;
 }
 /*  Per-lace integrity tag into dst[16]: CRC32C writes 4 (BE),
-    BLAKE2b writes 16 (raw).  */
+    BLAKE2b writes 16 (raw). MAC domain is always:
+    fhdr_ctx(15) || bhdr_prefix(8) || body(len).  */
 static void integrity_tag(u8 * dst, int algo,
                           const u8 * key, sz keylen,
+                          const u8 fhdr_ctx[FHDR_PAYLOAD],
+                          const u8 bhdr_prefix[BHDR_PREFIX],
                           const void * buf, sz len) {
   if (algo == INTEGRITY_CRC32C) {
-    u32 c = crc32c(buf, len);
+    u32 c = 0xFFFFFFFFu;
+    c = crc32c_partial(c, fhdr_ctx, FHDR_PAYLOAD);
+    c = crc32c_partial(c, bhdr_prefix, BHDR_PREFIX);
+    if (len) c = crc32c_partial(c, buf, len);
+    c ^= 0xFFFFFFFFu;
     dst[0] = (u8)(c >> 24); dst[1] = (u8)(c >> 16);
     dst[2] = (u8)(c >>  8); dst[3] = (u8) c;
   } else {
 #ifdef HAVE_BLAKE2B
-    blake2b(dst, 16, buf, len, keylen ? key : NULL, keylen);
+    blake2b_state s;
+    if (keylen) blake2b_init_key(&s, 16, key, keylen);
+    else        blake2b_init(&s, 16);
+    blake2b_update(&s, fhdr_ctx, FHDR_PAYLOAD);
+    blake2b_update(&s, bhdr_prefix, BHDR_PREFIX);
+    if (len) blake2b_update(&s, buf, len);
+    blake2b_final(&s, dst, 16);
 #else
-    (void) dst; (void) key; (void) keylen; (void) buf; (void) len;
+    (void) dst; (void) key; (void) keylen;
+    (void) fhdr_ctx; (void) bhdr_prefix; (void) buf; (void) len;
     FATAL("This build has BLAKE2b integrity disabled (configure with "
           "--enable-blake2b).");
 #endif
@@ -401,6 +433,30 @@ static bool integrity_match(const u8 a[BHDR_HASH_MAX],
   Fi(n, d |= a[i] ^ b[i])
   return d == 0;
 }
+/*  End-of-stream trailer: a bhdr-sized record with bytes=0 and seq set to
+    the block/lace count. MAC is computed over fhdr_ctx || trailer_prefix
+    || (empty body). Lets decoders detect tail truncation even when
+    total_bytes is unknown (stdin input).  */
+static void write_trailer(xpar_file * des, const file_hdr * fh,
+                          int algo, const u8 * key, sz keylen,
+                          u32 seq_count) {
+  u8 prefix[BHDR_PREFIX];
+  u8 hash[BHDR_HASH_MAX] = { 0 };
+  pack_bhdr_prefix(prefix, 0, seq_count);
+  integrity_tag(hash, algo, key, keylen, fh->ctx, prefix, NULL, 0);
+  write_block_header(des, prefix, hash, algo);
+}
+static bool validate_trailer(const u8 * buf, int algo,
+                             const file_hdr * fh,
+                             const u8 * key, sz keylen,
+                             u32 expected_seq) {
+  if (buf[0] != 'X') return false;
+  block_hdr th = parse_block_header(buf, algo, true);
+  if (th.bytes != 0 || th.seq != expected_seq) return false;
+  u8 exp[BHDR_HASH_MAX];
+  integrity_tag(exp, algo, key, keylen, fh->ctx, buf, NULL, 0);
+  return integrity_match(exp, th.hash, algo);
+}
 static void encode4(xpar_file * in, xpar_file * out, int ifactor,
                     int algo, const u8 * key, sz keylen, u64 total_bytes) {
   xpar_notty(out);
@@ -408,10 +464,10 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
   int ibs = compute_interlacing_bs(ifactor);
   in_buffer = xpar_malloc(ibs * K);
   o1 = xpar_malloc(ibs * N);  o2 = xpar_malloc(ibs * N);
-  block_hdr bhdr;
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
-  write_header(out, fh);
+  write_header(out, &fh);
   u32 seq = 0;
   for (size_t n; n = xpar_xread(in, in_buffer, ibs * K); seq++) {
     if (n < ibs * K) xpar_memset(in_buffer + n, 0, ibs * K - n);
@@ -424,10 +480,11 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
     }
     do_interlacing(o1, o2, ifactor);
     xpar_xwrite(out, o2, ibs * N);
-    bhdr.bytes = n; bhdr.seq = seq;
-    integrity_tag(bhdr.hash, algo, key, keylen, in_buffer, n);
-    write_block_header(out, bhdr, algo);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, in_buffer, n);
+    write_block_header(out, prefix, hash, algo);
   }
+  write_trailer(out, &fh, algo, key, keylen, seq);
   xpar_free(in_buffer), xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
@@ -437,10 +494,10 @@ static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
   u8 * o1, * o2;
   int ibs = compute_interlacing_bs(ifactor);
   o1 = xpar_malloc(ibs * N), o2 = xpar_malloc(ibs * N);
-  block_hdr bhdr;
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
-  write_header(out, fh);
+  write_header(out, &fh);
   u32 seq = 0;
   for (sz n; n = MIN(in.size, ibs * K), n; in.size -= n, in.map += n, seq++) {
     rse32_scatter_pad(in.map, n, o1, ibs);
@@ -452,10 +509,11 @@ static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
     }
     do_interlacing(o1, o2, ifactor);
     xpar_xwrite(out, o2, ibs * N);
-    bhdr.bytes = n; bhdr.seq = seq;
-    integrity_tag(bhdr.hash, algo, key, keylen, in.map, n);
-    write_block_header(out, bhdr, algo);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, in.map, n);
+    write_block_header(out, prefix, hash, algo);
   }
+  write_trailer(out, &fh, algo, key, keylen, seq);
   xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #endif
@@ -478,8 +536,14 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
-  for (sz n; n = xpar_xread(in, in1, ibs * N); laces++) {
+  bool saw_trailer = false;
+  for (;;) {
+    sz n = xpar_xread(in, in1, ibs * N);
+    if (n == 0) break;
     if (n < ibs * N) {
+      if (n == bsize && validate_trailer(in1, algo, &fh, key, keylen, laces)) {
+        saw_trailer = true; break;
+      }
       if (!quiet)
         xpar_fprintf(xpar_stderr, "Short read, lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
@@ -508,7 +572,7 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
     else                 Fi(ibs, _pf_fn_decode(i, &c));
     sz size = MIN(ibs * K, bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, out_buffer, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, lace %u (bytes %zu-%zu).\n",
@@ -518,6 +582,12 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
     }
     xpar_xwrite(out, out_buffer, size);
     bytes_out += size;
+    laces++;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    if (!force) xpar_exit(1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -548,20 +618,30 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
     FATAL("File is not authenticated; drop --auth.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
-  in.size -= 5 + N - K; in.map += 5 + N - K; /*  Skip the header.  */
+  in.size -= FHDR_DISK_SIZE; in.map += FHDR_DISK_SIZE;
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
-  for (sz n;
-      n = MIN(in.size, ibs * N), xpar_memcpy(in1, in.map, n),
-          in.size -= n, in.map += n, n
-      ; laces++) {
+  bool saw_trailer = false;
+  for (;;) {
+    if (in.size == 0) break;
+    sz n = MIN(in.size, ibs * N);
     if (n < ibs * N) {
+      if (n == bsize) {
+        u8 trbuf[24]; xpar_memcpy(trbuf, in.map, bsize);
+        if (validate_trailer(trbuf, algo, &fh, key, keylen, laces)) {
+          in.map += bsize; in.size -= bsize;
+          saw_trailer = true; break;
+        }
+      }
       if (!quiet)
         xpar_fprintf(xpar_stderr, "Short read, lace %u (bytes %zu-%zu).\n",
           laces, laces * ibs * N, laces * ibs * N + n - 1);
       if (!force) xpar_exit(1);
+      xpar_memcpy(in1, in.map, n); in.map += n; in.size = 0;
       xpar_memset(in1 + n, 0, ibs * N - n);
+    } else {
+      xpar_memcpy(in1, in.map, n); in.map += n; in.size -= n;
     }
     if (in.size < bsize) {
       if (!quiet)
@@ -588,7 +668,7 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
     else                 Fi(ibs, _pf_fn_decode(i, &c));
     sz size = MIN(ibs * K, bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, out_buffer, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, lace %u (bytes %zu-%zu).\n",
@@ -598,6 +678,12 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
     }
     xpar_xwrite(out, out_buffer, size);
     bytes_out += size;
+    laces++;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    if (!force) xpar_exit(1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -618,30 +704,34 @@ static void encode_systematic4(xpar_file * in, xpar_file * out,
                                int algo, const u8 * key, sz keylen,
                                u64 total_bytes) {
   xpar_notty(out);
-  u8 buf[K], block[N];  block_hdr bhdr;
+  u8 buf[K], block[N];
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
   file_hdr fh = { .ifactor = 4, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
-  write_header(out, fh);
+  write_header(out, &fh);
   u32 seq = 0;
+  bool short_block = false;
   for (sz n; (n = xpar_xread(in, buf, K)); seq++) {
-    if (n < K) xpar_memset(buf + n, 0, K - n);
+    if (n < K) { xpar_memset(buf + n, 0, K - n); short_block = true; }
     rse32(buf, block);
     xpar_xwrite(out, block + K, N - K);
-    bhdr.bytes = n; bhdr.seq = seq;
-    integrity_tag(bhdr.hash, algo, key, keylen, buf, n);
-    write_block_header(out, bhdr, algo);
-    if (n < K) break;
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, buf, n);
+    write_block_header(out, prefix, hash, algo);
+    if (short_block) { seq++; break; }
   }
+  write_trailer(out, &fh, algo, key, keylen, seq);
   xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
 static void encode_systematic3(xpar_mmap in, xpar_file * out,
                                int algo, const u8 * key, sz keylen) {
   xpar_notty(out);
-  u8 buf[K], block[N];  block_hdr bhdr;
+  u8 buf[K], block[N];
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
   file_hdr fh = { .ifactor = 4, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
-  write_header(out, fh);
+  write_header(out, &fh);
   u32 seq = 0;
   while (in.size) {
     sz n = MIN(in.size, (sz)K);
@@ -649,11 +739,13 @@ static void encode_systematic3(xpar_mmap in, xpar_file * out,
     if (n < K) xpar_memset(buf + n, 0, K - n);
     rse32(buf, block);
     xpar_xwrite(out, block + K, N - K);
-    bhdr.bytes = n; bhdr.seq = seq++;
-    integrity_tag(bhdr.hash, algo, key, keylen, in.map, n);
-    write_block_header(out, bhdr, algo);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, in.map, n);
+    write_block_header(out, prefix, hash, algo);
     in.size -= n; in.map += n;
+    seq++;
   }
+  write_trailer(out, &fh, algo, key, keylen, seq);
   xpar_xclose(out);
 }
 #endif
@@ -671,10 +763,15 @@ static void decode_systematic4(xpar_file * data_in,
     FATAL("File is not authenticated; drop --auth.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
     if (!pn) break;
     if (pn < (sz)(N - K)) {
+      if (pn == bsize && validate_trailer(block + K, algo,
+                                          &fh, key, keylen, blk)) {
+        saw_trailer = true; break;
+      }
       FATAL_UNLESS("Short parity block.", !force);
       xpar_memset(block + K + pn, 0, (N - K) - pn);
     }
@@ -696,7 +793,7 @@ static void decode_systematic4(xpar_file * data_in,
     } else ecc += n;
     sz size = MIN((sz)K, (sz)bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, block, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, block, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
@@ -706,7 +803,21 @@ static void decode_systematic4(xpar_file * data_in,
     xpar_xwrite(out, block, size);
     bytes_out += size;
     blk++;
-    if (size < (sz)K) break;
+    if (size < (sz)K) { done = true; break; }
+  }
+  if (!saw_trailer) {
+    /*  For systematic with a short final block, the encoder still emits
+        a trailer afterwards; read it here.  */
+    if (done) {
+      sz pn = xpar_xread(parity_in, tmp, bsize);
+      if (pn == bsize && validate_trailer(tmp, algo, &fh, key, keylen, blk))
+        saw_trailer = true;
+    }
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    if (!force) xpar_exit(1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -736,10 +847,15 @@ static void decode_systematic3(xpar_mmap data_in,
     FATAL("File is not authenticated; drop --auth.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
     if (!pn) break;
     if (pn < (sz)(N - K)) {
+      if (pn == bsize && validate_trailer(block + K, algo,
+                                          &fh, key, keylen, blk)) {
+        saw_trailer = true; break;
+      }
       FATAL_UNLESS("Short parity block.", !force);
       xpar_memset(block + K + pn, 0, (N - K) - pn);
     }
@@ -763,7 +879,7 @@ static void decode_systematic3(xpar_mmap data_in,
     } else ecc += n;
     sz size = MIN((sz)K, (sz)bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, block, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, block, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
@@ -773,7 +889,17 @@ static void decode_systematic3(xpar_mmap data_in,
     xpar_xwrite(out, block, size);
     bytes_out += size;
     blk++;
-    if (size < (sz)K) break;
+    if (size < (sz)K) { done = true; break; }
+  }
+  if (!saw_trailer && done) {
+    sz pn = xpar_xread(parity_in, tmp, bsize);
+    if (pn == bsize && validate_trailer(tmp, algo, &fh, key, keylen, blk))
+      saw_trailer = true;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    if (!force) xpar_exit(1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -807,8 +933,14 @@ static int test4(xpar_file * in, int ifactor_override,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
-  for (sz n; n = xpar_xread(in, in1, ibs * N); laces++) {
+  bool saw_trailer = false;
+  for (;;) {
+    sz n = xpar_xread(in, in1, ibs * N);
+    if (n == 0) break;
     if (n < ibs * N) {
+      if (n == bsize && validate_trailer(in1, algo, &fh, key, keylen, laces)) {
+        saw_trailer = true; break;
+      }
       if (!quiet) xpar_fprintf(xpar_stderr, "Short read, lace %u.\n", laces);
       xpar_atomic_add_int(&bad, 1); xpar_memset(in1 + n, 0, ibs * N - n);
     }
@@ -832,13 +964,19 @@ static int test4(xpar_file * in, int ifactor_override,
     else                 Fi(ibs, _pf_fn_decode(i, &c));
     sz size = MIN(ibs * K, bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, out_buffer, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, lace %u.\n",
         fh.auth_flag ? "MAC" : "Integrity", laces);
       xpar_atomic_add_int(&bad, 1);
     }
     bytes_out += size;
+    laces++;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    xpar_atomic_add_int(&bad, 1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -873,17 +1011,28 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
     FATAL("File is a systematic .xpa; pass -s to test it.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
-  in.size -= 5 + N - K; in.map += 5 + N - K;
+  in.size -= FHDR_DISK_SIZE; in.map += FHDR_DISK_SIZE;
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
-  for (sz n;
-      n = MIN(in.size, ibs * N), xpar_memcpy(in1, in.map, n),
-          in.size -= n, in.map += n, n
-      ; laces++) {
+  bool saw_trailer = false;
+  for (;;) {
+    if (in.size == 0) break;
+    sz n = MIN(in.size, ibs * N);
     if (n < ibs * N) {
+      if (n == bsize) {
+        u8 trbuf[24]; xpar_memcpy(trbuf, in.map, bsize);
+        if (validate_trailer(trbuf, algo, &fh, key, keylen, laces)) {
+          in.map += bsize; in.size -= bsize;
+          saw_trailer = true; break;
+        }
+      }
       if (!quiet) xpar_fprintf(xpar_stderr, "Short read, lace %u.\n", laces);
-      xpar_atomic_add_int(&bad, 1); xpar_memset(in1 + n, 0, ibs * N - n);
+      xpar_atomic_add_int(&bad, 1);
+      xpar_memcpy(in1, in.map, n); in.map += n; in.size = 0;
+      xpar_memset(in1 + n, 0, ibs * N - n);
+    } else {
+      xpar_memcpy(in1, in.map, n); in.map += n; in.size -= n;
     }
     if (in.size < bsize) {
       if (!quiet) xpar_fprintf(xpar_stderr,
@@ -908,13 +1057,19 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
     else                 Fi(ibs, _pf_fn_decode(i, &c));
     sz size = MIN(ibs * K, bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, out_buffer, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, out_buffer, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, lace %u.\n",
         fh.auth_flag ? "MAC" : "Integrity", laces);
       xpar_atomic_add_int(&bad, 1);
     }
     bytes_out += size;
+    laces++;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    xpar_atomic_add_int(&bad, 1);
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -947,10 +1102,17 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
     FATAL("File is not a systematic .xpa; omit -s to test it.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
     if (!pn) break;
-    if (pn < (sz)(N - K)) { bad++; break; }
+    if (pn < (sz)(N - K)) {
+      if (pn == bsize && validate_trailer(block + K, algo,
+                                          &fh, key, keylen, blk)) {
+        saw_trailer = true;
+      } else bad++;
+      break;
+    }
     if (xpar_xread(parity_in, tmp, bsize) != bsize) { bad++; break; }
     block_hdr bhdr = parse_block_header(tmp, algo, true);
     if (bhdr.seq != blk) {
@@ -968,7 +1130,7 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
     } else ecc += n;
     sz size = MIN((sz)K, (sz)bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, block, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, block, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
         fh.auth_flag ? "MAC" : "Integrity", blk);
@@ -976,7 +1138,17 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
     }
     bytes_out += size;
     blk++;
-    if (size < (sz)K) break;
+    if (size < (sz)K) { done = true; break; }
+  }
+  if (!saw_trailer && done) {
+    sz pn = xpar_xread(parity_in, tmp, bsize);
+    if (pn == bsize && validate_trailer(tmp, algo, &fh, key, keylen, blk))
+      saw_trailer = true;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    bad++;
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)
@@ -1005,10 +1177,17 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
     FATAL("File is not a systematic .xpa; omit -s to test it.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
     if (!pn) break;
-    if (pn < (sz)(N - K)) { bad++; break; }
+    if (pn < (sz)(N - K)) {
+      if (pn == bsize && validate_trailer(block + K, algo,
+                                          &fh, key, keylen, blk)) {
+        saw_trailer = true;
+      } else bad++;
+      break;
+    }
     if (xpar_xread(parity_in, tmp, bsize) != bsize) { bad++; break; }
     block_hdr bhdr = parse_block_header(tmp, algo, true);
     if (bhdr.seq != blk) {
@@ -1028,7 +1207,7 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
     } else ecc += n;
     sz size = MIN((sz)K, (sz)bhdr.bytes);
     u8 tag[BHDR_HASH_MAX];
-    integrity_tag(tag, algo, key, keylen, block, size);
+    integrity_tag(tag, algo, key, keylen, fh.ctx, tmp, block, size);
     if (!integrity_match(tag, bhdr.hash, algo)) {
       if (!quiet) xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
         fh.auth_flag ? "MAC" : "Integrity", blk);
@@ -1036,7 +1215,17 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
     }
     bytes_out += size;
     blk++;
-    if (size < (sz)K) break;
+    if (size < (sz)K) { done = true; break; }
+  }
+  if (!saw_trailer && done) {
+    sz pn = xpar_xread(parity_in, tmp, bsize);
+    if (pn == bsize && validate_trailer(tmp, algo, &fh, key, keylen, blk))
+      saw_trailer = true;
+  }
+  if (!saw_trailer) {
+    if (!quiet) xpar_fprintf(xpar_stderr,
+      "Missing end-of-stream trailer; file is truncated.\n");
+    bad++;
   }
   if (fh.total_bytes != (u64) -1 && bytes_out != fh.total_bytes) {
     if (!quiet)

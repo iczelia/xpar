@@ -737,7 +737,6 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
       consensus_size -= w)
     Fi(n_valid_shards, unmap_shard(&res[i]));
     xpar_xclose(out);
-    xpar_free(res);
     return;
   }
   rs * r = rs_init(consensus_dshards, consensus_pshards);
