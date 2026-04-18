@@ -472,7 +472,8 @@ static bool validate_trailer(const u8 * buf, int algo,
 static bool encode4_uring(xpar_file * in, xpar_file * out, int ifactor,
                           int algo, const u8 * key, sz keylen,
                           const file_hdr * fh,
-                          u8 * in_buffer, u8 * o1, u8 * o2) {
+                          u8 * in_buffer, u8 * o1, u8 * o2,
+                          xpar_progress_t * prog) {
   xpar_iogroup * iog = xpar_iogroup_new(8);
   if (!iog) return false;
   int fid = xpar_iogroup_register_file(iog, out);
@@ -511,6 +512,7 @@ static bool encode4_uring(xpar_file * in, xpar_file * out, int ifactor,
       xpar_iogroup_drain(iog);
       off += filled; filled = 0;
     }
+    xpar_progress_tick(prog, n);
   }
   if (filled) {
     xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
@@ -530,7 +532,8 @@ static bool encode4_uring(xpar_file * in, xpar_file * out, int ifactor,
 }
 #endif
 static void encode4(xpar_file * in, xpar_file * out, int ifactor,
-                    int algo, const u8 * key, sz keylen, u64 total_bytes) {
+                    int algo, const u8 * key, sz keylen, u64 total_bytes,
+                    bool progress) {
   xpar_notty(out);
   u8 * in_buffer, * o1, * o2;
   int ibs = compute_interlacing_bs(ifactor);
@@ -540,9 +543,13 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
   write_header(out, &fh);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    total_bytes == (u64) -1 ? 0 : total_bytes, "Encoding");
 #ifdef XPAR_HAS_LIBURING
   if (encode4_uring(in, out, ifactor, algo, key, keylen, &fh,
-                    in_buffer, o1, o2)) {
+                    in_buffer, o1, o2, &prog)) {
+    xpar_progress_end(&prog);
     xpar_free(in_buffer); xpar_free(o1); xpar_free(o2);
     xpar_xclose(out); return;
   }
@@ -562,15 +569,18 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
     pack_bhdr_prefix(prefix, n, seq);
     integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, in_buffer, n);
     write_block_header(out, prefix, hash, algo);
+    xpar_progress_tick(&prog, n);
   }
   write_trailer(out, &fh, algo, key, keylen, seq);
+  xpar_progress_end(&prog);
   xpar_free(in_buffer), xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
 #ifdef XPAR_HAS_LIBURING
 static bool encode3_uring(xpar_mmap in, xpar_file * out, int ifactor,
                           int algo, const u8 * key, sz keylen,
-                          const file_hdr * fh, u8 * o1, u8 * o2) {
+                          const file_hdr * fh, u8 * o1, u8 * o2,
+                          xpar_progress_t * prog) {
   xpar_iogroup * iog = xpar_iogroup_new(8);
   if (!iog) return false;
   int fid = xpar_iogroup_register_file(iog, out);
@@ -608,6 +618,7 @@ static bool encode3_uring(xpar_mmap in, xpar_file * out, int ifactor,
       xpar_iogroup_drain(iog);
       off += filled; filled = 0;
     }
+    xpar_progress_tick(prog, n);
   }
   if (filled) {
     xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
@@ -627,17 +638,21 @@ static bool encode3_uring(xpar_mmap in, xpar_file * out, int ifactor,
 }
 #endif
 static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
-                    int algo, const u8 * key, sz keylen) {
+                    int algo, const u8 * key, sz keylen, bool progress) {
   xpar_notty(out);
   u8 * o1, * o2;
   int ibs = compute_interlacing_bs(ifactor);
   o1 = xpar_malloc(ibs * N), o2 = xpar_malloc(ibs * N);
   u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u64 total_in = in.size;
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
-                  .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = total_in };
   write_header(out, &fh);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress, total_in, "Encoding");
 #ifdef XPAR_HAS_LIBURING
-  if (encode3_uring(in, out, ifactor, algo, key, keylen, &fh, o1, o2)) {
+  if (encode3_uring(in, out, ifactor, algo, key, keylen, &fh, o1, o2, &prog)) {
+    xpar_progress_end(&prog);
     xpar_free(o1); xpar_free(o2); xpar_xclose(out); return;
   }
 #endif
@@ -655,13 +670,15 @@ static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
     pack_bhdr_prefix(prefix, n, seq);
     integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, in.map, n);
     write_block_header(out, prefix, hash, algo);
+    xpar_progress_tick(&prog, n);
   }
   write_trailer(out, &fh, algo, key, keylen, seq);
+  xpar_progress_end(&prog);
   xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #endif
 static void decode4(xpar_file * in, xpar_file * out, int force,
-    int ifactor_override, bool quiet, bool verbose,
+    int ifactor_override, bool quiet, bool verbose, bool progress,
     const u8 * key, sz keylen) {
   xpar_notty(in);
   u8 * in1, * in2, * out_buffer;  u32 laces = 0;
@@ -679,6 +696,9 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Decoding");
   bool saw_trailer = false;
   for (;;) {
     sz n = xpar_xread(in, in1, ibs * N);
@@ -726,6 +746,7 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
     xpar_xwrite(out, out_buffer, size);
     bytes_out += size;
     laces++;
+    xpar_progress_tick(&prog, size);
   }
   if (!saw_trailer) {
     if (!quiet) xpar_fprintf(xpar_stderr,
@@ -740,6 +761,7 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
         (unsigned long long) fh.total_bytes);
     if (!force) xpar_exit(1);
   }
+  xpar_progress_end(&prog);
   xpar_free(in1), xpar_free(in2), xpar_free(out_buffer); xpar_xclose(out);
   if (!quiet && verbose)
     xpar_fprintf(xpar_stderr, "Decoded %u laces, %u errors corrected.\n",
@@ -747,7 +769,7 @@ static void decode4(xpar_file * in, xpar_file * out, int force,
 }
 #ifdef XPAR_ALLOW_MAPPING
 static void decode3(xpar_mmap in, xpar_file * out, int force,
-    int ifactor_override, bool quiet, bool verbose,
+    int ifactor_override, bool quiet, bool verbose, bool progress,
     const u8 * key, sz keylen) {
   u8 * in1, * in2, * out_buffer;  u32 laces = 0;
   xpar_atomic_int ecc = 0;
@@ -765,6 +787,9 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Decoding");
   bool saw_trailer = false;
   for (;;) {
     if (in.size == 0) break;
@@ -822,6 +847,7 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
     xpar_xwrite(out, out_buffer, size);
     bytes_out += size;
     laces++;
+    xpar_progress_tick(&prog, size);
   }
   if (!saw_trailer) {
     if (!quiet) xpar_fprintf(xpar_stderr,
@@ -836,6 +862,7 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
         (unsigned long long) fh.total_bytes);
     if (!force) xpar_exit(1);
   }
+  xpar_progress_end(&prog);
   xpar_free(in1), xpar_free(in2), xpar_free(out_buffer); xpar_xclose(out);
   if (!quiet && verbose)
     xpar_fprintf(xpar_stderr, "Decoded %u laces, %u errors corrected.\n",
@@ -851,7 +878,8 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
     caller falls through to the synchronous path.  */
 static bool encode_systematic4_uring(xpar_file * in, xpar_file * out,
                                      int algo, const u8 * key, sz keylen,
-                                     const file_hdr * fh) {
+                                     const file_hdr * fh,
+                                     xpar_progress_t * prog) {
   xpar_iogroup * iog = xpar_iogroup_new(8);
   if (!iog) return false;
   int fid = xpar_iogroup_register_file(iog, out);
@@ -882,6 +910,7 @@ static bool encode_systematic4_uring(xpar_file * in, xpar_file * out,
       xpar_iogroup_drain(iog);   /*  arena safe to reuse  */
       off += filled; filled = 0;
     }
+    xpar_progress_tick(prog, n);
     if (short_block) { seq++; break; }
   }
   if (filled) {
@@ -904,15 +933,19 @@ static bool encode_systematic4_uring(xpar_file * in, xpar_file * out,
 
 static void encode_systematic4(xpar_file * in, xpar_file * out,
                                int algo, const u8 * key, sz keylen,
-                               u64 total_bytes) {
+                               u64 total_bytes, bool progress) {
   xpar_notty(out);
   u8 buf[K], block[N];
   u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
   file_hdr fh = { .ifactor = 4, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
   write_header(out, &fh);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    total_bytes == (u64) -1 ? 0 : total_bytes, "Encoding");
 #ifdef XPAR_HAS_LIBURING
-  if (encode_systematic4_uring(in, out, algo, key, keylen, &fh)) {
+  if (encode_systematic4_uring(in, out, algo, key, keylen, &fh, &prog)) {
+    xpar_progress_end(&prog);
     xpar_xclose(out); return;
   }
 #endif
@@ -925,16 +958,19 @@ static void encode_systematic4(xpar_file * in, xpar_file * out,
     pack_bhdr_prefix(prefix, n, seq);
     integrity_tag(hash, algo, key, keylen, fh.ctx, prefix, buf, n);
     write_block_header(out, prefix, hash, algo);
+    xpar_progress_tick(&prog, n);
     if (short_block) { seq++; break; }
   }
   write_trailer(out, &fh, algo, key, keylen, seq);
+  xpar_progress_end(&prog);
   xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
 #ifdef XPAR_HAS_LIBURING
 static bool encode_systematic3_uring(xpar_mmap in, xpar_file * out,
                                      int algo, const u8 * key, sz keylen,
-                                     const file_hdr * fh) {
+                                     const file_hdr * fh,
+                                     xpar_progress_t * prog) {
   xpar_iogroup * iog = xpar_iogroup_new(8);
   if (!iog) return false;
   int fid = xpar_iogroup_register_file(iog, out);
@@ -968,6 +1004,7 @@ static bool encode_systematic3_uring(xpar_mmap in, xpar_file * out,
     }
     in.size -= n; in.map += n;
     seq++;
+    xpar_progress_tick(prog, n);
   }
   if (filled) {
     xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
@@ -987,15 +1024,20 @@ static bool encode_systematic3_uring(xpar_mmap in, xpar_file * out,
 }
 #endif
 static void encode_systematic3(xpar_mmap in, xpar_file * out,
-                               int algo, const u8 * key, sz keylen) {
+                               int algo, const u8 * key, sz keylen,
+                               bool progress) {
   xpar_notty(out);
   u8 buf[K], block[N];
   u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u64 total_in = in.size;
   file_hdr fh = { .ifactor = 4, .integrity = algo,
-                  .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
+                  .auth_flag = keylen ? 1 : 0, .total_bytes = total_in };
   write_header(out, &fh);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress, total_in, "Encoding");
 #ifdef XPAR_HAS_LIBURING
-  if (encode_systematic3_uring(in, out, algo, key, keylen, &fh)) {
+  if (encode_systematic3_uring(in, out, algo, key, keylen, &fh, &prog)) {
+    xpar_progress_end(&prog);
     xpar_xclose(out); return;
   }
 #endif
@@ -1011,14 +1053,16 @@ static void encode_systematic3(xpar_mmap in, xpar_file * out,
     write_block_header(out, prefix, hash, algo);
     in.size -= n; in.map += n;
     seq++;
+    xpar_progress_tick(&prog, n);
   }
   write_trailer(out, &fh, algo, key, keylen, seq);
+  xpar_progress_end(&prog);
   xpar_xclose(out);
 }
 #endif
 static void decode_systematic4(xpar_file * data_in,
     xpar_file * parity_in, xpar_file * out,
-    bool force, bool quiet, bool verbose,
+    bool force, bool quiet, bool verbose, bool progress,
     const u8 * key, sz keylen) {
   xpar_notty(parity_in);
   u8 block[N], tmp[24];  u32 blk = 0, ecc = 0;  u64 bytes_out = 0;
@@ -1030,6 +1074,9 @@ static void decode_systematic4(xpar_file * data_in,
     FATAL("File is not authenticated; drop --auth.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Decoding");
   bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
@@ -1073,6 +1120,7 @@ static void decode_systematic4(xpar_file * data_in,
     xpar_xwrite(out, block, size);
     bytes_out += size;
     blk++;
+    xpar_progress_tick(&prog, size);
     if (size < (sz)K) { done = true; break; }
   }
   if (!saw_trailer) {
@@ -1097,6 +1145,7 @@ static void decode_systematic4(xpar_file * data_in,
         (unsigned long long) fh.total_bytes);
     if (!force) xpar_exit(1);
   }
+  xpar_progress_end(&prog);
   xpar_xclose(out);
   if (!quiet && verbose)
     xpar_fprintf(xpar_stderr,
@@ -1105,7 +1154,7 @@ static void decode_systematic4(xpar_file * data_in,
 #ifdef XPAR_ALLOW_MAPPING
 static void decode_systematic3(xpar_mmap data_in,
     xpar_file * parity_in, xpar_file * out,
-    bool force, bool quiet, bool verbose,
+    bool force, bool quiet, bool verbose, bool progress,
     const u8 * key, sz keylen) {
   xpar_notty(parity_in);
   u8 block[N], tmp[24];  u32 blk = 0, ecc = 0;  u64 bytes_out = 0;
@@ -1117,6 +1166,9 @@ static void decode_systematic3(xpar_mmap data_in,
     FATAL("File is not authenticated; drop --auth.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Decoding");
   bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
@@ -1162,6 +1214,7 @@ static void decode_systematic3(xpar_mmap data_in,
     xpar_xwrite(out, block, size);
     bytes_out += size;
     blk++;
+    xpar_progress_tick(&prog, size);
     if (size < (sz)K) { done = true; break; }
   }
   if (!saw_trailer && done) {
@@ -1182,6 +1235,7 @@ static void decode_systematic3(xpar_mmap data_in,
         (unsigned long long) fh.total_bytes);
     if (!force) xpar_exit(1);
   }
+  xpar_progress_end(&prog);
   xpar_xclose(out);
   if (!quiet && verbose)
     xpar_fprintf(xpar_stderr,
@@ -1191,7 +1245,8 @@ static void decode_systematic3(xpar_mmap data_in,
 
 /*  Integrity check: decode path sans output write, continues on errors.  */
 static int test4(xpar_file * in, int ifactor_override,
-    bool quiet, bool verbose, const u8 * key, sz keylen) {
+    bool quiet, bool verbose, bool progress,
+    const u8 * key, sz keylen) {
   xpar_notty(in);
   u8 * in1, * in2, * out_buffer;
   u32 laces = 0;
@@ -1206,6 +1261,9 @@ static int test4(xpar_file * in, int ifactor_override,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Testing");
   bool saw_trailer = false;
   for (;;) {
     sz n = xpar_xread(in, in1, ibs * N);
@@ -1245,6 +1303,7 @@ static int test4(xpar_file * in, int ifactor_override,
     }
     bytes_out += size;
     laces++;
+    xpar_progress_tick(&prog, size);
   }
   if (!saw_trailer) {
     if (!quiet) xpar_fprintf(xpar_stderr,
@@ -1259,6 +1318,7 @@ static int test4(xpar_file * in, int ifactor_override,
         (unsigned long long) fh.total_bytes);
     xpar_atomic_add_int(&bad, 1);
   }
+  xpar_progress_end(&prog);
   xpar_free(in1), xpar_free(in2), xpar_free(out_buffer);
   int ecc_val = xpar_atomic_load_int(&ecc);
   int bad_val = xpar_atomic_load_int(&bad);
@@ -1272,7 +1332,8 @@ static int test4(xpar_file * in, int ifactor_override,
   return bad_val + (ecc_val ? 1 : 0);
 }
 #ifdef XPAR_ALLOW_MAPPING
-static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
+static int test3(xpar_mmap in, int ifactor_override,
+                 bool quiet, bool verbose, bool progress,
                  const u8 * key, sz keylen) {
   u8 * in1, * in2, * out_buffer;
   u32 laces = 0;
@@ -1288,6 +1349,9 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
   sz ibs = compute_interlacing_bs(fh.ifactor);
   in1 = xpar_malloc(ibs * N), in2 = xpar_malloc(ibs * N);
   out_buffer = xpar_malloc(ibs * K);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Testing");
   bool saw_trailer = false;
   for (;;) {
     if (in.size == 0) break;
@@ -1338,6 +1402,7 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
     }
     bytes_out += size;
     laces++;
+    xpar_progress_tick(&prog, size);
   }
   if (!saw_trailer) {
     if (!quiet) xpar_fprintf(xpar_stderr,
@@ -1352,6 +1417,7 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
         (unsigned long long) fh.total_bytes);
     xpar_atomic_add_int(&bad, 1);
   }
+  xpar_progress_end(&prog);
   xpar_free(in1), xpar_free(in2), xpar_free(out_buffer);
   int ecc_val = xpar_atomic_load_int(&ecc);
   int bad_val = xpar_atomic_load_int(&bad);
@@ -1366,7 +1432,7 @@ static int test3(xpar_mmap in, int ifactor_override, bool quiet, bool verbose,
 }
 #endif
 static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
-                             bool quiet, bool verbose,
+                             bool quiet, bool verbose, bool progress,
                              const u8 * key, sz keylen) {
   xpar_notty(parity_in);
   u8 block[N], tmp[24];  u32 blk = 0, ecc = 0, bad = 0;  u64 bytes_out = 0;
@@ -1375,6 +1441,9 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
     FATAL("File is not a systematic .xpa; omit -s to test it.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Testing");
   bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
@@ -1411,6 +1480,7 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
     }
     bytes_out += size;
     blk++;
+    xpar_progress_tick(&prog, size);
     if (size < (sz)K) { done = true; break; }
   }
   if (!saw_trailer && done) {
@@ -1431,6 +1501,7 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
         (unsigned long long) fh.total_bytes);
     bad++;
   }
+  xpar_progress_end(&prog);
   if (ecc && !quiet)
     xpar_fprintf(xpar_stderr,
       "%u byte(s) needed RS correction: file is not pristine.\n", ecc);
@@ -1441,7 +1512,7 @@ static int test_systematic4(xpar_file * data_in, xpar_file * parity_in,
 }
 #ifdef XPAR_ALLOW_MAPPING
 static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
-                             bool quiet, bool verbose,
+                             bool quiet, bool verbose, bool progress,
                              const u8 * key, sz keylen) {
   xpar_notty(parity_in);
   u8 block[N], tmp[24];  u32 blk = 0, ecc = 0, bad = 0;  u64 bytes_out = 0;
@@ -1450,6 +1521,9 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
     FATAL("File is not a systematic .xpa; omit -s to test it.");
   int algo = fh.integrity;
   sz bsize = bhdr_size(algo);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, progress,
+    fh.total_bytes == (u64) -1 ? 0 : fh.total_bytes, "Testing");
   bool saw_trailer = false, done = false;
   for (;;) {
     sz pn = xpar_xread(parity_in, block + K, N - K);
@@ -1488,6 +1562,7 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
     }
     bytes_out += size;
     blk++;
+    xpar_progress_tick(&prog, size);
     if (size < (sz)K) { done = true; break; }
   }
   if (!saw_trailer && done) {
@@ -1508,6 +1583,7 @@ static int test_systematic3(xpar_mmap data_in, xpar_file * parity_in,
         (unsigned long long) fh.total_bytes);
     bad++;
   }
+  xpar_progress_end(&prog);
   if (ecc && !quiet)
     xpar_fprintf(xpar_stderr,
       "%u byte(s) needed RS correction: file is not pristine.\n", ecc);
@@ -1553,10 +1629,11 @@ void do_joint_encode(joint_options_t o) {
       xpar_mmap map = xpar_map(o.input_name);
       if (map.map) {
         if (o.interlacing == 4)
-          encode_systematic3(map, out, o.integrity, o.auth_key, o.auth_keylen);
+          encode_systematic3(map, out, o.integrity, o.auth_key, o.auth_keylen,
+                             o.progress);
         else
           encode3(map, out, o.interlacing,
-                  o.integrity, o.auth_key, o.auth_keylen);
+                  o.integrity, o.auth_key, o.auth_keylen, o.progress);
         xpar_unmap(&map);
         return;
       }
@@ -1565,10 +1642,11 @@ void do_joint_encode(joint_options_t o) {
     if (!(in = xpar_open(o.input_name, XPAR_O_READ))) FATAL_PERROR("fopen");
   }
   if (o.interlacing == 4)
-    encode_systematic4(in, out, o.integrity, o.auth_key, o.auth_keylen, total);
+    encode_systematic4(in, out, o.integrity, o.auth_key, o.auth_keylen, total,
+                       o.progress);
   else
     encode4(in, out, o.interlacing,
-            o.integrity, o.auth_key, o.auth_keylen, total);
+            o.integrity, o.auth_key, o.auth_keylen, total, o.progress);
 }
 void do_joint_decode(joint_options_t o) {
   if (o.interlacing == 4) {
@@ -1583,7 +1661,7 @@ void do_joint_decode(joint_options_t o) {
         xpar_mmap map = xpar_map(o.input_name);
         if (map.map) {
           decode_systematic3(map, parity, xpar_stdout,
-                             o.force, o.quiet, o.verbose,
+                             o.force, o.quiet, o.verbose, o.progress,
                              o.auth_key, o.auth_keylen);
           xpar_unmap(&map);
           xpar_close(parity);
@@ -1594,12 +1672,12 @@ void do_joint_decode(joint_options_t o) {
       xpar_file * data = xpar_open(o.input_name, XPAR_O_READ);
       if (!data) FATAL_PERROR("fopen");
       decode_systematic4(data, parity, xpar_stdout,
-        o.force, o.quiet, o.verbose,
+        o.force, o.quiet, o.verbose, o.progress,
         o.auth_key, o.auth_keylen);
       xpar_close(data);
     } else {
       decode_systematic4(xpar_stdin, parity, xpar_stdout,
-        o.force, o.quiet, o.verbose,
+        o.force, o.quiet, o.verbose, o.progress,
         o.auth_key, o.auth_keylen);
     }
     xpar_close(parity);
@@ -1613,7 +1691,7 @@ void do_joint_decode(joint_options_t o) {
       xpar_mmap map = xpar_map(o.input_name);
       if (map.map) {
         decode3(map, out, o.force, o.interlacing, o.quiet, o.verbose,
-                o.auth_key, o.auth_keylen);
+                o.progress, o.auth_key, o.auth_keylen);
         xpar_unmap(&map);
         return;
       }
@@ -1621,7 +1699,7 @@ void do_joint_decode(joint_options_t o) {
     }
     if (!(in = xpar_open(o.input_name, XPAR_O_READ))) FATAL_PERROR("fopen");
   }
-  decode4(in, out, o.force, o.interlacing, o.quiet, o.verbose,
+  decode4(in, out, o.force, o.interlacing, o.quiet, o.verbose, o.progress,
           o.auth_key, o.auth_keylen);
 }
 void do_joint_test(joint_options_t o) {
@@ -1637,7 +1715,7 @@ void do_joint_test(joint_options_t o) {
         #if defined(XPAR_ALLOW_MAPPING)
         xpar_mmap map = xpar_map(o.input_name);
         if (map.map) {
-          bad = test_systematic3(map, parity, o.quiet, o.verbose,
+          bad = test_systematic3(map, parity, o.quiet, o.verbose, o.progress,
                                  o.auth_key, o.auth_keylen);
           xpar_unmap(&map);
           xpar_close(parity);
@@ -1647,11 +1725,11 @@ void do_joint_test(joint_options_t o) {
       }
       xpar_file * data = xpar_open(o.input_name, XPAR_O_READ);
       if (!data) FATAL_PERROR("fopen");
-      bad = test_systematic4(data, parity, o.quiet, o.verbose,
+      bad = test_systematic4(data, parity, o.quiet, o.verbose, o.progress,
                              o.auth_key, o.auth_keylen);
       xpar_close(data);
     } else {
-      bad = test_systematic4(xpar_stdin, parity, o.quiet, o.verbose,
+      bad = test_systematic4(xpar_stdin, parity, o.quiet, o.verbose, o.progress,
                              o.auth_key, o.auth_keylen);
     }
     xpar_close(parity);
@@ -1663,7 +1741,7 @@ void do_joint_test(joint_options_t o) {
       #if defined(XPAR_ALLOW_MAPPING)
       xpar_mmap map = xpar_map(o.input_name);
       if (map.map) {
-        bad = test3(map, o.interlacing, o.quiet, o.verbose,
+        bad = test3(map, o.interlacing, o.quiet, o.verbose, o.progress,
                     o.auth_key, o.auth_keylen);
         xpar_unmap(&map);
         goto done;
@@ -1672,11 +1750,11 @@ void do_joint_test(joint_options_t o) {
     }
     xpar_file * in = xpar_open(o.input_name, XPAR_O_READ);
     if (!in) FATAL_PERROR("fopen");
-    bad = test4(in, o.interlacing, o.quiet, o.verbose,
+    bad = test4(in, o.interlacing, o.quiet, o.verbose, o.progress,
                 o.auth_key, o.auth_keylen);
     xpar_close(in);
   } else {
-    bad = test4(xpar_stdin, o.interlacing, o.quiet, o.verbose,
+    bad = test4(xpar_stdin, o.interlacing, o.quiet, o.verbose, o.progress,
                 o.auth_key, o.auth_keylen);
   }
 done:

@@ -60,6 +60,7 @@ static void help() {
     "  -f,   --force        force operation: ignore errors, overwrite files\n"
     "  -v,   --verbose      verbose mode (display more information)\n"
     "  -q,   --quiet        quiet mode (display less information)\n"
+    "        --progress     periodically print progress to stderr\n"
     "  -V,   --version      display version information\n"
 #if defined(XPAR_ALLOW_MAPPING)
     "        --no-mmap      unconditionally disable memory mapping\n"
@@ -89,7 +90,7 @@ static void help() {
 }
 enum mode_t { MODE_NONE, MODE_ENCODING, MODE_DECODING, MODE_TESTING };
 enum { FLAG_NO_MMAP = CHAR_MAX + 1, FLAG_DSHARDS, FLAG_PSHARDS,
-        FLAG_OUT_PREFIX, FLAG_AUTH };
+        FLAG_OUT_PREFIX, FLAG_AUTH, FLAG_PROGRESS };
 static const yarg_options opt[] = {
   { 'V', no_argument, "version" },
   { 'v', no_argument, "verbose" },
@@ -114,6 +115,7 @@ static const yarg_options opt[] = {
   { 's', no_argument, "systematic" },
   { 'H', required_argument, "integrity" },
   { FLAG_AUTH, required_argument, "auth" },
+  { FLAG_PROGRESS, no_argument, "progress" },
   { 0, 0, NULL }
 };
 int xpar_main(int argc, char ** argv) {
@@ -121,7 +123,7 @@ int xpar_main(int argc, char ** argv) {
   yarg_settings settings = { .style = YARG_STYLE_UNIX, .dash_dash = true };
   bool verbose = false, quiet = false, force = false, force_stdout = false;
   bool no_map = false, joint = false, sharded = false, log_sharded = false;
-  bool systematic = false;
+  bool systematic = false, progress = false;
   int mode = MODE_NONE, interlacing = -1, dshards = -1, pshards = -1;
   int jobs = -1, integrity = INTEGRITY_CRC32C;
   const char * out_prefix = NULL;
@@ -181,6 +183,7 @@ int xpar_main(int argc, char ** argv) {
         break;
       }
       case FLAG_OUT_PREFIX: out_prefix = o.arg; break;
+      case FLAG_PROGRESS: progress = true; break;
       case 's': systematic = true; break;
       case 'H':
         if (!xpar_strcmp(o.arg, "crc32c")) integrity = INTEGRITY_CRC32C;
@@ -283,7 +286,7 @@ int xpar_main(int argc, char ** argv) {
       .auth_key = auth_keylen ? auth_key : NULL,
       .auth_keylen = auth_keylen,
       .force = force, .quiet = quiet, .verbose = verbose,
-      .no_map = no_map
+      .no_map = no_map, .progress = progress
     };
     u64 t_start = xpar_usec_now();
     switch(mode) {
@@ -316,7 +319,7 @@ int xpar_main(int argc, char ** argv) {
           .input_name = input_file, .output_prefix = out_prefix,
           .dshards = dshards, .pshards = pshards,
           .force = force, .quiet = quiet, .verbose = verbose,
-          .no_map = no_map,
+          .no_map = no_map, .progress = progress,
           .integrity = integrity,
           .auth_key = auth_keylen ? auth_key : NULL,
           .auth_keylen = auth_keylen
@@ -332,7 +335,8 @@ int xpar_main(int argc, char ** argv) {
           .output_file = output_file,
           .input_files = (const char **) res->pos_args + 1,
           .force = force, .quiet = quiet, .verbose = verbose,
-          .no_map = no_map, .n_input_shards = res->pos_argc - 1,
+          .no_map = no_map, .progress = progress,
+          .n_input_shards = res->pos_argc - 1,
           .auth_key = auth_keylen ? auth_key : NULL,
           .auth_keylen = auth_keylen
         };
@@ -345,7 +349,8 @@ int xpar_main(int argc, char ** argv) {
           .output_file = NULL,
           .input_files = (const char **) res->pos_args,
           .force = force, .quiet = quiet, .verbose = verbose,
-          .no_map = no_map, .n_input_shards = res->pos_argc,
+          .no_map = no_map, .progress = progress,
+          .n_input_shards = res->pos_argc,
           .auth_key = auth_keylen ? auth_key : NULL,
           .auth_keylen = auth_keylen
         };

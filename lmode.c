@@ -481,26 +481,45 @@ static rs * rs_init(int data_shards, int parity_shards) {
               NextPow2(data_shards + NextPow2(parity_shards));
   return r;
 }
-static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
+static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose,
+                      xpar_progress_t * prog) {
   void ** ework = xpar_malloc(r->ebuf * sizeof(void *));
   Fi(r->ebuf, ework[i] = SIMDSafeAllocate(len))
   if (verbose)
     xpar_fprintf(xpar_stderr,
       "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
       r->ebuf, len, r->ebuf * len);
-  if (r->data == 1) {
-    Fi(r->parity, xpar_memcpy(ework[i], in[0], len))
-  } else if (r->parity == 1) {
-    EncodeM1(len, r->data, (const void * const * const) in, ework[0]);
-  } else {
-    const unsigned m = NextPow2(r->parity);
-    ReedSolomonEncode(len, r->data, r->parity, m, (const void **) in, ework);
+  /*  Chunk the byte dimension so progress ticks periodically. The FFT is
+      over the shard axis; byte offsets within a shard are independent, so
+      processing (off, off+cl) slices in sequence yields the same output.
+      Chunk at a multiple of 64 to preserve SIMD alignment of shard starts.  */
+  sz chunk = MiB(64);
+  if (chunk > len) chunk = len;
+  if (!chunk) chunk = 1;
+  void ** in_sl = xpar_malloc(r->total * sizeof(void *));
+  void ** ew_sl = xpar_malloc(r->ebuf * sizeof(void *));
+  for (sz off = 0; off < len; off += chunk) {
+    sz cl = MIN(chunk, len - off);
+    Fi(r->total,    in_sl[i] = in[i] ? ((u8 *) in[i]) + off : NULL);
+    Fi(r->ebuf,     ew_sl[i] = ((u8 *) ework[i]) + off);
+    if (r->data == 1) {
+      Fi(r->parity, xpar_memcpy(ew_sl[i], in_sl[0], cl))
+    } else if (r->parity == 1) {
+      EncodeM1(cl, r->data,
+               (const void * const * const) in_sl, ew_sl[0]);
+    } else {
+      const unsigned m = NextPow2(r->parity);
+      ReedSolomonEncode(cl, r->data, r->parity, m,
+                        (const void **) in_sl, ew_sl);
+    }
+    xpar_progress_tick(prog, cl * (sz) r->data);
   }
+  xpar_free(in_sl); xpar_free(ew_sl);
   Fi(r->parity, in[r->data + i] = ework[i])
   Fi0(r->ebuf, r->parity, SIMDSafeFree(ework[i]))  xpar_free(ework);
 }
 static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
-                       sz len, bool verbose) {
+                       sz len, bool verbose, xpar_progress_t * prog) {
   int present = 0, di = 0, pi = 0;
   Fi(r->total, present += !!shards_present[i])
   if (present < r->data) return false;
@@ -524,23 +543,35 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
   if (recovery_got < orig_lost)
     FATAL("Not enough recovery data received: lost %lu, got %lu\n",
           orig_lost, recovery_got);
-  if (r->data == 1) {
-    xpar_memcpy(dwork[0], pshards[recovery_got_i], len);
-  } else if (orig_lost == 0) {
-    Fi(r->data, xpar_memcpy(dwork[i], dshards[i], len))
-  } else if (r->parity == 1) {
-    DecodeM1(
-        len, r->data,
-        (const void * const * const) dshards,
-        pshards[0], dwork[orig_lost]);
-  } else {
-    const sz m = NextPow2(r->parity), n = NextPow2(m + r->data);
-    ReedSolomonDecode(
-        len, r->data, r->parity, m, n,
-        (const void * const * const) dshards,
-        (const void * const * const) pshards,
-        dwork);
+  sz chunk = MiB(64);
+  if (chunk > len) chunk = len;
+  if (!chunk) chunk = 1;
+  void ** dsh_sl = xpar_malloc(r->data * sizeof(void *));
+  void ** psh_sl = xpar_malloc(r->parity * sizeof(void *));
+  void ** dw_sl  = xpar_malloc(r->dbuf * sizeof(void *));
+  for (sz off = 0; off < len; off += chunk) {
+    sz cl = MIN(chunk, len - off);
+    Fi(r->data,   dsh_sl[i] = dshards[i] ? ((u8 *) dshards[i]) + off : NULL);
+    Fi(r->parity, psh_sl[i] = pshards[i] ? ((u8 *) pshards[i]) + off : NULL);
+    Fi(r->dbuf,   dw_sl[i]  = ((u8 *) dwork[i]) + off);
+    if (r->data == 1) {
+      xpar_memcpy(dw_sl[0], psh_sl[recovery_got_i], cl);
+    } else if (orig_lost == 0) {
+      Fi(r->data, xpar_memcpy(dw_sl[i], dsh_sl[i], cl))
+    } else if (r->parity == 1) {
+      DecodeM1(cl, r->data,
+               (const void * const * const) dsh_sl,
+               psh_sl[0], dw_sl[orig_lost]);
+    } else {
+      const sz m = NextPow2(r->parity), n = NextPow2(m + r->data);
+      ReedSolomonDecode(cl, r->data, r->parity, m, n,
+                        (const void * const * const) dsh_sl,
+                        (const void * const * const) psh_sl,
+                        dw_sl);
+    }
+    xpar_progress_tick(prog, cl * (sz) r->data);
   }
+  xpar_free(dsh_sl); xpar_free(psh_sl); xpar_free(dw_sl);
   Fi(r->total, if (!shards_present[i]) xpar_memcpy(in[i], dwork[i], len))
   Fi(r->dbuf, SIMDSafeFree(dwork[i]))
   xpar_free(dwork);  xpar_free(dshards);  xpar_free(pshards);
@@ -589,7 +620,11 @@ static bool sharded_encode_uring(sharded_encoding_options_t o,
   )
   xpar_iogroup_submit(iog);
   rs * r = rs_init(o.dshards, o.pshards);
-  rs_encode(r, shards, shard_size, o.verbose);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, o.progress,
+    (u64) shard_size * (u64) o.dshards, "Encoding");
+  rs_encode(r, shards, shard_size, o.verbose, &prog);
+  xpar_progress_end(&prog);
   rs_destroy(r);
   /*  Phase C: parity shards exist now -- enqueue, fsync, drain.  */
   Fi0(o.dshards + o.pshards, o.dshards,
@@ -662,7 +697,11 @@ static void do_sharded_encode(sharded_encoding_options_t o,
 #endif
   {
     rs * r = rs_init(o.dshards, o.pshards);
-    rs_encode(r, shards, shard_size, o.verbose);
+    xpar_progress_t prog;
+    xpar_progress_init(&prog, o.progress,
+      (u64) shard_size * (u64) o.dshards, "Encoding");
+    rs_encode(r, shards, shard_size, o.verbose, &prog);
+    xpar_progress_end(&prog);
     rs_destroy(r);
     Fi(o.dshards + o.pshards,
       u8 hdr[SHARD_HEADER_BLAKE2B_SIZE];
@@ -823,8 +862,12 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     buffers[i] = SIMDSafeAllocate(consensus_shard_size);
     xpar_memset(buffers[i], 0, consensus_shard_size);
   })
-  if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose))
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, opt.progress,
+    (u64) consensus_shard_size * (u64) consensus_dshards, "Decoding");
+  if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose, &prog))
     FATAL("Failed to correct the data.");
+  xpar_progress_end(&prog);
   Fi(consensus_dshards,
     sz w = MIN(consensus_size, consensus_shard_size);
     xpar_xwrite(out, buffers[i], w);
@@ -881,11 +924,16 @@ void log_sharded_test(sharded_decoding_options_t opt) {
       buffers[i] = SIMDSafeAllocate(consensus_shard_size);
       xpar_memset(buffers[i], 0, consensus_shard_size);
     })
-    if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose)) {
+    xpar_progress_t prog;
+    xpar_progress_init(&prog, opt.progress,
+      (u64) consensus_shard_size * (u64) consensus_dshards, "Testing");
+    if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose,
+                    &prog)) {
       if (!opt.quiet)
         xpar_fprintf(xpar_stderr, "RS reconstruction failed.\n");
       bad++;
     }
+    xpar_progress_end(&prog);
     rs_destroy(r);
     Fi(n_total, if (!pres[i]) SIMDSafeFree(buffers[i]));
   }

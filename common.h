@@ -75,6 +75,80 @@
 #define INTEGRITY_CRC32C 0
 #define INTEGRITY_BLAKE2B 1
 
+/*  Throttled progress reporter writing to stderr. Callers bump byte
+    counts on every loop iteration; the emitter fires at most once per
+    second and skips the xpar_usec_now() syscall until >=1 MiB has been
+    added, so tight per-lace loops don't pay for it.  */
+typedef struct {
+  bool enabled;
+  u64 total_bytes;       /*  0 when the total is unknown (e.g. stdin).  */
+  u64 bytes_done;
+  u64 bytes_at_emit;     /*  bytes_done snapshot at last emit; dedup guard.  */
+  u64 start_usec;
+  u64 last_usec;
+  u64 since_check;       /*  Bytes accumulated since last time query.  */
+  const char * op;       /*  "Encoding", "Decoding", "Testing", ...  */
+} xpar_progress_t;
+
+static inline void xpar_progress_emit(const xpar_progress_t * p) {
+  u64 elapsed_us = p->last_usec - p->start_usec;
+  if (elapsed_us == 0) elapsed_us = 1;
+  u64 done_mib = p->bytes_done >> 20;
+  u64 rate_mbs = p->bytes_done / elapsed_us; /*  bytes/usec == MB/s  */
+  if (p->total_bytes) {
+    u64 tot_mib = p->total_bytes >> 20;
+    u64 num = p->bytes_done * 100;
+    unsigned pct = (unsigned)(num / p->total_bytes);
+    if (pct > 100) pct = 100;
+    xpar_fprintf(xpar_stderr,
+      "%s: %u%% (%llu / %llu MiB) @ %llu MB/s\n",
+      p->op, pct,
+      (unsigned long long) done_mib,
+      (unsigned long long) tot_mib,
+      (unsigned long long) rate_mbs);
+  } else {
+    xpar_fprintf(xpar_stderr,
+      "%s: %llu MiB @ %llu MB/s\n",
+      p->op,
+      (unsigned long long) done_mib,
+      (unsigned long long) rate_mbs);
+  }
+}
+
+static inline void xpar_progress_init(xpar_progress_t * p, bool enabled,
+                                      u64 total, const char * op) {
+  p->enabled = enabled;
+  p->total_bytes = total;
+  p->bytes_done = 0;
+  p->bytes_at_emit = 0;
+  p->since_check = 0;
+  p->op = op;
+  p->start_usec = enabled ? xpar_usec_now() : 0;
+  p->last_usec = p->start_usec;
+}
+
+static inline void xpar_progress_tick(xpar_progress_t * p, u64 bytes) {
+  if (!p->enabled) return;
+  p->bytes_done += bytes;
+  p->since_check += bytes;
+  if (p->since_check < ((u64) 1 << 20)) return;
+  p->since_check = 0;
+  u64 now = xpar_usec_now();
+  if (now - p->last_usec < 1000000) return;
+  p->last_usec = now;
+  p->bytes_at_emit = p->bytes_done;
+  xpar_progress_emit(p);
+}
+
+static inline void xpar_progress_end(xpar_progress_t * p) {
+  if (!p->enabled || !p->bytes_done) return;
+  /*  Skip the final line if a tick already emitted at this byte count.  */
+  if (p->bytes_at_emit == p->bytes_done) return;
+  p->last_usec = xpar_usec_now();
+  p->bytes_at_emit = p->bytes_done;
+  xpar_progress_emit(p);
+}
+
 /*  Derive output name: POSIX appends suffix; DOS (8.3) replaces extension.  */
 static inline char * xpar_derive_name(const char * input,
     const char * suffix) {

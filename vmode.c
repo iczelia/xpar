@@ -138,33 +138,43 @@ static void gf256_prod(uint8_t * restrict dst, uint8_t a,
   Fi(len, dst[i] ^= PROD[a][b[i]]);
 }
 struct _pf_ctx_rs_enc {
-  rs * r; uint8_t ** in; size_t len;
+  rs * r; uint8_t ** in; sz off; size_t len;
 };
 static void _pf_fn_rs_enc(sz j, void * p) {
   struct _pf_ctx_rs_enc * c = p;
-  Fk(c->r->data, gf256_prod(c->in[c->r->data + j], c->r->rows[j][k],
-                            c->in[k], c->len))
+  Fk(c->r->data, gf256_prod(c->in[c->r->data + j] + c->off, c->r->rows[j][k],
+                            c->in[k] + c->off, c->len))
 }
-static void rs_encode(rs * r, uint8_t ** in, size_t len) {
+static void rs_encode(rs * r, uint8_t ** in, size_t len,
+                      xpar_progress_t * prog) {
   Fj(r->parity, xpar_memset(in[r->data + j], 0, len));
-  struct _pf_ctx_rs_enc ctx = { r, in, len };
-  if (r->data + r->parity > 8 && len > MiB(100))
-    xpar_parallel_for((sz) r->parity, _pf_fn_rs_enc, &ctx);
-  else
-    Fj(r->parity, _pf_fn_rs_enc((sz) j, &ctx));
+  sz chunk = MiB(64);
+  if (chunk > len) chunk = len;
+  if (!chunk) chunk = 1;
+  for (sz off = 0; off < len; off += chunk) {
+    sz cl = MIN(chunk, len - off);
+    struct _pf_ctx_rs_enc ctx = { r, in, off, cl };
+    if (r->data + r->parity > 8 && cl > MiB(32))
+      xpar_parallel_for((sz) r->parity, _pf_fn_rs_enc, &ctx);
+    else
+      Fj(r->parity, _pf_fn_rs_enc((sz) j, &ctx));
+    xpar_progress_tick(prog, cl * (sz) r->data);
+  }
 }
 
 struct _pf_ctx_rs_cor {
   rs * r; uint8_t ** in; uint8_t * presence;
-  gf256mat * inv; uint8_t ** shards; size_t len;
+  gf256mat * inv; uint8_t ** shards; sz off; size_t len;
 };
 static void _pf_fn_rs_cor(sz i, void * p) {
   struct _pf_ctx_rs_cor * c = p;
   if (c->presence[i]) return;
-  Fj(c->r->data, gf256_prod(c->in[i], c->inv->v[j][i], c->shards[j], c->len))
+  Fj(c->r->data, gf256_prod(c->in[i] + c->off, c->inv->v[j][i],
+                            c->shards[j] + c->off, c->len))
 }
 static bool rs_correct(rs * r, uint8_t ** in,
-                       uint8_t * presence, size_t len) {
+                       uint8_t * presence, size_t len,
+                       xpar_progress_t * prog) {
   int present = 0;
   Fi(r->total, present += !!presence[i])
   if (present < r->data) return false;
@@ -181,11 +191,18 @@ static bool rs_correct(rs * r, uint8_t ** in,
   if (!inv) { xpar_free(shards); return false; }
   gf256mat_trans(inv);
 
-  struct _pf_ctx_rs_cor ctx = { r, in, presence, inv, shards, len };
-  if ((r->data + r->parity) > 8 && len > MiB(100))
-    xpar_parallel_for((sz) r->data, _pf_fn_rs_cor, &ctx);
-  else
-    Fi(r->data, _pf_fn_rs_cor((sz) i, &ctx));
+  sz chunk = MiB(64);
+  if (chunk > len) chunk = len;
+  if (!chunk) chunk = 1;
+  for (sz off = 0; off < len; off += chunk) {
+    sz cl = MIN(chunk, len - off);
+    struct _pf_ctx_rs_cor ctx = { r, in, presence, inv, shards, off, cl };
+    if ((r->data + r->parity) > 8 && cl > MiB(32))
+      xpar_parallel_for((sz) r->data, _pf_fn_rs_cor, &ctx);
+    else
+      Fi(r->data, _pf_fn_rs_cor((sz) i, &ctx));
+    xpar_progress_tick(prog, cl * (sz) r->data);
+  }
   gf256mat_free(inv);  xpar_free(shards);
   return true;
 }
@@ -234,7 +251,11 @@ static bool sharded_encode_uring(sharded_encoding_options_t o,
   )
   xpar_iogroup_submit(iog);
   rs * r = rs_init(o.dshards, o.pshards);
-  rs_encode(r, shards, shard_size);
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, o.progress,
+    (u64) shard_size * (u64) o.dshards, "Encoding");
+  rs_encode(r, shards, shard_size, &prog);
+  xpar_progress_end(&prog);
   rs_destroy(r);
   Fi0(o.dshards + o.pshards, o.dshards,
     hsz[i] = pack_shard_header(hdrs[i], "XPAS",
@@ -299,7 +320,11 @@ static void do_sharded_encode(sharded_encoding_options_t o,
 #endif
   {
     rs * r = rs_init(o.dshards, o.pshards);
-    rs_encode(r, shards, shard_size);
+    xpar_progress_t prog;
+    xpar_progress_init(&prog, o.progress,
+      (u64) shard_size * (u64) o.dshards, "Encoding");
+    rs_encode(r, shards, shard_size, &prog);
+    xpar_progress_end(&prog);
     rs_destroy(r);
     Fi(o.dshards + o.pshards,
       u8 hdr[SHARD_HEADER_BLAKE2B_SIZE];
@@ -458,8 +483,12 @@ void sharded_decode(sharded_decoding_options_t opt) {
     buffers[i] = xpar_malloc(consensus_shard_size);
     xpar_memset(buffers[i], 0, consensus_shard_size);
   })
-  if (!rs_correct(r, buffers, pres, consensus_shard_size))
+  xpar_progress_t prog;
+  xpar_progress_init(&prog, opt.progress,
+    (u64) consensus_shard_size * (u64) consensus_dshards, "Decoding");
+  if (!rs_correct(r, buffers, pres, consensus_shard_size, &prog))
     FATAL("Failed to correct the data.");
+  xpar_progress_end(&prog);
   Fi(consensus_dshards,
     sz w = MIN(consensus_size, consensus_shard_size);
     xpar_xwrite(out, buffers[i], w);
@@ -515,11 +544,15 @@ void sharded_test(sharded_decoding_options_t opt) {
       buffers[i] = xpar_malloc(consensus_shard_size);
       xpar_memset(buffers[i], 0, consensus_shard_size);
     })
-    if (!rs_correct(r, buffers, pres, consensus_shard_size)) {
+    xpar_progress_t prog;
+    xpar_progress_init(&prog, opt.progress,
+      (u64) consensus_shard_size * (u64) consensus_dshards, "Testing");
+    if (!rs_correct(r, buffers, pres, consensus_shard_size, &prog)) {
       if (!opt.quiet)
         xpar_fprintf(xpar_stderr, "RS reconstruction failed.\n");
       bad++;
     }
+    xpar_progress_end(&prog);
     rs_destroy(r);
     Fi(n_total, if (!pres[i]) xpar_free(buffers[i]));
   }

@@ -27,7 +27,7 @@ typedef struct {
   int integrity;   /*  INTEGRITY_CRC32C or INTEGRITY_BLAKE2B.  */
   const u8 * auth_key; /*  NULL when not using keyed MAC.  */
   sz auth_keylen;      /*  0 when not using keyed MAC (1-64 otherwise).  */
-  bool force, quiet, verbose, no_map;
+  bool force, quiet, verbose, no_map, progress;
 } joint_options_t;
 
 void jmode_gf256_gentab(u8 poly);

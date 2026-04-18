@@ -32,7 +32,7 @@
 
 typedef struct {
   const char * input_name, * output_prefix;
-  bool force, quiet, verbose, no_map;
+  bool force, quiet, verbose, no_map, progress;
   u8 dshards, pshards;
   /*  INTEGRITY_CRC32C or _BLAKE2B. With key: authenticated MAC.  */
   int integrity;
@@ -42,7 +42,7 @@ typedef struct {
 
 typedef struct {
   const char * output_file, ** input_files;
-  bool force, quiet, verbose, no_map;
+  bool force, quiet, verbose, no_map, progress;
   sz n_input_shards;
   const u8 * auth_key;
   sz auth_keylen;
