@@ -120,4 +120,3 @@ zfec tested via:
 - shard manifests like par2/parpar
 - variable redundancy in joint modes.
 - spec for the binary file format(s).
-- `--progress` option to periodically print progress to stderr.
