@@ -19,7 +19,6 @@
 #include "common.h"
 
 static int            g_n_threads = 0; /*  0 before init; live count after  */
-/*  set via xpar_set_num_threads before first use  */
 static int            g_pending_threads = 0;
 static xpar_thread ** g_workers = NULL;
 static xpar_mutex *   g_m = NULL;

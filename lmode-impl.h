@@ -31,7 +31,6 @@
 #define LEO_FORCE_INLINE inline __attribute__((always_inline))
 #define LEO_ALIGNED __attribute__((aligned(LEO_ALIGN_BYTES)))
 
-/*  Optimization toggles -- kept identical to lmode.c's originals.  */
 #define LEO_ERROR_BITFIELD_OPT
 #define LEO_INTERLEAVE_BUTTERFLY4_OPT
 #define LEO_M1_OPT
