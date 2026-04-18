@@ -77,8 +77,10 @@ bool        xpar_is_tty(xpar_file *);
 bool        xpar_eof   (xpar_file *);
 int         xpar_error (xpar_file *);
 
-/*  "Safe" helpers: abort the process on error. Match today's xfread /
-    xfwrite / xfclose semantics.  */
+/*  "Safe" helpers: abort the process on an I/O error. EOF is not an
+    error -- xpar_xread returns a short count (< n) to signal EOF and
+    callers check the return. xpar_xwrite / xpar_xclose always complete
+    fully or FATAL.  */
 sz   xpar_xread (xpar_file *, void * p, sz n);
 void xpar_xwrite(xpar_file *, const void * p, sz n);
 void xpar_xclose(xpar_file *);
