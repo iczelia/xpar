@@ -84,7 +84,8 @@ static void unmap_shard(sharded_hv_result_t * res) {
   }
 }
 static u8 * most_frequent(u8 * tab, sz nmemb, sz size) {
-  xpar_assert(size <= 16);  u8 tmp[16]; sz i, j;
+  xpar_assert(nmemb >= 1);  xpar_assert(size <= 16);
+  u8 tmp[16]; sz i, j;
   Fi0(nmemb, 1,
     for (j = i;
          j && xpar_memcmp(&tab[j * size], &tab[(j - 1) * size], size) < 0;
