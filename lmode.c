@@ -482,7 +482,7 @@ static rs * rs_init(int data_shards, int parity_shards) {
 }
 static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
   void ** ework = xpar_malloc(r->ebuf * sizeof(void *));
-  Fi(r->ebuf, ework[i] = xpar_malloc(len))
+  Fi(r->ebuf, ework[i] = SIMDSafeAllocate(len))
   if (verbose)
     xpar_fprintf(xpar_stderr,
       "The workspace is r->ebuf * len = %d * %zu = %zu bytes\n",
@@ -496,7 +496,7 @@ static void rs_encode(rs * r, uint8_t ** in, sz len, bool verbose) {
     ReedSolomonEncode(len, r->data, r->parity, m, (const void **) in, ework);
   }
   Fi(r->parity, in[r->data + i] = ework[i])
-  Fi0(r->ebuf, r->parity, xpar_free(ework[i]))  xpar_free(ework);
+  Fi0(r->ebuf, r->parity, SIMDSafeFree(ework[i]))  xpar_free(ework);
 }
 static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
                        sz len, bool verbose) {
@@ -509,7 +509,7 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
       "The workspace is r->dbuf * len = %d * %zu = %zu bytes\n",
       r->dbuf, len, r->dbuf * len);
   void ** dwork = xpar_malloc(r->dbuf * sizeof(void*));
-  Fi(r->dbuf, dwork[i] = xpar_malloc(len))
+  Fi(r->dbuf, dwork[i] = SIMDSafeAllocate(len))
   void ** dshards = xpar_malloc(r->data * sizeof(void*));
   void ** pshards = xpar_malloc(r->parity * sizeof(void*));
   Fi(r->total,
@@ -541,7 +541,7 @@ static bool rs_correct(rs * r, uint8_t ** in, uint8_t * shards_present,
         dwork);
   }
   Fi(r->total, if (!shards_present[i]) xpar_memcpy(in[i], dwork[i], len))
-  Fi(r->dbuf, xpar_free(dwork[i]))
+  Fi(r->dbuf, SIMDSafeFree(dwork[i]))
   xpar_free(dwork);  xpar_free(dshards);  xpar_free(pshards);
   return true;
 }
@@ -586,7 +586,7 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     if (start + shard_size <= size)
       shards[i] = buf + start;
     else {
-      shards[i] = xpar_malloc(shard_size);
+      shards[i] = SIMDSafeAllocate(shard_size);
       xpar_memset(shards[i], 0, shard_size);
       if (start < size)
         xpar_memcpy(shards[i], buf + start, size - start);
@@ -608,8 +608,8 @@ static void do_sharded_encode(sharded_encoding_options_t o,
     xpar_xwrite(out[i], eos, es);
   )
   Fi(o.dshards + o.pshards, xpar_xclose(out[i]));
-  Fi0(o.dshards + o.pshards, o.dshards, xpar_free(shards[i]));
-  Fi(o.dshards, if (owned[i]) xpar_free(shards[i]));
+  Fi0(o.dshards + o.pshards, o.dshards, SIMDSafeFree(shards[i]));
+  Fi(o.dshards, if (owned[i]) SIMDSafeFree(shards[i]));
 }
 
 void log_sharded_encode(sharded_encoding_options_t o) {
@@ -631,11 +631,11 @@ void log_sharded_encode(sharded_encoding_options_t o) {
   if (size_raw < 0) FATAL_PERROR("ftell");
   sz size = (sz) size_raw;
   xpar_seek(in, 0, XPAR_SEEK_SET);
-  u8 * buffer = xpar_malloc(size);
+  u8 * buffer = SIMDSafeAllocate(size);
   if (xpar_xread(in, buffer, size) != size) FATAL("Short read.");
   xpar_close(in);
   do_sharded_encode(o, buffer, size);
-  xpar_free(buffer);
+  SIMDSafeFree(buffer);
 }
 void log_sharded_decode(sharded_decoding_options_t opt) {
   sharded_hv_result_t res[MAX_TOTAL_SHARDS];
@@ -749,7 +749,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
     buffers[res[i].shard_number] = res[i].buf + res[i].hdr_size,
     pres[res[i].shard_number] = 1)
   Fi(consensus_dshards + consensus_pshards, if (!buffers[i]) {
-    buffers[i] = xpar_malloc(consensus_shard_size);
+    buffers[i] = SIMDSafeAllocate(consensus_shard_size);
     xpar_memset(buffers[i], 0, consensus_shard_size);
   })
   if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose))
@@ -762,7 +762,7 @@ void log_sharded_decode(sharded_decoding_options_t opt) {
   rs_destroy(r);
   Fi(n_valid_shards, unmap_shard(&res[i]));
   Fi(consensus_dshards + consensus_pshards,
-    if (!pres[i]) xpar_free(buffers[i]));
+    if (!pres[i]) SIMDSafeFree(buffers[i]));
 }
 /*  Dry-run of log_sharded_decode; returns invalid-or-missing count.
     Exits 1 when unrecoverable.  */
@@ -807,7 +807,7 @@ void log_sharded_test(sharded_decoding_options_t opt) {
       pres[res[i].shard_number] = 1;
     })
     Fi(n_total, if (!buffers[i]) {
-      buffers[i] = xpar_malloc(consensus_shard_size);
+      buffers[i] = SIMDSafeAllocate(consensus_shard_size);
       xpar_memset(buffers[i], 0, consensus_shard_size);
     })
     if (!rs_correct(r, buffers, pres, consensus_shard_size, opt.verbose)) {
@@ -816,7 +816,7 @@ void log_sharded_test(sharded_decoding_options_t opt) {
       bad++;
     }
     rs_destroy(r);
-    Fi(n_total, if (!pres[i]) xpar_free(buffers[i]));
+    Fi(n_total, if (!pres[i]) SIMDSafeFree(buffers[i]));
   }
   if (opt.verbose)
     xpar_fprintf(xpar_stderr,
