@@ -86,6 +86,14 @@ void xpar_xwrite(xpar_file *, const void * p, sz n);
 void xpar_xclose(xpar_file *);
 void xpar_notty (xpar_file *);
 
+#ifdef XPAR_HAS_LIBURING
+/*  Host-backend hooks used by io_uring_host.c to register an fd with a
+    ring without reaching into struct xpar_file. Only provided on POSIX
+    hosts -- XPAR_HAS_LIBURING is never defined elsewhere.  */
+int xpar_file_fd(xpar_file *);
+int xpar_file_flush_stdio(xpar_file *);
+#endif
+
 /*  -----------------------------------------------------------------------
   Filesystem queries / ops (without opening)  */
 typedef struct { u64 size; bool is_dir; bool is_regular; } xpar_stat_t;
