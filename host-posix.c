@@ -60,14 +60,21 @@ void xpar_host_init(void) {
 xpar_file * xpar_open(const char * path, int flags) {
   const char * mode;
   if ((flags & XPAR_O_READ) && (flags & XPAR_O_WRITE)) {
-    mode = (flags & XPAR_O_TRUNCATE) ? "w+b" : "r+b";
+    mode = (flags & XPAR_O_TRUNCATE) ? "w+be" : "r+be";
   } else if (flags & XPAR_O_WRITE) {
-    mode = (flags & XPAR_O_APPEND) ? "ab" : "wb";
+    mode = (flags & XPAR_O_APPEND) ? "abe" : "wbe";
   } else {
-    mode = "rb";
+    mode = "rbe";
   }
   FILE * fp = fopen(path, mode);
   if (!fp) return NULL;
+  /*  Belt-and-braces: if the libc silently ignored the 'e' suffix, set
+      FD_CLOEXEC explicitly so exec()'d children don't inherit the fd.  */
+  int fd = fileno(fp);
+  if (fd >= 0) {
+    int fl = fcntl(fd, F_GETFD);
+    if (fl != -1) fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+  }
   struct xpar_file * f = malloc(sizeof(*f));
   if (!f) { fclose(fp); errno = ENOMEM; return NULL; }
   f->fp = fp;
@@ -179,7 +186,7 @@ int xpar_same_file(const char * a, const char * b) {
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m = { NULL, 0 };
-  int fd = open(path, O_RDONLY);
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd == -1) return m;
   struct stat st;
   if (fstat(fd, &st) == -1) { close(fd); return m; }
