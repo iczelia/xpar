@@ -16,6 +16,7 @@
 #include "jmode.h"
 #include "crc32c.h"
 #include "platform.h"
+#include "io_uring_host.h"
 #ifdef HAVE_BLAKE2B
   #include "blake2b.h"
 #endif
@@ -461,6 +462,73 @@ static bool validate_trailer(const u8 * buf, int algo,
   integrity_tag(exp, algo, key, keylen, fh->ctx, buf, NULL, 0);
   return integrity_match(exp, th.hash, algo);
 }
+#ifdef XPAR_HAS_LIBURING
+/*  Uring fast path for encode4: packs (interlaced body || bhdr) laces
+    into a ~2 MiB arena. For ifactor=1 (rec=267 B) it coalesces thousands
+    of laces per write; for ifactor=3 (rec=16 MiB+) it collapses to one
+    lace per write, which still wins by replacing two syscalls with one
+    plus avoiding the stdio buffer. Shares the scratch buffers with the
+    caller so the arithmetic state is identical to the sync path.  */
+static bool encode4_uring(xpar_file * in, xpar_file * out, int ifactor,
+                          int algo, const u8 * key, sz keylen,
+                          const file_hdr * fh,
+                          u8 * in_buffer, u8 * o1, u8 * o2) {
+  xpar_iogroup * iog = xpar_iogroup_new(8);
+  if (!iog) return false;
+  int fid = xpar_iogroup_register_file(iog, out);
+  if (fid < 0) { xpar_iogroup_free(iog); return false; }
+
+  int ibs = compute_interlacing_bs(ifactor);
+  sz bsz = bhdr_size(algo);
+  sz rec = (sz) ibs * N + bsz;
+  sz target   = (sz) 2 * 1024 * 1024;
+  sz laces_ar = target / rec; if (!laces_ar) laces_ar = 1;
+  sz arena_sz = laces_ar * rec;
+  u8 * arena = xpar_malloc(arena_sz);
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u32 seq = 0;
+  sz  filled = 0;
+  u64 off    = FHDR_DISK_SIZE;
+  for (size_t n; n = xpar_xread(in, in_buffer, ibs * K); seq++) {
+    if (n < ibs * K) xpar_memset(in_buffer + n, 0, ibs * K - n);
+    rse32_scatter(in_buffer, o1, ibs);
+    if (ifactor == 3) {
+      struct _pf_ctx_rse32 c = { o1 };
+      xpar_parallel_for(ibs, _pf_fn_rse32, &c);
+    } else {
+      Fi(ibs, rse32_inplace(o1 + i * N));
+    }
+    do_interlacing(o1, o2, ifactor);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh->ctx, prefix, in_buffer, n);
+    xpar_memcpy(arena + filled,               o2,    (sz) ibs * N);
+    xpar_memcpy(arena + filled + (sz)ibs * N, prefix, BHDR_PREFIX);
+    xpar_memcpy(arena + filled + (sz)ibs * N + BHDR_PREFIX,
+                hash, bsz - BHDR_PREFIX);
+    filled += rec;
+    if (filled == arena_sz) {
+      xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+      xpar_iogroup_drain(iog);
+      off += filled; filled = 0;
+    }
+  }
+  if (filled) {
+    xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+    xpar_iogroup_drain(iog);
+    off += filled;
+  }
+  pack_bhdr_prefix(prefix, 0, seq);
+  u8 thash[BHDR_HASH_MAX] = { 0 };
+  integrity_tag(thash, algo, key, keylen, fh->ctx, prefix, NULL, 0);
+  xpar_memcpy(arena,               prefix, BHDR_PREFIX);
+  xpar_memcpy(arena + BHDR_PREFIX, thash,  bsz - BHDR_PREFIX);
+  xpar_iogroup_enqueue_write(iog, fid, arena, off, bsz, (u64) seq);
+  xpar_iogroup_fsync(iog, fid);
+  xpar_iogroup_free(iog);
+  xpar_free(arena);
+  return true;
+}
+#endif
 static void encode4(xpar_file * in, xpar_file * out, int ifactor,
                     int algo, const u8 * key, sz keylen, u64 total_bytes) {
   xpar_notty(out);
@@ -472,6 +540,13 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
   write_header(out, &fh);
+#ifdef XPAR_HAS_LIBURING
+  if (encode4_uring(in, out, ifactor, algo, key, keylen, &fh,
+                    in_buffer, o1, o2)) {
+    xpar_free(in_buffer); xpar_free(o1); xpar_free(o2);
+    xpar_xclose(out); return;
+  }
+#endif
   u32 seq = 0;
   for (size_t n; n = xpar_xread(in, in_buffer, ibs * K); seq++) {
     if (n < ibs * K) xpar_memset(in_buffer + n, 0, ibs * K - n);
@@ -492,6 +567,65 @@ static void encode4(xpar_file * in, xpar_file * out, int ifactor,
   xpar_free(in_buffer), xpar_free(o1), xpar_free(o2); xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
+#ifdef XPAR_HAS_LIBURING
+static bool encode3_uring(xpar_mmap in, xpar_file * out, int ifactor,
+                          int algo, const u8 * key, sz keylen,
+                          const file_hdr * fh, u8 * o1, u8 * o2) {
+  xpar_iogroup * iog = xpar_iogroup_new(8);
+  if (!iog) return false;
+  int fid = xpar_iogroup_register_file(iog, out);
+  if (fid < 0) { xpar_iogroup_free(iog); return false; }
+
+  int ibs = compute_interlacing_bs(ifactor);
+  sz bsz = bhdr_size(algo);
+  sz rec = (sz) ibs * N + bsz;
+  sz target   = (sz) 2 * 1024 * 1024;
+  sz laces_ar = target / rec; if (!laces_ar) laces_ar = 1;
+  sz arena_sz = laces_ar * rec;
+  u8 * arena = xpar_malloc(arena_sz);
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u32 seq = 0;
+  sz  filled = 0;
+  u64 off    = FHDR_DISK_SIZE;
+  for (sz n; n = MIN(in.size, ibs * K), n; in.size -= n, in.map += n, seq++) {
+    rse32_scatter_pad(in.map, n, o1, ibs);
+    if (ifactor == 3) {
+      struct _pf_ctx_rse32 c = { o1 };
+      xpar_parallel_for(ibs, _pf_fn_rse32, &c);
+    } else {
+      Fi(ibs, rse32_inplace(o1 + i * N));
+    }
+    do_interlacing(o1, o2, ifactor);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh->ctx, prefix, in.map, n);
+    xpar_memcpy(arena + filled,               o2,    (sz) ibs * N);
+    xpar_memcpy(arena + filled + (sz)ibs * N, prefix, BHDR_PREFIX);
+    xpar_memcpy(arena + filled + (sz)ibs * N + BHDR_PREFIX,
+                hash, bsz - BHDR_PREFIX);
+    filled += rec;
+    if (filled == arena_sz) {
+      xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+      xpar_iogroup_drain(iog);
+      off += filled; filled = 0;
+    }
+  }
+  if (filled) {
+    xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+    xpar_iogroup_drain(iog);
+    off += filled;
+  }
+  pack_bhdr_prefix(prefix, 0, seq);
+  u8 thash[BHDR_HASH_MAX] = { 0 };
+  integrity_tag(thash, algo, key, keylen, fh->ctx, prefix, NULL, 0);
+  xpar_memcpy(arena,               prefix, BHDR_PREFIX);
+  xpar_memcpy(arena + BHDR_PREFIX, thash,  bsz - BHDR_PREFIX);
+  xpar_iogroup_enqueue_write(iog, fid, arena, off, bsz, (u64) seq);
+  xpar_iogroup_fsync(iog, fid);
+  xpar_iogroup_free(iog);
+  xpar_free(arena);
+  return true;
+}
+#endif
 static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
                     int algo, const u8 * key, sz keylen) {
   xpar_notty(out);
@@ -502,6 +636,11 @@ static void encode3(xpar_mmap in, xpar_file * out, int ifactor,
   file_hdr fh = { .ifactor = ifactor, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
   write_header(out, &fh);
+#ifdef XPAR_HAS_LIBURING
+  if (encode3_uring(in, out, ifactor, algo, key, keylen, &fh, o1, o2)) {
+    xpar_free(o1); xpar_free(o2); xpar_xclose(out); return;
+  }
+#endif
   u32 seq = 0;
   for (sz n; n = MIN(in.size, ibs * K), n; in.size -= n, in.map += n, seq++) {
     rse32_scatter_pad(in.map, n, o1, ibs);
@@ -704,6 +843,65 @@ static void decode3(xpar_mmap in, xpar_file * out, int force,
 }
 #endif
 
+#ifdef XPAR_HAS_LIBURING
+/*  Uring fast path for encode_systematic4: same on-disk format, but the
+    per-block (parity || bhdr) records are packed into a scratch arena
+    and emitted as one pwrite per batch instead of three fwrites per
+    block. Returns false if io_uring isn't available at runtime, and the
+    caller falls through to the synchronous path.  */
+static bool encode_systematic4_uring(xpar_file * in, xpar_file * out,
+                                     int algo, const u8 * key, sz keylen,
+                                     const file_hdr * fh) {
+  xpar_iogroup * iog = xpar_iogroup_new(8);
+  if (!iog) return false;
+  int fid = xpar_iogroup_register_file(iog, out);
+  if (fid < 0) { xpar_iogroup_free(iog); return false; }
+
+  sz bsz = bhdr_size(algo);
+  sz rec = (N - K) + bsz;
+  unsigned B = xpar_iogroup_batch_records();
+  u8 * arena = xpar_malloc((sz) B * rec);
+  u8 buf[K], block[N];
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u32 seq = 0;
+  sz  filled = 0;
+  u64 off    = FHDR_DISK_SIZE;
+  bool short_block = false;
+  for (sz n; (n = xpar_xread(in, buf, K)); seq++) {
+    if (n < K) { xpar_memset(buf + n, 0, K - n); short_block = true; }
+    rse32(buf, block);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh->ctx, prefix, buf, n);
+    xpar_memcpy(arena + filled,              block + K, N - K);
+    xpar_memcpy(arena + filled + (N - K),    prefix,    BHDR_PREFIX);
+    xpar_memcpy(arena + filled + (N - K) + BHDR_PREFIX,
+                hash, bsz - BHDR_PREFIX);
+    filled += rec;
+    if (filled == (sz) B * rec) {
+      xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+      xpar_iogroup_drain(iog);   /*  arena safe to reuse  */
+      off += filled; filled = 0;
+    }
+    if (short_block) { seq++; break; }
+  }
+  if (filled) {
+    xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+    xpar_iogroup_drain(iog);
+    off += filled;
+  }
+  pack_bhdr_prefix(prefix, 0, seq);
+  u8 thash[BHDR_HASH_MAX] = { 0 };
+  integrity_tag(thash, algo, key, keylen, fh->ctx, prefix, NULL, 0);
+  xpar_memcpy(arena,               prefix, BHDR_PREFIX);
+  xpar_memcpy(arena + BHDR_PREFIX, thash,  bsz - BHDR_PREFIX);
+  xpar_iogroup_enqueue_write(iog, fid, arena, off, bsz, (u64) seq);
+  xpar_iogroup_fsync(iog, fid);
+  xpar_iogroup_free(iog);
+  xpar_free(arena);
+  return true;
+}
+#endif
+
 static void encode_systematic4(xpar_file * in, xpar_file * out,
                                int algo, const u8 * key, sz keylen,
                                u64 total_bytes) {
@@ -713,6 +911,11 @@ static void encode_systematic4(xpar_file * in, xpar_file * out,
   file_hdr fh = { .ifactor = 4, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = total_bytes };
   write_header(out, &fh);
+#ifdef XPAR_HAS_LIBURING
+  if (encode_systematic4_uring(in, out, algo, key, keylen, &fh)) {
+    xpar_xclose(out); return;
+  }
+#endif
   u32 seq = 0;
   bool short_block = false;
   for (sz n; (n = xpar_xread(in, buf, K)); seq++) {
@@ -728,6 +931,61 @@ static void encode_systematic4(xpar_file * in, xpar_file * out,
   xpar_xclose(out);
 }
 #ifdef XPAR_ALLOW_MAPPING
+#ifdef XPAR_HAS_LIBURING
+static bool encode_systematic3_uring(xpar_mmap in, xpar_file * out,
+                                     int algo, const u8 * key, sz keylen,
+                                     const file_hdr * fh) {
+  xpar_iogroup * iog = xpar_iogroup_new(8);
+  if (!iog) return false;
+  int fid = xpar_iogroup_register_file(iog, out);
+  if (fid < 0) { xpar_iogroup_free(iog); return false; }
+
+  sz bsz = bhdr_size(algo);
+  sz rec = (N - K) + bsz;
+  unsigned B = xpar_iogroup_batch_records();
+  u8 * arena = xpar_malloc((sz) B * rec);
+  u8 buf[K], block[N];
+  u8 prefix[BHDR_PREFIX], hash[BHDR_HASH_MAX];
+  u32 seq = 0;
+  sz  filled = 0;
+  u64 off    = FHDR_DISK_SIZE;
+  while (in.size) {
+    sz n = MIN(in.size, (sz)K);
+    xpar_memcpy(buf, in.map, n);
+    if (n < K) xpar_memset(buf + n, 0, K - n);
+    rse32(buf, block);
+    pack_bhdr_prefix(prefix, n, seq);
+    integrity_tag(hash, algo, key, keylen, fh->ctx, prefix, in.map, n);
+    xpar_memcpy(arena + filled,              block + K, N - K);
+    xpar_memcpy(arena + filled + (N - K),    prefix,    BHDR_PREFIX);
+    xpar_memcpy(arena + filled + (N - K) + BHDR_PREFIX,
+                hash, bsz - BHDR_PREFIX);
+    filled += rec;
+    if (filled == (sz) B * rec) {
+      xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+      xpar_iogroup_drain(iog);
+      off += filled; filled = 0;
+    }
+    in.size -= n; in.map += n;
+    seq++;
+  }
+  if (filled) {
+    xpar_iogroup_enqueue_write(iog, fid, arena, off, filled, (u64) seq);
+    xpar_iogroup_drain(iog);
+    off += filled;
+  }
+  pack_bhdr_prefix(prefix, 0, seq);
+  u8 thash[BHDR_HASH_MAX] = { 0 };
+  integrity_tag(thash, algo, key, keylen, fh->ctx, prefix, NULL, 0);
+  xpar_memcpy(arena,               prefix, BHDR_PREFIX);
+  xpar_memcpy(arena + BHDR_PREFIX, thash,  bsz - BHDR_PREFIX);
+  xpar_iogroup_enqueue_write(iog, fid, arena, off, bsz, (u64) seq);
+  xpar_iogroup_fsync(iog, fid);
+  xpar_iogroup_free(iog);
+  xpar_free(arena);
+  return true;
+}
+#endif
 static void encode_systematic3(xpar_mmap in, xpar_file * out,
                                int algo, const u8 * key, sz keylen) {
   xpar_notty(out);
@@ -736,6 +994,11 @@ static void encode_systematic3(xpar_mmap in, xpar_file * out,
   file_hdr fh = { .ifactor = 4, .integrity = algo,
                   .auth_flag = keylen ? 1 : 0, .total_bytes = in.size };
   write_header(out, &fh);
+#ifdef XPAR_HAS_LIBURING
+  if (encode_systematic3_uring(in, out, algo, key, keylen, &fh)) {
+    xpar_xclose(out); return;
+  }
+#endif
   u32 seq = 0;
   while (in.size) {
     sz n = MIN(in.size, (sz)K);
