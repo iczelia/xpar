@@ -2,8 +2,8 @@ EXTRA_DIST = README.md contrib/inject-errors.c
 bin_PROGRAMS = xpar
 noinst_HEADERS = platform.h crc32c.h jmode.h vmode.h lmode.h common.h yarg.h \
 								 sharding.h sse2neon.h blake2b.h blake2b-impl.h \
-								 lmode-impl.h
-xpar_SOURCES = xpar.c crc32c.c jmode.c vmode.c lmode.c lmode-scalar.c threadpool.c
+								 lmode-impl.h io_uring_host.h
+xpar_SOURCES = xpar.c crc32c.c jmode.c vmode.c lmode.c lmode-scalar.c threadpool.c io_uring_host.c
 
 if XPAR_WIN_HOST
 # Windows host: isolate host-win32.c with $(HOST_WIN32_CFLAGS), bypass
