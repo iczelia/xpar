@@ -113,3 +113,11 @@ zfec tested via:
 | `xpar-joint-i2`    | 40.46 | 235.7 | 11,437,146,731 | single archive |
 | `parpar`           | 48.56 | 196.4 |  1,009,386,576 | index + recovery volumes (sidecar) |
 | `par2cmdline`      | 114.82 | 83.1 |  1,001,465,336 | index + recovery volumes (sidecar) |
+
+## to-do
+
+- preserve file times & permissions; needs a header change (v2.0?), low priority.
+- shard manifests like par2/parpar
+- variable redundancy in joint modes.
+- spec for the binary file format(s).
+- `--progress` option to periodically print progress to stderr.
