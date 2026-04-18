@@ -163,6 +163,20 @@ void xpar_notty(xpar_file * f) {
   errno = 0;
 }
 
+/*  Exposed for io_uring_host.c so it can register fds without poking
+    the xpar_file struct layout. Returns -1 for NULL handles.  */
+int xpar_file_fd(xpar_file * f) {
+  if (!f || !f->fp) return -1;
+  return fileno(f->fp);
+}
+
+/*  Flush any libc-buffered writes so the fd's contents are consistent
+    before io_uring starts writing through it.  */
+int xpar_file_flush_stdio(xpar_file * f) {
+  if (!f || !f->fp) return -1;
+  return fflush(f->fp);
+}
+
 /*  -----------------------------------------------------------------------
   Filesystem  */
 
