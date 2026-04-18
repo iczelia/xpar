@@ -240,6 +240,34 @@ else
   AM_CONDITIONAL([XPAR_AARCH64], [false])
 fi
 
+AC_ARG_ENABLE([liburing],
+  [AS_HELP_STRING([--enable-liburing@<:@=auto|yes|no@:>@],
+    [Batched I/O via Linux io_uring (default: auto on Linux).])],
+  [enable_liburing=$enableval], [enable_liburing=auto])
+case $host_os in
+  linux*) : ;;
+  *) if test "x$enable_liburing" = "xyes"; then
+       AC_MSG_ERROR([--enable-liburing=yes is Linux-only])
+     fi
+     enable_liburing=no ;;
+esac
+xpar_uring=no
+if test "x$enable_liburing" != "xno"; then
+  AC_CHECK_HEADERS([liburing.h], [xpar_has_uring_h=yes], [xpar_has_uring_h=no])
+  if test "x$xpar_has_uring_h" = "xyes"; then
+    AC_CHECK_LIB([uring], [io_uring_queue_init_params],
+      [AC_DEFINE([XPAR_HAS_LIBURING], [1],
+         [Define if io_uring batched I/O is compiled in.])
+       LIBS="-luring $LIBS"
+       xpar_uring=yes],
+      [xpar_uring=no])
+  fi
+  if test "x$enable_liburing" = "xyes" -a "x$xpar_uring" != "xyes"; then
+    AC_MSG_ERROR([--enable-liburing=yes requested but liburing not usable])
+  fi
+fi
+AM_CONDITIONAL([XPAR_HAS_LIBURING], [test "x$xpar_uring" = "xyes"])
+
 AC_ARG_ENABLE([blake2b], [AS_HELP_STRING([--disable-blake2b], [Disable BLAKE2b integrity and keyed-MAC support.])], [enable_blake2b=$enableval], [enable_blake2b=yes])
 if test "x$enable_blake2b" = "xyes"; then
   AC_DEFINE([HAVE_BLAKE2B], [1], [Define if BLAKE2b integrity support is compiled in.])

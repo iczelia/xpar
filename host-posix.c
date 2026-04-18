@@ -163,6 +163,19 @@ void xpar_notty(xpar_file * f) {
   errno = 0;
 }
 
+#ifdef XPAR_HAS_LIBURING
+/*  Hooks for io_uring_host.c: fetch the raw fd and drain the stdio
+    buffer before the iogroup takes over writing to this fd.  */
+int xpar_file_fd(xpar_file * f) {
+  if (!f || !f->fp) return -1;
+  return fileno(f->fp);
+}
+int xpar_file_flush_stdio(xpar_file * f) {
+  if (!f || !f->fp) return -1;
+  return fflush(f->fp);
+}
+#endif
+
 /*  -----------------------------------------------------------------------
   Filesystem  */
 
