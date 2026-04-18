@@ -266,6 +266,28 @@ static sharded_hv_result_t validate_shard_header(const char * file_name,
   res.buf = buffer; res.valid = true;  return res;
 }
 
+/*  Majority-vote the four consensus fields (dshards, pshards, total_size,
+    shard_size) over the currently-valid shards. Zeroed result if none.  */
+typedef struct {
+  u8 dshards, pshards;
+  sz total_size, shard_size;
+} shard_consensus_t;
+static shard_consensus_t consensus_of_valid(
+    sharded_hv_result_t * res, sz n) {
+  shard_consensus_t c = { 0, 0, 0, 0 };
+  u8  b8[MAX_TOTAL_SHARDS];  sz bs[MAX_TOTAL_SHARDS];  int k;
+  k = 0;  Fi(n, if (res[i].valid) b8[k++] = res[i].dshards);
+  if (!k) return c;
+  c.dshards = *(u8 *) most_frequent(b8, k, 1);
+  k = 0;  Fi(n, if (res[i].valid) b8[k++] = res[i].pshards);
+  c.pshards = *(u8 *) most_frequent(b8, k, 1);
+  k = 0;  Fi(n, if (res[i].valid) bs[k++] = res[i].total_size);
+  c.total_size = *(sz *) most_frequent((u8 *) bs, k, sizeof(sz));
+  k = 0;  Fi(n, if (res[i].valid) bs[k++] = res[i].shard_size);
+  c.shard_size = *(sz *) most_frequent((u8 *) bs, k, sizeof(sz));
+  return c;
+}
+
 /*  Build shard header into dst, tag over header[0..16)+body.
     Returns bytes written: CRC32C=20, BLAKE2b(keyed or not)=32.  */
 static sz pack_shard_header(u8 dst[SHARD_HEADER_BLAKE2B_SIZE],

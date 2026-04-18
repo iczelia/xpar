@@ -99,7 +99,7 @@ static gf256mat * gf256mat_inv(gf256mat * a) {
     if (r == c->n) { gf256mat_free(c); return NULL; }
     gf256mat_swaprows(c, i, r);
     u8 inv = gf256_div(1, c->v[i][i]);
-    Fj(c->m,c->v[i][j] = PROD[inv][c->v[i][j]])
+    Fj(c->m, c->v[i][j] = PROD[inv][c->v[i][j]])
     Fj(c->n, if (j != i) {
       u8 f = c->v[j][i];
       Fk(c->m, c->v[j][k] ^= PROD[f][c->v[i][k]]);
@@ -290,28 +290,14 @@ void sharded_decode(sharded_decoding_options_t opt) {
       if (!opt.quiet)
         xpar_fprintf(xpar_stderr,
           "Invalid shard header in `%s', skipping.\n", opt.input_files[i]);
-      if (!opt.force) { xpar_free(res); xpar_exit(1); }
+      if (!opt.force)
+        { xpar_free(res); xpar_exit(1); }
     }
   )
   /*  Consensus voting.  */
-  u8 consensus_dshards, consensus_pshards;
-  sz consensus_size, consensus_shard_size;
-  {
-    u8 b[MAX_TOTAL_SHARDS];
-    Fi(opt.n_input_shards, b[i] = res[i].dshards);
-    consensus_dshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
-    Fi(opt.n_input_shards, b[i] = res[i].pshards);
-    consensus_pshards = *(u8 *) most_frequent(b, opt.n_input_shards, 1);
-  }
-  {
-    sz b[MAX_TOTAL_SHARDS];
-    Fi(opt.n_input_shards, b[i] = res[i].total_size);
-    consensus_size =
-      *(sz *) most_frequent((u8 *) b, opt.n_input_shards, sizeof(sz));
-    Fi(opt.n_input_shards, b[i] = res[i].shard_size);
-    consensus_shard_size =
-      *(sz *) most_frequent((u8 *) b, opt.n_input_shards, sizeof(sz));
-  }
+  shard_consensus_t sc = consensus_of_valid(res, opt.n_input_shards);
+  u8 consensus_dshards = sc.dshards, consensus_pshards = sc.pshards;
+  sz consensus_size = sc.total_size, consensus_shard_size = sc.shard_size;
   if ((u64) consensus_size
       > (u64) consensus_dshards * (u64) consensus_shard_size)
     FATAL("Header total_size (%zu) exceeds %u data shards of %zu bytes.",
@@ -328,7 +314,8 @@ void sharded_decode(sharded_decoding_options_t opt) {
         xpar_fprintf(xpar_stderr,
           "Shard `%s' does not match the consensus, skipping.\n",
           opt.input_files[i]);
-      if (!opt.force) { xpar_free(res); xpar_exit(1); }
+      if (!opt.force)
+        { xpar_free(res); xpar_exit(1); }
     }
   )
   /*  Check if we have a duplicate of any shard.  */
@@ -430,20 +417,9 @@ void sharded_test(sharded_decoding_options_t opt) {
   )
   int n_valid = 0;
   Fi(opt.n_input_shards, if (res[i].valid) n_valid++);
-  u8 consensus_dshards = 0, consensus_pshards = 0;
-  sz consensus_shard_size = 0;
-  if (n_valid) {
-    u8 b[MAX_TOTAL_SHARDS]; int n = 0;
-    Fi(opt.n_input_shards, if (res[i].valid) b[n++] = res[i].dshards);
-    consensus_dshards = *(u8 *) most_frequent(b, n, 1);
-    n = 0;
-    Fi(opt.n_input_shards, if (res[i].valid) b[n++] = res[i].pshards);
-    consensus_pshards = *(u8 *) most_frequent(b, n, 1);
-    sz ss[MAX_TOTAL_SHARDS]; n = 0;
-    Fi(opt.n_input_shards, if (res[i].valid) ss[n++] = res[i].shard_size);
-    consensus_shard_size =
-      *(sz *) most_frequent((u8 *) ss, n, sizeof(sz));
-  }
+  shard_consensus_t sc = consensus_of_valid(res, opt.n_input_shards);
+  u8 consensus_dshards = sc.dshards, consensus_pshards = sc.pshards;
+  sz consensus_shard_size = sc.shard_size;
   if (n_valid < consensus_dshards) {
     if (!opt.quiet)
       xpar_fprintf(xpar_stderr,
