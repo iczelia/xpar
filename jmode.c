@@ -802,7 +802,10 @@ static void decode_systematic4(xpar_file * data_in,
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
           fh.auth_flag ? "MAC" : "Integrity", blk);
-      if (!force) xpar_exit(1);
+      /*  Systematic + unauthenticated: the CRC is the only witness that
+          the headerless data file is paired with this parity file, so a
+          mismatch means wrong pairing; abort even under --force.  */
+      if (!force || !fh.auth_flag) xpar_exit(1);
     }
     xpar_xwrite(out, block, size);
     bytes_out += size;
@@ -888,7 +891,10 @@ static void decode_systematic3(xpar_mmap data_in,
       if (!quiet)
         xpar_fprintf(xpar_stderr, "%s mismatch, block %u.\n",
           fh.auth_flag ? "MAC" : "Integrity", blk);
-      if (!force) xpar_exit(1);
+      /*  Systematic + unauthenticated: the CRC is the only witness that
+          the headerless data file is paired with this parity file, so a
+          mismatch means wrong pairing; abort even under --force.  */
+      if (!force || !fh.auth_flag) xpar_exit(1);
     }
     xpar_xwrite(out, block, size);
     bytes_out += size;
