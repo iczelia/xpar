@@ -44,6 +44,7 @@
 
 #include "lmode.h"
 #include "platform.h"
+#include "io_uring_host.h"
 
 #if defined(XPAR_X86_64)
   #ifdef HAVE_FUNC_ATTRIBUTE_SYSV_ABI
@@ -549,6 +550,70 @@ static void rs_destroy(rs * r) { xpar_free(r); }
 
 /*  -----------------------------------------------------------------------
   Sharded mode encoders/decoders.  */
+#ifdef XPAR_HAS_LIBURING
+/*  Emit every shard (data + parity) via io_uring. The data shards can
+    be enqueued BEFORE rs_encode runs since their bytes are just slices
+    of the input; parity shards must wait. Returns false if io_uring is
+    not usable at runtime, and the caller takes the sync path.  */
+static bool sharded_encode_uring(sharded_encoding_options_t o,
+                                 xpar_file ** out, u8 ** shards,
+                                 sz shard_size, sz size) {
+  xpar_iogroup * iog = xpar_iogroup_new(
+      4u * (unsigned)(o.dshards + o.pshards));
+  if (!iog) return false;
+  int fid[MAX_TOTAL_SHARDS];
+  for (int i = 0; i < o.dshards + o.pshards; i++) {
+    fid[i] = xpar_iogroup_register_file(iog, out[i]);
+    if (fid[i] < 0) { xpar_iogroup_free(iog); return false; }
+  }
+  u8 (*hdrs)[SHARD_HEADER_BLAKE2B_SIZE]
+      = xpar_malloc((sz)(o.dshards + o.pshards) * sizeof *hdrs);
+  u8 (*eoss)[SHARD_EOS_BLAKE2B_SIZE]
+      = xpar_malloc((sz)(o.dshards + o.pshards) * sizeof *eoss);
+  sz hsz[MAX_TOTAL_SHARDS], esz[MAX_TOTAL_SHARDS];
+  /*  Phase A: enqueue k data shards before the FFT runs.  */
+  Fi0(o.dshards, 0,
+    hsz[i] = pack_shard_header(hdrs[i], "XPAL",
+                               o.dshards, o.pshards, (u8) i,
+                               size, shards[i], shard_size,
+                               o.integrity, o.auth_key, o.auth_keylen);
+    esz[i] = pack_eos_marker(eoss[i], hdrs[i], o.integrity,
+                             o.auth_key, o.auth_keylen);
+    xpar_iogroup_enqueue_write(iog, fid[i], hdrs[i],   0,
+                               hsz[i],                (u64) i);
+    xpar_iogroup_enqueue_write(iog, fid[i], shards[i], hsz[i],
+                               shard_size,            (u64) i);
+    xpar_iogroup_enqueue_write(iog, fid[i], eoss[i],
+                               hsz[i] + shard_size,
+                               esz[i],                (u64) i);
+  )
+  xpar_iogroup_submit(iog);
+  rs * r = rs_init(o.dshards, o.pshards);
+  rs_encode(r, shards, shard_size, o.verbose);
+  rs_destroy(r);
+  /*  Phase C: parity shards exist now -- enqueue, fsync, drain.  */
+  Fi0(o.dshards + o.pshards, o.dshards,
+    hsz[i] = pack_shard_header(hdrs[i], "XPAL",
+                               o.dshards, o.pshards, (u8) i,
+                               size, shards[i], shard_size,
+                               o.integrity, o.auth_key, o.auth_keylen);
+    esz[i] = pack_eos_marker(eoss[i], hdrs[i], o.integrity,
+                             o.auth_key, o.auth_keylen);
+    xpar_iogroup_enqueue_write(iog, fid[i], hdrs[i],   0,
+                               hsz[i],                (u64) i);
+    xpar_iogroup_enqueue_write(iog, fid[i], shards[i], hsz[i],
+                               shard_size,            (u64) i);
+    xpar_iogroup_enqueue_write(iog, fid[i], eoss[i],
+                               hsz[i] + shard_size,
+                               esz[i],                (u64) i);
+  )
+  Fi(o.dshards + o.pshards, xpar_iogroup_fsync(iog, fid[i]));
+  xpar_iogroup_free(iog);   /*  drains + FATALs on CQE error  */
+  xpar_free(hdrs); xpar_free(eoss);
+  return true;
+}
+#endif
+
 static void do_sharded_encode(sharded_encoding_options_t o,
                               u8 * buf, sz size) {
   xpar_file * out[MAX_TOTAL_SHARDS] = { NULL };
@@ -592,21 +657,27 @@ static void do_sharded_encode(sharded_encoding_options_t o,
         xpar_memcpy(shards[i], buf + start, size - start);
       owned[i] = true;
     })
-  rs * r = rs_init(o.dshards, o.pshards);
-  rs_encode(r, shards, shard_size, o.verbose);
-  rs_destroy(r);
-  Fi(o.dshards + o.pshards,
-    u8 hdr[SHARD_HEADER_BLAKE2B_SIZE];
-    u8 eos[SHARD_EOS_BLAKE2B_SIZE];
-    sz hs = pack_shard_header(hdr, "XPAL", o.dshards, o.pshards, (u8) i,
-                              size, shards[i], shard_size,
-                              o.integrity, o.auth_key, o.auth_keylen);
-    sz es = pack_eos_marker(eos, hdr, o.integrity,
-                            o.auth_key, o.auth_keylen);
-    xpar_xwrite(out[i], hdr, hs);
-    xpar_xwrite(out[i], shards[i], shard_size);
-    xpar_xwrite(out[i], eos, es);
-  )
+#ifdef XPAR_HAS_LIBURING
+  if (!sharded_encode_uring(o, out, shards, shard_size, size))
+#endif
+  {
+    rs * r = rs_init(o.dshards, o.pshards);
+    rs_encode(r, shards, shard_size, o.verbose);
+    rs_destroy(r);
+    Fi(o.dshards + o.pshards,
+      u8 hdr[SHARD_HEADER_BLAKE2B_SIZE];
+      u8 eos[SHARD_EOS_BLAKE2B_SIZE];
+      sz hs = pack_shard_header(hdr, "XPAL", o.dshards, o.pshards, (u8) i,
+                                size, shards[i], shard_size,
+                                o.integrity, o.auth_key, o.auth_keylen);
+      sz es = pack_eos_marker(eos, hdr, o.integrity,
+                              o.auth_key, o.auth_keylen);
+      xpar_xwrite(out[i], hdr, hs);
+      xpar_xwrite(out[i], shards[i], shard_size);
+      xpar_xwrite(out[i], eos, es);
+    )
+  }
+
   Fi(o.dshards + o.pshards, xpar_xclose(out[i]));
   Fi0(o.dshards + o.pshards, o.dshards, SIMDSafeFree(shards[i]));
   Fi(o.dshards, if (owned[i]) SIMDSafeFree(shards[i]));
