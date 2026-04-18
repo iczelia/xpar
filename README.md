@@ -72,3 +72,44 @@ As it stands:
 
 Code style:
 - Two space indent, brace on the same line, middle pointers - `char * p;`.
+
+## Benchmarks
+
+`enwik10` = first 10 GB of the English Wikipedia XML dump, a common benchmark corpus for compression and erasure coding tools. Each tool runs 3 times under `hyperfine --runs 3 --warmup 0`.
+
+- CPU: AMD Ryzen 9 5950X 16-core / 32-thread (Zen 3)
+- Kernel: Linux 6.8.0-101-generic x86-64
+- Binaries: all C/C++ tools built with `-march=x86-64-v3 -O3`, statically linked.
+
+xpar tested via:
+- `xpar -Jefq -i 1 enwik10` (joint mode, interlacing 1)
+- `xpar -Jefq -i 2 enwik10` (joint mode, interlacing 2)
+- `xpar -Jefq -i 3 enwik10` (joint mode, interlacing 3)
+- `xpar -Jsefq enwik10` (joint systematic mode, parity-only sidecar)
+- `xpar -Lefq --dshards=10 --pshards=1 --out-prefix=enwik10.xpa enwik10` (sharded mode, Leopard FFT)
+- `xpar -Wefq --dshards=10 --pshards=1 --out-prefix=enwik10.xpa enwik10` (sharded mode, Vandermonde + Berlekamp-Welch)
+
+Joint mode creates a single `.xpa` file, in the systematic mode both the `.xpa` parity file and the original input are needed for recovery. Sharded mode creates 11 files: 10 data shards (systematic, not re-encoded) and 1 parity shard.
+
+par2 family tested via:
+- `par2 create -q -r10 enwik10.par2 enwik10`
+- `par2-turbo create -q -r10 enwik10.par2 enwik10`
+- `parpar -s 1M -r 10% -o enwik10.par2 enwik10`
+
+Writes one small index file (`enwik10.par2`) plus several recovery volumes (`enwik10.vol000+01.par2`, `vol001+02`, etc) totalling ~10% of the input. The original `enwik10` is preserved and referenced by its per-slice MD5.
+
+zfec tested via:
+- `zfec -k 10 -m 11 -f enwik10`, which writes 11 files: `enwik10.000` through `enwik10.010`; 10 data shards (systematic) plus 1 parity shard, 10 of which are needed for recovery.
+
+| tool | mean wall (s) | throughput (MB/s) | on-disk output (bytes) | artefacts |
+| :--- | ---: | ---: | ---: | :--- |
+| `xpar-sharded-fft` | 11.48 | 830.5 | 11,000,000,352 | 11 shards (10 data + 1 parity) |
+| `xpar-sharded-van` | 14.57 | 654.5 | 11,000,000,352 | 11 shards (10 data + 1 parity) |
+| `zfec`             | 20.07 | 475.2 | 11,000,000,033 | 11 shards (10 data + 1 parity) |
+| `par2-turbo`       | 25.63 | 372.2 |  1,001,465,372 | index + recovery volumes (sidecar) |
+| `xpar-joint-sys`   | 28.91 | 329.9 |  1,973,094,259 | single parity-only sidecar |
+| `xpar-joint-i3`    | 33.85 | 281.7 | 11,441,157,089 | single archive |
+| `xpar-joint-i1`    | 37.49 | 254.4 | 11,973,094,409 | single archive |
+| `xpar-joint-i2`    | 40.46 | 235.7 | 11,437,146,731 | single archive |
+| `parpar`           | 48.56 | 196.4 |  1,009,386,576 | index + recovery volumes (sidecar) |
+| `par2cmdline`      | 114.82 | 83.1 |  1,001,465,336 | index + recovery volumes (sidecar) |
