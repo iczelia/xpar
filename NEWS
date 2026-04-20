@@ -2,6 +2,42 @@ This file contains release notes for major and minor releases of xpar.
 For a complete list of source-level changes, consult the ChangeLog file.
 
 ===============================================================================
+v1.1 (20-04-2026)
+- File format is unchanged from v1.0 in all modes; v1.0 archives
+  decode under v1.1 and v1.1 archives decode under v1.0.
+- New '--progress' flag periodically reports throughput and ETA to
+  stderr during encode and decode in joint, systematic, Leopard-
+  sharded, and Vandermonde-sharded modes.
+- Optional io_uring backend on Linux for batched parallel I/O in
+  joint, Leopard-sharded, and Vandermonde-sharded pipelines.
+  Enabled at configure time with '--enable-liburing' (auto-detected
+  on Linux when liburing is installed); other platforms and builds
+  without liburing continue to use the portable POSIX/Win32 host
+  backend unchanged.
+- Joint-mode encoder refuses to overwrite an existing output file
+  unless '-f / --force' is given, matching the other modes.
+- Keyed MAC and tag comparisons are constant-time.
+- Sharded decoders share a common consensus-voting path with bounded
+  vote tables and stricter layout checks; end-of-stream handling in
+  Leopard- and Vandermonde-sharded decode is hardened against
+  truncated or mismatched final shards.
+- Leopard-sharded: correct handling of the r->data == 1 single-data-
+  shard edge case; decoder now fsync's and close-checks output before
+  reporting success. Vandermonde-sharded: fix a shard buffer leak on
+  the error path. Sharded modes report a more meaningful error when
+  the shard count is out of range.
+- yarg command-line parser hardened against allocation-failure and
+  formatting edge cases. Windows legacy (CP_ACP) command-line parser
+  rewritten to grow its buffers safely and free partial state on OOM.
+- POSIX host: FD_CLOEXEC on opened descriptors; read/write loops
+  retry on short transfers and EINTR. DJGPP host: higher-precision
+  PIT timer and a switch to <io.h> for low-level I/O; DOS builds are
+  now LTO'd and benefit from -ffunction-sections / --gc-sections
+  size trimming in release builds.
+- Release tarballs have reproducible mtimes; CI adds Win95 and DOS
+  release workflows alongside the existing targets.
+
+===============================================================================
 v1.0 (16-04-2026)
 - File-format bump to v1.0. v0.x archives are rejected; re-encode any data
   you still need. Future v1.x minors stay decodable by v1.0+ tools.

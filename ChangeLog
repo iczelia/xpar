@@ -1,4 +1,100 @@
+2026-04-18  Kamila Szewczyk  <27734421+iczelia@users.noreply.github.com>
+
+	sloppy gitignore
+
+2026-04-18  Kamila Szewczyk  <k@iczelia.net>
+
+	update to-do list
+
+	implement (relatively good) --progress
+
+	to-dos for 1.1 and 2.0
+
+	Merge branch 'io_uring'
+
+	io_uring: lmode and vmode...
+
+	io_uring: hook up to jmode encoder.
+
+	hook up new io_uring stuff
+
+	simple io_uring wrapper apis
+
+	mark new functions as uring-specific
+
+	fileno/fflush wrappers for host-posix.
+
+	detect liburing in configure.ac
+
+	updated benchmarks
+
+	remove outdated benchmarks
+
+	lmode/threadpool: remove outdated info
+
+	re-instantiate SIMD safety...
+
+	platform: fix a vague outdated comment
+
+	host-posix: fd_cloexec
+
+	sharding: defensive programming
+
+	refactor shard consensus voting
+
+	djgpp: high precision pit, switch to <io.h>
+
+	jmode: auth-mode + force
+
+	loopy reads (posix/djgpp)
+
+	harden yarg
+
+	win32: legacy command line parsing improved.
+
+	vmode: shards leak
+
+	lmode/vmode: shard count portability tweak
+
+	consensus: ensure layout
+
+	l/v sharding: more meaningful error message
+
 2026-04-17  Kamila Szewczyk  <k@iczelia.net>
+
+	make/configure: size tweaks via -ffunction-sections + gc
+
+	DOS: LTO.
+
+	final format tweaks
+
+	EOS fix
+
+	jmode: wrap hdr in mac.
+
+	cosmetic: constant time MAC comparison
+
+	misc. lmode fixes: special handling of r->data == 1; close+sync in decode.
+
+	separator format
+
+	minor cleanup
+
+	some formatting + 79col adherence
+
+	crc32c, blake2b: adherence to formatting guidelines.
+
+	-O2 -s for releases
+
+	bump actions
+
+	bug workaround
+
+	__attribute__((used)) to stop the LTO linker from yanking stuff,
+
+	tar: mtime patches
+
+	update changelog/news
 
 	w95/dos release workflows
 
