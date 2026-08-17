@@ -234,4 +234,88 @@ $b=0,m,2m,\ldots<R$, copy $W$ to $T$, apply
 $T[j]$ for $0\le j<\min(m,R-b)$. These procedures, the field definitions, and
 the zero-padding rule uniquely determine every recovery byte.
 
+
+\chapter{Integrity, authentication, and identities}\label{integrity}
+
+\specp CRC values shall use CRC-32C as specified in Clause~\ref{conventions}.
+Unkeyed hashes shall
+use BLAKE3. In the following identities, lengths are unsigned little-endian
+integers of the displayed width:
+\begin{align*}
+\mathit{prefix\_hash}&=\mathrm{BLAKE3}(\text{first }\min(16384,L_f)
+  \text{ content bytes})[0..16),\\
+\mathit{file\_id}&=\mathrm{BLAKE3}(\texttt{"xpar2 file id v1"}\|
+  \mathrm{u64le}(L_f)\|\mathit{prefix\_hash}\|name)[0..16),\\
+\mathit{set\_id}&=\mathrm{BLAKE3}(\texttt{"xpar2 set id v1"}\|
+  SETD_{body}\|FILE_{body}[0]\|\cdots\|FILE_{body}[F-1])[0..16),\\
+\mathit{vol\_tag}&=\mathrm{BLAKE3}(\texttt{"xpar2 volume tag v1"}\|
+  volume\_bytes)[0..8).
+\end{align*}
+In a chain, each FILE body shall be the body selected by nearest-generation
+shadowing. The content hash is BLAKE3-256 over the logical entry content.
+Slice tags are BLAKE3 over exactly $Z$ bytes, including final zero padding,
+truncated to \texttt{SETD.slice\_tag\_len}.
+
+\subsection{Authentication keys}
+
+\specp Authentication shall derive a 32-byte master key and four role keys:
+\begin{align*}
+K&=\mathrm{BLAKE3\_derive\_key}(\texttt{"xpar2 auth master v1"},keyfile),\\
+K_{pkt}&=\mathrm{derive}(\texttt{"xpar2 packet v1"},K),&
+K_{slice}&=\mathrm{derive}(\texttt{"xpar2 slice v1"},K),\\
+K_{set}&=\mathrm{derive}(\texttt{"xpar2 set v1"},K),&
+K_{file}&=\mathrm{derive}(\texttt{"xpar2 file v1"},K).
+\end{align*}
+The key file shall be nonempty. Packet, slice, set, and file calculations shall
+use their respective keyed BLAKE3 role where this clause requires them.
+\texttt{AUTH.key\_check} shall equal
+$\mathrm{BLAKE3\_keyed}(K,\texttt{"xpar2 key check v1"})[0..16)$.
+
+\specp An authenticated generation shall contain exactly one AUTH packet.
+Every packet owned by that generation, including VOLH, table, RCVS, CRTR, and
+packets recovered from ARMG, shall set KEYED. After the AUTH packet has been
+authenticated, a reader shall reject an owned packet for which KEYED is clear
+before using its body. A generation without AUTH shall not contain a KEYED
+packet. A reader shall possess the correct key before it uses any authenticated
+packet body other than a framing-bounded AUTH candidate. A keyless reader shall
+not verify, extract, repair, or otherwise interpret an authenticated set.
+
+\specp \texttt{AUTH.unkeyed\_retained} shall equal zero or one. If it is one,
+FILE.content\_hash shall be unkeyed BLAKE3-256 and complete SLCR coverage shall
+be present. If it is zero, FILE.content\_hash shall be keyed BLAKE3 under
+$K_{file}$ and SLCR shall be absent. In both modes, prefix\_hash is unkeyed,
+file\_id and set\_id use $K_{file}$ and $K_{set}$ respectively, packet tags use
+$K_{pkt}$, and SLTG uses $K_{slice}$.
+
+\specp In an authenticated set, SLTG shall be present, its entries shall be 16
+bytes, and slice tags shall be the acceptance test. CRC values shall be used
+only as candidate filters. Authentication provides neither confidentiality nor
+freshness. The packet tag provides 64-bit forgery resistance.
+
+\specp \texttt{key\_check} permits offline testing of candidate key files.
+A directly used key file should contain at least 128 bits of unpredictable
+entropy. A password shall first be transformed by an externally specified
+memory-hard password KDF. Implementations shall compare authentication values
+without data-dependent early exit.
+
+\section{BLAKE3 slice chaining values}
+
+\specp If required feature \texttt{XPAR\_FEAT\_B3\_SUBTREE} is clear, an SLTG
+entry is the specified truncation of the ordinary BLAKE3 digest of the complete
+zero-padded slice. If the bit is set, \texttt{align} shall equal 2, $Z$ shall
+be a power of two not less than 1024, \texttt{stream\_base} shall be divisible
+by 1024, and an SLTG entry shall be the chaining value defined below. Because
+this rule changes integrity interpretation, the feature is required and shall
+not appear in \texttt{optional\_features}.
+
+\specp For slice $i$, the first BLAKE3 chunk counter is
+$(\mathtt{stream\_base}+iZ)/1024$. Chunk compression shall use the standard
+BLAKE3 CHUNK\_START and CHUNK\_END flags and, for authenticated data,
+KEYED\_HASH with $K_{slice}$. The resulting chunk chaining values shall be
+reduced as a balanced binary tree from left to right with the standard PARENT
+flag. ROOT shall not be set. The eight 32-bit chaining-value words shall be
+serialized little-endian and truncated to \texttt{slice\_tag\_len} bytes. This
+is a standalone balanced-tree chaining value with absolute chunk counters; it
+is not asserted to be a node in a larger file or set BLAKE3 tree.
+
 \end{document}
