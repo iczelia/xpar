@@ -7,6 +7,20 @@
 \usepackage[margin=25mm]{geometry}
 \usepackage[hidelinks]{hyperref}
 \usepackage{xcolor}
+\usepackage{fancyvrb}
+\usepackage{enumitem}
+\setlist{nosep}
+\setlength{\emergencystretch}{3em}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\newcounter{none}
+\newcounter{specparagraph}[section]
+\makeatletter
+\@addtoreset{specparagraph}{chapter}
+\@addtoreset{specparagraph}{subsection}
+\@addtoreset{specparagraph}{subsubsection}
+\makeatother
+\newcommand{\specp}{\refstepcounter{specparagraph}\noindent
+  \makebox[0pt][r]{\textsuperscript{\scriptsize[\thespecparagraph]}\hspace{0.7em}}}
 \title{xpar Container Format 2.0}
 \author{Kamila Szewczyk}
 \date{August 2026}
