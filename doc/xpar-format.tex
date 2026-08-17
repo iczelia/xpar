@@ -105,4 +105,132 @@ wraparound.
 little-endian, offsets are measured from the beginning of the containing body,
 reserved fields shall be written as zero, and padding bytes shall be zero.
 
+\chapter{Data model and coding algorithms}\label{coding}
+
+\section{Generation geometry}
+
+\specp One metadata model has three layouts: \emph{sidecar}, \emph{split}, and
+\emph{armoured}. A set may form a generation chain. Each generation owns one
+independently coded appended stream range and one effective manifest. Recovery
+data belonging to one generation shall not be used for another generation.
+
+\specp Let $L$ be the generation stream length, $Z$ the slice size,
+$S=\lceil L/Z\rceil$ the data-slice count, and $R$ the recovery-slice count.
+The final data slice shall be zero-filled to $Z$ bytes for integrity
+calculations and coding; the padding shall not be part of the stream. A
+stream-empty metadata generation has $L=S=0$ and has no slice or recovery
+packets. Otherwise, $Z\ge64$, $Z\bmod64=0$, $S\ge1$, and
+$(S-1)Z<L\le SZ$. Slice $i$ of generation $g$ denotes
+\[
+ [\mathit{stream\_base}_g+iZ,\ \mathit{stream\_base}_g+(i+1)Z).
+\]
+
+
+\subsection{Finite fields}
+
+\specp The outer field shall be either $\mathrm{GF}(2^8)$ with polynomial
+$x^8+x^4+x^3+x^2+1$ (low part \texttt{0x1D}) or $\mathrm{GF}(2^{16})$
+with polynomial $x^{16}+x^5+x^3+x^2+1$ (low part \texttt{0x2D}). The
+element $\alpha$ is \texttt{0x02}. A 16-bit element shall be serialized
+little-endian. SETD constrains the permitted field and geometry.
+
+\subsection{Matrix codec}
+
+\specp The matrix codec is systematic Cauchy Reed--Solomon. Data rows are the
+identity matrix. Recovery row exponent $e$ has coefficient
+\[
+ c_{e,i}=1/((q-1-e)\mathbin{\oplus}i),\qquad q=2^w.
+\]
+Every denominator shall be nonzero. Its exclusive recovery-exponent limit is
+$A=2^w-S$. SETD shall record \texttt{recovery\_axis\_log2}$=w$, and every
+RCVS exponent shall satisfy $e<A$. Encoding and decoding operate independently
+at every byte (GF8) or little-endian word (GF16) position of a slice.
+
+\specp A decoder shall select $S$ available rows, invert their coefficient
+matrix, reconstruct the missing data, and verify every reconstructed slice
+before committing output.
+
+\subsection{FFT codecs}
+
+\specp The FFT codecs are systematic additive-FFT constructions over the
+declared field. High-rate codec 0 uses
+$m=2^{\mathtt{recovery\_axis\_log2}}$, requires $R\le S$ and
+$S+m\le2^w$, and has exclusive recovery-exponent limit $A=m$. Low-rate
+codec 2 is used when $R>S$, uses $m=\operatorname{NextPow2}(S)$, requires
+$m+R\le2^w$, records $\log_2m$, and has exclusive exponent limit
+$A=2^w-m$. Every RCVS exponent shall satisfy $e<A$. A deterministic writer
+shall emit exponents $0,\ldots,R-1$. The two codecs produce distinct recovery
+bytes.
+
+\specp The FFT transform width is $m$ and shall not be inferred from $R$, the
+available recovery rows, or filenames. Shortening shall fix unused positions
+to zero. Evaluation points shall use the Cantor-basis additive order specified
+by this clause and the V-DET FFT corpus. Field elements remain in the
+polynomial basis specified in \ref{coding}. Missing data are erasures. If
+SLCL is present, cells may be decoded independently by column; otherwise, the
+erasure unit is one complete slice.
+
+\subsection{FFT basis and transform}
+
+\specp The Cantor bases, in polynomial representation and index order, are:
+\begin{Verbatim}[fontsize=\small]
+GF8:  01 d6 98 92 56 c8 58 e6
+GF16: 0001 acca 3c0e 163e c582 ed2e 914c 4012
+      6c98 10d8 6a72 b900 fdb8 fb34 ff38 991e
+\end{Verbatim}
+The bits of transform slot $j$ are the coordinates of its evaluation point in
+this basis. All additions below are field XOR and all multiplications are in
+the field specified in \ref{coding}.
+
+\specp The skew array has $2^w-1$ field elements and shall be constructed by
+the following algorithm. \texttt{B} is the Cantor basis and \texttt{inv} is
+field inversion.
+\begin{Verbatim}[fontsize=\small]
+for i = 1 .. w-1: t[i-1] = B[i]
+for v = 0 .. w-2:
+    step = 2^(v+1); skew[2^v-1] = 0
+    for i = v .. w-2:
+        q = 2^(i+1)
+        for j = 2^v-1; j < q; j += step:
+            skew[j+q] = skew[j] xor t[i]
+    ib = inv(t[v] * (t[v] xor B[0]))
+    for i = v+1 .. w-2:
+        t[i] = t[i] * (t[i] xor B[0]) * ib
+\end{Verbatim}
+
+\specp \texttt{FWD(W,trunc,len,base)} applies the following loops in the
+stated order. Each assignment operates independently at every GF8 byte or
+little-endian GF16 word position of the slice.
+\begin{Verbatim}[fontsize=\small]
+for dist = len/2, len/4, ..., 1:
+    for r = 0; r < trunc; r += 2*dist:
+        c = skew[base+r+dist-1]
+        for i = r .. r+dist-1:
+            x = W[i]; y = W[i+dist]
+            if c == 0: y = y xor x
+            else:      x = x xor c*y; y = y xor x
+            W[i] = x; W[i+dist] = y
+\end{Verbatim}
+\texttt{INV} uses distances $1,2,\ldots,\mathtt{len}/2$ and the same skew
+index. If $c=0$, it performs $y=y\mathbin{\mathtt{xor}}x$. Otherwise it
+performs $y=y\mathbin{\mathtt{xor}}x$ followed by
+$x=x\mathbin{\mathtt{xor}}cy$.
+
+\subsection{FFT recovery-row mapping}
+
+\specp For high-rate codec 0, let \texttt{first=min(S,m)}. Copy data rows
+$0,\ldots,\mathtt{first}-1$ into $W[0,\ldots,\mathtt{first}-1]$, zero the
+remaining rows through $m-1$, and apply \texttt{INV(W,first,m,m)}. For each
+block base $b=m,2m,\ldots<S$, copy the next \texttt{min(m,S-b)} data rows to a
+zero-padded $m$-row temporary $T$, apply
+\texttt{INV(T,min(m,S-b),m,m+b)}, and XOR all $m$ rows of $T$ into $W$.
+Apply \texttt{FWD(W,R,m,0)}. Recovery exponent $e$ is row $W[e]$.
+
+\specp For low-rate codec 2, copy the $S$ data rows to a zero-padded $m$-row
+array $W$ and apply \texttt{INV(W,S,m,0)}. For each recovery block base
+$b=0,m,2m,\ldots<R$, copy $W$ to $T$, apply
+\texttt{FWD(T,min(m,R-b),m,m+b)}, and assign recovery exponent $b+j$ from
+$T[j]$ for $0\le j<\min(m,R-b)$. These procedures, the field definitions, and
+the zero-padding rule uniquely determine every recovery byte.
+
 \end{document}
