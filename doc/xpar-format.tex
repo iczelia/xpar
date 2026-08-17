@@ -63,4 +63,46 @@ does not specify decoding of any xpar 1.0 object.
 serialization, domain-separation, and truncation rules in this document shall
 apply where a referenced specification permits alternatives.
 
+\chapter{Terms, definitions, and conformance}\label{terms}
+
+\section{Conformance}
+
+\specp An implementation conforms to this specification only if every output
+it identifies as xpar 2.0 satisfies all applicable ``shall'' and ``shall not''
+requirements and it rejects every input for which this specification requires
+rejection.
+
+\specp In this specification, ``shall'' expresses a requirement, ``shall not''
+expresses a prohibition, ``should'' expresses a recommendation, and ``may''
+expresses permission. Text identified as a constraint is normative. Examples
+do not override a requirement or constraint.
+
+\section{Terms and definitions}
+
+\begin{description}[style=nextline]
+\item[entry] A manifest object denoting a regular file, directory, symbolic
+link, or hard-link alias.
+\item[extent] A half-open interval in the global set-stream address space.
+\item[generation] One manifest state and the independently coded stream range
+appended by that state.
+\item[set] An ordered byte stream, a manifest mapping entries to stream
+extents, integrity metadata, and zero or more recovery slices.
+\item[slice] A coding unit of exactly $Z$ bytes. The final data slice includes
+zero padding that is not part of the logical stream.
+\item[volume] One file that contains xpar packets, bare data, or an armoured
+archive as specified by its layout.
+\end{description}
+
+\chapter{Byte and arithmetic representation}\label{representation}
+
+\specp Byte interval $[a,b)$ contains byte offsets $a$ through $b-1$.
+$A\mathbin{\|}B$ denotes byte-string concatenation. $\mathrm{u}N\mathrm{le}(x)$
+denotes the unsigned $N$-bit little-endian representation of $x$.
+Arithmetic constraints use mathematical integers and shall be checked without
+wraparound.
+
+\specp Unless a field definition states otherwise, integers are unsigned and
+little-endian, offsets are measured from the beginning of the containing body,
+reserved fields shall be written as zero, and padding bytes shall be zero.
+
 \end{document}
