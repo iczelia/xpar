@@ -29,4 +29,38 @@
 \maketitle
 \tableofcontents
 
+\chapter{Scope}\label{scope}
+
+\specp This document specifies the xpar 2.0 file format. It describes in depth
+the byte representation, coding geometry, integrity and authentication,
+packet constraints, volume layouts, deterministic construction,
+parser requirements, and conformance vectors.
+
+\specp xpar 2.0 is by design incompatible with other competing standards, such
+as PAR2, PAR3, and xpar 1.0. Notwithstanding, a conforming reader shall detect
+an xpar 1.0 signature, shall report an unsupported version, and shall not
+interpret the input as xpar 2.0.
+
+\specp The xpar 1.0 signatures are the five-byte sequence \texttt{XP}, one
+major-version byte in the range 0 through 1, one minor-version byte in the
+range 0 through 9, and a final byte in
+\texttt{1}, \texttt{2}, \texttt{3}, or \texttt{4}; the four-byte sequence
+\texttt{XPAS}; and the four-byte sequence \texttt{XPAL}. Detection of these
+signatures shall produce only an unsupported-version diagnostic. This document
+does not specify decoding of any xpar 1.0 object.
+
+\chapter{Normative references}\label{normative-references}
+
+\specp The following documents are normatively referenced:
+\begin{itemize}
+\item BLAKE3 specification, version 1.3.3, 9 June 2025;
+\item RFC 3720, Appendix B.4, CRC-32C, April 2004;
+\item ISO/IEC 10646:2020, UTF-8 encoding form;
+\item FIPS PUB 180-4, Secure Hash Standard, August 2015.
+\end{itemize}
+
+\specp A dated reference denotes only the stated edition. The parameter,
+serialization, domain-separation, and truncation rules in this document shall
+apply where a referenced specification permits alternatives.
+
 \end{document}
