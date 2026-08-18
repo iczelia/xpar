@@ -2,17 +2,13 @@
 % Copyright (C) 2022-2026 Kamila Szewczyk
 \documentclass[10pt,a4paper]{report}
 \usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage{amsmath,amssymb,array,booktabs,caption,longtable,microtype}
+\usepackage{amsmath,amssymb,array,booktabs,longtable,microtype}
 \usepackage[margin=25mm]{geometry}
 \usepackage[hidelinks]{hyperref}
-\usepackage{xcolor}
 \usepackage{fancyvrb}
 \usepackage{enumitem}
 \setlist{nosep}
 \setlength{\emergencystretch}{3em}
-\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
-\newcounter{none}
 \newcounter{specparagraph}[section]
 \makeatletter
 \@addtoreset{specparagraph}{chapter}
@@ -21,6 +17,7 @@
 \makeatother
 \newcommand{\specp}{\refstepcounter{specparagraph}\noindent
   \makebox[0pt][r]{\textsuperscript{\scriptsize[\thespecparagraph]}\hspace{0.7em}}}
+\newcommand{\option}[1]{\texttt{\char`-\char`-#1}}
 \title{xpar Container Format 2.0}
 \author{Kamila Szewczyk}
 \date{August 2026}
@@ -31,23 +28,26 @@
 
 \chapter{Scope}\label{scope}
 
-\specp This document specifies the xpar 2.0 file format. It describes in depth
-the byte representation, coding geometry, integrity and authentication,
-packet constraints, volume layouts, deterministic construction,
-parser requirements, and conformance vectors.
+\specp This document specifies the xpar 2.0 file format, including its byte
+representation, coding geometry, integrity and authentication data, packet
+constraints, volume layouts, deterministic representation, validation rules,
+and security requirements.
 
-\specp xpar 2.0 is by design incompatible with other competing standards, such
-as PAR2, PAR3, and xpar 1.0. Notwithstanding, a conforming reader shall detect
-an xpar 1.0 signature, shall report an unsupported version, and shall not
-interpret the input as xpar 2.0.
+\specp xpar 2.0 is not compatible with PAR2, PAR3, or xpar 1.0. A conforming
+reader shall detect an xpar 1.0 signature, report that the version is not
+supported, and not interpret the input as xpar 2.0.
 
-\specp The xpar 1.0 signatures are the five-byte sequence \texttt{XP}, one
-major-version byte in the range 0 through 1, one minor-version byte in the
-range 0 through 9, and a final byte in
-\texttt{1}, \texttt{2}, \texttt{3}, or \texttt{4}; the four-byte sequence
-\texttt{XPAS}; and the four-byte sequence \texttt{XPAL}. Detection of these
-signatures shall produce only an unsupported-version diagnostic. This document
-does not specify decoding of any xpar 1.0 object.
+\specp The following byte sequences are xpar 1.0 signatures:
+\begin{itemize}
+\item a five-byte sequence consisting of \texttt{XP}, a major-version byte from
+0 through 1, a minor-version byte from 0 through 9, and a final byte equal to
+\texttt{1}, \texttt{2}, \texttt{3}, or \texttt{4};
+\item the four-byte sequence \texttt{XPAS}; and
+\item the four-byte sequence \texttt{XPAL}.
+\end{itemize}
+A reader that detects one of these signatures shall report an unsupported
+version and shall not attempt xpar 2.0 decoding. Decoding xpar 1.0 objects is
+outside the scope of this specification.
 
 \chapter{Normative references}\label{normative-references}
 
@@ -55,8 +55,7 @@ does not specify decoding of any xpar 1.0 object.
 \begin{itemize}
 \item BLAKE3 specification, version 1.3.3, 9 June 2025;
 \item RFC 3720, Appendix B.4, CRC-32C, April 2004;
-\item ISO/IEC 10646:2020, UTF-8 encoding form;
-\item FIPS PUB 180-4, Secure Hash Standard, August 2015.
+\item ISO/IEC 10646:2020, UTF-8 encoding form.
 \end{itemize}
 
 \specp A dated reference denotes only the stated edition. The parameter,
@@ -83,19 +82,40 @@ do not override a requirement or constraint.
 \item[entry] A manifest object denoting a regular file, directory, symbolic
 link, or hard-link alias.
 \item[extent] A half-open interval in the global set-stream address space.
-\item[generation] One manifest state and the independently coded stream range
-appended by that state.
+\item[generation] A manifest state together with the stream bytes, if any,
+introduced by that state. Each generation is coded independently from the
+others.
 \item[set] An ordered byte stream, a manifest mapping entries to stream
 extents, integrity metadata, and zero or more recovery slices.
-\item[slice] A coding unit of exactly $Z$ bytes. The final data slice includes
+\item[slice] A coding unit of $Z$ bytes. The final data slice includes
 zero padding that is not part of the logical stream.
-\item[volume] One file that contains xpar packets, bare data, or an armoured
-archive as specified by its layout.
+\item[volume] One file containing xpar packets, bare data, or an armoured
+archive.
 \end{description}
+
+\section{Command-interface terms}
+
+\specp Requirements that name commands or options specify the behaviour of a
+conforming command interface. \texttt{create} writes a root generation;
+\texttt{add} writes a child generation; \texttt{extract} creates the effective
+manifest at a destination; \texttt{repair} reconstructs damaged data;
+\texttt{list} reports stored metadata; and \texttt{verify} validates a set
+without extracting it. For \texttt{repair}, \option{to} names a separate
+destination. The option \texttt{-f} authorizes otherwise restricted metadata
+and replacement operations. \option{json} requests the stated event records,
+\option{resync} enables byte-granular salvage scanning, and
+\option{require=links} makes hard-link fallback an error.
+
+\specp The \option{preserve=} options select the named metadata classes.
+\option{owner-map=name} and \option{owner-map=numeric} select the ownership
+mapping described in Clause~\ref{metadata-restoration-rules}.
+\option{auth} selects authenticated output. \option{reproducible} selects the
+deterministic writer profile, and \option{dedup=none}, \option{dedup=file}, and
+\option{dedup=chunk} select deduplication levels 0, 1, and 2 respectively.
 
 \chapter{Byte and arithmetic representation}\label{representation}
 
-\specp Byte interval $[a,b)$ contains byte offsets $a$ through $b-1$.
+\specp The byte interval $[a,b)$ contains byte offsets $a$ through $b-1$.
 $A\mathbin{\|}B$ denotes byte-string concatenation. $\mathrm{u}N\mathrm{le}(x)$
 denotes the unsigned $N$-bit little-endian representation of $x$.
 Arithmetic constraints use mathematical integers and shall be checked without
@@ -109,69 +129,86 @@ reserved fields shall be written as zero, and padding bytes shall be zero.
 
 \section{Generation geometry}
 
-\specp One metadata model has three layouts: \emph{sidecar}, \emph{split}, and
-\emph{armoured}. A set may form a generation chain. Each generation owns one
-independently coded appended stream range and one effective manifest. Recovery
-data belonging to one generation shall not be used for another generation.
+\specp The format has three layouts: \emph{sidecar}, \emph{split}, and
+\emph{armoured}. All three represent the same manifest, stream, integrity data,
+and recovery data. A set may consist of a chain of generations. Each generation
+has an effective manifest and may append a stream range that is coded
+independently. Recovery data for one generation shall not be used for another.
 
 \specp Let $L$ be the generation stream length, $Z$ the slice size,
 $S=\lceil L/Z\rceil$ the data-slice count, and $R$ the recovery-slice count.
 The final data slice shall be zero-filled to $Z$ bytes for integrity
 calculations and coding; the padding shall not be part of the stream. A
-stream-empty metadata generation has $L=S=0$ and has no slice or recovery
+metadata-only generation has $L=S=0$ and has no slice or recovery
 packets. Otherwise, $Z\ge64$, $Z\bmod64=0$, $S\ge1$, and
-$(S-1)Z<L\le SZ$. Slice $i$ of generation $g$ denotes
+$(S-1)Z<L\le SZ$. The logical bytes of slice $i$ of generation $g$ occupy
 \[
- [\mathit{stream\_base}_g+iZ,\ \mathit{stream\_base}_g+(i+1)Z).
+ [\mathtt{stream\_base}_g+iZ,
+  \mathtt{stream\_base}_g+\min((i+1)Z,L)).
 \]
+For coding and integrity calculations, every slice is represented by $Z$ bytes.
+In the final slice, positions $L-(S-1)Z$ through $Z-1$ are zero.
 
 
-\subsection{Finite fields}
+\subsection{Finite fields}\label{finite-fields}
 
 \specp The outer field shall be either $\mathrm{GF}(2^8)$ with polynomial
 $x^8+x^4+x^3+x^2+1$ (low part \texttt{0x1D}) or $\mathrm{GF}(2^{16})$
 with polynomial $x^{16}+x^5+x^3+x^2+1$ (low part \texttt{0x2D}). The
 element $\alpha$ is \texttt{0x02}. A 16-bit element shall be serialized
-little-endian. SETD (a packet of special type) constrains the permitted
-field and geometry.
+little-endian. The SETD packet specifies the field and constrains the coding
+geometry as described in Clause~\ref{setd-set-descriptor}.
 
 \subsection{Matrix codec}
 
-\specp The matrix codec is systematic Cauchy Reed--Solomon. Data rows are the
-identity matrix. Recovery row exponent $e$ has coefficient
+\specp The matrix codec is a systematic Cauchy Reed--Solomon code. Data row
+$i$ is row $i$ of the identity matrix. For $0\le i<S$, recovery row exponent
+$e$ has coefficient
 \[
  c_{e,i}=1/((q-1-e)\mathbin{\oplus}i),\qquad q=2^w.
 \]
-Every denominator shall be nonzero. Its exclusive recovery-exponent limit is
-$A=2^w-S$. SETD shall record \texttt{recovery\_axis\_log2}$=w$, and every
-RCVS exponent shall satisfy $e<A$. Encoding and decoding operate independently
-at every byte (GF8) or little-endian word (GF16) position of a slice.
+The operands of $\oplus$ are the polynomial-basis representations of field
+elements. The exclusive recovery-exponent limit for the matrix codec is
+$A=2^w-S$, and $0\le e<A$. Consequently, $q-1-e$ differs from every $i$ in
+$[0,S)$, so the denominator is nonzero. SETD shall record
+$\mathtt{recovery\_axis\_log2}=w$, and every RCVS exponent shall satisfy $e<A$.
+Encoding and decoding operate independently at every byte (GF8) or
+little-endian word (GF16) position of a slice.
 
-\specp A decoder shall select $S$ available rows, invert their coefficient
-matrix, reconstruct the missing data, and verify every reconstructed slice
-before committing output.
+\specp A decoder shall select $S$ distinct rows. A data row may be selected only
+if its computed SLTG value matches the recorded value, or, when SLTG is absent,
+if its computed SLCR value matches. Each selected recovery row
+shall come from an RCVS packet whose checksum or keyed tag is valid and whose
+exponent is within the applicable limit. The decoder shall invert the rows'
+coefficient matrix and reconstruct the missing data. It shall not commit a
+reconstructed slice unless the computed SLTG value, when present, or otherwise
+the computed SLCR value, matches the recorded value.
 
-\subsection{FFT codecs}
+\subsection{FFT codecs}\label{fft-codecs}
 
 \specp The FFT codecs are systematic additive-FFT constructions over the
 declared field. High-rate codec 0 uses
-$m=2^{\mathtt{recovery\_axis\_log2}}$, requires $R\le S$ and
+$m=2^{\mathtt{recovery\_axis\_log2}}$, requires $R\le\min(S,m)$ and
 $S+m\le2^w$, and has exclusive recovery-exponent limit $A=m$. Low-rate
 codec 2 is used when $R>S$, uses $m=\operatorname{NextPow2}(S)$, requires
 $m+R\le2^w$, records $\log_2m$, and has exclusive exponent limit
 $A=2^w-m$. Every RCVS exponent shall satisfy $e<A$. A deterministic writer
-shall emit exponents $0,\ldots,R-1$. The two codecs produce distinct recovery
-bytes.
+shall emit exponents $0,\ldots,R-1$.
+
+\specp $\operatorname{NextPow2}(S)$ is the least power of two not less than
+$S$.
 
 \specp The FFT transform width is $m$ and shall not be inferred from $R$, the
 available recovery rows, or filenames. Shortening shall fix unused positions
 to zero. Evaluation points shall use the Cantor-basis additive order specified
-by this clause and the V-DET FFT corpus. Field elements remain in the
-polynomial basis specified in \ref{coding}. Missing data are erasures. If
-SLCL is present, cells may be decoded independently by column; otherwise, the
-erasure unit is one complete slice.
+in Clause~\ref{fft-basis-and-transform}. Field elements remain in the
+polynomial basis specified in Clause~\ref{finite-fields}.
 
-\subsection{FFT basis and transform}
+\specp When SLCL is present, cells with the same cell index in different slices
+form a column and may be decoded independently. Otherwise, the erasure unit is
+one complete slice.
+
+\subsection{FFT basis and transform}\label{fft-basis-and-transform}
 
 \specp The Cantor bases, in polynomial representation and index order, are:
 \begin{Verbatim}[fontsize=\small]
@@ -179,143 +216,1743 @@ GF8:  01 d6 98 92 56 c8 58 e6
 GF16: 0001 acca 3c0e 163e c582 ed2e 914c 4012
       6c98 10d8 6a72 b900 fdb8 fb34 ff38 991e
 \end{Verbatim}
-The bits of transform slot $j$ are the coordinates of its evaluation point in
-this basis. All additions below are field XOR and all multiplications are in
-the field specified in \ref{coding}.
+The bits in the binary representation of transform slot $j$ are the coordinates
+of its evaluation point in this basis. All additions below are field XOR and
+all multiplications are in the field specified in Clause~\ref{finite-fields}.
 
-\specp The skew array has $2^w-1$ field elements and shall be constructed by
-the following algorithm. \texttt{B} is the Cantor basis and \texttt{inv} is
-field inversion.
+\specp This subclause defines the forward and inverse additive FFTs used by the
+recovery-row mapping in Clause~\ref{fft-recovery-row-mapping}. The inverse
+transform interpolates the values in a systematic data block. The forward
+transform then evaluates the result at the points assigned to recovery rows.
+Both transforms operate in place on an array $W$ of $\mathtt{len}$ rows, where
+$\mathtt{len}$ is a power of two and
+$0\le\mathtt{trunc}\le\mathtt{len}$. The parameters shall satisfy
+$\mathtt{base}+\mathtt{len}\le2^w$; consequently, every skew-array index formed
+by the transform is in $[0,2^w-1)$. A row consists of field elements: bytes for
+GF8 and little-endian 16-bit words for GF16. The parameter $\mathtt{base}$
+selects the interval of evaluation points. The parameter $\mathtt{trunc}$
+identifies the active prefix: it is the number of populated input rows for the
+inverse transform and the number of required output rows for the forward
+transform. Before the inverse transform, input rows outside the populated
+prefix shall contain zero.
+
+\specp The skew array supplies the field multipliers for the transform
+butterflies. The following algorithm initializes the elements of
+$\mathtt{skew}$ with indices 0 through $2^w-2$. In the algorithm, $B$ is the
+$w$-element Cantor basis, $t$ is a temporary array of $w-1$ elements, and
+$\mathtt{inv}$ denotes field inversion.
 \begin{Verbatim}[fontsize=\small]
-for i = 1 .. w-1: t[i-1] = B[i]
-for v = 0 .. w-2:
+for i = 1 to w-1: t[i-1] = B[i]
+for v = 0 to w-2:
     step = 2^(v+1); skew[2^v-1] = 0
-    for i = v .. w-2:
+    for i = v to w-2:
         q = 2^(i+1)
         for j = 2^v-1; j < q; j += step:
             skew[j+q] = skew[j] xor t[i]
     ib = inv(t[v] * (t[v] xor B[0]))
-    for i = v+1 .. w-2:
+    for i = v+1 to w-2:
         t[i] = t[i] * (t[i] xor B[0]) * ib
 \end{Verbatim}
 
-\specp \texttt{FWD(W,trunc,len,base)} applies the following loops in the
-stated order. Each assignment operates independently at every GF8 byte or
-little-endian GF16 word position of the slice.
+\specp The forward transform
+$\mathtt{FWD}(W,\mathtt{trunc},\mathtt{len},\mathtt{base})$ shall perform the
+following operations. Each assignment is applied independently to every field
+element in a row.
 \begin{Verbatim}[fontsize=\small]
 for dist = len/2, len/4, ..., 1:
     for r = 0; r < trunc; r += 2*dist:
         c = skew[base+r+dist-1]
-        for i = r .. r+dist-1:
+        for i = r to r+dist-1:
             x = W[i]; y = W[i+dist]
             if c == 0: y = y xor x
             else:      x = x xor c*y; y = y xor x
             W[i] = x; W[i+dist] = y
 \end{Verbatim}
-\texttt{INV} uses distances $1,2,\ldots,\mathtt{len}/2$ and the same skew
-index. If $c=0$, it performs $y=y\mathbin{\mathtt{xor}}x$. Otherwise it
-performs $y=y\mathbin{\mathtt{xor}}x$ followed by
-$x=x\mathbin{\mathtt{xor}}cy$.
+\specp The inverse transform
+$\mathtt{INV}(W,\mathtt{trunc},\mathtt{len},\mathtt{base})$ shall apply the
+inverse butterflies in the opposite order:
+\begin{Verbatim}[fontsize=\small]
+for dist = 1, 2, ..., len/2:
+    for r = 0; r < trunc; r += 2*dist:
+        c = skew[base+r+dist-1]
+        for i = r to r+dist-1:
+            x = W[i]; y = W[i+dist]
+            if c == 0: y = y xor x
+            else:      y = y xor x; x = x xor c*y
+            W[i] = x; W[i+dist] = y
+\end{Verbatim}
 
-\subsection{FFT recovery-row mapping}
+\subsection{FFT recovery-row mapping}\label{fft-recovery-row-mapping}
 
-\specp For high-rate codec 0, let \texttt{first=min(S,m)}. Copy data rows
+\specp The following procedures assign systematic data rows to transform slots
+and recovery exponents to transform results.
+
+\specp For high-rate codec 0, let $\mathtt{first}=\min(S,m)$. Copy data rows
 $0,\ldots,\mathtt{first}-1$ into $W[0,\ldots,\mathtt{first}-1]$, zero the
-remaining rows through $m-1$, and apply \texttt{INV(W,first,m,m)}. For each
-block base $b=m,2m,\ldots<S$, copy the next \texttt{min(m,S-b)} data rows to a
-zero-padded $m$-row temporary $T$, apply
-\texttt{INV(T,min(m,S-b),m,m+b)}, and XOR all $m$ rows of $T$ into $W$.
-Apply \texttt{FWD(W,R,m,0)}. Recovery exponent $e$ is row $W[e]$.
+remaining rows through $m-1$, and apply
+$\mathtt{INV}(W,\mathtt{first},m,m)$. For each positive multiple $b$ of $m$ for
+which $b<S$, copy the next $\min(m,S-b)$ data rows to a zero-padded
+$m$-row temporary $T$, and apply $\mathtt{INV}(T,\min(m,S-b),m,m+b)$. Within
+each iteration, for every $j$ in $[0,m)$, replace $W[j]$ with
+$W[j]\oplus T[j]$. After all such blocks have been accumulated, apply
+$\mathtt{FWD}(W,R,m,0)$. Recovery exponent $e$ is row $W[e]$.
 
 \specp For low-rate codec 2, copy the $S$ data rows to a zero-padded $m$-row
-array $W$ and apply \texttt{INV(W,S,m,0)}. For each recovery block base
-$b=0,m,2m,\ldots<R$, copy $W$ to $T$, apply
-\texttt{FWD(T,min(m,R-b),m,m+b)}, and assign recovery exponent $b+j$ from
-$T[j]$ for $0\le j<\min(m,R-b)$. These procedures, the field definitions, and
-the zero-padding rule uniquely determine every recovery byte.
-
+array $W$ and apply $\mathtt{INV}(W,S,m,0)$. For each nonnegative multiple $b$
+of $m$ for which $b<R$, copy $W$ to $T$, apply
+$\mathtt{FWD}(T,\min(m,R-b),m,m+b)$, and assign recovery exponent $b+j$ from
+$T[j]$ for $0\le j<\min(m,R-b)$.
 
 \chapter{Integrity, authentication, and identities}\label{integrity}
 
 \specp CRC values shall use CRC-32C as specified in Clause~\ref{conventions}.
-Unkeyed hashes shall
-use BLAKE3. In the following identities, lengths are unsigned little-endian
-integers of the displayed width:
+BLAKE3 shall be used for all unkeyed digest calculations. Let $C_f$ be the byte
+string covered by an entry's \texttt{content\_hash}: the file content for a
+regular file, the empty string for a directory, the target bytes for a symbolic
+link, and the canonical entry's content for a hard link. Let $L_f$ be the
+length of $C_f$, let $\mathtt{name}$ be the entry's name bytes, and let
+$\mathtt{volume\_bytes}$ be the complete contents of a data volume. Define
 \begin{align*}
-\mathit{prefix\_hash}&=\mathrm{BLAKE3}(\text{first }\min(16384,L_f)
-  \text{ content bytes})[0..16),\\
-\mathit{file\_id}&=\mathrm{BLAKE3}(\texttt{"xpar2 file id v1"}\|
-  \mathrm{u64le}(L_f)\|\mathit{prefix\_hash}\|name)[0..16),\\
-\mathit{set\_id}&=\mathrm{BLAKE3}(\texttt{"xpar2 set id v1"}\|
-  SETD_{body}\|FILE_{body}[0]\|\cdots\|FILE_{body}[F-1])[0..16),\\
-\mathit{vol\_tag}&=\mathrm{BLAKE3}(\texttt{"xpar2 volume tag v1"}\|
-  volume\_bytes)[0..8).
+\mathtt{prefix\_hash}&=\mathrm{BLAKE3}(\text{first }\min(16384,L_f)
+  \text{ bytes of }C_f)[0,16),\\
+M_{file}&=\texttt{"xpar2 file id v1"}\mathbin{\|}
+  \mathrm{u64le}(L_f)\mathbin{\|}\mathtt{prefix\_hash}\mathbin{\|}
+  \mathtt{name},\\
+M_{set}&=\texttt{"xpar2 set id v1"}\mathbin{\|}
+  \mathtt{SETD}_{\mathtt{body}}\mathbin{\|}
+  \mathtt{FILE}_{\mathtt{body}}[0]\mathbin{\|}\cdots\mathbin{\|}
+  \mathtt{FILE}_{\mathtt{body}}[F-1],\\
+\mathtt{vol\_tag}&=\mathrm{BLAKE3}(\texttt{"xpar2 volume tag v1"}\mathbin{\|}
+  \mathtt{volume\_bytes})[0,8).
 \end{align*}
-In a chain, each FILE body shall be the body selected by nearest-generation
-shadowing. The content hash is BLAKE3-256 over the logical entry content.
-Slice tags are BLAKE3 over exactly $Z$ bytes, including final zero padding,
-truncated to \texttt{SETD.slice\_tag\_len}.
+For an unauthenticated generation,
+\begin{align*}
+ \mathtt{content\_hash}&=\mathrm{BLAKE3}(C_f),\\
+ \mathtt{file\_id}&=\mathrm{BLAKE3}(M_{file})[0,16),\\
+ \mathtt{set\_id}&=\mathrm{BLAKE3}(M_{set})[0,16).
+\end{align*}
+For an authenticated generation, the keyed definitions in Clause~\ref{authentication-keys}
+apply. The eight bytes of \texttt{vol\_tag} are stored verbatim; they are not
+converted to an integer.
 
-\subsection{Authentication keys}
+\specp For the set identifier of a generation, the FILE bodies are those of its
+effective manifest in manifest order; an inherited body is taken from the
+nearest ancestor that contains it. The \texttt{content\_hash} field is 256 bits
+and is calculated from $C_f$ as specified in this clause. Slice tags are defined in
+Clause~\ref{slice-tags}.
+
+\section{Authentication keys}\label{authentication-keys}
 
 \specp Authentication shall derive a 32-byte master key and four role keys:
 \begin{align*}
-K&=\mathrm{BLAKE3\_derive\_key}(\texttt{"xpar2 auth master v1"},keyfile),\\
-K_{pkt}&=\mathrm{derive}(\texttt{"xpar2 packet v1"},K),&
-K_{slice}&=\mathrm{derive}(\texttt{"xpar2 slice v1"},K),\\
-K_{set}&=\mathrm{derive}(\texttt{"xpar2 set v1"},K),&
-K_{file}&=\mathrm{derive}(\texttt{"xpar2 file v1"},K).
+K&=\mathrm{BLAKE3}_{\mathrm{derive\_key}}(\texttt{"xpar2 auth master v1"},
+  \mathtt{keyfile}),\\
+K_{pkt}&=\mathrm{BLAKE3}_{\mathrm{derive\_key}}(\texttt{"xpar2 packet v1"},K),\\
+K_{slice}&=\mathrm{BLAKE3}_{\mathrm{derive\_key}}(\texttt{"xpar2 slice v1"},K),\\
+K_{set}&=\mathrm{BLAKE3}_{\mathrm{derive\_key}}(\texttt{"xpar2 set v1"},K),\\
+K_{file}&=\mathrm{BLAKE3}_{\mathrm{derive\_key}}(\texttt{"xpar2 file v1"},K).
 \end{align*}
-The key file shall be nonempty. Packet, slice, set, and file calculations shall
-use their respective keyed BLAKE3 role where this clause requires them.
+The key file shall be nonempty. For an authenticated generation,
+\begin{align*}
+\mathtt{file\_id}&=\mathrm{BLAKE3}_{\mathrm{keyed}}(K_{file},M_{file})[0,16),\\
+\mathtt{set\_id}&=\mathrm{BLAKE3}_{\mathrm{keyed}}(K_{set},M_{set})[0,16),\\
+\mathtt{content\_hash}&=\mathrm{BLAKE3}_{\mathrm{keyed}}(K_{file},C_f)
+  \quad\text{when unkeyed hashes are not retained}.
+\end{align*}
+Packet tags use $K_{pkt}$ as specified in Clause~\ref{packet-framing}; slice
+tags use $K_{slice}$ as specified in Clause~\ref{slice-tags}.
 \texttt{AUTH.key\_check} shall equal
-$\mathrm{BLAKE3\_keyed}(K,\texttt{"xpar2 key check v1"})[0..16)$.
+$\mathrm{BLAKE3}_{\mathrm{keyed}}(K,\texttt{"xpar2 key check v1"})[0,16)$.
 
 \specp An authenticated generation shall contain exactly one AUTH packet.
-Every packet owned by that generation, including VOLH, table, RCVS, CRTR, and
-packets recovered from ARMG, shall set KEYED. After the AUTH packet has been
-authenticated, a reader shall reject an owned packet for which KEYED is clear
-before using its body. A generation without AUTH shall not contain a KEYED
-packet. A reader shall possess the correct key before it uses any authenticated
-packet body other than a framing-bounded AUTH candidate. A keyless reader shall
-not verify, extract, repair, or otherwise interpret an authenticated set.
+Every packet in that generation, including VOLH, table packets, RCVS, CRTR,
+and packets recovered from ARMG, shall set KEYED\@. A reader shall derive the keys from the
+external key file, verify \texttt{key\_check}, and verify the AUTH packet tag
+before accepting any other packet in the generation. It shall reject any packet
+in an authenticated generation for which KEYED is clear. A
+generation without AUTH shall not contain a KEYED packet. A reader may examine
+the framing of a candidate AUTH packet before a key has been accepted, but
+shall not otherwise interpret, verify, extract, or repair an authenticated set.
 
 \specp \texttt{AUTH.unkeyed\_retained} shall equal zero or one. If it is one,
-FILE.content\_hash shall be unkeyed BLAKE3-256 and complete SLCR coverage shall
-be present. If it is zero, FILE.content\_hash shall be keyed BLAKE3 under
-$K_{file}$ and SLCR shall be absent. In both modes, prefix\_hash is unkeyed,
-file\_id and set\_id use $K_{file}$ and $K_{set}$ respectively, packet tags use
-$K_{pkt}$, and SLTG uses $K_{slice}$.
+\texttt{FILE.content\_hash} shall be unkeyed BLAKE3-256 and complete SLCR
+coverage shall be present in every nonempty generation; SLCR shall be absent in
+a metadata-only generation. If it is zero, \texttt{FILE.content\_hash} shall be
+keyed BLAKE3 under $K_{file}$ and SLCR shall be absent. In both modes,
+\texttt{prefix\_hash} is unkeyed; \texttt{file\_id}, \texttt{set\_id}, packet
+tags, and slice tags use the keys specified above.
 
-\specp In an authenticated set, SLTG shall be present, its entries shall be 16
-bytes, and slice tags shall be the acceptance test. CRC values shall be used
-only as candidate filters. Authentication provides neither confidentiality nor
-freshness. The packet tag provides 64-bit forgery resistance.
+\specp In a nonempty authenticated generation,
+$\mathtt{SETD.slice\_tag\_len}=16$, and SLTG shall provide complete coverage.
+SLTG shall be absent in a metadata-only generation. A
+reader shall reject a slice whose computed tag differs from its SLTG
+entry. CRC values shall be used only as candidate filters. Authentication
+provides neither confidentiality nor freshness. A packet tag is 64 bits long.
 
 \specp \texttt{key\_check} permits offline testing of candidate key files.
 A directly used key file should contain at least 128 bits of unpredictable
 entropy. A password shall first be transformed by an externally specified
-memory-hard password KDF. Implementations shall compare authentication values
-without data-dependent early exit.
+memory-hard password KDF\@. Implementations shall compare authentication values
+without data-dependent early exit to mitigate timing attacks.
 
-\section{BLAKE3 slice chaining values}
+\section{BLAKE3 slice tags}\label{slice-tags}
 
-\specp If required feature \texttt{XPAR\_FEAT\_B3\_SUBTREE} is clear, an SLTG
-entry is the specified truncation of the ordinary BLAKE3 digest of the complete
-zero-padded slice. If the bit is set, \texttt{align} shall equal 2, $Z$ shall
-be a power of two not less than 1024, \texttt{stream\_base} shall be divisible
-by 1024, and an SLTG entry shall be the chaining value defined below. Because
-this rule changes integrity interpretation, the feature is required and shall
-not appear in \texttt{optional\_features}.
+\specp If required feature \texttt{XPAR\_FEAT\_B3\_SUBTREE} is not set, an
+SLTG entry is the first \texttt{slice\_tag\_len} bytes of the BLAKE3 digest of
+the complete zero-padded slice. In an authenticated generation, it is instead
+the corresponding truncation of
+$\mathrm{BLAKE3}_{\mathrm{keyed}}(K_{slice},\mathtt{slice})$. If the feature is
+set, \texttt{align} shall equal 2,
+$Z$ shall be a power of two not less than 1024, \texttt{stream\_base} shall be
+divisible by 1024, and an SLTG entry shall be the chaining value defined below.
+Because this feature changes the interpretation of integrity data, it shall
+appear only in \texttt{required\_features}.
 
 \specp For slice $i$, the first BLAKE3 chunk counter is
 $(\mathtt{stream\_base}+iZ)/1024$. Chunk compression shall use the standard
-BLAKE3 CHUNK\_START and CHUNK\_END flags and, for authenticated data,
-KEYED\_HASH with $K_{slice}$. The resulting chunk chaining values shall be
-reduced as a balanced binary tree from left to right with the standard PARENT
-flag. ROOT shall not be set. The eight 32-bit chaining-value words shall be
-serialized little-endian and truncated to \texttt{slice\_tag\_len} bytes. This
-is a standalone balanced-tree chaining value with absolute chunk counters; it
-is not asserted to be a node in a larger file or set BLAKE3 tree.
+BLAKE3 \texttt{CHUNK\_START} and \texttt{CHUNK\_END} flags. For authenticated data, $K_{slice}$
+shall supply the initial chaining value and every chunk and parent compression
+shall set \texttt{KEYED\_HASH}. The resulting chunk chaining values shall be
+reduced as a balanced binary tree from left to right with the standard
+\texttt{PARENT}
+flag. \texttt{ROOT} shall not be set. The eight 32-bit chaining-value words shall be
+serialized little-endian and truncated to \texttt{slice\_tag\_len} bytes. The
+result is a standalone balanced-tree chaining value with absolute chunk
+counters, not a node in a larger BLAKE3 tree for a file or set.
+
+\chapter{Packet framing}\label{packet-framing-clause}
+
+\specp The body offsets in this clause are relative to the start of the packet
+body unless a field definition states otherwise.
+
+\section{Conventions}\label{conventions}
+
+\specp In field descriptions, MBZ means that the field shall be written as
+zero and that a reader shall reject any other value.
+
+\begin{longtable}[]{@{}p{.22\linewidth}p{.72\linewidth}@{}}
+\toprule\noalign{}
+Rule & Value \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Integer byte order & little-endian, for all fields, with no
+exceptions \\
+Integer signedness & unsigned, unless the field name is prefixed with
+\texttt{i} \\
+Alignment & every packet begins at an 8-byte boundary within its volume;
+every packet length is a multiple of 8 \\
+Padding & zero bytes \\
+Reserved fields & writers shall write zero; readers shall reject a nonzero
+reserved field unless its definition expressly permits another value \\
+Text & UTF-8, with no BOM or NUL byte unless a field definition states
+otherwise \\
+Hash & BLAKE3, unkeyed by default and keyed as specified in
+Clause~\ref{integrity} when \option{auth} is used. $\mathrm{BLAKE3}\text{-}n$
+means the first $n$ bits of the standard 256-bit output \\
+CRC & CRC-32C (CRC-32/ISCSI): polynomial \texttt{0x1EDC6F41}, reflected
+polynomial \texttt{0x82F63B78}, initial value \texttt{0xFFFFFFFF}, reflected
+input and output, and final XOR \texttt{0xFFFFFFFF}. The check value is
+$\mathtt{check}(\texttt{"123456789"})=\mathtt{0xE3069283}$. Values are stored
+as \texttt{u32le} \\
+\end{longtable}
+
+\section{Packet framing}\label{packet-framing}
+
+\specp Every packet begins with a 48-byte header.
+
+\begin{verbatim}
+  offset  size  type     field
+  ------  ----  -------  -----------------------------------------------
+  0       8     u8[8]    magic     = 58 50 41 52 32 50 4B 54  "XPAR2PKT"
+  8       8     u64le    length    total packet size including header
+  16      16    u8[16]   set_id
+  32      4     u8[4]    type      four ASCII characters
+  36      4     u32le    flags
+  40      8     u8[8]    checksum
+  48      ...            body      (length - 48 bytes)
+\end{verbatim}
+
+\specp The packet length shall satisfy
+$\mathtt{length}\ge48$, $\mathtt{length}\bmod8=0$,
+$\mathtt{length}\le2^{48}$, and
+$\mathtt{offset}+\mathtt{length}\le\mathtt{volume\_size}$.
+
+\specp A packet whose body description states an exact size has a fixed body;
+all other packets have variable bodies. For a fixed-body packet,
+$\mathtt{length}-48$ shall equal the stated body length. For a variable-body
+packet, the stated fields are followed
+by zero to seven zero padding bytes and no other bytes. Readers shall
+reject nonzero padding. Every reserved flag bit shall be zero. A packet
+shall use the CRITICAL and KEYED flags required by its packet type,
+generation, and authentication mode.
+
+\specp The flag bits have the following meanings:
+
+\begin{longtable}[]{@{}p{.08\linewidth}p{.26\linewidth}p{.60\linewidth}@{}}
+\toprule\noalign{}
+Bit & Name & Meaning \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & \texttt{CRITICAL} & Member of the replicated critical group
+(Clause~\ref{the-critical-group}); an unknown critical type requires rejection \\
+1 & \texttt{KEYED} & \texttt{checksum} is a keyed BLAKE3 tag under
+$K_{pkt}$ \\
+2 & \texttt{BODY\_UNCHECKED} & \texttt{checksum} covers only the header;
+permitted only on \texttt{STRM} \\
+3--31 & reserved & MBZ \\
+\end{longtable}
+
+\specp Let $H$ be the concatenation of packet bytes $[0,40)$ and
+$[48,\mathtt{length})$. Thus, $H$ contains the whole packet except the
+eight-byte checksum field. If \texttt{BODY\_UNCHECKED} is set, $H$
+contains packet bytes $[0,40)$ only. If \texttt{KEYED} is clear,
+$\mathtt{checksum}=\mathrm{BLAKE3}(H)[0,8)$. If \texttt{KEYED} is set,
+$\mathtt{checksum}=\mathrm{BLAKE3}_{\mathrm{keyed}}(K_{pkt},H)[0,8)$.
+
+\subsection{Packet types}\label{packet-types}
+
+\begin{longtable}[]{@{}p{.13\linewidth}p{.12\linewidth}p{.31\linewidth}p{.36\linewidth}@{}}
+\toprule\noalign{}
+Type & \texttt{CRITICAL} & Occurs in & Clause \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{VOLH} & no & every packet-bearing volume; first, at offset 0 &
+\ref{volh-volume-header} \\
+\texttt{SETD} & yes & critical group & \ref{setd-set-descriptor} \\
+\texttt{FILE} & yes & critical group; entries owned by the generation &
+\ref{file-manifest-entry} \\
+\texttt{POSX} & yes & critical group; when an owned FILE refers to it &
+\ref{posx-the-ownership-and-attribute-table} \\
+\texttt{SLCR} & yes & critical group; subject to the integrity-table rules &
+\ref{slcr-sltg-and-slcl-slice-tables} \\
+\texttt{AUTH} & yes & critical group, when \option{auth} &
+\ref{auth-crtr-cmnt} \\
+\texttt{LAYT} & yes & critical group & \ref{layt-volume-layout} \\
+\texttt{ARMG} & no & contains the armoured critical group &
+\ref{armg-armoured-packet-group} \\
+\texttt{SLTG} & no & index, first recovery, and armoured volumes; when required &
+\ref{slcr-sltg-and-slcl-slice-tables} \\
+\texttt{SLCL} & no & index, first recovery, and armoured volumes; when required &
+\ref{slcr-sltg-and-slcl-slice-tables} \\
+\texttt{RCVS} & no & recovery volumes and armoured-layout plaintext &
+\ref{rcvs-recovery-slice} \\
+\texttt{STRM} & no & armoured-layout plaintext only &
+\ref{strm-the-protected-stream} \\
+\texttt{CRTR} & no & every packet-bearing volume, last non-comment
+packet & \ref{auth-crtr-cmnt} \\
+\texttt{CMNT} & no & optional & \ref{auth-crtr-cmnt} \\
+\end{longtable}
+
+\specp Each byte of a packet type shall be an ASCII letter or digit. Types
+consisting only of uppercase letters and digits are reserved for this
+specification. A type containing a lowercase letter is private. A conforming
+reader shall skip an unknown noncritical packet type without reporting an
+error, and shall reject an unknown packet for which \texttt{CRITICAL} is set.
+
+\chapter{Packet bodies}\label{packet-bodies}
+
+\section{\texorpdfstring{\texttt{VOLH}: volume
+header}{VOLH: volume header}}\label{volh-volume-header}
+
+\specp The body is 24 bytes and the complete packet is 72 bytes.
+
+\begin{verbatim}
+  0   4  u32le  volume_index          0xFFFFFFFF for a standalone index volume
+  4   4  u32le  volume_kind           0 index, 1 data, 2 recovery
+  8   4  u32le  format_version_major  = 2
+  12  4  u32le  format_version_minor  = 0
+  16  8  u64le  reserved              MBZ
+\end{verbatim}
+
+\specp The VOLH packet shall be the first packet, at offset 0, of every volume
+that contains packets. A reader that does not implement
+the value of \texttt{format\_version\_major} shall refuse to repair the set. It
+may verify portions of the set whose interpretation is independent of that
+version.
+
+\section{\texorpdfstring{\texttt{SETD}: set
+descriptor}{SETD: set descriptor}}\label{setd-set-descriptor}
+
+\specp The body consists of $80+16F$ bytes.
+
+\begin{verbatim}
+  0   8      u64le   slice_size Z            multiple of 64; 64 <= Z <= 2^40
+  8   8      u64le   data_slice_count S      <= 2^field_log2 - 1; 0 only in a
+                                             stream-empty generation
+  16  8      u64le   stream_length L         if S >= 1: (S-1)*Z < L <= S*Z
+                                             if S = 0: L = 0
+  24  4      u32le   file_count F            root: >= 1; child: may be 0
+  28  1      u8      field_log2              8 or 16
+  29  1      u8      codec                   0 = high-rate FFT, 1 = matrix,
+                                             2 = low-rate FFT
+  30  1      u8      recovery_axis_log2      at most field_log2
+  31  1      u8      layout                  0 sidecar, 1 split, 2 armoured
+  32  1      u8      align                   0 packed, 1 slice-aligned,
+                                             2 BLAKE3-chunk-aligned (1 KiB)
+  33  1      u8      slice_tag_len           0, 8, or 16
+  34  1      u8      dedup_level             0 none, 1 file, 2 chunk
+  35  1      u8      reserved                MBZ
+  36  4      u32le   required_features
+  40  4      u32le   optional_features
+  44  4      u32le   cell_bytes Y            0, or a multiple of 64 from 4096
+                                             through Z
+  48  16     u8[16]  parent_set_id           zero for generation 0; otherwise nonzero
+  64  4      u32le   generation g            0 for a root set
+  68  4      u32le   posix_record_count      zero when POSX is absent;
+                                             otherwise nonzero
+  72  8      u64le   stream_base             global stream offset of this
+                                             generation; 0 when generation = 0
+  80  16*F   u8[16]  file_id[F]              in manifest order
+\end{verbatim}
+
+\specp Let $Y=\mathtt{cell\_bytes}$ be the erasure granularity. If $Y=0$,
+SLCL is absent and each complete slice is one erasure unit. If $Y>0$, a slice
+contains $K=\lceil Z/Y\rceil$ cells, where $K\le65536$, and the last contains
+$Z-\lfloor(Z-1)/Y\rfloor Y$ bytes, and complete SLCL coverage is required. The
+value of $Y$ defines the cell boundaries in each column.
+
+\specp A metadata-only generation has $S=L=0$ and contains no SLCR, SLTG,
+SLCL, or RCVS packets and no recovery volumes. Such a generation may rename or
+delete entries, change permissions, or add empty directories and symbolic
+links. Its FILE packets remain part of the critical group. A root generation
+shall have $F\ge1$. A child generation may have $F=0$, in which case its
+effective manifest is empty, its SETD body is 80 bytes, it contains no FILE
+packets, and its set identifier is calculated from the SETD body alone.
+
+\specp The \texttt{required\_features} and \texttt{optional\_features} fields
+shall be interpreted as specified in Clause~\ref{extensibility-and-versioning}.
+Version 2.0 defines required bit 0 as \texttt{XPAR\_FEAT\_B3\_SUBTREE}: SLTG
+entries are BLAKE3 subtree chaining values as specified in
+Clause~\ref{slice-tags}. The bit requires $\mathtt{align}=2$,
+$\mathtt{slice\_tag\_len}\ne0$, a power-of-two
+$Z\ge1024$, and a 1 KiB-aligned \texttt{stream\_base}. Bits 1 through 31 are
+undefined in version 2.0.
+
+\specp The array \texttt{file\_id[F]} specifies the effective manifest in
+stored order. The same order is used when appending entry content and assigning
+manifest indices. A reader shall not reorder the array.
+
+\specp The \texttt{dedup\_level} field describes the sharing performed by the
+writer. A value of 0 means that no extent is shared. A value of 1 means that
+only complete extent lists are shared between entries. A value of 2 means that
+partial ranges may also be shared, whether within one entry or between entries.
+Extent validity does not depend on this field; the rules in
+Clause~\ref{extents} are authoritative. A writer shall record the highest form
+of sharing that it used.
+
+\specp The \texttt{posix\_record\_count} field is the number of records in the
+generation's POSX table. It also gives the exclusive upper bound for
+\texttt{FILE.posix\_index}, so a reader can validate that index before parsing
+a POSX packet.
+
+\subsection{Parent sets and inheritance}
+\label{chains-parent-sets-inheritance-and-shadowing}
+
+\specp Generation 0 shall have an all-zero \texttt{parent\_set\_id} and a zero
+\texttt{stream\_base}. For generation $g>0$, the following requirements apply:
+
+\begin{itemize}
+\item
+  \texttt{parent\_set\_id} shall equal the parent's
+  \texttt{set\_id}.
+\item
+  \texttt{stream\_base} shall equal
+  $\mathtt{parent.stream\_base}+\mathtt{parent.stream\_length}$.
+\item
+  The parent and child shall either both be unauthenticated or both be
+  authenticated. Authenticated generations in one chain shall have equal
+  \texttt{AUTH.key\_check} and \texttt{AUTH.unkeyed\_retained} values.
+\item
+  A reader shall reject a chain that violates any of these requirements and report
+  the generation and parent for which validation failed.
+\item
+  The chain shall be finite and acyclic. The generation number shall decrease
+  by one at each step toward the root. A reader shall place an implementation
+  limit on the number of generations it examines.
+\end{itemize}
+
+\specp The \texttt{set\_id} in a packet header identifies the generation that
+owns the packet. A packet is owned by the generation whose set identifier
+appears in that field. Only a FILE packet may supply an inherited manifest
+entry. When resolving such an entry, a reader may also consult the POSX table
+owned by the same ancestor. Every other generation-local packet used while
+resolving generation $g$ shall contain the set identifier of $g$; the parent's
+SETD is used only to resolve the chain.
+
+\specp For each \texttt{file\_id}
+in \texttt{SETD(g).file\_id[]}, the entry is the FILE packet with that
+identifier from the nearest generation, beginning with $g$ and proceeding
+toward the root:
+
+\begin{verbatim}
+  resolve(file_id, g):
+    for h := g, g-1, ..., 0:
+      if a FILE packet with this file_id is owned by generation h: return it
+    fail("manifest entry not found", file_id, g)
+\end{verbatim}
+
+\begin{itemize}
+\item
+  A generation shall not contain two FILE packets with the same
+  \texttt{file\_id}.
+\item
+  Every \texttt{file\_id} in \texttt{SETD(g).file\_id[]} shall
+  resolve.
+\end{itemize}
+
+\specp A recovery slice from generation $h$ applies only to the stream range
+of generation $h$. A reader shall not use it for any other range.
+
+\specp Slice numbers are relative to a generation. Slice $i$ has a $Z$-byte
+coded representation. Its initial bytes correspond to the logical stream
+interval beginning at $\mathtt{stream\_base}(g)+iZ(g)$; any final padding has
+no address in the logical stream. The SLCR, SLTG, SLCL, and RCVS packets for
+generation $g$ use these slice numbers.
+
+\section{\texorpdfstring{\texttt{FILE}: manifest
+entry}{FILE: manifest entry}}\label{file-manifest-entry}
+
+\specp The body has $128+16\mathtt{extent\_count}+\mathtt{name\_len}
++\mathtt{extra\_len}$ bytes before padding and shall be padded with zeros to a
+multiple of eight bytes.
+
+\begin{verbatim}
+  0    16  u8[16]  file_id          as specified by the integrity rules
+  16   8   u64le   length           as specified by entry_type
+  24   32  u8[32]  content_hash     digest of C_f
+  56   16  u8[16]  prefix_hash      digest of first min(16384, L_f) bytes of C_f
+  72   8   i64le   mtime_ns         ns since Unix epoch; INT64_MIN = absent
+  80   8   i64le   atime_ns         ns since Unix epoch; INT64_MIN = absent
+  88   8   i64le   ctime_ns         ns since Unix epoch; INT64_MIN = absent
+  96   8   i64le   btime_ns         creation time; INT64_MIN = absent
+  104  4   u32le   mode             POSIX mode bits; 0xFFFFFFFF = absent
+  108  4   u32le   posix_index      index into the POSX table; 0xFFFFFFFF absent
+  112  4   u32le   extent_count     0 for entry_type 1, 2 and 3
+  116  2   u16le   entry_type       0 regular, 1 dir, 2 symlink, 3 hard link
+  118  2   u16le   attrs
+  120  4   u32le   name_len         <= 65535
+  124  4   u32le   extra_len        <= 65535
+  128  16*extent_count              as given by the extents clause
+  ...  name_len   u8[]  name
+  ...  extra_len  u8[]  extra
+  ...  pad to 8
+\end{verbatim}
+
+\specp The bits in \texttt{attrs} have the following meanings:
+
+\begin{longtable}[]{@{}p{.08\linewidth}p{.26\linewidth}p{.60\linewidth}@{}}
+\toprule\noalign{}
+Bit & Meaning & Restoration \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & read-only & restored where supported \\
+1 & hidden & restored where supported \\
+2 & system & restored where supported \\
+3 & executable & restored via \texttt{mode} on POSIX; see
+Clause~\ref{metadata-restoration-rules} \\
+4 & \texttt{name} is not a sequence of Unicode scalar values and uses the
+lossless platform mapping below &
+n/a \\
+5 & archive & restored where supported \\
+6 & content not indexed & status only; not restored \\
+7 & sparse & advisory only \\
+8 & filesystem-compressed & advisory only \\
+9 & filesystem-encrypted & advisory only \\
+10 & \texttt{mode} carries setuid, setgid or sticky bits & see
+Clause~\ref{metadata-restoration-rules} \\
+11--15 & reserved MBZ & n/a \\
+\end{longtable}
+
+\specp On Windows, \texttt{attrs} bits 0, 1, 2, and 5 correspond respectively
+to the read-only, hidden, system, and archive file attributes. On another host,
+a reader shall apply a bit only if that host provides the same property. It
+shall otherwise omit the property and report the omission. Bit 3 is restored
+through \texttt{mode}; bit 4 selects the name conversion below; and bit 6 is
+reported as stored status but does not alter the extracted object.
+
+\specp The entry types have the following representations:
+
+\begin{longtable}[]{@{}p{.11\linewidth}p{.15\linewidth}p{.15\linewidth}p{.20\linewidth}p{.28\linewidth}@{}}
+\toprule\noalign{}
+Type & \texttt{length} & \texttt{extent\_count} & \texttt{extra} &
+\texttt{content\_hash} covers \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+regular (0) & file size & extent lengths sum to \texttt{length} & empty & the
+file bytes \\
+directory (1) & 0 & 0 & empty & the empty string \\
+symlink (2) & 0 & 0 & target path bytes & the target path bytes \\
+hard link (3) & the canonical entry's \texttt{length} &
+0 & the canonical entry's \texttt{name}, byte for byte &
+the canonical entry's content \\
+\end{longtable}
+
+\subsection{Path rules}\label{path-rules}
+
+\specp The \texttt{name} field is a relative path whose separator is
+\texttt{/}. A conforming writer shall not emit, and a conforming reader shall
+treat as malformed, a name with any of the following properties:
+
+\begin{itemize}
+\item
+  an empty name, or any empty path component;
+\item
+  a leading \texttt{/}, or a drive letter, or a UNC prefix;
+\item
+  any component equal to \texttt{.} or \texttt{..};
+\item
+  a trailing \texttt{/};
+\item
+  any byte from \texttt{0x00} through \texttt{0x1F};
+\item
+  on Windows targets, a byte equal to \texttt{\textbackslash},
+  \texttt{:}, \texttt{*}, \texttt{?}, \texttt{"}, \texttt{<},
+  \texttt{>}, or \texttt{|};
+\item
+  on Windows targets, a component whose stem
+  case-insensitively matches \texttt{CON}, \texttt{PRN}, \texttt{AUX},
+  \texttt{NUL}, \texttt{COM1} through \texttt{COM9}, or
+  \texttt{LPT1} through \texttt{LPT9};
+\item
+  on Windows targets, a component ending in \texttt{.} or a space.
+\end{itemize}
+
+\specp A reader shall not follow an existing symlink while creating a path
+during extraction.
+
+\specp The same rules apply to a hard-link target in \texttt{extra} when
+\texttt{entry\_type} is 3. The target shall identify an entry in the same
+effective manifest (Clause~\ref{hard-links}). A symbolic-link target, for which
+\texttt{entry\_type} is 2, is content rather than an extraction path. It shall
+be nonempty, shall contain no NUL byte, and shall not exceed 65535 bytes.
+Absolute targets, \texttt{..} components, and non-UTF-8 host bytes are
+permitted in symbolic-link targets.
+
+\specp No two entries in one effective manifest shall have byte-identical
+names. When extracting to a case-insensitive file system, a reader shall also
+reject names that differ only in case and shall report both names.
+
+\specp On POSIX, a name that is not valid UTF-8 shall be stored as its original
+bytes with \texttt{attrs} bit 4 set and shall be written back byte for byte. On
+Windows, a writer shall convert a name from UTF-16: valid surrogate pairs are
+encoded as ordinary UTF-8, and an unpaired surrogate is encoded as though its
+code-unit value were a code point. The latter encoding is WTF-8 and requires
+bit 4. A Windows reader shall reverse this conversion to reproduce the original
+UTF-16 code units.
+
+\subsection{Extents}\label{extents}
+
+\specp Each extent occupies 16 bytes:
+
+\begin{verbatim}
+  0   8   u64le   stream_offset    absolute, in the chain's stream address space
+  8   8   u64le   length           >= 1
+\end{verbatim}
+
+\specp The byte range denoted by an extent is
+\[
+ [\mathtt{stream\_offset},
+  \mathtt{stream\_offset}+\mathtt{length}).
+\]
+The content of an entry is the concatenation of these ranges in list order. A
+reader shall check the following constraints before using an extent and shall
+treat a violation as a malformed packet:
+
+\begin{enumerate}
+\item
+  $\mathtt{length}\ge1$.
+\item
+  For \texttt{entry\_type} 0,
+  $\sum\mathtt{extent.length}=\mathtt{FILE.length}$. The other entry types
+  have an \texttt{extent\_count} of zero. Only type 3 may then have a nonzero
+  \texttt{length}; that length is the length of the canonical entry's content.
+\item
+  $\mathtt{stream\_offset}+\mathtt{length}$ does not overflow \texttt{u64}.
+\item
+  The range shall lie within the stream of one generation $h$ at or below the
+  generation containing the packet:
+  \begin{align*}
+  \mathtt{stream\_base}(h)&\le\mathtt{stream\_offset},\\
+  \mathtt{stream\_offset}+\mathtt{length}
+    &\le\mathtt{stream\_base}(h)+\mathtt{stream\_length}(h).
+  \end{align*}
+\item
+  For each generation $g$, examine the FILE packets owned by $g$ in their
+  effective-manifest order and examine each packet's extents in list order.
+  Maintain a high-water mark $H_g$ whose initial value is
+  $b_g=\mathtt{stream\_base}(g)$, and let $C_g$ be the union of the ranges of
+  canonical extents already examined. When an alignment mode is active, let
+  $a_g=Z$ for $\mathtt{align}=1$ and $a_g=1024$ for
+  $\mathtt{align}=2$, and define
+  \[
+    N_g(x)=b_g+a_g\left\lceil\frac{x-b_g}{a_g}\right\rceil .
+  \]
+  An extent that refers to an ancestor generation is subject to rules 1
+  through 4 but does not change $H_g$ or $C_g$. For every other extent, one of
+  the following shall hold:
+
+  \begin{itemize}
+  \item
+    $\mathtt{stream\_offset}=H_g$: the extent is canonical and
+    defines new stream bytes. Set
+    $H_g=\mathtt{stream\_offset}+\mathtt{length}$ and add the extent's range
+    to $C_g$.
+  \item
+    $\mathtt{stream\_offset}<H_g$ and
+    $\mathtt{stream\_offset}+\mathtt{length}\le H_g$: the extent is
+    aliased. Its complete range shall be contained in $C_g$; alignment padding
+    is not available for aliasing. $H_g$ and $C_g$ are unchanged.
+  \item
+    $\mathtt{stream\_offset}>H_g$: an alignment mode shall be active, the
+    extent shall begin at $N_g(H_g)$, and the intervening bytes shall be zero.
+    Set $H_g$ to the end of the extent and add the extent's range to $C_g$.
+  \end{itemize}
+
+  An extent is malformed if it begins below $H_g$ and ends above $H_g$.
+\end{enumerate}
+
+\specp Let $E_g=\mathtt{stream\_base}(g)+\mathtt{stream\_length}(g)$. After the
+last entry owned by generation $g$, either $H_g=E_g$, or an alignment mode
+shall be active, $E_g=N_g(H_g)$, and the bytes in $[H_g,E_g)$ shall be zero.
+After this test, set $H_g=E_g$.
+
+\specp Extents may overlap other extents in the same or another entry. They
+need not be sorted by \texttt{stream\_offset}; their list order determines the
+order of the corresponding file content.
+
+\subsection{Hard links}\label{hard-links}
+
+\specp An entry with \texttt{entry\_type} 3 is an additional name for the
+content of another entry, called the canonical entry. On a host that supports
+hard links, extraction creates another directory entry for the same file.
+
+\specp A writer shall emit an entry as an alias when its \texttt{(dev, ino)}
+matches that of an entry already in the manifest and the host guarantees that
+this pair is a stable and unique file identity while the input tree is read.
+The writer may use $\mathtt{st\_nlink}>1$ to avoid recording files that cannot
+have aliases. If the capability is absent, the writer shall represent every
+name as an independent entry.
+
+\specp A hard-link entry has the following representation:
+
+\begin{itemize}
+\item
+  \texttt{extra} holds the canonical entry's
+  \texttt{name}, byte for byte, rather than an index.
+\item
+  \texttt{extent\_count} is zero; \texttt{length}, \texttt{content\_hash},
+  and \texttt{prefix\_hash} shall equal the corresponding fields in the
+  canonical entry.
+  A reader shall reject an alias when any of these content identity
+  fields differs.
+\item
+  \texttt{mode}, the four times, and \texttt{attrs} shall equal the
+  corresponding fields in the canonical entry. The two
+  \texttt{posix\_index} fields may both be \texttt{0xFFFFFFFF}. Otherwise,
+  both shall resolve, and the resulting POSX records shall be byte-identical.
+  The record contents, rather than the index values, are compared because the
+  entries may occur in different generations. A writer shall write equal
+  values. A reader that
+  encounters a difference shall report the set as malformed; during salvage,
+  it may use the canonical entry's values.
+\end{itemize}
+
+\specp A reader shall enforce the following constraints:
+
+\begin{enumerate}
+\item
+  \texttt{extra} shall name an entry in the same effective manifest.
+  A hard-link alias shall not refer to an entry outside the set.
+\item
+  The named entry shall have \texttt{entry\_type} 0. An alias shall not refer
+  to another alias.
+\item
+  \texttt{extra} is subject to every rule in Clause~\ref{path-rules},
+  as if it were \texttt{name}.
+\end{enumerate}
+
+\specp A writer shall choose the canonical name as follows:
+
+\begin{itemize}
+\item
+  Among the entries first emitted by one generation, the canonical entry for an
+  inode is the one whose \texttt{name} sorts first bytewise. Since
+  the manifest is sorted as specified in Clause~\ref{determinism}, this is the
+  first such name encountered.
+\item
+  If the inherited canonical name remains in the effective manifest, a name
+  added by a later generation shall be its alias, whatever the new name's sort
+  order. Adding such a name adds one FILE packet and no stream bytes.
+\item
+  If the inherited canonical name is absent from the new effective manifest,
+  it shall not be the target of an alias. Of the paths for the same file
+  identity that remain, the first in manifest order shall be represented as a
+  regular-file entry; all others shall refer to it as aliases.
+\end{itemize}
+
+\specp A writer shall identify hard links before applying content
+deduplication. For each path in manifest order, it shall emit a hard-link entry
+if a preceding path has the same stable file identity. Otherwise, it shall emit
+a regular-file entry and may reuse earlier stream extents according to
+\texttt{dedup\_level}.
+
+\specp The following table illustrates the distinction between hard-link
+aliases and shared extents. The notation $\{s,\operatorname{len}(X)\}$ denotes
+an extent that begins at $s$ and contains the bytes $X$.
+
+\begin{longtable}[]{@{}p{.14\linewidth}p{.07\linewidth}p{.13\linewidth}p{.28\linewidth}p{.27\linewidth}@{}}
+\toprule\noalign{}
+entry & type & extents & \texttt{extra} & extracted object \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{a.txt} & 0 & $[\{s,\operatorname{len}(X)\}]$ & empty & inode 42,
+canonical occurrence of $X$ \\
+\texttt{b.txt} & 3 & none & \texttt{a.txt} & inode 42, the same bytes \\
+\texttt{c.txt} & 0 & $[\{s,\operatorname{len}(X)\}]$ & empty & inode 99,
+an aliased occurrence of $X$ \\
+\end{longtable}
+
+\specp A reader shall verify the canonical content before accepting an alias.
+For an unauthenticated set, or an authenticated set that retains unkeyed
+hashes, it shall compare the unkeyed content hash with the recorded
+\texttt{content\_hash}. For an authenticated set that does not retain unkeyed
+hashes, it shall compare the keyed hash under $K_{file}$. Filesystem identity
+is used by a writer to recognize hard links; it does not verify file content.
+
+\subsection{\texorpdfstring{\texttt{POSX}: the ownership and
+attribute
+table}{POSX: the ownership and attribute table}}\label{posx-the-ownership-and-attribute-table}
+
+\begin{verbatim}
+  POSX body:
+  0   4    u32le   first_record
+  4   4    u32le   record_count n          n >= 1
+  8   ...          n records, each padded to a multiple of 8
+
+  record:
+  0   4    u32le   uid                     0xFFFFFFFF = absent
+  4   4    u32le   gid                     0xFFFFFFFF = absent
+  8   2    u16le   owner_len               <= 255
+  10  2    u16le   group_len               <= 255
+  12  2    u16le   xattr_count
+  14  2    u16le   reserved                MBZ
+  16  owner_len  u8[]  owner name, UTF-8, no NUL
+  ...  group_len u8[]  group name, UTF-8, no NUL
+  ...  xattr_count entries, each:
+         0   2   u16le   name_len          >= 1, <= 65535
+         2   2   u16le   value_len         <= 65535
+         4   name_len   u8[]  name, UTF-8, no NUL
+         ...  value_len  u8[]  value, arbitrary bytes
+  ... pad to 8
+\end{verbatim}
+
+\specp \texttt{FILE.posix\_index} is the absolute record index across the
+concatenation of all \texttt{POSX} packets of the generation that owns
+the \texttt{FILE} packet, taken in ascending \texttt{first\_record}.
+The packets shall cover $[0,\mathtt{posix\_record\_count})$ without gaps or
+overlaps. The value of \texttt{posix\_index} shall be less than
+\texttt{SETD.posix\_record\_count} in the generation containing the FILE
+packet.
+
+\specp A record is self-delimiting. Its size is determined from
+\texttt{owner\_len}, \texttt{group\_len}, and the lengths in its
+\texttt{xattr\_count} name--value pairs, rounded up to a multiple of eight
+bytes. Before reading each variable-length field, a reader shall verify that
+the field lies within the remaining packet body. Otherwise, it shall report a
+malformed packet.
+
+\specp A writer shall emit each distinct record once. Two records are equal if
+their serialized bytes, excluding trailing padding, are equal. The following
+ordering requirements apply:
+
+\begin{itemize}
+\item
+  xattrs within a record shall be sorted by \texttt{name} bytewise
+  ascending; two xattrs in one record shall not share a name.
+\item
+  Records shall appear in order of first reference, that is, ascending
+  order of the lowest manifest index that refers to them.
+\end{itemize}
+
+\specp A writer shall append records in index order and start a new POSX
+packet if the next record would make the body exceed 1 MiB. A record larger
+than 1 MiB shall occupy a packet by itself. Readers shall accept any split that
+satisfies the format constraints.
+
+\specp A missing or malformed POSX packet makes the set nonconforming. During
+salvage, a reader may nevertheless extract an affected entry and apply its
+\texttt{mode}, timestamp, and \texttt{attrs} fields. It shall report the
+omission for each affected entry and shall not silently substitute ownership or
+extended-attribute defaults.
+
+\subsection{Metadata restoration
+rules}\label{metadata-restoration-rules}
+
+\specp The \texttt{extract} operation and the \texttt{repair} \option{to}
+operation shall obey the following rules.
+
+\specp Metadata shall not be applied through a symbolic link. Each metadata
+operation shall act on the directory entry itself through an interface that
+does not follow symbolic links. An implementation shall not use a path-based
+operation that can follow a symbolic link. This restriction prevents a link
+from causing modification of an object outside the extraction directory.
+
+\specp A host that has no symlink-safe call for a given field shall skip that
+field on entries of \texttt{entry\_type} 2 rather than fall back to a
+path-based call.
+
+\begin{enumerate}
+\item
+  The set-user-ID, set-group-ID, and sticky bits shall be cleared from
+  \texttt{mode} unless \option{preserve=setid} is specified. If it is
+  specified, they shall be applied only if \texttt{-f} is also given or the
+  session is interactive and the user confirms.
+\item
+  Ownership shall not be applied unless \option{preserve=owner}
+  is specified. By default, names are mapped using
+  \option{owner-map=name}, with the numeric identifier used when the
+  name does not resolve; the reader shall report each such fallback. The
+  \option{owner-map=numeric} option uses the numeric identifiers directly. If the
+  process cannot change ownership, \texttt{extract} shall report the omission
+  once per set and shall continue. The omission does not change the operation's
+  exit status.
+\item
+  By default, only extended attributes in the \texttt{user.} namespace shall
+  be restored. \texttt{security.*}, \texttt{system.*}, and
+  \texttt{trusted.*} are recorded but not applied unless
+  \option{preserve=xattr-all} and \texttt{-f} are both specified. This
+  restriction prevents an untrusted set from restoring attributes such as
+  \texttt{security.capability} or \texttt{security.selinux}. The reader shall
+  report the namespaces that it omits.
+\item
+  The \texttt{atime} field shall not be restored unless
+  \option{preserve=atime} is specified. On POSIX, the operation shall
+  preserve \texttt{mtime} when both values must be set in one call.
+\item
+  The \texttt{ctime} field shall not be restored. POSIX defines it as the file
+  status-change time, which the kernel sets when metadata is changed. It is
+  recorded for forensic use and
+  reported by \texttt{list}. The option \option{preserve=ctime} is accepted
+  at \texttt{create} and rejected at \texttt{extract}.
+\item
+  The \texttt{btime} field shall be applied only where the host provides a
+  suitable symlink-safe interface. If no such interface is available, the
+  reader shall omit the field and report the omission once.
+\item
+  The reader shall not apply \texttt{attrs} bits 7, 8, and 9, as specified in the
+  table in Clause~\ref{file-manifest-entry}.
+\item
+  If the host cannot create a hard link, the reader shall create an independent
+  file containing the canonical content and report the entry as
+  \texttt{materialised-as-copy}. This fallback shall not change the exit status
+  unless \option{require=links} is specified.
+\item
+  Extraction shall create directories in parent-before-child order. It shall
+  then create every entry of type 0 or 2 before creating entries of type 3.
+  The manifest does not require a canonical entry to precede its aliases.
+\item
+  For each entry and omitted metadata class, \texttt{extract} \option{json}
+  shall emit a \texttt{metadata\_skipped} event.
+\end{enumerate}
+
+\section{\texorpdfstring{\texttt{SLCR}, \texttt{SLTG} and
+\texttt{SLCL}: slice
+tables}{SLCR, SLTG and SLCL: slice tables}}\label{slcr-sltg-and-slcl-slice-tables}
+
+\begin{verbatim}
+  SLCR body:
+  0   8    u64le   first_slice
+  8   8    u64le   slice_count n           n >= 1, first_slice + n <= S
+  16  4*n  u32le   crc32c[n]
+  ... pad to 8
+
+  SLTG body:
+  0   8    u64le   first_slice
+  8   8    u64le   slice_count n           n >= 1, first_slice + n <= S
+  16  1    u8      tag_len                 SETD.slice_tag_len; 8 or 16
+  17  7            reserved                MBZ
+  24  tag_len*n  u8[]  tag[n]
+
+  SLCL body:
+  0   8    u64le   first_slice
+  8   8    u64le   slice_count n           n >= 1, first_slice + n <= S
+  16  4    u32le   cell_bytes Y            SETD.cell_bytes; nonzero
+  20  4            reserved                MBZ
+  24  4*n*K  u32le  cell_crc32c[n][K]      K = ceil(Z/Y)
+\end{verbatim}
+
+\specp All three packet types cover slices of one generation's stream range.
+The final slice is zero-padded to $Z$ bytes. The value \texttt{crc32c[i]} is
+the CRC-32C of slice $\mathtt{first\_slice}+i$. The value \texttt{tag[i]} is
+the slice tag specified in Clause~\ref{slice-tags}. The value
+\texttt{cell\_crc32c[i][c]} is the CRC-32C of bytes
+$[cY,\min((c+1)Y,Z))$ of slice $\mathtt{first\_slice}+i$. Values are stored in row-major order, with the
+cell index $c$ varying fastest. The final cell of each slice
+contains $Z-(K-1)Y$ bytes.
+
+\specp In a nonempty generation, SLCR shall provide complete slice coverage
+unless the generation is authenticated and \texttt{unkeyed\_retained} is zero;
+in that case, SLCR shall be absent. SLTG shall provide complete slice coverage
+when \texttt{slice\_tag\_len} is nonzero and shall be absent otherwise. SLCL
+shall provide complete slice coverage when \texttt{cell\_bytes} is nonzero and
+shall be absent otherwise.
+
+\specp Coverage is assessed separately for each replicated copy. The SLCR
+packets within one copy of the critical group form one SLCR table. The SLTG or
+SLCL packets in one volume form one copy of the corresponding table. A writer
+shall place a complete SLTG and SLCL copy, when required, in the index volume
+and in the first recovery volume when one exists. An armoured archive shall
+contain one complete copy of each required table. Identical copies do not
+constitute overlapping coverage. A reader shall reject a set if two complete
+copies of the same table differ and every packet in both copies has a valid
+checksum or keyed tag. Within one copy, coverage shall neither overlap nor
+contain a gap.
+
+\specp A reader shall reject a set in normal validation if a required SLCR,
+SLTG, or SLCL table has no valid complete copy. During salvage, it may derive
+slice-level erasures from SLTG, or from SLCR if SLTG is absent, but shall report
+that cell-level recovery is unavailable when a required SLCL table is missing.
+
+\specp An SLCR or SLTG packet shall cover at most 65536 slices. An SLCL packet
+shall satisfy $n\lceil Z/Y\rceil\le65536$ and shall not divide the cells of one
+slice between packets. Writers shall start a new packet when the applicable
+limit is reached. Readers shall accept any division into packets that satisfies
+these bounds and the applicable complete-coverage requirement; they shall
+reject overlapping or gapped coverage.
+
+\section{\texorpdfstring{\texttt{RCVS}: recovery
+slice}{RCVS: recovery slice}}\label{rcvs-recovery-slice}
+
+\specp The body is $16+Z$ bytes and the complete packet is $64+Z$ bytes.
+
+\begin{verbatim}
+  0   8   u64le   exponent e      < the codec recovery-exponent limit
+  8   8   u64le   reserved        MBZ
+  16  Z   u8[Z]   recovery slice bytes
+\end{verbatim}
+
+\specp Two recovery slices with the same $\mathtt{set\_id}$ and exponent shall be
+byte-identical. A reader encountering a mismatch shall discard the conflicting
+copies and report a format error.
+
+\specp For matrix coding, the exclusive exponent limit is
+$2^{\mathtt{field\_log2}}-S$. For high-rate FFT it is
+$2^{\mathtt{recovery\_axis\_log2}}$. For low-rate FFT it is
+$2^{\mathtt{field\_log2}}-2^{\mathtt{recovery\_axis\_log2}}$. A deterministic
+writer shall emit the consecutive exponents $0,\ldots,R-1$.
+
+\section{\texorpdfstring{\texttt{LAYT}: volume
+layout}{LAYT: volume layout}}\label{layt-volume-layout}
+
+\begin{verbatim}
+  body:
+  0   4   u32le   volume_count V
+  4   4   u32le   this_volume         = 0xFFFFFFFF
+  8   ...         V entries, each padded to a multiple of 8
+
+  entry:
+  0   1   u8      kind                0 index, 1 data, 2 recovery
+  1   1   u8      vflags              bit 0 armoured; bits 1 through 7 MBZ
+  2   2   u16le   name_len
+  4   4   u32le   recovery_first      recovery: first exponent; otherwise 0
+  8   8   u64le   stream_offset       data: stream offset; otherwise 0
+  16  8   u64le   byte_length         data: stream bytes here
+                                      recovery: recovery slice count
+                                      index: 0
+  24  8   u8[8]   vol_tag             data: BLAKE3-64 of the whole volume
+                                      otherwise 0
+  32  name_len  u8[]  name            basename only, no path separators
+  ... pad to 8
+\end{verbatim}
+
+\specp The \texttt{this\_volume} field shall contain \texttt{0xFFFFFFFF}. This
+sentinel identifies the canonical layout table; LAYT is not rewritten for each
+volume. There shall be exactly one index entry. Each name shall be nonempty,
+shall consist of one path component that satisfies Clause~\ref{path-rules}, and
+shall be unique within the LAYT packet. Inactive fields shall be zero. A data
+entry's \texttt{stream\_offset} is relative to this generation's stream range.
+
+\specp For sidecar and split layouts, each packet-bearing volume shall
+correspond to one LAYT entry. The standalone index volume has
+$\mathtt{VOLH.volume\_index}=\mathtt{0xFFFFFFFF}$ and
+$\mathtt{volume\_kind}=0$; it corresponds to the unique index entry. Every
+other packet-bearing volume shall use the zero-based array index of its LAYT
+entry as \texttt{volume\_index}, and its \texttt{volume\_kind} shall equal that
+entry's \texttt{kind}. A recovery volume shall contain exactly one valid RCVS
+packet for each exponent in its declared half-open recovery range and no RCVS
+packet with another exponent. The recovery ranges shall be nonoverflowing,
+pairwise disjoint, nonempty, and within the codec's recovery-exponent limit.
+The first recovery volume is the one whose LAYT entry has the least
+\texttt{recovery\_first} value. The union of the ranges shall contain $R$
+exponents; equivalently, $R$ is the sum of \texttt{byte\_length} over the
+recovery entries.
+
+\specp An armoured layout shall have one LAYT entry: the index entry. Its
+\texttt{vflags} bit 0 shall be set, and its name shall be the archive name.
+There shall be no data or recovery entry. The decoded archive shall contain
+exactly one RCVS packet for each of $R$ distinct exponents and no duplicate
+exponent. In this layout, $R$ is the number of those RCVS packets. The VOLH in
+the decoded plaintext shall have \texttt{volume\_index} equal to
+\texttt{0xFFFFFFFF} and \texttt{volume\_kind} equal to 0.
+
+\specp Before reading an entry, a reader shall verify that its 32-byte fixed
+part, its \texttt{name\_len} bytes, and its padding all lie within the remaining
+LAYT body. After reading $V$ entries, only zero padding may remain.
+
+\specp A sidecar layout shall have no data-volume entry. Its data are the
+regular files named by the effective manifest; a reader maps the available
+file ranges into the generation stream through their extents. In a split
+layout, the data-volume entries shall cover $[0,L)$ without gaps or overlaps.
+When ordered by \texttt{stream\_offset}, each entry shall begin where the
+previous entry ends, and the last entry shall end at $L$. An armoured layout
+shall have no data-volume entry; its STRM packet contains the stream.
+
+\specp Number the $D$ split-layout data volumes from 0 through $D-1$ in
+ascending order of \texttt{stream\_offset}. The ordinal of a data volume is
+$j$ in the naming rules of Clause~\ref{file-naming}.
+
+\section{\texorpdfstring{\texttt{AUTH}, \texttt{CRTR},
+\texttt{CMNT}}{AUTH, CRTR, CMNT}}\label{auth-crtr-cmnt}
+
+\begin{verbatim}
+  AUTH body (32 bytes):
+  0   4   u32le   kdf_id              0 = BLAKE3 derive_key; see authentication
+  4   1   u8      slice_tag_keyed     must be 1
+  5   1   u8      packet_tag_keyed    must be 1
+  6   1   u8      unkeyed_retained    1 if content_hash is unkeyed; SLCR is
+                                      retained when the generation is nonempty
+  7   1            reserved           MBZ
+  8   16  u8[16]  key_check           calculated from the master key
+  24  8   u64le   reserved            MBZ
+\end{verbatim}
+
+\specp The AUTH fields and all authentication requirements are specified in
+Clause~\ref{authentication-keys}.
+
+\begin{verbatim}
+  CRTR body: UTF-8 text, zero-padded to a multiple of 8.
+  CMNT body: UTF-8 text, zero-padded to a multiple of 8.
+\end{verbatim}
+
+\specp CRTR contains a UTF-8 string identifying the writer, and CMNT contains a
+UTF-8 comment. Neither string shall contain a NUL byte.
+The body consists of the string followed by the zero bytes required for packet
+alignment; a reader shall remove all trailing zero bytes. The CRTR string shall
+omit the version when \texttt{SOURCE\_DATE\_EPOCH} is set or
+\option{reproducible} is given, as specified in Clause~\ref{determinism}.
+
+\chapter{Volume layouts and association}\label{volume-layouts}
+
+\section{Volume structure, ordering, and
+naming}\label{volume-structure-ordering-and-naming}
+
+\subsection{The critical group}\label{the-critical-group}
+
+\specp The critical group shall contain the following packets, contiguously and
+in the stated order:
+\begin{enumerate}
+\item one SETD packet;
+\item the FILE packets introduced or changed by the generation, in
+effective-manifest order;
+\item the POSX packets, if any, in ascending \texttt{first\_record};
+\item the SLCR packets when required by
+Clause~\ref{slcr-sltg-and-slcl-slice-tables}, in ascending
+\texttt{first\_slice};
+\item one AUTH packet if the generation is authenticated; and
+\item one LAYT packet.
+\end{enumerate}
+
+\specp In a sidecar or split layout, a writer may protect the critical group
+with ARMG. If it does, the complete group shall be the plaintext of one ARMG
+packet as specified in Clause~\ref{armg-armoured-packet-group}.
+
+\specp For a root set, the group contains all $F$ FILE packets. An inherited
+entry appears in
+\texttt{SETD.file\_id[]} but its FILE packet remains in the volume of the
+ancestor that introduced it.
+
+\specp \texttt{POSX} packets appear only when at least one owned \texttt{FILE}
+packet has $\mathtt{posix\_index}\ne\mathtt{0xFFFFFFFF}$. POSX records
+belong to individual generations and are not inherited. A generation that
+contains no FILE packet referring to a record emits no POSX packet, and
+\texttt{SETD.posix\_record\_count} is 0. An inherited \texttt{FILE}
+packet's \texttt{posix\_index} is an index into the immutable POSX table of the
+generation containing that FILE packet.
+
+\subsection{Packet order within a
+volume}\label{packet-order-within-a-volume}
+
+\specp A packet-bearing volume shall begin with VOLH. If it contains a copy of
+the critical group, that copy shall follow VOLH, either inline or in an ARMG
+packet. The index volume shall contain the group, and the recovery volumes
+selected by Clause~\ref{replication-schedule} shall contain it. In the index
+volume and the first recovery volume, any SLTG packets shall follow the
+critical group, and any SLCL
+packets shall follow the SLTG packets. Except in an armoured layout, an RCVS
+packet shall occur only in a recovery volume. RCVS packets in one volume, or in
+the decoded plaintext of one armoured archive, shall be in ascending exponent
+order. CRTR shall follow all other non-comment packets. Zero or more CMNT
+packets may follow CRTR.
+
+\subsection{Replication schedule}\label{replication-schedule}
+
+\specp Let $C$ be the size in bytes of the emitted critical group, including
+its armour if present. Number the $N$ recovery volumes from 0 through $N-1$ in
+ascending order of \texttt{recovery\_first}.
+Let $P_i$ be the total number of recovery-slice data bytes in recovery volume
+$i$, excluding RCVS headers and packet framing.
+
+\begin{itemize}
+\item
+  The standalone index volume shall contain one copy.
+\item
+  Recovery volume $i$ shall contain a copy if
+  $C\le\max(1\ \mathrm{MiB},P_i/20)$.
+\item
+  Otherwise, if there are $N$ recovery volumes, recovery volume $i$ shall
+  contain a copy when $i=0$, when $i$ is a power of two, or when $i=N-1$.
+\end{itemize}
+
+\specp These requirements apply to writers. A reader shall accept any
+replication schedule, but shall reject conflicting copies of the critical
+group.
+
+\subsection{File naming}\label{file-naming}
+
+\begin{longtable}[]{@{}p{.20\linewidth}p{.29\linewidth}p{.43\linewidth}@{}}
+\toprule\noalign{}
+Layout & POSIX / Windows & DOS 8.3 \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+index volume & \texttt{base.xpar} & \texttt{BASE.XPR} \\
+recovery volume, first exponent $f$, count $c$ &
+\texttt{base.v<f>+<c>.xpar}
+& \texttt{BASE.V00} through \texttt{BASE.V99} \\
+data volume $j$ (split) &
+\texttt{base.d<j>} & \texttt{BASE.D00} through
+\texttt{BASE.D99} \\
+armoured archive & \texttt{base.xpar} & \texttt{BASE.XPA} \\
+\end{longtable}
+
+\specp The placeholders \texttt{<f>}, \texttt{<c>}, and \texttt{<j>} are
+zero-padded decimal values. Their width is the greater of three and the number
+of digits in the largest corresponding value in the set. For example:
+\texttt{book.v000+001.xpar}, \texttt{book.v001+002.xpar},
+\texttt{book.v003+004.xpar}.
+
+\specp Generation 0 uses the names above without a generation component. For
+$g\ge1$, a writer shall insert \texttt{.g<g>} before the existing suffix.
+The width of \texttt{<g>} is at least three digits and increases as necessary:
+
+\begin{longtable}[]{@{}p{.20\linewidth}p{.29\linewidth}p{.43\linewidth}@{}}
+\toprule\noalign{}
+& generation 0 & generation $g\ge1$ \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+index volume & \texttt{base.xpar} &
+\texttt{base.g<g>.xpar} \\
+recovery volume &
+\texttt{base.v<f>+<c>.xpar}
+&
+\texttt{base.g<g>.v<f>+<c>.xpar} \\
+data volume (split) & \texttt{base.d<j>} &
+\texttt{base.g<g>.d<j>} \\
+\end{longtable}
+
+\specp On DOS, \texttt{BASE} is formed by converting ASCII lowercase letters
+in the requested base name to uppercase, replacing every byte other than an
+ASCII letter, digit, or underscore with an underscore, and then truncating to
+four characters or padding on the right with underscores to four characters.
+The placeholder \texttt{<g>} is one decimal digit and \texttt{<nn>} has two
+decimal digits. For a recovery volume, \texttt{<nn>} is its ordinal $i$ from
+Clause~\ref{replication-schedule}; for a split-layout data volume, it is the
+data-volume index $j$.
+For generation $g\ge1$, the index volume uses \texttt{BASE.XG<g>}. A recovery
+volume in that generation uses \texttt{BASG<g>.V<nn>}, where the fourth
+character of \texttt{BASE} is replaced by \texttt{G}. A split-layout data
+volume in that generation uses \texttt{BASG<g>.D<nn>}. An armoured archive uses \texttt{BASE.XPA} for
+generation 0 and \texttt{BASE.XG<g>} for a later generation. This scheme
+permits ten generations of one hundred recovery or data volumes each.
+The \texttt{create} and \texttt{add} operations shall reject a set that exceeds
+either limit or whose truncated base name collides with another required name.
+A DOS build shall also accept the POSIX names above when the host
+file system makes those names available. If a required volume cannot be
+opened, the implementation shall report its expected name.
+
+\subsection{Volume identification}\label{volume-identification}
+
+\specp The first eight bytes indicate the probable volume type:
+
+\begin{longtable}[]{@{}p{.22\linewidth}p{.72\linewidth}@{}}
+\toprule\noalign{}
+Bytes & Meaning \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{XPAR2PKT} & packet-bearing volume; parse per Clause~\ref{parsing-rules} \\
+\texttt{XPAR2ARM} & armoured archive; parse the prologue per Clause~\ref{the-armoured-layout} \\
+anything else & candidate bare data volume; identify by
+\texttt{vol\_tag} against \texttt{LAYT} \\
+\end{longtable}
+
+\specp When resolving a known LAYT data entry, its exact length and
+\texttt{vol\_tag} are authoritative regardless of its first eight bytes.
+
+\chapter{Armouring}\label{armouring}
+
+\section{\texorpdfstring{\texttt{ARMG}: armoured packet
+group}{ARMG: armoured packet group}}\label{armg-armoured-packet-group}
+
+\specp The body has $48+\mathtt{armoured\_length}$ bytes before padding and
+shall be padded with zeros to a multiple of eight bytes.
+
+\begin{verbatim}
+  0   1   u8      symbol_bits         8 or 16
+  1   1   u8      reserved            MBZ
+  2   2   u16le   reserved            MBZ
+  4   4   u32le   poly                low bits of the field polynomial
+  8   4   u32le   n                   codeword length in symbols
+  12  4   u32le   k                   data symbols per codeword, n - 2t
+  16  4   u32le   fcr                 first consecutive root; see below
+  20  4   u32le   prim                primitive element step; see below
+  24  8   u64le   depth D             1 <= D <= 2^24
+  32  8   u64le   plain_length        bytes
+  40  8   u64le   armoured_length     bytes; see below
+  48  armoured_length  u8[]  armoured bytes
+\end{verbatim}
+
+\specp Let $u=\mathtt{symbol\_bits}/8$. Then
+\[
+\mathtt{armoured\_length}
+=\left\lceil\frac{\mathtt{plain\_length}}{Dku}\right\rceil Dnu.
+\]
+
+\specp Let $w=\mathtt{symbol\_bits}$ and $t=(n-k)/2$. The parameters shall satisfy
+$16\le n\le2^w-1$, $1\le k<n$, $1\le D\le2^{24}$, and
+$\gcd(\mathtt{prim},2^w-1)=1$. The value $n-k$
+shall be positive and even. Version 2.0 requires the values of \texttt{poly},
+\texttt{fcr}, and \texttt{prim} shown below; other values are malformed.
+
+\specp Decoding an ARMG body produces a packet sequence of
+\texttt{plain\_length} bytes. That plaintext shall not contain another ARMG
+packet.
+
+\specp The final frame is zero-padded to $Dku$ plaintext bytes before encoding,
+and the padding is stored. The padding occupies fewer than $Dku$ bytes. For an
+ARMG packet containing a critical metadata group, $\mathtt{symbol\_bits}$ shall
+be 8 and $D$ shall be 1; its final-frame padding therefore occupies fewer than
+$k$ bytes.
+
+\specp Within one frame, armoured symbol $s$ is symbol $\lfloor s/D\rfloor$ of
+codeword $s\bmod D$. GF16 symbols are serialized little-endian. In an ARMG
+body, shortening prepends $2^w-1-n$ implicit zero symbols to each full-length
+codeword and does not store them. The prologue uses the distinct shortening
+rule in Clause~\ref{the-armoured-layout}. A final partial GF16 plaintext symbol
+is zero-filled in its high byte.
+
+\specp If \texttt{symbol\_bits} is 8, the field is $\mathrm{GF}(2^8)$ with
+polynomial $x^8+x^4+x^3+x^2+1$, whose low coefficient bits are
+\texttt{0x0000001D}. If \texttt{symbol\_bits} is 16, the field is
+$\mathrm{GF}(2^{16})$ with polynomial $x^{16}+x^5+x^3+x^2+1$, whose low
+coefficient bits are \texttt{0x0000002D}.
+
+\specp The generator polynomial is
+\[
+g(x)=\prod_{i=0}^{2t-1}\left(x-\alpha^{\mathtt{fcr}+i\mathtt{prim}}\right),
+\]
+where $\alpha$ is the field element \texttt{0x02}.
+
+\specp Symbol $i$ of a codeword is the coefficient of $x^{n-1-i}$. The $k$
+data symbols occupy $[0,k)$ and the $2t$ parity symbols occupy $[k,n)$. A
+valid codeword satisfies
+$c(\alpha^{\mathtt{fcr}+j\mathtt{prim}})=0$ for $0\le j<2t$. The encoder
+forms
+\[
+  m(x)=\sum_{i=0}^{k-1}d_i x^{k-1-i}
+\]
+from the data symbols $d_0,\ldots,d_{k-1}$. It divides
+$m(x)x^{2t}$ by $g(x)$ and places the coefficients of the remainder, in
+descending degree order and padded at the high-degree end with zeros, in the
+parity positions. Thus $c(x)=m(x)x^{2t}+r(x)$; addition and subtraction are
+identical in these characteristic-two fields.
+
+\specp Version 2.0 uses the following parameter values:
+
+\begin{longtable}[]{@{}p{.18\linewidth}p{.30\linewidth}p{.20\linewidth}p{.20\linewidth}@{}}
+\toprule\noalign{}
+\texttt{symbol\_bits} & \texttt{poly} & \texttt{fcr} & \texttt{prim} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+8 & \texttt{0x1D} & 212 & 11 \\
+16 & \texttt{0x2D} & 1 & 1 \\
+\end{longtable}
+
+\section{The armoured layout}\label{the-armoured-layout}
+
+\specp An armoured archive has the following layout:
+
+\begin{verbatim}
+  offset 0    : prologue copy 0   (96 bytes) + 32 bytes of RS parity
+  offset 128  : prologue copy 1   (96 bytes, byte-identical) + 32 bytes of RS parity
+  offset 256  : prologue copy 2   (96 bytes, byte-identical) + 32 bytes of RS parity
+  offset 384  : armoured region, armoured_length bytes, to EOF
+\end{verbatim}
+
+\specp Each prologue has the following 96-byte plaintext representation:
+
+\begin{verbatim}
+  0   8   u8[8]   magic = "XPAR2ARM"
+  8   1   u8      format_version_major = 2
+  9   1   u8      format_version_minor = 0
+  10  1   u8      symbol_bits           8 or 16
+  11  1   u8      reserved MBZ
+  12  4   u32le   poly
+  16  4   u32le   n
+  20  4   u32le   k
+  24  4   u32le   fcr
+  28  4   u32le   prim
+  32  8   u64le   depth D
+  40  8   u64le   plain_length
+  48  8   u64le   armoured_length
+  56  8   u64le   stream_offset     plaintext offset of the STRM packet body
+  64  8   u64le   stream_length
+  72  16          reserved MBZ
+  88  8   u8[8]   checksum = BLAKE3("xpar2 armour prologue v1" ||
+                                    prologue bytes [0,88))[0,8)
+\end{verbatim}
+
+\specp A prologue copy uses shortened RS(255,223) over $\mathrm{GF}(2^8)$, polynomial
+\texttt{0x1D}, $\mathtt{fcr}=212$, and $\mathtt{prim}=11$. The 96 prologue
+bytes occupy data positions 0 through 95, data positions 96 through 222
+are implicit zero, and the stored 32 parity bytes are full-codeword
+positions 223 through 254.
+
+\specp A reader shall first test the checksum of each stored prologue copy. If
+none is valid, it shall decode each copy independently with Reed--Solomon and
+test the corrected copies in stored order. If none of those is valid, the
+reader may form a candidate by taking the majority value at each byte position
+among the three copies, using the decoded copy when decoding succeeded and the
+stored copy otherwise. If the three values at a position differ, the majority
+procedure fails. The reader shall accept a majority candidate only if every
+position has a majority and the resulting checksum is valid.
+
+\specp A reader shall accept a prologue only if all of the following
+requirements are satisfied:
+\begin{enumerate}
+\item \texttt{format\_version\_major} is 2;
+\item every reserved field is zero;
+\item \texttt{poly}, \texttt{fcr}, and \texttt{prim} have the values in the
+version 2.0 table;
+\item the coding parameters satisfy the bounds in
+Clause~\ref{armg-armoured-packet-group};
+\item $384+\mathtt{armoured\_length}=\mathtt{file\_size}$ without overflow;
+and
+\item $\mathtt{stream\_offset}+\mathtt{stream\_length}
+\le\mathtt{plain\_length}$ without overflow, and that range is the complete
+STRM payload.
+\end{enumerate}
+
+\specp The plaintext of the armoured region shall begin with VOLH and the
+critical group, which may be inline or contained in one ARMG packet. STRM shall
+follow the critical group. Any SLTG, SLCL, and RCVS packets shall follow STRM
+in that order. CRTR shall be the final non-comment packet.
+
+\subsection{\texorpdfstring{\texttt{STRM}: the protected
+stream}{STRM: the protected stream}}\label{strm-the-protected-stream}
+
+\begin{verbatim}
+  body:
+  0   8   u64le   stream_offset       0 for a single STRM covering the set
+  8   8   u64le   reserved            MBZ
+  16  ...         stream bytes
+\end{verbatim}
+
+\specp An armoured archive shall contain exactly one STRM packet. Its
+\texttt{stream\_offset} shall be zero, and its payload shall contain exactly
+$L$ bytes. The prologue's \texttt{stream\_length} shall therefore equal $L$.
+
+\specp STRM shall set \texttt{flags.BODY\_UNCHECKED}. Its integrity is
+provided by the applicable slice table and each FILE packet's
+\texttt{content\_hash}, not by the packet checksum. This permits a reader to validate a large stream by
+slices without first computing a digest over the complete STRM body.
+
+\specp The prologue's \texttt{stream\_offset} equals the
+plaintext offset of the STRM body payload (that is,
+the packet's own offset plus 64), and
+\texttt{stream\_length} equals the payload length. Their inclusion in the
+prologue permits the reader to locate and decode the stream without first
+parsing the decoded packet sequence.
+
+\chapter{Validation and malformed input}\label{validation}
+
+\section{Parsing rules}\label{parsing-rules}
+
+\specp A salvage scanner shall implement the following bounded algorithm.
+
+\begin{verbatim}
+  parse_volume(buf, size):
+    p := 0
+    while p + 48 <= size:
+      if buf[p,p+8) != "XPAR2PKT":
+        p := p + STEP                      # STEP = 8 normally, 1 when resyncing
+        continue
+      len := u64le(buf + p + 8)
+      if len < 48 or len % 8 != 0 or len > 2^48 or p + len > size:
+        p := p + 8; continue
+      if !checksum_ok(buf + p, len):
+        if type(buf + p) == "ARMG":
+          attempt_armg_recovery(buf + p, len)
+        p := p + 8; continue
+      emit(buf + p, len)
+      p := p + len
+\end{verbatim}
+
+\specp A conforming packet volume begins with a checksum-valid VOLH at offset
+zero, contains only checksum-valid aligned packets in the required order, and
+ends after its final packet. A verifier may salvage valid packets from a
+damaged volume but shall report the volume as nonconforming.
+
+\specp A failed checksum invalidates every packet type except ARMG\@. For ARMG,
+a failed checksum requires the reader to attempt Reed--Solomon decoding of the
+armoured body. Each packet recovered from that body shall pass its own checksum
+before its contents are used. \texttt{BODY\_UNCHECKED} remains prohibited on
+ARMG.
+
+\specp The ARMG recovery attempt shall first verify that the complete fixed
+body and declared armoured bytes lie within the candidate packet. It shall then
+validate \texttt{symbol\_bits}, \texttt{poly}, $n$, $k$, \texttt{fcr},
+\texttt{prim}, $D$, and the calculated \texttt{armoured\_length}, without
+trusting the failed packet checksum. If those fields satisfy
+Clause~\ref{armg-armoured-packet-group}, the reader shall Reed--Solomon decode
+the body and parse exactly \texttt{plain\_length} recovered bytes as a packet
+sequence. Only packets whose own framing and checksum or keyed tag are valid
+shall be emitted by this recovery attempt.
+
+\specp A reader shall discard an ARMG candidate whose header cannot be parsed
+and validated.
+It shall use a packet's length to advance the scan only after the packet
+checksum has been validated. These requirements prevent a corrupt length from
+causing the scanner to skip later packets.
+
+\specp A conforming reader shall also satisfy the following requirements:
+
+\begin{enumerate}
+\item
+  Every length shall be validated against the remaining buffer before an
+  allocation whose size depends on that length. No allocation may be sized from
+  an unvalidated field.
+\item
+  Except for the ARMG recovery attempt specified above, a failed checksum shall
+  cause the scanner to skip the packet rather than stop scanning the volume.
+\item
+  A truncated final packet shall be ignored.
+\item
+  \texttt{STEP} is 8 for the normal scan. \texttt{STEP} is 1 only under
+  \option{resync}; byte-granular scanning is needed after a byte insertion.
+\end{enumerate}
+
+\section{Extensibility and
+versioning}\label{extensibility-and-versioning}
+
+\specp The format provides four extension mechanisms. A reader shall handle an
+unknown value as follows:
+
+\begin{longtable}[]{@{}p{.34\linewidth}p{.60\linewidth}@{}}
+\toprule\noalign{}
+Mechanism & Required reader behaviour \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Unknown packet type & skip if noncritical; reject if \texttt{CRITICAL} is set \\
+\texttt{SETD.optional\_features} bit & ignore \\
+\texttt{SETD.required\_features} bit & refuse all semantic use and
+identify the unsupported feature \\
+\texttt{VOLH.format\_version\_major} change & refuse repair and semantic use;
+permit only reporting and version-independent verification \\
+\end{longtable}
+
+\specp The minor version number may increase for an addition expressible by
+the first three mechanisms. The major version number shall increase only if
+packet framing changes incompatibly.
+
+\specp A violation of any ``shall'' or ``shall not'' requirement that applies
+to an input makes that input malformed and requires rejection during normal
+validation, unless a clause expressly permits recovery during salvage. The
+following list identifies common cases; it is not exhaustive.
+
+\begin{itemize}
+\item
+  \texttt{SETD.field\_log2} is not 8 or 16; \texttt{SETD.codec} is not 0,
+  1, or 2; \texttt{SETD.layout} is not 0, 1, or 2;
+  \texttt{SETD.align} is not 0, 1, or 2; or
+  \texttt{SETD.dedup\_level} is not 0, 1, or 2.
+\item
+  \texttt{SETD.slice\_tag\_len} is not 0, 8, or 16, or $Z\bmod64\ne0$.
+\item
+  \texttt{SETD.recovery\_axis\_log2} exceeds
+  \texttt{SETD.field\_log2}.
+\item
+  An \texttt{XPAR\_FEAT\_B3\_SUBTREE} descriptor violates the constraints
+  in Clause~\ref{setd-set-descriptor}.
+\item
+  A root generation has a nonzero \texttt{parent\_set\_id} or
+  \texttt{stream\_base}, or a child generation has a zero
+  \texttt{parent\_set\_id}.
+\item
+  \texttt{SETD.stream\_base} differs from
+  $\mathtt{parent.stream\_base}+\mathtt{parent.stream\_length}$.
+\item
+  \texttt{FILE.entry\_type} is not 0, 1, 2, or 3; or
+  \texttt{FILE.extent\_count} is nonzero for an entry of type 1, 2, or 3.
+\item
+  For a regular file, the sum of the extent lengths differs from
+  \texttt{FILE.length}.
+\item
+  An extent has zero length, overflows \texttt{u64}, crosses a generation
+  boundary, or violates the high-water and alignment rules in
+  Clause~\ref{extents}.
+\item
+  A hard-link target is absent from the effective manifest, is not a regular
+  file, or differs in a field required to equal the canonical entry by
+  Clause~\ref{hard-links}.
+\item
+  \texttt{FILE.posix\_index} is neither \texttt{0xFFFFFFFF} nor less than
+  \texttt{SETD.posix\_record\_count} in the generation containing the FILE
+  packet.
+\item
+  POSX coverage has a gap or overlap, or the extended-attribute names in a
+  record are not in strictly ascending order.
+\item
+  \texttt{ARMG.symbol\_bits} is not 8 or 16; $\mathtt{ARMG.n}<16$;
+  $\mathtt{ARMG.n}>2^{\mathtt{ARMG.symbol\_bits}}-1$;
+  $\mathtt{ARMG.k}=0$; $\mathtt{ARMG.k}\ge\mathtt{ARMG.n}$; or
+  $\mathtt{ARMG.n}-\mathtt{ARMG.k}$ is zero or odd.
+\item
+  \texttt{BODY\_UNCHECKED} is set on a packet other than STRM.
+\item
+  $\mathtt{POSX.first\_record}+\mathtt{POSX.record\_count}$ exceeds
+  $2^{32}-1$, or $\mathtt{first\_slice}+\mathtt{slice\_count}$ overflows in an
+  SLCR, SLTG, or SLCL packet.
+\item
+  \texttt{ARMG.armoured\_length} differs from the value specified in
+  Clause~\ref{armg-armoured-packet-group}.
+\end{itemize}
+
+\chapter{Deterministic writer profile}\label{determinism-clause}
+
+\section{Determinism}\label{determinism}
+
+\specp If \option{reproducible} is specified, a writer shall produce the same
+bytes for the same set of path names, file contents, hard-link identities,
+selected metadata, format
+parameters, and command options. Setting \texttt{SOURCE\_DATE\_EPOCH} shall
+imply \option{reproducible}. The following requirements apply:
+
+\begin{enumerate}
+\item
+  Input paths shall be sorted bytewise ascending before manifest indices are
+  assigned.
+\item
+  Packet order shall be that specified in
+  Clause~\ref{packet-order-within-a-volume}.
+\item
+  A writer shall start a new SLCR or SLTG packet after 65536 slices.
+\item
+  The replication schedule shall be that specified in
+  Clause~\ref{replication-schedule}.
+\item
+  Volume boundaries shall be included among the format parameters and shall
+  not depend on host or execution state.
+\item
+  All padding shall be zero.
+\item
+  CRTR shall contain \texttt{"xpar"} without a version.
+\item
+  All four timestamp fields (\texttt{mtime\_ns},
+  \texttt{atime\_ns}, \texttt{ctime\_ns}, \texttt{btime\_ns}) shall be
+  written as \texttt{INT64\_MIN} (absent) under
+  \option{reproducible} unless the corresponding
+  \option{preserve=} value is explicitly specified.
+\item
+  \texttt{posix\_index} shall be \texttt{0xFFFFFFFF} and no \texttt{POSX}
+  packet shall be emitted unless \option{preserve=owner} or
+  \option{preserve=xattr} is explicitly specified. In that case, records
+  shall follow the order in Clause~\ref{posx-the-ownership-and-attribute-table}
+  and shall be divided at 1 MiB.
+\item
+  The \texttt{attrs} field shall be written without modification.
+\item
+  When the host supplies stable file identities, hard-link structure shall be
+  preserved. Two trees with identical file contents but different link
+  structures therefore produce different sets on such a host.
+\item
+  Chunk boundaries shall be a function only of the byte stream. They shall not
+  depend on thread count, iteration order, memory addresses, or the order in
+  which files were opened. If two occurrences of a range could be canonical,
+  the writer shall choose the occurrence with the lowest manifest index and
+  then the lowest file offset. It shall not use hash-table order.
+\end{enumerate}
+
+\specp In the timestamp and POSX requirements above, ``explicitly specified''
+means present on the command line. Membership in the default set for
+\option{preserve} does not satisfy this requirement. Thus,
+\option{reproducible} alone records no timestamps, whereas
+\option{reproducible} \option{preserve=mtime} records \texttt{mtime\_ns}.
+
+\specp With \option{dedup=none} or \option{dedup=file}, the reproducibility
+requirement applies across version 2.0 implementations given the same abstract
+hard-link identities. For \option{dedup=file}, content-hash equality and the
+manifest-order tie break are part of the deterministic representation. With
+\option{dedup=chunk}, the requirement applies only to repeated runs of the same
+implementation version because this specification does not define a chunking
+algorithm.
+
+\specp A writer on a host that cannot supply stable file identities shall not
+claim cross-host reproducibility for an input tree containing hard links. The
+abstract input includes the identity shared by all names of one hard-linked
+file.
+
+\chapter{Security considerations}\label{security}
+
+\specp A reader shall perform every length, offset, count, multiplication, and
+addition check before allocation, pointer arithmetic, file access, or loop
+construction. It shall impose finite, documented limits before processing work
+whose cost is controlled by untrusted input. Rejected input shall not leave a
+visible destination file or modified destination entry.
+
+\specp When extracting a tree, a reader shall resolve every path component
+relative to an already opened directory handle. It shall reject a
+symbolic link, reparse point, mount escape, or non-directory intermediate
+component. A check followed by a path-based open is not conforming. A final
+regular file shall be written to a temporary file in the destination directory,
+verified, and atomically published. Existing objects shall not be replaced unless the
+caller has explicitly authorized replacement.
+
+\specp Authentication establishes integrity under a shared key and shows that
+the data were produced by a holder of that key. It does not distinguish among
+key holders and does not encrypt names, metadata, or content. Recovery coding
+is not an authentication mechanism. Implementations shall avoid data-dependent
+timing in key checks, tag checks, and recovery acceptance.
+
 
 \end{document}
