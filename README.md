@@ -1,122 +1,229 @@
 # xpar
 
-[![Build](https://github.com/iczelia/xpar/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/iczelia/xpar/actions/workflows/build.yml)
+xpar is an error and erasure correction system for guarding data integrity.
+Licensed under the GNU GPL version 3 only; see COPYING.
 
-xpar - an error/erasure code system guarding data integrity.
-Licensed under the terms of GNU GPL version 3 or later - see COPYING.
 Report issues to Kamila Szewczyk <k@iczelia.net>.
 Project homepage: https://github.com/iczelia/xpar
 
-xpar in joint mode generates a slightly inflated (by about 12%) parity-guarded
-file from a given data file. Such a file can be recovered as long as no more
-than about 6.2% of the data is corrupted. xpar internally uses a (255,223)-RS
-code over an 8-bit Galois field.
-
-can be consiered a sibling project of par2.
-
 [![Packaging status](https://repology.org/badge/vertical-allrepos/xpar.svg)](https://repology.org/project/xpar/versions)
 
-## Building
+## Synopsis
+
+xpar can be pointed at a file or a directory to create a recovery volume beside
+it.  They can be later used to restore files that fall victim to bad sectors,
+bit flips, truncated copies, media rot or transmission failure.
 
 ```
-# If using a git clone (not needed for source packages), first...
-$ ./bootstrap
-
-# Optimised x86-64
-$ ./configure --enable-x86_64 --enable-native --enable-lto && make && sudo make install
-
-# Optimised aarch64
-$ ./configure --enable-aarch64 --enable-native --enable-lto && make && sudo make install
-
-# Generic x86-64
-$ ./configure --enable-x86_64 && make && sudo make install
-
-# Generic aarch64
-$ ./configure --enable-aarch64 && make && sudo make install
-
-# Generic unknown architecture
-$ ./configure && make && sudo make install
+$ xpar create -r 10% -o backup movie.mkv     # 10% redundancy
+$ xpar verify backup.xpa                     # writes nothing, exits 0/1/2
+$ xpar repair --in-place backup.xpa          # fix what broke
 ```
 
-NOTE TO LINUX DISTRIBUTION MAINTAINERS: Simple builds with no configure flags will likely max out at a couple hundred megabytes of encoding and decoding and miss out on most assembly-level optimisations to the tool. They are provided for compatibility with simple systems (Amiga, MS-DOS, etc). To get suitable performance as indicated with the benchmarks, build with OpenMP and follow the instructions above.
+xpar and its file format are competitors to PAR2, PAR2-turbo, ParPar, QuickPar,
+Par3, zfec, and numerous front-ends to ISA-L.  The tool's core operation presents
+a handful of key improvements: xpar corrects bit errors as well as lost/invalid
+blocks, i.e. it uses two layers of Reed-Solomon codes to operate, repairs are done
+in-place, and small (optionally transposed, for better burst error correction)
+blocks are used for the inner code.
 
-### MS-DOS (DJGPP)
+Its file format has been extensively documented by the formal specification
+as given by [doc/xpar-format.pdf](doc/xpar-format.pdf).  A manual page is
+also supplied.
 
-xpar builds for MS-DOS via the DJGPP cross-toolchain, producing a 32-bit
-protected-mode binary that runs on Windows 9x DOS box, FreeDOS, DOSEMU2,
-DOSBox-X, or a real DOS machine with any DPMI host (CWSDPMI is bundled
-in the stubified `xpar.exe`). Configure with `--host=i586-pc-msdosdjgpp`.
-Limitations: single-threaded, no SIMD dispatch (i386 baseline), maximum
-file size 2 GiB (DJGPP's 32-bit `off_t`; FAT32's 4 GiB ceiling makes
-the remaining 2-4 GiB window narrow enough to punt on). Long-filename
-paths work on hosts with an LFN driver (Win9x, DOSEMU2, DOSBox-X,
-FreeDOS + DOSLFN); pure DOS is stuck with 8.3.
+## Installation
 
-## Usage
+If your software vendor packages xpar, it is the easiest to get it from there.
+Otherwise, consider downloading the fitting for your CPU architecture and
+operating system binary file from the Releases tab.
 
-Consult the man page.
+In order to build from source code, download a distribution tarball from the
+releases tab and execute the following commands:
 
-## Development 
+```
+% ./configure && make && sudo make install
+```
 
-A rough outline of some development-related topics below.
+## Basic usage
 
-## Repository management
+`create` protects files or whole directory trees (when `-R` is specified).  The
+argument `-r` specifies the intended amount of redundancy as a percentage, byte
+size, or a multiple (e.g. `-r 2x`).
 
-As it stands:
-- `contrib/` - holds scripts and other non-source files that are not present
-  in the distribution tarball and not supported.
-- `NEWS` - will contain the release notes for each release and needs to be
-  modified before each release.
-- `ChangeLog` - generated via `make update-ChangeLog`; intended to be
-  re-generated before each release.
+```
+% xpar create -r 15% --dedup=file -o photos -R 448CANON
+xpar: photos: 8 entries, 245 slices of 4096 bytes, 37 recovery slices in 5 volumes
+```
 
-Code style:
-- Two space indent, brace on the same line, middle pointers - `char * p;`.
+The `448CANON` directory will not be altered. `photos.xpa` will hold the
+manifest of the data protected (i.e., names, sizes, modes, modification and 
+creation times, checksums, permissions, ...), while `photos.v*.xpa` will hold
+the Reed-Solomon recovery data, split across volumes in a doubling ladder.
 
-## Benchmarks
+xpar provides built-in deduplication. Identical files are thus stored only
+once. `list --dedup` shows shared contents:
 
-`enwik10` = first 10 GB of the English Wikipedia XML dump, a common benchmark corpus for compression and erasure coding tools. Each tool runs 3 times under `hyperfine --runs 3 --warmup 0`.
+```
+% xpar list --dedup photos.xpa
+generation 0  set 42f3a6c40f8ec6b826a1850458c005eb  8 entries
+  t         size  gen  mode   mtime                 name
+  f       300000    0  0664   2026-08-21T21:40:13Z  pics/IMG0001.jpg
+      extent 0 + 300000  in generation 0  refs=2
+  ...
+  f       300000    0  0664   2026-08-21T21:40:13Z  pics/IMG0001 (Copy).jpg
+      extent 0 + 300000  in generation 0  refs=2
+```
 
-- CPU: AMD Ryzen 9 5950X 16-core / 32-thread (Zen 3)
-- Kernel: Linux 6.8.0-101-generic x86-64
-- Binaries: all C/C++ tools built with `-march=x86-64-v3 -O3`, statically linked.
+`verify` checks the integrity of the data. Nothing is ever written to disk.
+Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
+repairable), 2 (hopelessly broken). 
 
-xpar tested via:
-- `xpar -Jefq -i 1 enwik10` (joint mode, interlacing 1)
-- `xpar -Jefq -i 2 enwik10` (joint mode, interlacing 2)
-- `xpar -Jefq -i 3 enwik10` (joint mode, interlacing 3)
-- `xpar -Jsefq enwik10` (joint systematic mode, parity-only sidecar)
-- `xpar -Lefq --dshards=10 --pshards=1 --out-prefix=enwik10.xpa enwik10` (sharded mode, Leopard FFT)
-- `xpar -Wefq --dshards=10 --pshards=1 --out-prefix=enwik10.xpa enwik10` (sharded mode, Vandermonde + Berlekamp-Welch)
+```
+$ xpar verify backup.xpa
+xpar: movie.mkv: content differs
+xpar: 3956 slices of 5056 bytes, 396 recovery slices, erasure unit cell of 5056 bytes (1 per slice)
+xpar: damaged: 1 entries (0 missing), 1 slices, 1 cells; deepest column 1
+xpar: status: repairable
+```
 
-Joint mode creates a single `.xpa` file, in the systematic mode both the `.xpa` parity file and the original input are needed for recovery. Sharded mode creates 11 files: 10 data shards (systematic, not re-encoded) and 1 parity shard.
+`--json` may be passed for a more machine friendly output:
 
-par2 family tested via:
-- `par2 create -q -r10 enwik10.par2 enwik10`
-- `par2-turbo create -q -r10 enwik10.par2 enwik10`
-- `parpar -s 1M -r 10% -o enwik10.par2 enwik10`
+```
+{"type":"summary","t":4864,"status":"clean","exit":0,"slices_checked":1221,
+ "slices_bad":0,"recovery_available":366,"recovery_needed":0,"bytes_read":10001216, ...}
+```
 
-Writes one small index file (`enwik10.par2`) plus several recovery volumes (`enwik10.vol000+01.par2`, `vol001+02`, etc) totalling ~10% of the input. The original `enwik10` is preserved and referenced by its per-slice MD5.
+In order to repair broken archives, one may use the `repair` command:
 
-zfec tested via:
-- `zfec -k 10 -m 11 -f enwik10`, which writes 11 files: `enwik10.000` through `enwik10.010`; 10 data shards (systematic) plus 1 parity shard, 10 of which are needed for recovery.
+```
+% xpar repair --in-place backup.xpa
+xpar: 1 cells damaged, 0 copied, 1 decoded; 1 writes, 5056 bytes; 1 entries repaired
+```
 
-| tool | mean wall (s) | throughput (MB/s) | on-disk output (bytes) | artefacts |
-| :--- | ---: | ---: | ---: | :--- |
-| `xpar-sharded-fft` | 11.48 | 830.5 | 11,000,000,352 | 11 shards (10 data + 1 parity) |
-| `xpar-sharded-van` | 14.57 | 654.5 | 11,000,000,352 | 11 shards (10 data + 1 parity) |
-| `zfec`             | 20.07 | 475.2 | 11,000,000,033 | 11 shards (10 data + 1 parity) |
-| `par2-turbo`       | 25.63 | 372.2 |  1,001,465,372 | index + recovery volumes (sidecar) |
-| `xpar-joint-sys`   | 28.91 | 329.9 |  1,973,094,259 | single parity-only sidecar |
-| `xpar-joint-i3`    | 33.85 | 281.7 | 11,441,157,089 | single archive |
-| `xpar-joint-i1`    | 37.49 | 254.4 | 11,973,094,409 | single archive |
-| `xpar-joint-i2`    | 40.46 | 235.7 | 11,437,146,731 | single archive |
-| `parpar`           | 48.56 | 196.4 |  1,009,386,576 | index + recovery volumes (sidecar) |
-| `par2cmdline`      | 114.82 | 83.1 |  1,001,465,336 | index + recovery volumes (sidecar) |
+In this simulation, one randomly garbled byte in a 20 MB file cost a write
+of only 5 KiB. The file keeps its name, inode, and hard links. An undo journal
+is written first and removed on success. This ensures data integrity if the
+machine powers off mid repair, or the tool crashes, `xpar undo` replays stale
+journal files. `repair` issues a write only after the corrected result matches
+the stored BLAKE3 checksum, and then re-verifies the finished file.
 
-## to-do
+## Why xpar?
 
-- preserve file times & permissions; needs a header change (v2.0?), low priority.
-- shard manifests like par2/parpar
-- variable redundancy in joint modes.
-- spec for the binary file format(s).
+Mainly because erasure correction is not error correction. Unlike PAR2,
+PAR2Turbo, PAR3 (Draft), ParPar, or zfec, xpar is also an error-correcting
+container. It is thus the only tool that can use a partially correct
+information. It is radically more common for files to contain the (mildly)
+wrong data rather than outright disappear.  Was it otherwise, why does every
+respectable tool under the sun include a checksum in its binary format?
+Firstly, erasures are correctible within a block.
+
+```
+% xpar verify b.xpa
+xpar: big.bin: content differs
+xpar: 48 slices of 2097152 bytes, 5 recovery slices, erasure unit cell of 65536 bytes (32 per slice)
+xpar: damaged: 1 entries (0 missing), 23 slices, 30 cells; deepest column 3
+xpar: status: repairable
+
+% xpar repair --in-place b.xpa
+xpar: 30 cells damaged, 0 copied, 30 decoded; 28 writes, 1966080 bytes; 1 entries repaired
+% cmp big.bin big.keep && echo ok
+ok
+```
+
+Secondly, errors can be optionally corrected within the erasure slices using
+an inner error-correcting code. xpar can augment the slice data with additional
+redundancy to protect against spurious bit-flips.
+
+```
+$ xpar verify arch.xpa
+xpar: armoured metadata: 1 regions corrected, 0 past the inner code
+xpar: status: clean
+
+$ xpar scrub arch.xpar
+xpar: inner code: 1 regions, 169 codewords, 0 clean, 169 corrected, 0 past capacity
+xpar: corrected symbols: 2000 total, worst codeword 20
+xpar:   codewords corrected at 11 symbols: 25
+xpar:   codewords corrected at 12 symbols: 16
+xpar:   ...
+xpar:   codewords corrected at 20 symbols: 2
+```
+
+Such granular information is typically unachievable with other tools.
+
+Thirdly, errors are not necessarily corruption.  xpar handles insertions or
+deletions as well:
+
+```
+$ xpar repair --in-place p.xpa
+xpar: ./data.bin: found 732 displaced slices with 732 strong confirmations.
+xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entries repaired
+$ cmp data.bin data.keep && echo identical
+identical
+```
+
+Finally, the xpar format has been designed in order to be easily extractable
+(without error correction, of course) via only standard and simple UNIX
+commands.  This provides long-term data security, in case this tool ever
+disappears off the face of the planet.
+
+```
+% xpar explain p.xpa
+[...]
+  code             RS(255, 223), t = 16 over GF(2^8)
+  interleave D     1
+  frame            255 bytes on disk, 223 of plaintext
+  frames           5
+[...]
+set -e
+in=p.xpar
+out=recovered.bin
+W=1; n=255; k=223; D=1; hdr=168
+Fd=$((D*k*W))          # plaintext bytes per frame = 223
+Fx=$((D*n*W))          # disk bytes per frame      = 255
+frames=5
+off=0               # stream_offset from the prologue
+len=1008               # stream_length from the prologue
+dd if="$in" of=region.bin bs=$hdr skip=1 status=none
+f=0
+while [ $f -lt $frames ]; do
+  dd if=region.bin bs=$Fx skip=$f count=1 status=none | \
+    dd bs=$Fd count=1 status=none
+  f=$((f+1))
+done > plain.bin
+if [ $off -gt 0 ]; then
+  dd if=plain.bin bs=$off skip=1 status=none | head -c $len > "$out"
+else
+  head -c $len plain.bin > "$out"
+fi
+```
+
+## Comparison
+
+| | xpar | par2cmdline | par2cmdline-turbo | ParPar | zfec |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Protect file sets / trees | yes | yes | yes | yes | one file |
+| Filenames + metadata stored | yes | yes | yes | yes | no |
+| Arbitrary redundancy | yes (`%`, count, size, `1x`) | yes | yes | yes | k, m free |
+| Verify without repairing | yes | yes | yes | creation-focused | no |
+| **Corrects bit errors** | **yes** | no | no | no | no |
+| **Erasure unit finer than a block** | **yes (64 KiB cells)** | no | no | no | no |
+| **Repairs in place** | **yes, + undo journal** | rename + recreate | rename + recreate | n/a | no |
+| **Burst-error interleaving** | **yes** | no | no | no | no |
+| **Keyed authentication** | **yes** | no | no | no | no |
+| **Media-health check** | **yes (`scrub`)** | no | no | no | no |
+| Resync after insert/delete | yes | yes | yes | n/a | no |
+| Add recovery later | yes | yes | yes | yes | no |
+| Memory cap / multi-pass | yes | yes | yes | yes | streams |
+| Incremental generations | yes | no | no | no | no |
+| Deduplication | yes (file / chunk) | no | no | no | no |
+| Published format spec | yes | yes | yes | yes | yes |
+| GFNI / AVX-512 | yes | no | yes | yes | no |
+| SVE2, RISC-V V | yes | no | yes | yes | no |
+| GPU (OpenCL) | no | no | no | yes | no |
+| Legacy targets | yes | no | no | no | no |
+
+Some drawbacks of xpar:
+
+- It's not as mature; PAR2 is interoperable and very solid.
+- ParPar often has a speed edge over xpar and there are currently no plans
+  for an OpenCL backend.
