@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -309,9 +309,8 @@ static void ex_open_armoured(ex * x, const ex_vol * v) {
   xpar_armour * a;
   u8 * plain;
   u64 plain_len, arm_len;
-  FATAL_UNLESS("The armoured prologue of '%s' does not verify in any of "
-               "its three copies; `xpar recover-prologue` searches for "
-               "the parameters.",
+  FATAL_UNLESS("No prologue copy in '%s' verifies; try "
+               "`xpar recover-prologue`.",
                xpar_garm_prologue(v->data, (sz) v->size, &pr, NULL),
                v->path);
   p.symbol_bits = pr.symbol_bits;
@@ -1024,7 +1023,7 @@ int xpar_op_extract(const xpar_options * o) {
     if (res.link_meta_mismatch)
       ex_note(&x, "xpar: %u hard-link aliases disagree with their "
                   "canonical entry's metadata; the canonical values are "
-                  "used (8.5.3).\n", res.link_meta_mismatch);
+                  "used.\n", res.link_meta_mismatch);
   }
 
   for (i = 0; i < x.mf.count; i++) {

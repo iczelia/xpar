@@ -8,7 +8,7 @@ Acknowledgements:
 - Chris A. Taylor (catid) for the FFT-based Reed-Solomon codec
   used by xpar, licensed under 3-BSD.
 
-License: GNU General Public License version 3 or later.
+License: GNU General Public License version 3 only.
 
 Includes the source code of yarg, a library for parsing command line
 arguments, written by Kamila Szewczyk and licensed under the terms of

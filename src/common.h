@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -88,7 +88,7 @@ static inline u64 xpar_ceil_div(u64 a, u64 b) {
 }
 
 /*  Smallest power of two >= v, for v <= 2^63. Returns 1 for v == 0, which is
-    what NextPow2 means everywhere it is used here (DESIGN 5.2).  */
+    what NextPow2 means everywhere it is used here.  */
 static inline u64 xpar_next_pow2(u64 v) {
   if (v <= 1) return 1;
   v--;

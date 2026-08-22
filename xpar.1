@@ -1,8 +1,16 @@
-.\" Copyright (C) 2022-2026 Kamila Szewczyk
+.\"  Copyright (C) 2022-2026 Kamila Szewczyk
 .\"
-.\" This program is free software; you can redistribute it and/or modify
-.\" it under the terms of the GNU General Public License as published by
-.\" the Free Software Foundation; either version 3 of the License only.
+.\"  This program is free software; you can redistribute it and/or modify
+.\"  it under the terms of the GNU General Public License as published by
+.\"  the Free Software Foundation; version 3 of the License only.
+.\"
+.\"  This program is distributed in the hope that it will be useful,
+.\"  but WITHOUT ANY WARRANTY; without even the implied warranty of
+.\"  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+.\"  GNU General Public License for more details.
+.\"
+.\"  You should have received a copy of the GNU General Public License
+.\"  along with this program. If not, see <http://www.gnu.org/licenses/>.
 .TH XPAR 1 "2026" "xpar 2.0" "User Commands"
 .SH NAME
 xpar \- error and erasure correction for guarding data integrity
@@ -21,35 +29,34 @@ same as
 .RE
 .SH DESCRIPTION
 .B xpar
-can be pointed at a file or a directory to create a recovery volume beside
-it.  They can be later used to restore files that fall victim to bad sectors,
-bit flips, truncated copies, media rot or transmission failure.
+creates recovery volumes for files and directories. These volumes can restore
+data damaged by bad sectors, bit flips, truncation, media rot, or transmission
+failures.
 .SH VERBS
 Any unambiguous prefix of a verb is accepted;  an exact match always wins
 over a prefix match.
 .TP
 .B create
-Build a redundancy set from the given input paths, protecting the data.
+Build a redundancy set from the input paths.
 .TP
 .B verify
 Checks the integrity of the data. Nothing is written to disk. The exit codes
 distinguish clean, damaged but repairable, and hopelessly damaged data.
 .TP
 .B repair
-Verify the integrity of the data and repair the discovered errors or erasures.
+Verify and repair errors or erasures.
 .TP
 .B scrub
-Read everything, including the recovery volumes, and report the distribution of
-per-codeword corrected symbols, and with
+Read all data and recovery volumes and report corrected symbols per codeword.
+With
 .B \-\-deep
-the tool recomputes the recovery data from the protected data.
+recompute recovery data from the protected data.
 .TP
 .B extract
-Reconstruct the data present in a split or armoured set (see
+Reconstruct data from a split or armoured set (see
 .B --layout
 ). A
-sidecar set protects files that are already on disk and thus extraction is not
-necessary.
+sidecar set protects files already on disk and needs no extraction.
 .TP
 .B recover
 Regenerate one volume of a set from the others.
@@ -92,7 +99,7 @@ Replay an in-place repair journal after a crash interrupted an operation.
 Recover the parameters of a destroyed armoured prologue via brute-force.
 .TP
 .B benchmark
-Display the performance metrics for low-level SIMD kernels used by xpar.
+Measure xpar's low-level SIMD kernels.
 .SH GLOBAL OPTIONS
 .TP
 .BR \-v ", " \-\-verbose

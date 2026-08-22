@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -269,7 +269,7 @@ int xpar_op_list(const xpar_options * o) {
           /*  Which generation the bytes are in is the load-bearing part:
               it is what `prune` will refuse on and what the entry's
               survival depends on, and it is not always the generation
-              whose manifest lists the entry (4.10.4).  */
+              whose manifest lists the entry.  */
           if (h < 0) xpar_snprintf(gb, sizeof gb, "outside the chain");
           else xpar_snprintf(gb, sizeof gb, "generation %u",
                              c.gen[h].sd.generation);
@@ -562,7 +562,7 @@ int xpar_op_info(const xpar_options * o) {
     xpar_fprintf(xpar_stdout,
                  "  cells      : Y = %lu bytes, K = %llu per slice; the "
                  "erasure unit is\n               (slice, column), not a "
-                 "whole slice (4.6)\n", (unsigned long) sd->cell_bytes,
+                 "whole slice\n", (unsigned long) sd->cell_bytes,
                  (unsigned long long) xpar_ceil_div(sd->slice_size,
                                                     sd->cell_bytes));
   else

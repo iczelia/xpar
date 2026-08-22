@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -183,7 +183,7 @@ struct xpar_vset {
   v_resync * resync;
   u64 superseded_entries;
   u64 bytes_read, depth, armg_failed, armg_corrected;
-  bool degraded;              /*  SLCL absent or incomplete (8.6).  */
+  bool degraded;              /*  SLCL absent or incomplete.  */
   const u8 * strm;            /*  Armoured-layout STRM body.  */
   u64        strm_len;
   xpar_armour_params archive_ap;
@@ -1954,13 +1954,13 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
     xpar_file * f;
     u64 take, physical;
     if (off >= end) {
-      /*  Past L is the zero padding of the final slice (4.1).  */
+      /*  Past L is the zero padding of the final slice.  */
       xpar_memset(buf, 0, (sz) len);
       return ok;
     }
     if (!xpar_stream_locate(&s->occ, off, &sp)) {
       /*  A range no extent names: only --align=slice leaves one, and it
-          is per-entry padding (4.2).  */
+          is per-entry padding.  */
       take = MIN(len, end - off);
       xpar_memset(buf, 0, (sz) take);
       off += take;  buf += take;  len -= take;

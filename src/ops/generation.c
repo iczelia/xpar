@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -295,7 +295,7 @@ static char * gen_name_data(const char * base, u32 g, u32 index, int width) {
   return s;
 }
 
-/*  The armoured prologue (8.12).  */
+/*  The armoured prologue.  */
 
 #define ARM_PLAIN_LEN  96
 #define ARM_COPY_LEN   128    /*  96 plaintext plus 32 RS(255,223) parity.  */
@@ -3359,7 +3359,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
                  (unsigned long long) want, (unsigned long long) want);
     FATAL_CODE(XPAR_EXIT_NOPLAN,
                "Generation %u's recovery axis holds %llu slices and %llu was "
-               "asked for; exponents must stay inside the axis (8.7).",
+               "asked for; exponents must stay inside the axis.",
                c.gen[g].sd.generation, (unsigned long long) axis,
                (unsigned long long) want);
   }
@@ -4020,7 +4020,7 @@ int xpar_op_add(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-/*  prune (9.12).  */
+/*  prune.  */
 
 /*  Removing a generation destroys entries whose extents or owning FILE
     packets live there.  */
@@ -4840,7 +4840,7 @@ done:
   return XPAR_EXIT_OK;
 }
 
-/*  recover (9.6).  */
+/*  recover.  */
 
 /*  Reproduce a critical group from stored bodies without changing set_id
     inputs.  */

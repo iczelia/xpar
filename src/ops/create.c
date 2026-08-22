@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -1285,15 +1285,15 @@ static int create_from_pipe_direct(const xpar_options * o) {
   int rc;
 
   xpar_memset(&ready, 0, sizeof ready);
-  FATAL_UNLESS("A direct split pipe cannot choose more than one bare data "
-               "volume before EOF; use --spool with --volumes=N.",
+  FATAL_UNLESS("Direct split pipe input supports one data volume; use "
+               "--spool with --volumes=N.",
                o->layout != XPAR_LAYOUT_SPLIT ||
                o->volumes != XPAR_VOLS_FIXED || o->volume_count <= 1);
-  FATAL_UNLESS("A direct pipe slice size must be a multiple of 64 bytes and "
-               "at least 4 KiB.", z >= XPAR_SLICE_MIN && !(z & 63));
+  FATAL_UNLESS("Direct pipe slices must be at least 4 KiB and 64-byte aligned.",
+               z >= XPAR_SLICE_MIN && !(z & 63));
   q = (u64) 1 << field;
-  FATAL_UNLESS("The requested recovery count leaves no data nodes in "
-               "GF(2^%u); reduce -r or choose --field=16.", r < q, field);
+  FATAL_UNLESS("Recovery count exhausts GF(2^%u); reduce -r or use "
+               "--field=16.", r < q, field);
   FATAL_UNLESS("A one-pass matrix pipe needs R*Z plus one input slice: "
                "%llu bytes are required but -m admits %llu.",
                r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,

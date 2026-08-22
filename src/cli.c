@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -1177,19 +1177,15 @@ static void positionals(xpar_options * o, char ** pos, int n) {
 }
 
 static void validate(xpar_options * o, u32 pres_lit) {
-  FATAL_UNLESS("Options -s and -b both set the slice geometry and only "
-               "one of them may be given.",
+  FATAL_UNLESS("Options -s and -b are mutually exclusive.",
                !(o->slice_size && o->slices));
-  FATAL_UNLESS("Options --armour-t and --armour-pct set the same "
-               "parameter and only one of them may be given.",
+  FATAL_UNLESS("Options --armour-t and --armour-pct are mutually exclusive.",
                !(o->armour_t && o->armour_pct > 0.0));
-  FATAL_UNLESS("Options --burst and --depth set the same parameter and "
-               "only one of them may be given.",
+  FATAL_UNLESS("Options --burst and --depth are mutually exclusive.",
                !(o->burst && o->depth));
   FATAL_UNLESS("Options --keep-journal and --no-journal contradict each "
                "other.", !(o->keep_journal && o->no_journal));
-  FATAL_UNLESS("Options --before and --generation select generations two "
-               "different ways and only one of them may be given.",
+  FATAL_UNLESS("Options --before and --generation are mutually exclusive.",
                !(o->have_before && o->gen_count));
   FATAL_UNLESS("--dedup-chunk cannot exceed 1 GiB.",
                o->dedup_chunk <= ((u64) 1 << 30));
@@ -1198,33 +1194,27 @@ static void validate(xpar_options * o, u32 pres_lit) {
 
   if (o->from_stdin) {
     xpar_path_status ns;
-    FATAL_UNLESS("Reading an input pipe requires --stdin-name=PATH so the "
-                 "manifest has a stable name.",
+    FATAL_UNLESS("Pipe input requires --stdin-name=PATH.",
                  o->stdin_name && o->stdin_name[0]);
     ns = xpar_path_check(o->stdin_name,
                          (u32) xpar_strlen(o->stdin_name), 0);
     FATAL_UNLESS("--stdin-name must be a safe relative manifest path: %s.",
                  ns == XPAR_PATH_OK, xpar_path_reason(ns));
-    FATAL_UNLESS("Creating from a pipe requires -o/--output; '-' is not a "
-                 "stable output base.", o->verb != XPAR_VERB_CREATE ||
+    FATAL_UNLESS("Creating from a pipe requires -o/--output.",
+                 o->verb != XPAR_VERB_CREATE ||
                  (o->output && o->output[0]));
     FATAL_UNLESS("A pipe must be the only input.",
                  o->path_count == 1);
     if (o->verb == XPAR_VERB_CREATE && !o->spool) {
-      FATAL_UNLESS("Creating directly from a pipe needs the matrix codec; "
-                   "the FFT codec needs every slice at once.",
+      FATAL_UNLESS("Direct pipe input requires the matrix codec.",
                    o->codec != XPAR_CODEC_FFT);
-      FATAL_UNLESS("Creating an armoured archive from a pipe needs --spool: "
-                   "its prologue and protected metadata precede the stream.",
+      FATAL_UNLESS("Armoured pipe input requires --spool.",
                    o->layout != XPAR_LAYOUT_ARMOURED);
-      FATAL_UNLESS("Creating directly from a pipe needs -s, not -b, because "
-                   "the slice size must be known before the first byte.",
+      FATAL_UNLESS("Direct pipe input requires -s, not -b.",
                    !o->slices);
       o->codec = XPAR_CODEC_MATRIX;
     }
-    FATAL_UNLESS("Creating directly from a pipe needs -r as a count or a "
-                 "size, or --spool: a percentage needs a length nobody "
-                 "knows yet.",
+    FATAL_UNLESS("Direct pipe input requires --spool or -r as a count or size.",
                  o->verb == XPAR_VERB_ADD || o->spool ||
                  o->recovery.kind == XPAR_R_COUNT ||
                  o->recovery.kind == XPAR_R_BYTES);
@@ -1238,9 +1228,8 @@ static void validate(xpar_options * o, u32 pres_lit) {
                  "regenerate.", o->volume_given);
 
   if (o->verb == XPAR_VERB_EXTRACT) {
-    FATAL_UNLESS("The ctime cannot be restored on any host: the kernel "
-                 "sets it on every metadata write, including the ones "
-                 "extract is making.", !(pres_lit & XPAR_PRES_CTIME));
+    FATAL_UNLESS("ctime cannot be restored because metadata writes reset it.",
+                 !(pres_lit & XPAR_PRES_CTIME));
     FATAL_UNLESS("Restoring setuid, setgid and sticky bits needs -f: "
                  "from a set of unknown origin they are a privilege "
                  "escalation.",

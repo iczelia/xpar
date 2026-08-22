@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -796,7 +796,7 @@ u64 xpar_physical_memory(void) {
 /*  There is no supported Win32 query for rotational media short of an
     IOCTL against the raw volume, which needs privileges this program does
     not ask for. Unknown answers false, which costs a planner heuristic and
-    never correctness (DESIGN 5.3).  */
+    never correctness.  */
 bool xpar_is_rotational(const char * path) { (void) path;  return false; }
 
 void * xpar_memcpy (void * d, const void * s, sz n) { return memcpy(d, s, n); }

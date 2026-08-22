@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -579,7 +579,7 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
     need = hi;
   }
 
-  /*  The slice count that fits the budget the user actually gave.  */
+  /*  Find a slice count that fits the budget.  */
   q = *req;
   q.memory_budget = budget;
   q.slice_size    = 0;
@@ -590,8 +590,7 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
     if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK) { best_b = q.slice_count; }
   }
 
-  /*  Whether the matrix codec is the thing that unlocks it, which is a
-      different question from whether it is faster.  */
+  /*  Check whether the matrix codec fits, regardless of speed.  */
   q = *req;
   q.memory_budget = budget;
   q.codec         = XPAR_CODEC_MATRIX;

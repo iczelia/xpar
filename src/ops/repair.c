@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -1587,7 +1587,7 @@ static void rp_apply(rp * r) {
     if (!xpar_lock_supported() && !warned) {
       warned = true;
       rp_note(r, "xpar: this host has no file locking, so a concurrent "
-                 "writer would race this repair (15.2).\n");
+                 "writer would race this repair.\n");
     } else if (xpar_lock_supported() && xpar_lock(f, true) != 0)
       FATAL_IO("'%s' is locked by another process; repair would race it.",
                r->path[entry]);

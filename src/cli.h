@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -131,7 +131,7 @@ typedef struct {
   int  armour;           /*  XPAR_ARMOUR_*  */
   int  armour_field;     /*  8, 16 or XPAR_CLI_AUTO.  */
   u32  armour_t;         /*  0 when unset; excludes armour_pct.  */
-  f64  armour_pct;       /*  0 when unset; 0 < p <= 50 (6.2.1).  */
+  f64  armour_pct;       /*  0 when unset; 0 < p <= 50.  */
   u64  burst;            /*  0 when unset; excludes depth.  */
   u32  depth;            /*  0 when unset; the planner's default is 1.  */
   int  volumes;          /*  XPAR_VOLS_*  */

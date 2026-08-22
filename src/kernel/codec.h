@@ -2,7 +2,7 @@
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License only.
+    the Free Software Foundation; version 3 of the License only.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -91,7 +91,7 @@ xpar_codec_status xpar_codec_plan_apply(const xpar_codec_plan *,
 
 /*  Working-set size in bytes for encoding or decoding `bytes` per slice, so
     that plan.c can choose a column width that fits `-m` before committing
-    to a codec (DESIGN 12.3). Must not allocate.  */
+    to a codec. Must not allocate.  */
 u64 xpar_codec_encode_footprint(u8 codec, u8 field_log2, u64 s, u64 r,
                                 sz bytes);
 u64 xpar_codec_decode_footprint(u8 codec, u8 field_log2, u64 s, u64 r,
