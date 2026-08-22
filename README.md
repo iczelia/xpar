@@ -44,7 +44,7 @@ releases tab and execute the following commands:
 % ./configure && make && make check && sudo make install
 ```
 
-`configure` probes for all SIMD extensions that xpar can use. Each becomes
+`configure` probes for all SIMD extensions that xpar can use.  Each becomes
 a convenience library with its own compilation flags, while the kernel is
 picked at the runtime based on signals from CPUID + OSXSAVE/XCR0 (x86),
 HWCAP or `riscv_hwprove`.
@@ -71,8 +71,8 @@ manifest of the data protected (i.e., names, sizes, modes, modification and
 creation times, checksums, permissions, ...), while `photos.v*.xpa` will hold
 the Reed-Solomon recovery data, split across volumes in a doubling ladder.
 
-xpar provides built-in deduplication. Identical files are thus stored only
-once. `list --dedup` shows shared contents:
+xpar provides built-in deduplication.  Identical files are thus stored only
+once.  `list --dedup` shows shared contents:
 
 ```
 % xpar list --dedup photos.xpa
@@ -85,7 +85,7 @@ generation 0  set 42f3a6c40f8ec6b826a1850458c005eb  8 entries
       extent 0 + 300000  in generation 0  refs=2
 ```
 
-`verify` checks the integrity of the data. Nothing is ever written to disk.
+`verify` checks the integrity of the data.  Nothing is ever written to disk.
 Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
 repairable), 2 (hopelessly broken). 
 
@@ -112,18 +112,18 @@ xpar: 1 cells damaged, 0 copied, 1 decoded; 1 writes, 5056 bytes; 1 entries repa
 ```
 
 In this simulation, one randomly garbled byte in a 20 MB file cost a write
-of only 5 KiB. The file keeps its name, inode, and hard links. An undo journal
-is written first and removed on success. This ensures data integrity if the
+of only 5 KiB.  The file keeps its name, inode, and hard links.  An undo journal
+is written first and removed on success.  This ensures data integrity if the
 machine powers off mid repair, or the tool crashes, `xpar undo` replays stale
-journal files. `repair` issues a write only after the corrected result matches
+journal files.  `repair` issues a write only after the corrected result matches
 the stored BLAKE3 checksum, and then re-verifies the finished file.
 
 ## Why xpar?
 
-Mainly because erasure correction is not error correction. Unlike PAR2,
+Mainly because erasure correction is not error correction.  Unlike PAR2,
 PAR2Turbo, PAR3 (Draft), ParPar, or zfec, xpar is also an error-correcting
-container. It is thus the only tool that can use a partially correct
-information. It is radically more common for files to contain the (mildly)
+container.  It is thus the only tool that can use a partially correct
+information.  It is radically more common for files to contain the (mildly)
 wrong data rather than outright disappear.  Was it otherwise, why does every
 respectable tool under the sun include a checksum in its binary format?
 Firstly, erasures are correctible within a block.
@@ -142,7 +142,7 @@ ok
 ```
 
 Secondly, errors can be optionally corrected within the erasure slices using
-an inner error-correcting code. xpar can augment the slice data with additional
+an inner error-correcting code.  xpar can augment the slice data with additional
 redundancy to protect against spurious bit-flips.
 
 ```
@@ -243,7 +243,7 @@ Some drawbacks of xpar:
 
 - `add` / `prune` / `consolidate`: manages a chain of generations in the `xpa`
   file.  `add` appends a new generation detailing the changes against the
-  current disk contents. unchanged files are inherited and not re-stored.
+  current disk contents.  Unchanged files are inherited and not re-stored.
   Since redundancy is per-generation, `info --deps` shows old generations that
   are still required for operation. `prune` removes generations that are
   unreferenced.  `consolidate` collapses generational chains, merging all
@@ -253,7 +253,7 @@ $ xpar add -r 15% photos.xpar -R pics
 xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
       200000 new stream bytes, 7 recovery slices in 3 volumes.
 ```
-- `recover`: regenerate lost volume(s) from the surviving set. For example,
+- `recover`: regenerate lost volume(s) from the surviving set.  For example,
   when with `--layout=split --volumes=4`, the data lives in header-free
   `.d00` - `.d03` files, one per disk, then:
 ```
@@ -264,7 +264,7 @@ $ cat disc.d00* > joined && cmp joined vid.mp4 && echo identical
 identical
 ```
 - `--auth-key=FILE`: authenticate the set with a keyed MAC, as a precaution
-  against doctored archives. Every subsequent operation requires the key:
+  against doctored archives.  Every subsequent operation requires the key:
 ```
 $ xpar verify s.xpar
 xpar: This set is authenticated; supply --auth-key=FILE.
@@ -327,13 +327,13 @@ Three options are offered:
   stream exactly.
 - `--layout=armoured`: one self-contained `base.xpar` containing three
   replicated header copies, alongside an inner-coded packet stream with the
-  manifest, the data and the recovery. Use `extract` to unpack, rather than
+  manifest, the data and the recovery.  Use `extract` to unpack, rather than
   concatenation.
 
 ## Performance
 
 Generally, xpar comes close in terms of performance to par2cmdline-turbo and
-ParPar in the single core mode. Parallel workloads are not optimised as well
+ParPar in the single core mode.  Parallel workloads are not optimised as well
 yet.
 
 Further, xpar issues a mandatory readback (that can nonetheless be disabled
@@ -343,11 +343,11 @@ with `--no-verify-after`) to ensure that the data has been written correctly.
 
 Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
 / GFNI-512 / VBMI / VPCLMULQDQ, ARM NEON / PMULL / SVE2, PowerPC VSX, and
-RISC-V vector (both shuffle and clmul paths). The binary format is
+RISC-V vector (both shuffle and clmul paths).  The binary format is
 platform-agnostic.
 
 Windows specifically has two targets; the default `nt` target uses UTF-16,
-extended-length paths and a Vista+ API floor. It is used like so:
+extended-length paths and a Vista+ API floor.  It is used like so:
 
 ```
 $ CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \
@@ -364,4 +364,4 @@ $ CC=i686-w64-mingw32-gcc ./configure --host=i686-w64-mingw32 \
 
 That executable imports only `KERNEL32.DLL`. MS-DOS builds through DJGPP
 (`--host=i586-pc-msdosdjgpp`), likewise with an i386 (1985) scalar baseline
-and no optional SIMD. A 32-bit NT build may contain SSSE3 and SSE4.2 objects.
+and no optional SIMD.  A 32-bit NT build may contain SSSE3 and SSE4.2 objects.
