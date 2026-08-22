@@ -29,3 +29,5 @@ ChangeLog.tmp
 inject-errors
 test-driver
 .dirstamp
+conftest
+conftest.*
