@@ -351,15 +351,6 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
   return got;
 }
 
-static bool pread_batch_fallback(xpar_read_req * r, sz count) {
-  sz i;
-  for (i = 0; i < count; i++)
-    r[i].result = r[i].file
-                    ? xpar_pread(r[i].file, r[i].buf, r[i].length,
-                                 r[i].offset) : 0;
-  return false;
-}
-
 #if defined(HAVE_IO_URING) && defined(HAVE_MMAP)
 /*  Keep one small ring for the lifetime of the process. Creating, mapping,
     unmapping and closing a ring for every eight reads costs more than the
@@ -454,10 +445,10 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
   bool used = false;
   if (!count) return false;
   if (count > 1024 || count > (sz) UINT32_MAX)
-    return pread_batch_fallback(r, count);
+    return xpar_pread_serial(r, count);
   for (i = 0; i < count; i++)
     if (r[i].length > (sz) UINT32_MAX)
-      return pread_batch_fallback(r, count);
+      return xpar_pread_serial(r, count);
   URING_LOCK();
   if (u->state == 0 && !uring_open(u, count)) goto fallback;
   if (u->state != 1 || count > u->p.sq_entries) goto fallback;
@@ -515,9 +506,9 @@ done:
 
 fallback:
   URING_UNLOCK();
-  return pread_batch_fallback(r, count);
+  return xpar_pread_serial(r, count);
 #else
-  return pread_batch_fallback(r, count);
+  return xpar_pread_serial(r, count);
 #endif
 }
 
@@ -820,80 +811,8 @@ int    xpar_strncmp(const char * a, const char * b, sz n) {
   return strncmp(a, b, n);
 }
 
-char * xpar_strdup(const char * s) {
-  sz n = strlen(s) + 1;
-  char * c = xpar_alloc_raw(n);
-  memcpy(c, s, n);
-  return c;
-}
-
-char * xpar_strndup(const char * s, sz n) {
-  sz len = 0;
-  char * c;
-  while (len < n && s[len]) len++;
-  c = xpar_alloc_raw(len + 1);
-  memcpy(c, s, len);
-  c[len] = '\0';
-  return c;
-}
-
-int xpar_parse_u64(const char * s, u64 * out) {
-  u64 v = 0;
-  if (!s || !*s) return -1;
-  if (*s == '+') s++;
-  if (!*s) return -1;
-  while (*s) {
-    u64 nv;
-    if (*s < '0' || *s > '9') return -1;
-    nv = v * 10 + (u64) (*s - '0');
-    if (nv < v) return -1;
-    v = nv;  s++;
-  }
-  *out = v;
-  return 0;
-}
-
-int xpar_parse_i64(const char * s, i64 * out) {
-  int neg = 0;
-  u64 v;
-  if (!s || !*s) return -1;
-  if (*s == '-') { neg = 1;  s++; }
-  if (xpar_parse_u64(s, &v) != 0) return -1;
-  if (neg) {
-    if (v > (u64) INT64_MAX + 1) return -1;
-    /*  Negating INT64_MIN through i64 is undefined, so the endpoint is
-        spelled out rather than computed.  */
-    *out = v == (u64) INT64_MAX + 1 ? INT64_MIN : -(i64) v;
-  } else {
-    if (v > (u64) INT64_MAX) return -1;
-    *out = (i64) v;
-  }
-  return 0;
-}
-
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
   return vsnprintf(buf, cap, fmt, ap);
-}
-
-int xpar_snprintf(char * buf, sz cap, const char * fmt, ...) {
-  va_list ap;  int r;
-  va_start(ap, fmt);
-  r = vsnprintf(buf, cap, fmt, ap);
-  va_end(ap);
-  return r;
-}
-
-int xpar_asprintf(char ** out, const char * fmt, ...) {
-  va_list ap, ap2;  int n;
-  va_start(ap, fmt);
-  va_copy(ap2, ap);
-  n = vsnprintf(NULL, 0, fmt, ap);
-  va_end(ap);
-  if (n < 0) { va_end(ap2);  *out = NULL;  return -1; }
-  *out = xpar_alloc_raw((sz) n + 1);
-  vsnprintf(*out, (sz) n + 1, fmt, ap2);
-  va_end(ap2);
-  return n;
 }
 
 int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
@@ -914,14 +833,6 @@ int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
     xpar_write(f, big, (sz) n);
     xpar_free(big); }
   return n;
-}
-
-int xpar_fprintf(xpar_file * f, const char * fmt, ...) {
-  va_list ap;  int r;
-  va_start(ap, fmt);
-  r = xpar_vfprintf(f, fmt, ap);
-  va_end(ap);
-  return r;
 }
 
 int xpar_fputs(const char * s, xpar_file * f) {

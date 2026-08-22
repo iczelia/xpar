@@ -123,6 +123,11 @@ typedef struct {
 
 bool xpar_pread_batch(xpar_read_req *, sz count);
 
+/*  The same requests issued one at a time with xpar_pread, in order.
+    Every port either is this or falls back to it, so no port writes the
+    loop again. Returns false: nothing was batched.  */
+bool xpar_pread_serial(xpar_read_req *, sz count);
+
 /*  fsync on the directory containing `path`. Required after a rename or a
     create for the entry to survive a crash; a file fsync does not cover
     it. A host without the concept returns 0.  */

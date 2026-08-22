@@ -60,6 +60,7 @@ libxpar_core_a_SOURCES = \
   src/kernel/codec-matrix.c src/kernel/codec-fft.c \
   src/kernel/blake3.c src/kernel/blake3-scalar.c \
   src/kernel/crc32c.c src/kernel/crc32c-scalar.c \
+  src/platform/port-common.c \
   src/platform/port-cpu-x86.c src/platform/port-cpu-arm.c \
   src/platform/port-cpu-other.c
 
@@ -69,11 +70,13 @@ libxpar_core_a_SOURCES += src/platform/port-posix.c \
 endif
 if XPAR_IS_WINDOWS
 libxpar_core_a_SOURCES += src/platform/port-win32.c \
-                          src/platform/port-fs-win32.c
+                          src/platform/port-fs-win32.c \
+                          src/platform/port-printf.c
 endif
 if XPAR_DOS
 libxpar_core_a_SOURCES += src/platform/port-djgpp.c \
-                          src/platform/port-fs-djgpp.c
+                          src/platform/port-fs-djgpp.c \
+                          src/platform/port-printf.c
 endif
 
 if XPAR_THREADS
