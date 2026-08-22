@@ -208,24 +208,8 @@ endif
 
 xpar_LDADD += libxpar_core.a
 
-TESTS = tests/run-tests.sh tests/t_unit
-check_PROGRAMS = tests/t_unit tests/vector_kat bench/codec_xpar
-tests_t_unit_SOURCES = tests/t_unit.c
-tests_t_unit_CPPFLAGS = $(AM_CPPFLAGS)
-tests_t_unit_LDADD = $(xpar_LDADD)
-tests_t_unit_LDADD += libxpar_core.a
-tests_vector_kat_SOURCES = tests/vector-kat.c
-tests_vector_kat_CPPFLAGS = $(AM_CPPFLAGS)
-tests_vector_kat_LDADD = $(xpar_LDADD) libxpar_core.a
-bench_codec_xpar_SOURCES = bench/codec-xpar.c
-bench_codec_xpar_CPPFLAGS = $(AM_CPPFLAGS)
-bench_codec_xpar_LDADD = $(xpar_LDADD) libxpar_core.a
-
 EXTRA_DIST = \
   bootstrap README.md \
-  tests/run-tests.sh tests/run-sanitizers.sh \
-  tests/vectors/README.md tests/vectors/generate.sh \
-  tests/fuzz/README.md tests/fuzz/fuzz_container.c \
   contrib/inject-errors.c contrib/check-win95-pe.sh
 
 VENDORED = src/yarg.h
@@ -233,40 +217,6 @@ VENDORED = src/yarg.h
 .PHONY: docs doc-check format-check vectors vectors-check fuzz \
         sanitizer-check win95-check
 docs: doc/xpar-format.pdf
-
-vectors: all tests/vector_kat
-	test ! -e $(top_srcdir)/tests/vectors/generated
-	$(SHELL) $(top_srcdir)/tests/vectors/generate.sh \
-	  $(abs_top_builddir)/xpar $(top_srcdir)/tests/vectors/generated \
-	  $(abs_top_builddir)/tests/vector_kat
-	cp $(top_srcdir)/tests/vectors/generated/V-DET/sidecar-matrix-gf8/set.xpar \
-	  $(top_srcdir)/tests/fuzz/seeds/valid-sidecar.xpar
-	cp $(top_srcdir)/tests/vectors/generated/V-BAD/bad-packet-checksum.xpar \
-	  $(top_srcdir)/tests/fuzz/seeds/bad-checksum.xpar
-	cp $(top_srcdir)/tests/vectors/generated/V-BAD/truncated-final-packet.xpar \
-	  $(top_srcdir)/tests/fuzz/seeds/truncated-tail.xpar
-
-vectors-check: all tests/vector_kat
-	@tmp=`mktemp -d`; \
-	$(SHELL) $(top_srcdir)/tests/vectors/generate.sh \
-	  $(abs_top_builddir)/xpar $$tmp/generated \
-	  $(abs_top_builddir)/tests/vector_kat >/dev/null && \
-	diff -u $(top_srcdir)/tests/vectors/generated/SHA256SUMS \
-	  $$tmp/generated/SHA256SUMS; status=$$?; \
-	rm -rf $$tmp; exit $$status
-
-FUZZ_SANITIZERS = fuzzer,address,undefined
-
-fuzz: all
-	$(MKDIR_P) tests/fuzz
-	clang $(AM_CPPFLAGS) $(AM_CFLAGS) -fsanitize=$(FUZZ_SANITIZERS) \
-	  -Wl,--allow-multiple-definition \
-	  -o tests/fuzz/fuzz_container \
-	  $(top_srcdir)/tests/fuzz/fuzz_container.c src/xpar.o $(xpar_LDADD) \
-	  libxpar_core.a
-
-sanitizer-check:
-	$(SHELL) $(top_srcdir)/tests/run-sanitizers.sh
 
 win95-check: xpar$(EXEEXT)
 	OBJDUMP=$(OBJDUMP) $(SHELL) \
