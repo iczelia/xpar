@@ -27,3 +27,4 @@ stamp-h1
 config.guess
 ChangeLog.tmp
 inject-errors
+test-driver
