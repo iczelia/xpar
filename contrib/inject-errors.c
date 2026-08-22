@@ -123,6 +123,28 @@ static void do_truncate(const char * path, i64 delta) {
   xpar_free(buf);
 }
 
+static void do_insert(const char * path, i64 start, i64 count, u64 seed) {
+  xpar_file * f;
+  i64 size;
+  u8 * buf;
+  if (start < 0 || count < 0) die("negative offset or length");
+  f = xopen(path, XPAR_O_READ);
+  size = xpar_size(f);
+  if (size < 0 || start > size || (u64) size + (u64) count > (u64) (sz) -1)
+    die("insertion is outside the file");
+  buf = xpar_alloc_raw((sz) ((u64) size + (u64) count));
+  if (start) xread_or_die(f, buf, (sz) start);
+  rng_seed(seed);
+  for (i64 i = 0; i < count; i++) buf[start + i] = (u8) rng_next();
+  if (size > start)
+    xread_or_die(f, buf + start + count, (sz) (size - start));
+  xpar_xclose(f);
+  f = xopen(path, XPAR_O_WRITE | XPAR_O_CREATE | XPAR_O_TRUNCATE);
+  xwrite_or_die(f, buf, (sz) ((u64) size + (u64) count));
+  xpar_xclose(f);
+  xpar_free(buf);
+}
+
 static void do_swap(const char * path, i64 off_a, i64 off_b, i64 len) {
   if (len < 0 || off_a < 0 || off_b < 0) die("negative offset or length");
   xpar_file * f = xopen(path, XPAR_O_READ | XPAR_O_WRITE);
@@ -156,6 +178,7 @@ static void usage(void) {
     "  inject-errors scatter   FILE COUNT SEED\n"
     "  inject-errors burst     FILE COUNT START\n"
     "  inject-errors truncate  FILE DELTA\n"
+    "  inject-errors insert    FILE OFFSET LENGTH SEED\n"
     "  inject-errors swap      FILE OFFSET_A OFFSET_B LENGTH\n"
     "  inject-errors swap2     FILE_A FILE_B OFFSET LENGTH\n",
     xpar_stderr);
@@ -173,6 +196,9 @@ int xpar_main(int argc, char ** argv) {
              parse_i64(argv[4], "start"));
   } else if (xpar_strcmp(mode, "truncate") == 0 && argc == 4) {
     do_truncate(argv[2], parse_i64(argv[3], "delta"));
+  } else if (xpar_strcmp(mode, "insert") == 0 && argc == 6) {
+    do_insert(argv[2], parse_i64(argv[3], "offset"),
+              parse_i64(argv[4], "length"), parse_u64(argv[5], "seed"));
   } else if (xpar_strcmp(mode, "swap") == 0 && argc == 6) {
     do_swap(argv[2], parse_i64(argv[3], "offset_a"),
             parse_i64(argv[4], "offset_b"),
