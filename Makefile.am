@@ -1,282 +1,273 @@
-EXTRA_DIST = README.md contrib/inject-errors.c
+##  Copyright (C) 2022-2026 Kamila Szewczyk
+##
+##  This program is free software; you can redistribute it and/or modify
+##  it under the terms of the GNU General Public License as published by
+##  the Free Software Foundation; either version 3 of the License only.
+
+ACLOCAL_AMFLAGS = -I m4
+
+AM_CFLAGS = -std=c99 $(XPAR_WARN_CFLAGS) $(XPAR_HARDEN_CFLAGS) \
+            $(XPAR_SAN_CFLAGS) $(XPAR_WIN_CFLAGS)
+AM_LDFLAGS = $(XPAR_SAN_LDFLAGS) $(XPAR_WIN_LDFLAGS)
+
+AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS) -I$(top_builddir) \
+              -I$(top_srcdir)/src \
+              -I$(top_srcdir)/src/kernel \
+              -I$(top_srcdir)/src/platform
+
 bin_PROGRAMS = xpar
-noinst_HEADERS = platform.h crc32c.h jmode.h vmode.h lmode.h common.h yarg.h \
-								 sharding.h sse2neon.h blake2b.h blake2b-impl.h \
-								 lmode-impl.h io_uring_host.h
-xpar_SOURCES = xpar.c crc32c.c jmode.c vmode.c lmode.c lmode-scalar.c threadpool.c io_uring_host.c
+dist_man1_MANS = xpar.1
+dist_doc_DATA = doc/xpar-format.tex
 
-if XPAR_WIN_HOST
-# Windows host: isolate host-win32.c with $(HOST_WIN32_CFLAGS), bypass
-# the mingw C runtime so the binary imports only KERNEL32.dll.
-xpar_LDFLAGS = -nostartfiles -Wl,-e,xpar_entry -static -static-libgcc -Wl,--subsystem,console $(XPAR_WIN_SUBSYS_LDFLAGS)
-xpar_LDADD_EXTRA_WIN = libhost_win32.a -lkernel32
-AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS)
+doc/xpar-format.pdf: $(srcdir)/doc/xpar-format.tex
+	$(MKDIR_P) doc
+	TEXINPUTS=$(abs_top_srcdir)/doc:$$TEXINPUTS \
+	latexmk -pdf -interaction=nonstopmode -halt-on-error \
+	  -output-directory=$(abs_top_builddir)/doc \
+	  $(abs_top_srcdir)/doc/xpar-format.tex
+
+noinst_HEADERS = \
+  src/common.h src/xpar2.h src/cli.h src/yarg.h src/v1detect.h \
+  src/container.h src/auth.h src/manifest.h src/chunk.h src/slice.h src/resync.h \
+  src/plan.h src/json.h \
+  src/ops/ops.h src/ops/chain.h src/ops/vset.h \
+  src/kernel/gf.h src/kernel/gf-impl.h src/kernel/gf-rvv-int.h \
+  src/kernel/armour.h src/kernel/armour-impl.h \
+  src/kernel/codec.h src/kernel/codec-int.h \
+  src/kernel/blake3.h src/kernel/blake3-impl.h \
+  src/kernel/crc32c.h src/kernel/crc32c-impl.h \
+  src/platform/port.h src/platform/port-fs.h src/platform/port-cpu.h \
+  src/platform/port-thread.h
+
+noinst_LIBRARIES = libxpar_core.a
+
+libxpar_core_a_SOURCES = \
+  src/cli.c src/progress.c src/v1detect.c \
+  src/container.c src/auth.c src/manifest.c src/chunk.c src/slice.c src/resync.c \
+  src/plan.c src/json.c \
+  src/ops/create.c src/ops/verify.c src/ops/repair.c src/ops/extract.c \
+  src/ops/scrub.c src/ops/listinfo.c src/ops/generation.c \
+  src/kernel/gf.c src/kernel/gf-scalar.c \
+  src/kernel/armour.c src/kernel/armour-scalar.c \
+  src/kernel/codec-matrix.c src/kernel/codec-fft.c \
+  src/kernel/blake3.c src/kernel/blake3-scalar.c \
+  src/kernel/crc32c.c src/kernel/crc32c-scalar.c \
+  src/platform/port-cpu-x86.c src/platform/port-cpu-arm.c \
+  src/platform/port-cpu-other.c
+
+if XPAR_IS_POSIX
+libxpar_core_a_SOURCES += src/platform/port-posix.c \
+                          src/platform/port-fs-posix.c
+endif
+if XPAR_IS_WINDOWS
+libxpar_core_a_SOURCES += src/platform/port-win32.c \
+                          src/platform/port-fs-win32.c
+endif
+if XPAR_DOS
+libxpar_core_a_SOURCES += src/platform/port-djgpp.c \
+                          src/platform/port-fs-djgpp.c
+endif
+
+if XPAR_THREADS
+if XPAR_IS_WINDOWS
+libxpar_core_a_SOURCES += src/platform/port-thread-win32.c
 else
-if XPAR_DOS_HOST
-# DJGPP / MS-DOS host; -static keeps the stubified xpar.exe self-contained.
-xpar_SOURCES += host-djgpp.c
-xpar_LDFLAGS = -static
-xpar_LDADD_EXTRA_WIN =
+libxpar_core_a_SOURCES += src/platform/port-thread-posix.c
+endif
 else
-xpar_SOURCES += host-posix.c
-xpar_LDADD_EXTRA_WIN =
-endif
+libxpar_core_a_SOURCES += src/platform/port-thread-none.c
 endif
 
-if HAVE_BLAKE2B
-xpar_SOURCES += blake2b.c
+xpar_SOURCES = src/xpar.c
+xpar_CFLAGS = $(AM_CFLAGS)
+xpar_LDFLAGS = $(AM_LDFLAGS)
+
+xpar_LDADD = libxpar_core.a
+
+if XPAR_WIN_LEGACY
+xpar_SOURCES += src/platform/port-win95-crt.c
+xpar_CFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns
+xpar_LDFLAGS += -nostartfiles -nodefaultlibs -Wl,-e,xpar_entry \
+                 -static -static-libgcc -Wl,--subsystem,console
+xpar_LDADD += -lgcc -lkernel32
 endif
 
-if XPAR_X86_64
-xpar_SOURCES += xpar-x86_64.asm
-SUFFIXES = .asm
-.asm.o:
-	$(NASM) $(NAFLAGS) -g -o $@ $<
-endif
-
-if XPAR_AARCH64
-xpar_SOURCES += xpar-aarch64.S
-xpar_CCASFLAGS = -march=armv8-a+crypto+crc
-# NEON is always available on AArch64; SSSE3/SSE4.1 variants use sse2neon.
-xpar_SOURCES += lmode-ssse3.c
-if HAVE_BLAKE2B
-xpar_SOURCES += blake2b-sse41.c
-endif
-endif
-
-# SIMD variants live in convenience libs so per-file SSSE3/SSE41/AVX2
-# CFLAGS stay out of the rest of the binary (runtime CPUID dispatch).
-noinst_LIBRARIES =
-xpar_LDADD = $(xpar_LDADD_EXTRA_WIN)
-if XPAR_WIN_HOST
-noinst_LIBRARIES += libhost_win32.a
-libhost_win32_a_SOURCES = host-win32.c
-libhost_win32_a_CFLAGS = $(AM_CFLAGS) $(HOST_WIN32_CFLAGS)
-endif
-if XPAR_X86_64
 if HAVE_SSSE3
-noinst_LIBRARIES += liblmode_ssse3.a
-liblmode_ssse3_a_SOURCES = lmode-ssse3.c
-liblmode_ssse3_a_CFLAGS = $(AM_CFLAGS) $(SSSE3_CFLAGS)
-xpar_LDADD += liblmode_ssse3.a
+noinst_LIBRARIES          += libxpar_ssse3.a
+libxpar_ssse3_a_SOURCES    = src/kernel/gf-ssse3.c
+libxpar_ssse3_a_CFLAGS     = $(AM_CFLAGS) $(SSSE3_CFLAGS)
+libxpar_ssse3_a_CPPFLAGS   = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_ssse3.a
 endif
+
+if HAVE_SSE42
+noinst_LIBRARIES          += libxpar_sse42.a
+libxpar_sse42_a_SOURCES    = src/kernel/crc32c-sse42.c
+libxpar_sse42_a_CFLAGS     = $(AM_CFLAGS) $(SSE42_CFLAGS)
+libxpar_sse42_a_CPPFLAGS   = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_sse42.a
+endif
+
+if HAVE_VPCLMUL
+noinst_LIBRARIES          += libxpar_vpclmul.a
+libxpar_vpclmul_a_SOURCES  = src/kernel/crc32c-vpclmul.c
+libxpar_vpclmul_a_CFLAGS    = $(AM_CFLAGS) $(VPCLMUL_CFLAGS)
+libxpar_vpclmul_a_CPPFLAGS  = $(AM_CPPFLAGS)
+xpar_LDADD                 += libxpar_vpclmul.a
+endif
+
 if HAVE_AVX2
-noinst_LIBRARIES += liblmode_avx2.a
-liblmode_avx2_a_SOURCES = lmode-avx2.c
-liblmode_avx2_a_CFLAGS = $(AM_CFLAGS) $(AVX2_CFLAGS)
-xpar_LDADD += liblmode_avx2.a
-endif
-endif
-if HAVE_BLAKE2B
-if XPAR_X86_64
-if HAVE_SSE41
-noinst_LIBRARIES += libblake2b_sse41.a
-libblake2b_sse41_a_SOURCES = blake2b-sse41.c
-libblake2b_sse41_a_CFLAGS = $(AM_CFLAGS) $(SSE41_CFLAGS)
-xpar_LDADD += libblake2b_sse41.a
-endif
-if HAVE_AVX2
-noinst_LIBRARIES += libblake2b_avx2.a
-libblake2b_avx2_a_SOURCES = blake2b-avx2.c
-libblake2b_avx2_a_CFLAGS = $(AM_CFLAGS) $(AVX2_CFLAGS)
-xpar_LDADD += libblake2b_avx2.a
-endif
-endif
+noinst_LIBRARIES          += libxpar_avx2.a
+libxpar_avx2_a_SOURCES     = src/kernel/gf-avx2.c src/kernel/armour-avx2.c \
+                             src/kernel/blake3-avx2.c
+libxpar_avx2_a_CFLAGS      = $(AM_CFLAGS) $(AVX2_CFLAGS)
+libxpar_avx2_a_CPPFLAGS    = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_avx2.a
 endif
 
-dist_man_MANS = xpar.1
-
-.PHONY: size-report
-if XPAR_DOS_HOST
-# Swap DJGPP's go32 stub for CWSDSTUB.EXE (CWSDPMI r7) and emit a ./xpar
-# wrapper that drives the binary headlessly via DOSBox-X for self-check.
-all-local: xpar.wrapper-stamp size-report
-size-report: xpar.wrapper-stamp
-	@$(SIZE) xpar$(EXEEXT) 2>/dev/null || :
-	@ls -l xpar$(EXEEXT) | awk '{printf "  xpar$(EXEEXT): %s bytes\n", $$5}'
-xpar.wrapper-stamp: xpar$(EXEEXT) $(srcdir)/contrib/dos/dosbox-x.conf
-	$(EXE2COFF) xpar$(EXEEXT)
-	cat $(CWSDSTUB) xpar > xpar$(EXEEXT).new
-	mv -f xpar$(EXEEXT).new xpar$(EXEEXT)
-	rm -f xpar
-	@{ \
-	  echo '#!/bin/sh'; \
-	  echo 'set -e'; \
-	  echo 'tmp=$$(mktemp -d)'; \
-	  echo 'trap "rm -rf \"$$tmp\"" EXIT'; \
-	  echo 'cfg=$$tmp/dosbox-x.conf'; \
-	  echo 'printf %s "$$*" > "$$tmp/args.rsp"   # DJGPP @response-file (PSP 126-byte cap)'; \
-	  echo 'sed -e "s|@PWD@|$$PWD|g" -e "s|@OUT@|$$tmp|g" '"$(abs_srcdir)/contrib/dos/dosbox-x.conf"' > "$$cfg"'; \
-	  echo 'SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy dosbox-x -silent -fastlaunch -nogui -nomenu -conf "$$cfg" -exit >/dev/null 2>&1'; \
-	  echo 'if [ -f "$$tmp/stdout.out" ]; then cat "$$tmp/stdout.out"; fi'; \
-	  echo 'ec=$$(tr -d " \\t\\r\\n" < "$$tmp/ec.txt" 2>/dev/null || echo FAIL)'; \
-	  echo 'case "$$ec" in OK) exit 0;; *) exit 1;; esac'; \
-	} > xpar
-	@chmod +x xpar
-	@touch $@
-DOS_WRAPPER_CLEAN = xpar xpar.wrapper-stamp
-else
-all-local: size-report
-size-report: xpar$(EXEEXT)
-	@$(SIZE) xpar$(EXEEXT) 2>/dev/null || :
-	@ls -l xpar$(EXEEXT) | awk '{printf "  xpar$(EXEEXT): %s bytes\n", $$5}'
-DOS_WRAPPER_CLEAN =
-endif
-EXTRA_DIST += contrib/dos/dosbox-x.conf
-
-# Developer convenience targets
-.PHONY: update-ChangeLog
-update-ChangeLog:
-	contrib/gitlog-to-changelog > ChangeLog
-
-# Error-injection helper, built for the build host (not the target).
-CLEANFILES = inject-errors$(EXEEXT) $(DOS_WRAPPER_CLEAN)
-inject-errors$(EXEEXT): contrib/inject-errors.c host-posix.c threadpool.c
-	$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD) -pthread -I. -o $@ $^
-
-CC_FOR_BUILD ?= $(CC)
-CFLAGS_FOR_BUILD ?= $(CFLAGS)
-
-# Self-check file patterns: DOS uses 8.3 name derivation (xpar.exe ->
-# xpar.xpa joint / xpar.NNN sharded), POSIX/Windows append the full suffix.
-if XPAR_DOS_HOST
-XPA_BIN_JOINT      = xpar.xpa
-XPA_BIN_SHARD_GLOB = xpar.[0-9][0-9][0-9]
-XPA_BIN_SHARD_000  = xpar.000
-XPA_BIN_SHARD_001  = xpar.001
-XPA_BIN_SHARD_002  = xpar.002
-XPA_SRC_JOINT      = xpar.xpa
-else
-XPA_BIN_JOINT      = xpar$(EXEEXT).xpa
-XPA_BIN_SHARD_GLOB = xpar$(EXEEXT).xpa.*
-XPA_BIN_SHARD_000  = xpar$(EXEEXT).xpa.000
-XPA_BIN_SHARD_001  = xpar$(EXEEXT).xpa.001
-XPA_BIN_SHARD_002  = xpar$(EXEEXT).xpa.002
-XPA_SRC_JOINT      = xpar.src.xpa
+if HAVE_GFNI
+noinst_LIBRARIES          += libxpar_gfni.a
+libxpar_gfni_a_SOURCES     = src/kernel/gf-gfni.c src/kernel/armour-gfni.c
+libxpar_gfni_a_CFLAGS      = $(AM_CFLAGS) $(GFNI_CFLAGS)
+libxpar_gfni_a_CPPFLAGS    = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_gfni.a
 endif
 
-.PHONY: self-check
-self-check: inject-errors$(EXEEXT)
-	./xpar -Jef xpar$(EXEEXT) && ./xpar -Jdf $(XPA_BIN_JOINT) xpar.org \
-		&& cmp xpar$(EXEEXT) xpar.org && rm xpar.org $(XPA_BIN_JOINT)
-	./xpar -Jef -i 2 xpar$(EXEEXT) && ./xpar -Jdf $(XPA_BIN_JOINT) xpar.org \
-		&& cmp xpar$(EXEEXT) xpar.org && rm xpar.org $(XPA_BIN_JOINT)
-	./xpar -Wef --dshards=4 --pshards=2 xpar$(EXEEXT) \
-	  && ./xpar -Wdf xpar.org $(XPA_BIN_SHARD_GLOB) \
-		&& cmp xpar$(EXEEXT) xpar.org
-	rm -f xpar.org $(XPA_BIN_SHARD_GLOB)
-	./xpar -Wef --dshards=4 --pshards=2 xpar$(EXEEXT) && rm -f $(XPA_BIN_SHARD_000) \
-	  && ./xpar -Wdf xpar.org $(XPA_BIN_SHARD_GLOB) \
-		&& cmp xpar$(EXEEXT) xpar.org
-	rm -f xpar.org $(XPA_BIN_SHARD_GLOB)
-	./xpar -Lef --dshards=4 --pshards=2 xpar$(EXEEXT) \
-	  && ./xpar -Ldf xpar.org $(XPA_BIN_SHARD_GLOB) \
-		&& cmp xpar$(EXEEXT) xpar.org
-	rm -f xpar.org $(XPA_BIN_SHARD_GLOB)
-	./xpar -Lef --dshards=4 --pshards=2 xpar$(EXEEXT) && rm -f $(XPA_BIN_SHARD_000) \
-	  && ./xpar -Ldf xpar.org $(XPA_BIN_SHARD_GLOB) \
-		&& cmp xpar$(EXEEXT) xpar.org
-	rm -f xpar.org $(XPA_BIN_SHARD_GLOB)
-	./xpar -Lef --dshards=12 --pshards=8 xpar$(EXEEXT) && rm -f $(XPA_BIN_SHARD_000) \
-	  && ./xpar -Ldf xpar.org $(XPA_BIN_SHARD_GLOB) \
-		&& cmp xpar$(EXEEXT) xpar.org
-	rm -f xpar.org $(XPA_BIN_SHARD_GLOB)
-	cp xpar$(EXEEXT) xpar.src && ./xpar -Jsef xpar.src \
-	  && ./xpar -Jsdf xpar.src $(XPA_SRC_JOINT) > xpar.src.rt \
-	  && cmp xpar.src xpar.src.rt
-	./xpar -Jsdf xpar.src > xpar.src.rt2 && cmp xpar.src xpar.src.rt2
-	rm -f xpar.src.rt xpar.src.rt2
-	cp xpar.src xpar.src.corrupt && ./inject-errors$(EXEEXT) scatter \
-	  xpar.src.corrupt 10 7
-	./xpar -Jsdf xpar.src.corrupt $(XPA_SRC_JOINT) > xpar.src.fixed \
-	  && cmp xpar.src xpar.src.fixed
-	rm -f xpar.src.corrupt xpar.src.fixed
-	cp xpar.src xpar.src.burst && ./inject-errors$(EXEEXT) burst \
-	  xpar.src.burst 20 500
-	! ./xpar -Jsd xpar.src.burst $(XPA_SRC_JOINT) > /dev/null 2>&1
-	rm -f xpar.src.burst
-	./xpar -Jsef xpar.src && ./xpar -Jstf xpar.src $(XPA_SRC_JOINT)
-	cp xpar.src xpar.src.corrupt \
-	  && ./inject-errors$(EXEEXT) burst xpar.src.corrupt 20 500 \
-	  && ! ./xpar -Jstf xpar.src.corrupt $(XPA_SRC_JOINT) 2>/dev/null
-	rm -f xpar.src.corrupt $(XPA_SRC_JOINT)
-	./xpar -Jef xpar.src && ./xpar -Jtf $(XPA_SRC_JOINT)
-	cp $(XPA_SRC_JOINT) xpar.xpa.corrupt \
-	  && ./inject-errors$(EXEEXT) burst xpar.xpa.corrupt 40 200 \
-	  && ! ./xpar -Jtf xpar.xpa.corrupt 2>/dev/null
-	rm -f $(XPA_SRC_JOINT) xpar.xpa.corrupt
-	! ./xpar -Jsef -i 2 xpar.src 2>/dev/null
-	! ./xpar -Lse -s --dshards=4 --pshards=2 xpar.src 2>/dev/null
-	./xpar -Jef xpar.src \
-	  && ! ./xpar -Jsd xpar.src $(XPA_SRC_JOINT) > /dev/null 2>&1
-	rm -f $(XPA_SRC_JOINT)
-	./xpar -Jsef xpar.src \
-	  && ! ./xpar -Jd $(XPA_SRC_JOINT) xpar.src.mm 2>/dev/null
-	rm -f xpar.src $(XPA_SRC_JOINT) xpar.src.mm
-	./xpar -Wef --dshards=4 --pshards=2 xpar$(EXEEXT) \
-	  && ./xpar -Wtf $(XPA_BIN_SHARD_GLOB)
-	./inject-errors$(EXEEXT) burst $(XPA_BIN_SHARD_000) 100 1000 \
-	  && ./inject-errors$(EXEEXT) burst $(XPA_BIN_SHARD_001) 100 1000 \
-	  && ./inject-errors$(EXEEXT) burst $(XPA_BIN_SHARD_002) 100 1000 \
-	  && ! ./xpar -Wtf $(XPA_BIN_SHARD_GLOB) 2>/dev/null
-	rm -f $(XPA_BIN_SHARD_GLOB)
-	./xpar -Lef --dshards=4 --pshards=2 xpar$(EXEEXT) \
-	  && ./xpar -Ltf $(XPA_BIN_SHARD_GLOB)
-	rm -f $(XPA_BIN_SHARD_000) $(XPA_BIN_SHARD_001) $(XPA_BIN_SHARD_002)
-	! ./xpar -Ltf $(XPA_BIN_SHARD_GLOB) 2>/dev/null
-	rm -f $(XPA_BIN_SHARD_GLOB)
-	./xpar -Jef -H blake2b xpar$(EXEEXT) && ./xpar -Jdf $(XPA_BIN_JOINT) xpar.org \
-	  && cmp xpar$(EXEEXT) xpar.org && rm xpar.org $(XPA_BIN_JOINT)
-	./xpar -Jef -i 2 -H blake2b xpar$(EXEEXT) && ./xpar -Jdf $(XPA_BIN_JOINT) xpar.org \
-	  && cmp xpar$(EXEEXT) xpar.org && rm xpar.org $(XPA_BIN_JOINT)
-	./xpar -Jsef -H blake2b xpar$(EXEEXT) \
-	  && ./xpar -Jsdf xpar$(EXEEXT) $(XPA_BIN_JOINT) > xpar.org \
-	  && cmp xpar$(EXEEXT) xpar.org && rm xpar.org $(XPA_BIN_JOINT)
-	head -c 32 /dev/urandom > test.key
-	./xpar -Jef --auth=test.key xpar$(EXEEXT)
-	./xpar -Jdf --auth=test.key $(XPA_BIN_JOINT) xpar.org
-	cmp xpar$(EXEEXT) xpar.org
-	head -c 32 /dev/urandom > wrong.key
-	! ./xpar -Jd --auth=wrong.key $(XPA_BIN_JOINT) /tmp/bad > /dev/null 2>&1
-	! ./xpar -Jd $(XPA_BIN_JOINT) /tmp/bad > /dev/null 2>&1
-	rm -f xpar.org $(XPA_BIN_JOINT)
-	./xpar -We -H blake2b --dshards=4 --pshards=2 xpar$(EXEEXT)
-	./xpar -Wd xpar.org $(XPA_BIN_SHARD_GLOB)
-	cmp xpar$(EXEEXT) xpar.org
-	./xpar -Wt $(XPA_BIN_SHARD_GLOB)
-	rm -f $(XPA_BIN_SHARD_GLOB) xpar.org
-	./xpar -Le -H blake2b --dshards=4 --pshards=2 xpar$(EXEEXT)
-	./xpar -Ld xpar.org $(XPA_BIN_SHARD_GLOB)
-	cmp xpar$(EXEEXT) xpar.org
-	./xpar -Lt $(XPA_BIN_SHARD_GLOB)
-	rm -f $(XPA_BIN_SHARD_GLOB) xpar.org
-	./xpar -We --auth=test.key --dshards=4 --pshards=2 xpar$(EXEEXT)
-	./xpar -Wd --auth=test.key xpar.org $(XPA_BIN_SHARD_GLOB)
-	cmp xpar$(EXEEXT) xpar.org
-	./xpar -Wt --auth=test.key $(XPA_BIN_SHARD_GLOB)
-	! ./xpar -Wd --auth=wrong.key /tmp/bad $(XPA_BIN_SHARD_GLOB) > /dev/null 2>&1
-	! ./xpar -Wd /tmp/bad $(XPA_BIN_SHARD_GLOB) > /dev/null 2>&1
-	rm -f $(XPA_BIN_SHARD_GLOB) xpar.org
-	./xpar -Le --auth=test.key --dshards=4 --pshards=2 xpar$(EXEEXT)
-	./xpar -Ld --auth=test.key xpar.org $(XPA_BIN_SHARD_GLOB)
-	cmp xpar$(EXEEXT) xpar.org
-	./xpar -Lt --auth=test.key $(XPA_BIN_SHARD_GLOB)
-	! ./xpar -Ld --auth=wrong.key /tmp/bad $(XPA_BIN_SHARD_GLOB) > /dev/null 2>&1
-	rm -f $(XPA_BIN_SHARD_GLOB) xpar.org test.key wrong.key
-	./xpar -Jef xpar$(EXEEXT)
-	./inject-errors$(EXEEXT) truncate $(XPA_BIN_JOINT) 267
-	! ./xpar -Jd $(XPA_BIN_JOINT) /tmp/bad > /dev/null 2>&1
-	rm -f $(XPA_BIN_JOINT)
-	./xpar -Jef xpar$(EXEEXT)
-	./inject-errors$(EXEEXT) swap $(XPA_BIN_JOINT) 37 304 267
-	! ./xpar -Jd $(XPA_BIN_JOINT) /tmp/bad > /dev/null 2>&1
-	rm -f $(XPA_BIN_JOINT)
-	./xpar -Wef --dshards=4 --pshards=2 xpar$(EXEEXT)
-	./inject-errors$(EXEEXT) swap2 $(XPA_BIN_SHARD_000) $(XPA_BIN_SHARD_001) 7 1
-	! ./xpar -Wd /tmp/bad $(XPA_BIN_SHARD_GLOB) > /dev/null 2>&1
-	rm -f $(XPA_BIN_SHARD_GLOB)
+if HAVE_GFNI512
+noinst_LIBRARIES          += libxpar_gfni512.a
+libxpar_gfni512_a_SOURCES  = src/kernel/gf-gfni512.c
+libxpar_gfni512_a_CFLAGS   = $(AM_CFLAGS) $(GFNI512_CFLAGS)
+libxpar_gfni512_a_CPPFLAGS = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_gfni512.a
+endif
 
-.PHONY: cloc
-cloc:
-	cloc $(xpar_SOURCES) Makefile.am configure.ac xpar-aarch64.S \
-		xpar-x86_64.asm
+if HAVE_VBMI
+noinst_LIBRARIES          += libxpar_vbmi.a
+libxpar_vbmi_a_SOURCES     = src/kernel/gf-vbmi.c
+libxpar_vbmi_a_CFLAGS      = $(AM_CFLAGS) $(VBMI_CFLAGS)
+libxpar_vbmi_a_CPPFLAGS    = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_vbmi.a
+endif
+
+if HAVE_NEON
+noinst_LIBRARIES          += libxpar_neon.a
+libxpar_neon_a_SOURCES     = src/kernel/gf-neon.c src/kernel/armour-neon.c \
+                             src/kernel/blake3-neon.c
+libxpar_neon_a_CFLAGS      = $(AM_CFLAGS) $(NEON_CFLAGS)
+libxpar_neon_a_CPPFLAGS    = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_neon.a
+endif
+
+if HAVE_PMULL
+noinst_LIBRARIES          += libxpar_pmull.a
+libxpar_pmull_a_SOURCES    = src/kernel/gf-neon-clmul.c
+libxpar_pmull_a_CFLAGS     = $(AM_CFLAGS) $(PMULL_CFLAGS)
+libxpar_pmull_a_CPPFLAGS   = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_pmull.a
+endif
+
+if HAVE_SVE2
+noinst_LIBRARIES          += libxpar_sve2.a
+libxpar_sve2_a_SOURCES     = src/kernel/gf-sve2.c
+libxpar_sve2_a_CFLAGS      = $(AM_CFLAGS) $(SVE2_CFLAGS)
+libxpar_sve2_a_CPPFLAGS    = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_sve2.a
+endif
+
+if HAVE_VSX
+noinst_LIBRARIES          += libxpar_vsx.a
+libxpar_vsx_a_SOURCES      = src/kernel/gf-vsx.c
+libxpar_vsx_a_CFLAGS       = $(AM_CFLAGS) $(VSX_CFLAGS)
+libxpar_vsx_a_CPPFLAGS     = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_vsx.a
+endif
+
+if HAVE_RVV_CLMUL
+noinst_LIBRARIES          += libxpar_rvvclmul.a
+libxpar_rvvclmul_a_SOURCES = src/kernel/gf-rvv-clmul.c
+libxpar_rvvclmul_a_CFLAGS  = $(AM_CFLAGS) $(RVV_CLMUL_CFLAGS)
+libxpar_rvvclmul_a_CPPFLAGS = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_rvvclmul.a
+endif
+
+if HAVE_RVV
+noinst_LIBRARIES          += libxpar_rvv.a
+libxpar_rvv_a_SOURCES      = src/kernel/gf-rvv-shuffle.c
+libxpar_rvv_a_CFLAGS       = $(AM_CFLAGS) $(RVV_CFLAGS)
+libxpar_rvv_a_CPPFLAGS     = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_rvv.a
+endif
+
+if HAVE_ARM_CRC
+noinst_LIBRARIES          += libxpar_armcrc.a
+libxpar_armcrc_a_SOURCES   = src/kernel/crc32c-arm.c
+libxpar_armcrc_a_CFLAGS    = $(AM_CFLAGS) $(ARM_CRC_CFLAGS)
+libxpar_armcrc_a_CPPFLAGS  = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_armcrc.a
+endif
+
+xpar_LDADD += libxpar_core.a
+
+TESTS = tests/run-tests.sh tests/t_unit
+check_PROGRAMS = tests/t_unit tests/vector_kat bench/codec_xpar
+tests_t_unit_SOURCES = tests/t_unit.c
+tests_t_unit_CPPFLAGS = $(AM_CPPFLAGS)
+tests_t_unit_LDADD = $(xpar_LDADD)
+tests_t_unit_LDADD += libxpar_core.a
+tests_vector_kat_SOURCES = tests/vector-kat.c
+tests_vector_kat_CPPFLAGS = $(AM_CPPFLAGS)
+tests_vector_kat_LDADD = $(xpar_LDADD) libxpar_core.a
+bench_codec_xpar_SOURCES = bench/codec-xpar.c
+bench_codec_xpar_CPPFLAGS = $(AM_CPPFLAGS)
+bench_codec_xpar_LDADD = $(xpar_LDADD) libxpar_core.a
+
+EXTRA_DIST = \
+  bootstrap README.md \
+  tests/run-tests.sh tests/run-sanitizers.sh \
+  tests/vectors/README.md tests/vectors/generate.sh \
+  tests/fuzz/README.md tests/fuzz/fuzz_container.c \
+  contrib/inject-errors.c contrib/check-win95-pe.sh
+
+VENDORED = src/yarg.h
+
+.PHONY: docs doc-check format-check vectors vectors-check fuzz \
+        sanitizer-check win95-check
+docs: doc/xpar-format.pdf
+
+vectors: all tests/vector_kat
+	test ! -e $(top_srcdir)/tests/vectors/generated
+	$(SHELL) $(top_srcdir)/tests/vectors/generate.sh \
+	  $(abs_top_builddir)/xpar $(top_srcdir)/tests/vectors/generated \
+	  $(abs_top_builddir)/tests/vector_kat
+	cp $(top_srcdir)/tests/vectors/generated/V-DET/sidecar-matrix-gf8/set.xpar \
+	  $(top_srcdir)/tests/fuzz/seeds/valid-sidecar.xpar
+	cp $(top_srcdir)/tests/vectors/generated/V-BAD/bad-packet-checksum.xpar \
+	  $(top_srcdir)/tests/fuzz/seeds/bad-checksum.xpar
+	cp $(top_srcdir)/tests/vectors/generated/V-BAD/truncated-final-packet.xpar \
+	  $(top_srcdir)/tests/fuzz/seeds/truncated-tail.xpar
+
+vectors-check: all tests/vector_kat
+	@tmp=`mktemp -d`; \
+	$(SHELL) $(top_srcdir)/tests/vectors/generate.sh \
+	  $(abs_top_builddir)/xpar $$tmp/generated \
+	  $(abs_top_builddir)/tests/vector_kat >/dev/null && \
+	diff -u $(top_srcdir)/tests/vectors/generated/SHA256SUMS \
+	  $$tmp/generated/SHA256SUMS; status=$$?; \
+	rm -rf $$tmp; exit $$status
+
+FUZZ_SANITIZERS = fuzzer,address,undefined
+
+fuzz: all
+	$(MKDIR_P) tests/fuzz
+	clang $(AM_CPPFLAGS) $(AM_CFLAGS) -fsanitize=$(FUZZ_SANITIZERS) \
+	  -Wl,--allow-multiple-definition \
+	  -o tests/fuzz/fuzz_container \
+	  $(top_srcdir)/tests/fuzz/fuzz_container.c src/xpar.o $(xpar_LDADD) \
+	  libxpar_core.a
+
+sanitizer-check:
+	$(SHELL) $(top_srcdir)/tests/run-sanitizers.sh
+
+win95-check: xpar$(EXEEXT)
+	OBJDUMP=$(OBJDUMP) $(SHELL) \
+	  $(top_srcdir)/contrib/check-win95-pe.sh ./xpar$(EXEEXT) ./config.h
