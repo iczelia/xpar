@@ -296,11 +296,11 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
 - `benchmark`: displays the performance metrics for low-level SIMD kernels used
   by xpar.
 ```
-% xpar selftest --tiers
-xpar: selftest: avx2         gf8-mac    8388608 bytes    136 us  58823.53 MiB/s
-xpar: selftest: gfni256      gf8-mac    8388608 bytes    164 us  48780.49 MiB/s
-xpar: selftest: scalar       gf8-mac    8388608 bytes   3683 us   2172.14 MiB/s
-xpar: selftest: 9 tiers checked.
+% xpar benchmark --tiers
+xpar: benchmark: avx2         gf8-mac    8388608 bytes    136 us  58823.53 MiB/s
+xpar: benchmark: gfni256      gf8-mac    8388608 bytes    164 us  48780.49 MiB/s
+xpar: benchmark: scalar       gf8-mac    8388608 bytes   3683 us   2172.14 MiB/s
+xpar: benchmark: 9 tiers checked.
 ```
 
 The following exit codes/ERRORLEVELs of all sub-commands are possible:
