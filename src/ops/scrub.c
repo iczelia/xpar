@@ -165,13 +165,11 @@ static void load_recovery(scrub * c) {
 /*  The inner code, over everything.  */
 
 static void hist_add(scrub * c, const xpar_armour_stat * st) {
-  u32 i;
   c->frames    += st->frames;     c->codewords += st->codewords;
   c->clean     += st->clean;      c->corrected += st->corrected;
   c->failed    += st->failed;     c->symbols   += st->symbols;
   if (st->worst > c->worst) c->worst = st->worst;
-  for (i = 0; i < st->hist_len && i < c->hist_len; i++)
-    c->hist[i] += st->hist[i];
+  For(u32, i, MIN(st->hist_len, c->hist_len), c->hist[i] += st->hist[i])
 }
 
 /*  One armoured packet group: every frame, then the plaintext parse that
@@ -638,8 +636,7 @@ static u64 last_hist[SCRUB_HIST_MAX];
 static u32 last_hist_len;
 
 u32 xpar_scrub_histogram(u64 * out, u32 n) {
-  u32 i;
-  for (i = 0; i < n && i < last_hist_len; i++) out[i] = last_hist[i];
+  For(u32, i, MIN(n, last_hist_len), out[i] = last_hist[i])
   return last_hist_len;
 }
 

@@ -77,6 +77,12 @@ typedef struct {
 } xpar_arm_prologue;
 
 bool xpar_garm_prologue(const u8 *, sz, xpar_arm_prologue *, int *);
+
+/*  Three copies of the 96-byte prologue, each with its 32 GF(2^8) parity
+    bytes, which is how an armoured volume starts.  */
+void xpar_garm_write_prologue(xpar_file *, const xpar_armour_params *,
+                              u64 plain_length, u64 armoured_length,
+                              u64 stream_offset, u64 stream_length);
 void xpar_garm_write_plain(const char *, const xpar_armour_params *,
                            const u8 *, u64, u64, u64);
 void xpar_garm_write_patched(const char *, const xpar_armour_params *,

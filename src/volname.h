@@ -12,28 +12,23 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Serial worker-pool implementation for DJGPP and --disable-threads.  */
+#ifndef XPAR_VOLNAME_H
+#define XPAR_VOLNAME_H
 
 #include "common.h"
-#include "port-thread.h"
+#include "xpar2.h"
 
-int xpar_cpu_count(void) { return 1; }
-int xpar_core_count(void) { return 1; }
+char * xpar_vname_index   (const char * base, u32 gen);
+char * xpar_vname_recovery(const char * base, u32 gen, u64 first, u64 count,
+                           int wfirst, int wcount);
+char * xpar_vname_data    (const char * base, u32 gen, u32 index, int width);
 
-struct xpar_pool { int nthreads; };
+char * xpar_vname_label(const char * data_name);
 
-xpar_pool * xpar_pool_create(int threads) {
-  struct xpar_pool * p = xpar_alloc_raw(sizeof(*p));
-  (void) threads;
-  p->nthreads = 1;
-  return p;
-}
+void xpar_vname_widths(u64 max_first, u64 max_count,
+                       int * wfirst, int * wcount);
+bool xpar_vname_has_ext(const char * name);
+bool xpar_vname_is_index (const char * name, const char * stem);
+bool xpar_vname_is_member(const char * name, const char * stem);
 
-int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
-
-void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
-  (void) p;
-  For(sz, i, n, fn(i, ctx))
-}
-
-void xpar_pool_destroy(xpar_pool * p) { xpar_free(p); }
+#endif

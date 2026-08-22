@@ -168,6 +168,13 @@ static inline int xpar_digits10(u64 v) {
   return d;
 }
 
+/*  Whether any of `n` bytes is NUL, which is how a length-counted field
+    that will become a C string is rejected on the way in.  */
+static inline bool xpar_has_nul(const u8 * p, sz n) {
+  For(sz, i, n, if (!p[i]) return true)
+  return false;
+}
+
 /*  Constant-time comparison.  */
 static inline bool xpar_ct_equal(const void * a, const void * b, sz n) {
   const u8 * x = (const u8 *) a, * y = (const u8 *) b;

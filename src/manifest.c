@@ -97,9 +97,7 @@ bool xpar_utf8_valid(const u8 * p, u32 n) {
 /*  Path rules.  */
 
 static bool stem_is(const char * c, const char * want, u32 n) {
-  u32 i;
-  for (i = 0; i < n; i++)
-    if (fold_ascii((u8) c[i]) != (u8) want[i]) return false;
+  For(u32, i, n, if (fold_ascii((u8) c[i]) != (u8) want[i]) return false)
   return true;
 }
 
@@ -153,10 +151,9 @@ xpar_path_status xpar_path_check(const char * name, u32 len, u32 flags) {
 }
 
 xpar_path_status xpar_symlink_target_check(const u8 * target, u32 len) {
-  u32 i;
   if (len == 0) return XPAR_PATH_EMPTY;
   if (len > XPAR_EXTRA_MAX) return XPAR_PATH_TOO_LONG;
-  for (i = 0; i < len; i++) if (target[i] == 0) return XPAR_PATH_CONTROL;
+  For(u32, i, len, if (target[i] == 0) return XPAR_PATH_CONTROL)
   return XPAR_PATH_OK;
 }
 
@@ -238,13 +235,11 @@ xpar_entry * xpar_manifest_append(xpar_manifest * m) {
   return e;
 }
 
-static void posix_rec_free(xpar_posix_rec * r) {
-  u32 i;
-  for (i = 0; i < r->xattr_count; i++) {
-    xpar_free(r->xattrs[i].name);  xpar_free(r->xattrs[i].value);
-  }
+void xpar_posix_rec_free(xpar_posix_rec * r) {
+  For(u32, i, r->xattr_count,
+      xpar_free(r->xattrs[i].name);  xpar_free(r->xattrs[i].value))
   xpar_free(r->xattrs);  xpar_free(r->owner);  xpar_free(r->group);
-  xpar_memset(r, 0, sizeof(*r));
+  xpar_memset(r, 0, sizeof *r);
 }
 
 void xpar_manifest_free(xpar_manifest * m) {
@@ -253,7 +248,7 @@ void xpar_manifest_free(xpar_manifest * m) {
     xpar_entry_free(&m->entry[i]);
     if (m->source) xpar_free(m->source[i]);
   }
-  for (i = 0; i < m->posix_count; i++) posix_rec_free(&m->posix[i]);
+  for (i = 0; i < m->posix_count; i++) xpar_posix_rec_free(&m->posix[i]);
   xpar_free(m->entry);  xpar_free(m->source);  xpar_free(m->posix);
   xpar_memset(m, 0, sizeof(*m));
 }
@@ -288,11 +283,10 @@ static void sort_names(const xpar_manifest * m, u32 * a, u32 n) {
 }
 
 void xpar_nameidx_build(const xpar_manifest * m, xpar_nameidx * ix) {
-  u32 i;
   ix->count = m->count;
   ix->order = (u32 *) xpar_alloc_raw((m->count ? m->count : 1) *
                                      sizeof(u32));
-  for (i = 0; i < m->count; i++) ix->order[i] = i;
+  For(u32, i, m->count, ix->order[i] = i)
   sort_names(m, ix->order, m->count);
 }
 
@@ -507,8 +501,7 @@ static bool glob_match(const char * pat, const char * text) {
 }
 
 static bool any_glob(char * const * pat, u32 count, const char * name) {
-  u32 i;
-  for (i = 0; i < count; i++) if (glob_match(pat[i], name)) return true;
+  For(u32, i, count, if (glob_match(pat[i], name)) return true)
   return false;
 }
 
@@ -614,7 +607,7 @@ static void record_posix(walker * w, xpar_entry * e, const char * path,
     }
   }
   e->posix_index = xpar_posix_intern(w->m, &r);
-  posix_rec_free(&r);
+  xpar_posix_rec_free(&r);
   xpar_free(names);
 }
 

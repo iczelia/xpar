@@ -146,11 +146,9 @@ xpar_pool * xpar_pool_create(int threads) {
 int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
-  sz i;
-  int k;
   if (n == 0) return;
   if (!p || p->nthreads <= 1 || n == 1) {
-    for (i = 0; i < n; i++) fn(i, ctx);
+    For(sz, i, n, fn(i, ctx))
     return;
   }
   EnterCriticalSection(&p->cs);
@@ -162,7 +160,7 @@ void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
   /*  SetEvent carries the publication of the fields above to the woken
       thread; the kernel transition is a full barrier on every Windows
       target.  */
-  for (k = 0; k < p->nthreads - 1; k++) SetEvent(p->wake[k]);
+  Fk(p->nthreads - 1, SetEvent(p->wake[k]))
 
   drain(p);
 

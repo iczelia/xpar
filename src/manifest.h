@@ -122,6 +122,7 @@ void xpar_extents_append(xpar_extent ** list, u32 * count, u32 * capacity,
 
 u32 xpar_posix_intern(xpar_manifest * m, const xpar_posix_rec * r);
 bool xpar_posix_equal(const xpar_posix_rec *, const xpar_posix_rec *);
+void xpar_posix_rec_free(xpar_posix_rec *);
 
 /*  Walking a tree into entries (writer side).  */
 

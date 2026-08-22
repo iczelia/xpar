@@ -18,6 +18,7 @@
 #include "manifest.h"
 #include "pathname.h"
 #include "v1detect.h"
+#include "volname.h"
 #include "port-fs.h"
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -728,11 +729,6 @@ static void v1_flag_refuse(int argc, char ** argv) {
   }
 }
 
-static bool ends_with_xpar(const char * p) {
-  sz n = xpar_strlen(p);
-  return n > XPAR_EXT_LEN && ci_equal(p + n - XPAR_EXT_LEN, XPAR_EXT);
-}
-
 static bool is_dir(const char * p) {
   xpar_dir * d = xpar_opendir(p);
   if (!d) return false;
@@ -827,17 +823,6 @@ static void strip_volume_suffix(char * base) {
   if (i == n) base[dot - 1] = '\0';
 }
 
-static bool chain_index_sibling(const char * name, const char * stem) {
-  sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (n <= XPAR_EXT_LEN || !ends_with_xpar(name) ||
-      n - XPAR_EXT_LEN < p || xpar_strncmp(name, stem, p)) return false;
-  n -= XPAR_EXT_LEN;
-  if (p == n) return true;
-  if (name[p++] != '.' || p == n || name[p] != 'g') return false;
-  i = p + 1;
-  return xpar_scan_digits(name, &i, n) && i == n;
-}
-
 static void gather_chain_siblings(xpar_setref * s) {
   const char * leaf = s->base;
   sz dlen = 0;
@@ -855,7 +840,7 @@ static void gather_chain_siblings(xpar_setref * s) {
   d = xpar_opendir(*dir ? dir : ".");
   if (d) {
     while ((e = xpar_readdir(d)) != NULL)
-      if (!e->is_dir && chain_index_sibling(e->name, leaf))
+      if (!e->is_dir && xpar_vname_is_index(e->name, leaf))
         push_vol_once(s, join_path(dir, e->name));
     xpar_closedir(d);
   }
@@ -871,14 +856,14 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     const xpar_dirent * e;
     out->dir = dup_str(arg);
     while ((e = xpar_readdir(d)) != NULL)
-      if (!e->is_dir && ends_with_xpar(e->name))
+      if (!e->is_dir && xpar_vname_has_ext(e->name))
         push_vol(out, join_path(arg, e->name));
     xpar_closedir(d);
     sort_vols(out);
     FATAL_UNLESS("Directory '%s' holds no " XPAR_EXT " file.",
                  out->count > 0, arg);
   } else if (is_file(arg)) {
-    if (ends_with_xpar(arg)) {
+    if (xpar_vname_has_ext(arg)) {
       char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
       FATAL_UNLESS("Out of memory.", b != NULL);
       strip_volume_suffix(b);

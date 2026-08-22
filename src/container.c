@@ -35,12 +35,6 @@ static int bytes_cmp(const u8 * a, sz na, const u8 * b, sz nb) {
   return na < nb ? -1 : (na > nb);
 }
 
-static bool has_nul(const u8 * p, sz n) {
-  sz i;
-  for (i = 0; i < n; i++) if (!p[i]) return true;
-  return false;
-}
-
 /*  Callers have already rejected embedded NUL bytes.  */
 static char * dup_str(const u8 * p, sz n) {
   char * s = (char *) xpar_malloc(n + 1);
@@ -608,13 +602,13 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
 
   if (ol > avail - p) return XPAR_E_MALFORMED;
   if (ol) {
-    if (has_nul(b + p, ol)) return XPAR_E_MALFORMED;
+    if (xpar_has_nul(b + p, ol)) return XPAR_E_MALFORMED;
     r->owner = dup_str(b + p, ol);
     p += ol;
   }
   if (gl > avail - p) return XPAR_E_MALFORMED;
   if (gl) {
-    if (has_nul(b + p, gl)) return XPAR_E_MALFORMED;
+    if (xpar_has_nul(b + p, gl)) return XPAR_E_MALFORMED;
     r->group = dup_str(b + p, gl);
     p += gl;
   }
@@ -631,7 +625,7 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
       nl = xpar_rd16(b + p);  vl = xpar_rd16(b + p + 2);  p += 4;
       if (nl < 1) return XPAR_E_MALFORMED;
       if (nl > avail - p) return XPAR_E_MALFORMED;
-      if (has_nul(b + p, nl)) return XPAR_E_MALFORMED;
+      if (xpar_has_nul(b + p, nl)) return XPAR_E_MALFORMED;
       if (prev && bytes_cmp(prev, prev_n, b + p, nl) >= 0)
         return XPAR_E_MALFORMED;
       prev = b + p;  prev_n = nl;
@@ -650,15 +644,6 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
   *used = (sz) xpar_align_up(p, XPAR_PKT_ALIGN);
   if (*used > avail) return XPAR_E_MALFORMED;
   return XPAR_OK;
-}
-
-static void posx_rec_free(xpar_posix_rec * r) {
-  u32 j;
-  for (j = 0; j < r->xattr_count; j++) {
-    xpar_free(r->xattrs[j].name);  xpar_free(r->xattrs[j].value);
-  }
-  xpar_free(r->xattrs);  xpar_free(r->owner);  xpar_free(r->group);
-  xpar_memset(r, 0, sizeof *r);
 }
 
 static xpar_status posx_body(const u8 * body, sz n, xpar_posx * out) {
@@ -692,8 +677,7 @@ xpar_status xpar_posx_read(const u8 * body, sz n, xpar_posx * out) {
 }
 
 void xpar_posx_free(xpar_posx * t) {
-  u32 i;
-  for (i = 0; i < t->count; i++) posx_rec_free(&t->rec[i]);
+  For(u32, i, t->count, xpar_posix_rec_free(&t->rec[i]))
   xpar_free(t->rec);
   xpar_memset(t, 0, sizeof *t);
 }
@@ -1165,7 +1149,7 @@ static xpar_status layt_body(const u8 * body, sz n, xpar_layt * out) {
         (out->vol[i].stream_offset || out->vol[i].vol_tag))
       return XPAR_E_MALFORMED;
     if ((u64) nl > (u64) (n - p) - 32) return XPAR_E_MALFORMED;
-    if (has_nul(e + 32, nl) ||
+    if (xpar_has_nul(e + 32, nl) ||
         xpar_path_check((const char *) e + 32, nl, XPAR_PATH_WIN) !=
           XPAR_PATH_OK) return XPAR_E_MALFORMED;
     out->vol[i].name = dup_str(e + 32, nl);
@@ -1191,8 +1175,7 @@ xpar_status xpar_layt_read(const u8 * body, sz n, xpar_layt * out) {
 }
 
 void xpar_layt_free(xpar_layt * l) {
-  u32 i;
-  for (i = 0; i < l->count; i++) xpar_free(l->vol[i].name);
+  For(u32, i, l->count, xpar_free(l->vol[i].name))
   xpar_free(l->vol);
   xpar_memset(l, 0, sizeof *l);
 }
@@ -1290,6 +1273,20 @@ xpar_status xpar_layt_tiles(const xpar_layt * l, u64 stream_length) {
   return next == stream_length ? XPAR_OK : XPAR_E_MALFORMED;
 }
 
+void xpar_strm_write_header(xpar_buf * out, u64 stream_length,
+                            const u8 * set_id, const xpar_key * key) {
+  const sz fixed = XPAR_PKT_HDR + 16;
+  xpar_blake3_t h;
+  u8 * p;
+  xpar_strm_write(out, 0, NULL, 0, set_id, key);
+  p = out->data + out->len - fixed;
+  xpar_wr64(p + 8, xpar_align_up(fixed + stream_length, XPAR_PKT_ALIGN));
+  if (key) xpar_blake3_init_keyed(&h, key->k_pkt);
+  else     xpar_blake3_init(&h);
+  xpar_blake3_update(&h, p, 40);
+  xpar_blake3_final(&h, p + 40, 8);
+}
+
 /*  Volume tags.  */
 
 void xpar_vol_tag_begin(xpar_blake3_t * h) {
@@ -1367,7 +1364,7 @@ xpar_status xpar_text_read(const u8 * body, sz n, char ** out, sz * out_len) {
   sz len = n;
   *out = NULL;  *out_len = 0;
   while (len && !body[len - 1]) len--;
-  if (len && has_nul(body, len)) return XPAR_E_MALFORMED;
+  if (len && xpar_has_nul(body, len)) return XPAR_E_MALFORMED;
   *out = dup_str(body, len);
   *out_len = len;
   return XPAR_OK;
@@ -1644,8 +1641,7 @@ const xpar_crit_pkt * xpar_critset_find_file(const xpar_critset * s,
 }
 
 void xpar_posix_records_free(xpar_posix_rec * rec, u32 count) {
-  u32 i;
-  for (i = 0; i < count; i++) posx_rec_free(&rec[i]);
+  For(u32, i, count, xpar_posix_rec_free(&rec[i]))
   xpar_free(rec);
 }
 

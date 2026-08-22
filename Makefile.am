@@ -37,8 +37,8 @@ doc/xpar-format.pdf: $(srcdir)/doc/xpar-format.tex
 noinst_HEADERS = \
   src/common.h src/xpar2.h src/cli.h src/yarg.h src/v1detect.h \
   src/container.h src/auth.h src/manifest.h src/chunk.h src/slice.h src/resync.h \
-  src/plan.h src/json.h src/pathname.h \
-  src/ops/ops.h src/ops/chain.h src/ops/vset.h \
+  src/plan.h src/json.h src/pathname.h src/volname.h \
+  src/ops/ops.h src/ops/chain.h src/ops/vset.h src/ops/volimg.h \
   src/kernel/gf.h src/kernel/gf-impl.h src/kernel/gf-rvv-int.h \
   src/kernel/armour.h src/kernel/armour-impl.h \
   src/kernel/codec.h src/kernel/codec-int.h \
@@ -51,10 +51,12 @@ noinst_LIBRARIES = libxpar_core.a
 
 libxpar_core_a_SOURCES = \
   src/cli.c src/progress.c src/v1detect.c src/pathname.c \
+  src/volname.c \
   src/container.c src/auth.c src/manifest.c src/chunk.c src/slice.c src/resync.c \
   src/plan.c src/json.c \
   src/ops/create.c src/ops/verify.c src/ops/repair.c src/ops/extract.c \
   src/ops/scrub.c src/ops/listinfo.c src/ops/generation.c \
+  src/ops/volimg.c \
   src/kernel/gf.c src/kernel/gf-scalar.c \
   src/kernel/armour.c src/kernel/armour-scalar.c \
   src/kernel/codec-matrix.c src/kernel/codec-fft.c \

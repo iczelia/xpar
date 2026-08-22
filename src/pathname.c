@@ -43,7 +43,8 @@ char * xpar_path_dir(const char * path) {
 char * xpar_path_join_n(const char * dir, const char * name, u32 n) {
   sz d = dir ? xpar_strlen(dir) : 0;
   sz sep = d && !xpar_path_sep(dir[d - 1]);
-  char * p = (char *) xpar_malloc(d + sep + n + 1);
+  /*  Every byte below is written, so there is nothing to zero first.  */
+  char * p = (char *) xpar_alloc_raw(d + sep + n + 1);
   if (d) xpar_memcpy(p, dir, d);
   if (sep) p[d] = '/';
   if (n) xpar_memcpy(p + d + sep, name, n);

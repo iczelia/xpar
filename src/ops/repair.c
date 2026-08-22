@@ -18,6 +18,7 @@
 #include "auth.h"
 #include "chain.h"
 #include "vset.h"
+#include "volimg.h"
 
 #include "armour.h"
 #include "blake3.h"
@@ -47,14 +48,6 @@
 
 /*  Small descriptor cache for sequential and column-strided reads.  */
 #define RP_FD_CACHE  8
-
-typedef struct {
-  xpar_mmap  map;
-  u8 *       heap;            /*  Set when the host declined to map.  */
-  const u8 * data;
-  u64        size;
-  char *     path;
-} rp_vol;
 
 /*  One cell of the work set: a cell that is damaged somewhere on disk,
     with the bytes that will repair every damaged occurrence of it.  */
@@ -93,7 +86,7 @@ typedef struct {
   int        verbose;
   bool       quiet;
 
-  rp_vol *   vol;
+  xpar_volimg * vol;
   u32        vol_count, vol_cap;
   u8 **      plain;           /*  Unwrapped ARMG plaintexts, owned.  */
   u32        plain_count, plain_cap;
@@ -219,29 +212,12 @@ static void rp_tree_preflight(const xpar_options * o, const xpar_manifest * m,
 }
 
 static bool rp_vol_open(rp * r, const char * path) {
-  rp_vol v;
-  xpar_memset(&v, 0, sizeof v);
-  v.map = xpar_map(path);
-  if (v.map.valid) { v.data = v.map.map;  v.size = v.map.size; }
-  else {
-    xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
-    i64 sz_i;
-    if (!f) return false;
-    sz_i = xpar_size(f);
-    if (sz_i < 0 || (u64) sz_i > (u64) (sz) -1 / 2) {
-      xpar_close(f);  return false;
-    }
-    v.heap = (u8 *) xpar_alloc_raw((sz) sz_i ? (sz) sz_i : 1);
-    if (xpar_read(f, v.heap, (sz) sz_i) != (sz) sz_i) {
-      xpar_close(f);  xpar_free(v.heap);  return false;
-    }
-    xpar_close(f);
-    v.data = v.heap;  v.size = (u64) sz_i;
-  }
-  v.path = xpar_strdup(path);
+  xpar_volimg v;
+  if (!xpar_volimg_open(&v, path)) return false;
   if (r->vol_count == r->vol_cap) {
     r->vol_cap = r->vol_cap ? r->vol_cap * 2 : 8;
-    r->vol = (rp_vol *) xpar_realloc(r->vol, r->vol_cap * sizeof(rp_vol));
+    r->vol = (xpar_volimg *)
+               xpar_realloc(r->vol, r->vol_cap * sizeof(xpar_volimg));
   }
   r->vol[r->vol_count++] = v;
   return true;
@@ -257,43 +233,13 @@ static void rp_keep_plain(rp * r, u8 * p) {
 
 static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync);
 
-/*  Decode ARMG only after its packet tag fails. Keep corrected plaintext
-    separate because the collector retains pointers into accepted input.  */
-static void rp_unwrap_armg(rp * r, const u8 * body, u64 len, bool damaged) {
-  xpar_armg g;
-  xpar_armour_params p;
-  xpar_armour * a;
-  u8 * plain;
-  if (xpar_armg_read(body, (sz) len, &g) != XPAR_OK) return;
-  if (g.plain_length > (u64) (sz) -1 / 2) return;
-  p.symbol_bits = g.symbol_bits;  p.poly = g.poly;
-  p.n = g.n;  p.k = g.k;  p.fcr = g.fcr;  p.prim = g.prim;
-  p.depth = g.depth;
-  if (xpar_armour_check(&p)) return;
-  /*  Empty field tables make every syndrome zero and silently accept
-      damage; initialise them before constructing the decoder.  */
-  xpar_gf_init();
-  a = xpar_armour_new(&p);
-  if (!a) return;
-  plain = (u8 *) xpar_alloc_raw((sz) g.plain_length ? (sz) g.plain_length : 1);
-  xpar_armour_extract(a, plain, g.plain_length, g.data);
-  rp_collect(r, plain, g.plain_length, false);
+/*  Plaintext an armoured group gave up. Corrected and uncorrected
+    readings are kept apart and both retained, because the collector
+    holds pointers into whichever one its packets came from.  */
+static void rp_plain(void * user, u8 * plain, u64 len) {
+  rp * r = (rp *) user;
+  rp_collect(r, plain, len, false);
   rp_keep_plain(r, plain);
-  if (damaged) {
-    u8 * region = (u8 *) xpar_alloc_raw((sz) g.armoured_length ?
-                                        (sz) g.armoured_length : 1);
-    u8 * fixed  = (u8 *) xpar_alloc_raw((sz) g.plain_length ?
-                                        (sz) g.plain_length : 1);
-    u64 fd = xpar_armour_frame_disk(a), off;
-    xpar_memcpy(region, g.data, (sz) g.armoured_length);
-    for (off = 0; off + fd <= g.armoured_length; off += fd)
-      xpar_armour_decode_frame(a, region + off, NULL);
-    xpar_armour_extract(a, fixed, g.plain_length, region);
-    xpar_free(region);
-    rp_collect(r, fixed, g.plain_length, false);
-    rp_keep_plain(r, fixed);
-  }
-  xpar_armour_free(a);
 }
 
 static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
@@ -305,7 +251,7 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
   sc.accept_unverified_keyed = !r->key_loaded;
   while (xpar_scan_next(&sc, &h, &body, &off)) {
     if (xpar_pkt_is(&h, XPAR_T_ARMG))
-      rp_unwrap_armg(r, body, h.length - XPAR_PKT_HDR, false);
+      xpar_armg_unwrap(body, h.length - XPAR_PKT_HDR, false, rp_plain, r);
     else
       xpar_critset_add(&r->crit, &h, body);
   }
@@ -317,28 +263,15 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
 }
 
 static bool rp_have_setd(const rp * r) {
-  u32 i;
-  for (i = 0; i < r->crit.count; i++)
-    if (xpar_pkt_is(&r->crit.pkt[i].hdr, XPAR_T_SETD)) return true;
+  For(u32, i, r->crit.count,
+      if (xpar_pkt_is(&r->crit.pkt[i].hdr, XPAR_T_SETD)) return true)
   return false;
 }
 
 /*  Recover a failed ARMG only when the ordinary scan found no SETD; its
     failed packet tag is the prerequisite for inner decoding.  */
 static void rp_salvage(rp * r, const u8 * buf, u64 size) {
-  u64 at;
-  for (at = 0; at + XPAR_PKT_HDR <= size; at += XPAR_PKT_ALIGN) {
-    xpar_pkt h;
-    if (xpar_memcmp(buf + at, XPAR_PKT_MAGIC, 8)) continue;
-    { xpar_status st = xpar_pkt_read(buf + at, size - at,
-                                     r->key_loaded ? &r->key : NULL, &h);
-      if (st != XPAR_E_CHECKSUM && st != XPAR_E_NEEDKEY)
-      continue;
-    }
-    if (!xpar_pkt_is(&h, XPAR_T_ARMG)) continue;
-    rp_unwrap_armg(r, buf + at + XPAR_PKT_HDR, h.length - XPAR_PKT_HDR,
-                   true);
-  }
+  xpar_armg_salvage(buf, size, r->key_loaded ? &r->key : NULL, rp_plain, r);
 }
 
 static void rp_authenticate(rp * r) {
@@ -791,9 +724,8 @@ done:
 }
 
 static void rp_resync_tree(rp * r) {
-  u32 i;
   if (r->o->resync == XPAR_RESYNC_OFF) return;
-  for (i = 0; i < r->mf.count; i++) rp_resync_entry(r, i);
+  For(u32, i, r->mf.count, rp_resync_entry(r, i))
 }
 
 /*  Work cells are immutable and ordered by (slice, column).  */
@@ -2114,11 +2046,7 @@ static void rp_report(rp * r, const char * status, int code) {
 static void rp_free(rp * r) {
   u32 i;
   rp_close_files(r);
-  for (i = 0; i < r->vol_count; i++) {
-    if (r->vol[i].map.valid) xpar_unmap(&r->vol[i].map);
-    xpar_free(r->vol[i].heap);
-    xpar_free(r->vol[i].path);
-  }
+  for (i = 0; i < r->vol_count; i++) xpar_volimg_close(&r->vol[i]);
   xpar_free(r->vol);
   for (i = 0; i < r->plain_count; i++) xpar_free(r->plain[i]);
   xpar_free(r->plain);
@@ -2354,7 +2282,8 @@ static void owned_scan_recovery(const xpar_vset * s, const owned_vol * v,
     if (!xpar_pkt_is(&h, XPAR_T_RCVS) ||
         xpar_memcmp(h.set_id, xpar_vset_id(s), XPAR_SET_ID_LEN)) continue;
     if (xpar_rcvs_read(body, (sz) (h.length - XPAR_PKT_HDR),
-                       xpar_vset_setd(s)->slice_size, &r) != XPAR_OK) continue;
+                       xpar_vset_setd(s)->slice_size, &r) != XPAR_OK)
+      continue;
     if (r.exponent < rtop && !rec[r.exponent]) rec[r.exponent] = r.data;
   }
 }

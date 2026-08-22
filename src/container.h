@@ -308,6 +308,9 @@ xpar_status xpar_strm_read (const u8 * body, sz n, xpar_strm * out);
 void        xpar_strm_write(xpar_buf *, u64 stream_offset, const void * data,
                             sz len, const u8 * set_id, const xpar_key *);
 
+void xpar_strm_write_header(xpar_buf *, u64 stream_length,
+                            const u8 * set_id, const xpar_key *);
+
 typedef struct {
   const xpar_setd * setd;
   const xpar_entry * file;    /*  Owned entries only, manifest order.  */

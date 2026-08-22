@@ -329,10 +329,8 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
 }
 
 void xpar_col_groups_free(xpar_col_groups * g) {
-  u32 i;
-  for (i = 0; i < g->group_count; i++) {
-    xpar_free(g->group[i].present);  xpar_free(g->group[i].column);
-  }
+  For(u32, i, g->group_count,
+      xpar_free(g->group[i].present);  xpar_free(g->group[i].column))
   xpar_free(g->group);
   g->group = NULL;  g->group_count = 0;
 }

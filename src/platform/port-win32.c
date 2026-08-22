@@ -634,9 +634,7 @@ void xpar_xwrite(xpar_file * f, const void * p, sz n) {
 }
 
 void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
-  u32 i;
-  for (i = 0; i < count; i++)
-    xpar_xwrite(f, part[i].data, part[i].length);
+  For(u32, i, count, xpar_xwrite(f, part[i].data, part[i].length))
 }
 
 void xpar_xclose(xpar_file * f) {

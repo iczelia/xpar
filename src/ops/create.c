@@ -15,7 +15,9 @@
 /*  Protected-set writer, from manifest scan through volume publication.  */
 
 #include "ops.h"
+#include "chain.h"
 #include "vset.h"
+#include "volimg.h"
 
 #include "common.h"
 #include "auth.h"
@@ -27,6 +29,7 @@
 #include "plan.h"
 #include "slice.h"
 #include "v1detect.h"
+#include "volname.h"
 #include "kernel/armour.h"
 #include "kernel/codec.h"
 #include "kernel/crc32c.h"
@@ -67,9 +70,8 @@ static const xpar_key * create_key(const ctx * c) {
 }
 
 static void scan_inputs(const xpar_options * o) {
-  u32 i;
-  for (i = 0; i < o->path_count; i++)
-    if (xpar_strcmp(o->paths[i], "-")) xpar_v1_refuse_if_v1(o->paths[i]);
+  For(u32, i, o->path_count,
+      if (xpar_strcmp(o->paths[i], "-")) xpar_v1_refuse_if_v1(o->paths[i]))
 }
 
 static char * base_name(const xpar_options * o) {
@@ -81,15 +83,6 @@ static char * base_name(const xpar_options * o) {
     n--;
   b = xpar_strndup(o->paths[0], n);
   return b;
-}
-
-static char * vol_name(const char * base, u64 first, u64 count, int wf,
-                       int wc) {
-  char * s = NULL;
-  xpar_asprintf(&s, "%s.v%0*llu+%0*llu" XPAR_EXT, base, wf,
-                (unsigned long long) first, wc,
-                (unsigned long long) count);
-  return s;
 }
 
 /*  Power-of-two volume ladder, with any remainder in the last volume.  */
@@ -541,12 +534,11 @@ static void compute_set_id(ctx * c) {
   u8 zero[XPAR_SET_ID_LEN];
   sz p = 0;
   bool first = true;
-  u32 i;
   xpar_memset(zero, 0, sizeof zero);
   xpar_buf_init(&b);
   xpar_setd_write(&b, &c->sd, zero, NULL);
-  for (i = 0; i < c->m.count; i++)
-    xpar_entry_write(&b, &c->m.entry[i], zero, NULL, &c->wr);
+  For(u32, i, c->m.count,
+      xpar_entry_write(&b, &c->m.entry[i], zero, NULL, &c->wr))
   while (p + XPAR_PKT_HDR <= b.len) {
     u64 len = xpar_rd64(b.data + p + 8);
     const u8 * body = b.data + p + XPAR_PKT_HDR;
@@ -666,104 +658,6 @@ static void emit_head(ctx * c, xpar_buf * out, const xpar_crit * cr,
 
 /*  Stream armour frames so the L-byte STRM body is never resident. The
     final frame is zero-padded, making encoded length deterministic.  */
-
-typedef struct {
-  const xpar_armour * a;
-  xpar_file * f;
-  u8 * frame;
-  u64 cap, fill, plain, wrote;
-} armsink;
-
-static void as_init(armsink * s, const xpar_armour * a, xpar_file * f) {
-  s->a = a;  s->f = f;
-  s->cap = xpar_armour_frame_plain(a);
-  s->frame = (u8 *) xpar_calloc((sz) xpar_armour_frame_disk(a), 1);
-  s->fill = 0;  s->plain = 0;  s->wrote = 0;
-}
-
-static void as_flush(armsink * s) {
-  if (!s->fill) return;
-  xpar_memset(s->frame + s->fill, 0, (sz) (s->cap - s->fill));
-  xpar_armour_encode_frame(s->a, s->frame);
-  xpar_xwrite(s->f, s->frame, (sz) xpar_armour_frame_disk(s->a));
-  s->wrote += xpar_armour_frame_disk(s->a);
-  s->fill = 0;
-}
-
-static void as_put(armsink * s, const void * p, u64 n) {
-  const u8 * q = (const u8 *) p;
-  s->plain += n;
-  while (n) {
-    u64 take = MIN(n, s->cap - s->fill);
-    xpar_memcpy(s->frame + s->fill, q, (sz) take);
-    s->fill += take;  q += take;  n -= take;
-    if (s->fill == s->cap) as_flush(s);
-  }
-}
-
-static void as_free(armsink * s) { xpar_free(s->frame); }
-
-/*  BODY_UNCHECKED authenticates only the first 40 header bytes, allowing
-    STRM framing to be final before its streaming body exists.  */
-static void strm_header(xpar_buf * out, u64 stream_len, const u8 * set_id,
-                        const xpar_key * key) {
-  const sz fixed = XPAR_PKT_HDR + 16;
-  xpar_blake3_t h;
-  u8 * p;
-  xpar_strm_write(out, 0, NULL, 0, set_id, key);
-  p = out->data + out->len - fixed;
-  xpar_wr64(p + 8, xpar_align_up(fixed + stream_len, XPAR_PKT_ALIGN));
-  if (key) xpar_blake3_init_keyed(&h, key->k_pkt);
-  else     xpar_blake3_init(&h);
-  xpar_blake3_update(&h, p, 40);
-  xpar_blake3_final(&h, p + 40, 8);
-}
-
-/*  Three 96-byte prologues, each followed by 32 GF(2^8) parity bytes.  */
-static void write_prologue(xpar_file * f, const xpar_armour_params * p,
-                           u64 plain, u64 armoured, u64 stream_off,
-                           u64 stream_len) {
-  u8 pro[96], block[255];
-  xpar_armour_params gp;
-  xpar_armour * ga;
-  int copy;
-  xpar_memset(pro, 0, sizeof pro);
-  xpar_memcpy(pro, "XPAR2ARM", 8);
-  pro[8]  = XPAR_FORMAT_MAJOR;
-  pro[9]  = XPAR_FORMAT_MINOR;
-  pro[10] = (u8) p->symbol_bits;
-  xpar_wr32(pro + 12, p->poly);
-  xpar_wr32(pro + 16, p->n);
-  xpar_wr32(pro + 20, p->k);
-  xpar_wr32(pro + 24, p->fcr);
-  xpar_wr32(pro + 28, p->prim);
-  xpar_wr64(pro + 32, p->depth);
-  xpar_wr64(pro + 40, plain);
-  xpar_wr64(pro + 48, armoured);
-  xpar_wr64(pro + 56, stream_off);
-  xpar_wr64(pro + 64, stream_len);
-  {
-    xpar_blake3_t h;
-    u8 out[8];
-    /*  Plain BLAKE3 over the domain string followed by prologue[0,88).  */
-    xpar_blake3_init(&h);
-    xpar_blake3_update(&h, "xpar2 armour prologue v1", 24);
-    xpar_blake3_update(&h, pro, 88);
-    xpar_blake3_final(&h, out, sizeof out);
-    xpar_memcpy(pro + 88, out, 8);
-  }
-  xpar_armour_defaults(&gp, 8);
-  gp.n = 255;  gp.k = 223;  gp.depth = 1;
-  ga = xpar_armour_new(&gp);
-  for (copy = 0; copy < 3; copy++) {
-    xpar_memset(block, 0, sizeof block);
-    xpar_memcpy(block, pro, sizeof pro);
-    xpar_armour_encode_frame(ga, block);
-    xpar_xwrite(f, block, 96);
-    xpar_xwrite(f, block + 223, 32);
-  }
-  xpar_armour_free(ga);
-}
 
 /*  Rebuild and hash every entry through its extents, then reparse all
     written packet volumes. The first check catches invalid deduplication
@@ -963,8 +857,8 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     to[at] = xpar_strdup(final[i]);
   }
   for (i = 0; i < labels; i++, at++) {
-    xpar_asprintf(&from[at], "%s" XPAR_EXT, stage[label_first + i]);
-    xpar_asprintf(&to[at], "%s" XPAR_EXT, final[label_first + i]);
+    from[at] = xpar_vname_label(stage[label_first + i]);
+    to[at]   = xpar_vname_label(final[label_first + i]);
   }
   from[at] = xpar_strdup(stage[0]);
   to[at] = xpar_strdup(final[0]);
@@ -1611,24 +1505,19 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     else if (data_n > c.geom.slice_count) data_n = (u32) c.geom.slice_count;
   }
   name_count = nvol + 1 + data_n;
-  /*  One width per placeholder, taken from the widest value that will
-      appear in it, so every recovery name of the generation lines up.  */
-  wf = xpar_digits10(c.recovery ? c.recovery - 1 : 0);
-  wc = 1;
-  for (i = 0; i < nvol; i++)
-    if (xpar_digits10(span[i].count) > wc) wc = xpar_digits10(span[i].count);
-  if (wf < 2) wf = 2;
-  if (wc < 2) wc = 2;
+  { u64 widest = 0;
+    for (i = 0; i < nvol; i++) widest = MAX(widest, span[i].count);
+    xpar_vname_widths(c.recovery ? c.recovery - 1 : 0, widest, &wf, &wc); }
   names = (char **) xpar_calloc(name_count ? name_count : 1,
                                  sizeof(char *));
-  xpar_asprintf(&names[0], "%s" XPAR_EXT, c.base);
+  names[0] = xpar_vname_index(c.base, 0);
   for (i = 0; i < nvol; i++)
-    names[i + 1] = vol_name(c.base, span[i].first, span[i].count, wf, wc);
+    names[i + 1] = xpar_vname_recovery(c.base, 0, span[i].first,
+                                       span[i].count, wf, wc);
   if (o->layout == XPAR_LAYOUT_SPLIT) {
-    int wd = xpar_digits10(data_n ? data_n - 1 : 0);
-    if (wd < 2) wd = 2;
+    int wd = MAX(xpar_digits10(data_n ? data_n - 1 : 0), 2);
     for (i = 0; i < data_n; i++)
-      xpar_asprintf(&names[nvol + 1 + i], "%s.d%0*u", c.base, wd, i);
+      names[nvol + 1 + i] = xpar_vname_data(c.base, 0, i, wd);
   }
   /*  Preflight every output before the first write.  */
   if (!o->force)
@@ -1645,7 +1534,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     for (i = 0; i < data_n; i++) {
       char * label;
       xpar_file * probe;
-      xpar_asprintf(&label, "%s" XPAR_EXT, names[nvol + 1 + i]);
+      label = xpar_vname_label(names[nvol + 1 + i]);
       probe = xpar_open(label, XPAR_O_RDONLY);
       if (probe) {
         xpar_close(probe);
@@ -1723,7 +1612,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     xpar_armour_params ap;
     xpar_armour * ra;
     xpar_buf head, tail;
-    armsink sk;
+    xpar_armsink sk;
     xpar_file * f;
     reader rd;
     u64 stream_at, plain_len, i2;
@@ -1743,7 +1632,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     layt.this_volume = XPAR_VOL_STANDALONE;
     emit_head(&c, &head, &cr, XPAR_VOL_STANDALONE, XPAR_VOL_INDEX, false,
               true);
-    strm_header(&head, c.geom.stream_length, c.set_id, create_key(&c));
+    xpar_strm_write_header(&head, c.geom.stream_length, c.set_id,
+                           create_key(&c));
     xpar_buf_init(&tail);
     if (c.tag_len)
       xpar_sltg_write_all(&tail, c.slice_tag, c.geom.slice_count, c.tag_len,
@@ -1762,27 +1652,27 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     f = xpar_open(write_names[0], XPAR_O_WRONLY | XPAR_O_CREAT |
                                   XPAR_O_TRUNC);
     if (!f) FATAL_PERROR(write_names[0]);
-    write_prologue(f, xpar_armour_params_of(ra), plain_len,
+    xpar_garm_write_prologue(f, xpar_armour_params_of(ra), plain_len,
                    xpar_armour_size(ra, plain_len), stream_at,
                    c.geom.stream_length);
-    as_init(&sk, ra, f);
-    as_put(&sk, head.data, head.len);
+    xpar_armsink_init(&sk, ra, f);
+    xpar_armsink_put(&sk, head.data, head.len);
     slice = (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
     rd_init(&rd, &c);
     for (i2 = 0; i2 < c.geom.slice_count; i2++) {
       u64 have = xpar_slice_bytes(&c.geom, i2);
       if (!have) break;
       rd_bytes(&rd, xpar_slice_begin(&c.geom, i2), slice, have);
-      as_put(&sk, slice, have);
+      xpar_armsink_put(&sk, slice, have);
     }
     rd_free(&rd);
     {
       u64 pad = strm_len - (XPAR_PKT_HDR + 16 + c.geom.stream_length);
       u8 zero[XPAR_PKT_ALIGN];
       xpar_memset(zero, 0, sizeof zero);
-      if (pad) as_put(&sk, zero, pad);
+      if (pad) xpar_armsink_put(&sk, zero, pad);
     }
-    as_put(&sk, tail.data, tail.len);
+    xpar_armsink_put(&sk, tail.data, tail.len);
     for (i2 = 0; i2 < c.recovery; i2++) {
       static const u8 zero[XPAR_PKT_ALIGN] = { 0 };
       u8 rcvs_head[XPAR_PKT_HDR + 16];
@@ -1790,14 +1680,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       u32 pad = xpar_rcvs_stream_header(
                   rcvs_head, i2, p, (sz) c.geom.slice_size, c.set_id,
                   create_key(&c));
-      as_put(&sk, rcvs_head, sizeof rcvs_head);
-      as_put(&sk, p, (sz) c.geom.slice_size);
-      if (pad) as_put(&sk, zero, pad);
+      xpar_armsink_put(&sk, rcvs_head, sizeof rcvs_head);
+      xpar_armsink_put(&sk, p, (sz) c.geom.slice_size);
+      if (pad) xpar_armsink_put(&sk, zero, pad);
     }
     xpar_free(slice);
-    as_put(&sk, crtr.data, crtr.len);
-    as_flush(&sk);
-    as_free(&sk);
+    xpar_armsink_put(&sk, crtr.data, crtr.len);
+    xpar_armsink_flush(&sk);
+    xpar_armsink_free(&sk);
     xpar_xclose(f);
     xpar_buf_free(&head);
     xpar_buf_free(&tail);
@@ -1877,7 +1767,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
         if (o->labels) {
           char * label;
           xpar_buf lb;
-          xpar_asprintf(&label, "%s" XPAR_EXT, write_names[li]);
+          label = xpar_vname_label(write_names[li]);
           xpar_buf_init(&lb);
           layt.this_volume = li;
           emit_head(&c, &lb, &cr, li, XPAR_VOL_DATA, false, true);

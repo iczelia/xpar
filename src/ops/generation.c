@@ -18,6 +18,7 @@
 #include "chain.h"
 #include "auth.h"
 #include "vset.h"
+#include "volimg.h"
 
 #include "armour.h"
 #include "blake3.h"
@@ -29,9 +30,11 @@
 #include "json.h"
 #include "manifest.h"
 #include "pathname.h"
+#include "plan.h"
 #include "port-cpu.h"
 #include "port-fs.h"
 #include "slice.h"
+#include "volname.h"
 
 static xpar_file * gen_hout(const xpar_options * o) {
   return o->json ? xpar_stderr : xpar_stdout;
@@ -165,38 +168,6 @@ static void gen_split_path(const char * path, char ** dir, char ** name) {
   *name = xpar_strdup(leaf);
 }
 
-static bool gen_chain_sibling(const char * name, const char * stem) {
-  sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!xpar_path_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
-      xpar_strncmp(name, stem, p)) return false;
-  n -= XPAR_EXT_LEN;
-  if (p == n) return true;
-  if (name[p++] != '.' || p == n) return false;
-  if (name[p] == 'g') {
-    i = p + 1;
-    if (!xpar_scan_digits(name, &i, n)) return false;
-    if (i == n) return true;
-    if (name[i++] != '.' || i == n || name[i] != 'v') return false;
-    p = i;
-  }
-  if (name[p] != 'v') return false;
-  i = p + 1;
-  if (!xpar_scan_digits(name, &i, n) || i == n || name[i++] != '+')
-    return false;
-  return xpar_scan_digits(name, &i, n) && i == n;
-}
-
-static bool gen_chain_index_sibling(const char * name, const char * stem) {
-  sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!xpar_path_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
-      xpar_strncmp(name, stem, p)) return false;
-  n -= XPAR_EXT_LEN;
-  if (p == n) return true;
-  if (name[p++] != '.' || p == n || name[p] != 'g') return false;
-  i = p + 1;
-  return xpar_scan_digits(name, &i, n) && i == n;
-}
-
 static char * gen_unused_base(const char * base, const char * label) {
   u32 i;
   for (i = 0; i < 1000; i++) {
@@ -228,41 +199,6 @@ static char * gen_unused_path(const char * path, const char * label) {
 static bool gen_publish_cache(char * stage, const char * final) {
   if (xpar_rename(stage, final) != 0) return false;
   return xpar_fsync_dir(final) == 0;
-}
-
-static char * gen_name_index(const char * base, u32 g) {
-  char * s;
-  if (!g) xpar_asprintf(&s, "%s" XPAR_EXT, base);
-  else    xpar_asprintf(&s, "%s.g%03u" XPAR_EXT, base, g);
-  return s;
-}
-
-/*  One width per placeholder, taken from the widest value that will
-    appear in it, so every recovery name of the generation lines up. Two
-    digits unless the generation needs more.  */
-static void gen_recovery_widths(u64 max_first, u64 max_count, int * wf,
-                                int * wc) {
-  *wf = xpar_digits10(max_first);  if (*wf < 2) *wf = 2;
-  *wc = xpar_digits10(max_count);  if (*wc < 2) *wc = 2;
-}
-
-static char * gen_name_recovery(const char * base, u32 g, u64 first,
-                                u64 count, int wf, int wc) {
-  char * s;
-  if (!g) xpar_asprintf(&s, "%s.v%0*llu+%0*llu" XPAR_EXT, base, wf,
-                        (unsigned long long) first, wc,
-                        (unsigned long long) count);
-  else    xpar_asprintf(&s, "%s.g%03u.v%0*llu+%0*llu" XPAR_EXT, base, g,
-                        wf, (unsigned long long) first, wc,
-                        (unsigned long long) count);
-  return s;
-}
-
-static char * gen_name_data(const char * base, u32 g, u32 index, int width) {
-  char * s;
-  if (!g) xpar_asprintf(&s, "%s.d%0*u", base, width, index);
-  else    xpar_asprintf(&s, "%s.g%03u.d%0*u", base, g, width, index);
-  return s;
 }
 
 /*  The armoured prologue.  */
@@ -570,9 +506,8 @@ static void chain_strip_gen(char * stem) {
 }
 
 static void chain_gather(const xpar_options * o, xpar_chain * c) {
-  u32 i;
-  for (i = 0; i < o->set_ref.count; i++)
-    chain_add_vol(c, xpar_strdup(o->set_ref.vol[i]));
+  For(u32, i, o->set_ref.count,
+      chain_add_vol(c, xpar_strdup(o->set_ref.vol[i])))
 
   if (o->set_ref.base) {
     char * dir;  char * stem;  xpar_dir * d;
@@ -586,8 +521,8 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
       while ((e = xpar_readdir(d)) != NULL)
         if (!e->is_dir &&
             (o->chain_metadata_only
-               ? gen_chain_index_sibling(e->name, stem)
-               : gen_chain_sibling(e->name, stem)))
+               ? xpar_vname_is_index(e->name, stem)
+               : xpar_vname_is_member(e->name, stem)))
           chain_add_vol(c, xpar_path_join(dir, e->name));
       xpar_closedir(d);
     }
@@ -766,12 +701,10 @@ void xpar_gchain_load(const xpar_options * o, xpar_chain * c) {
 }
 
 void xpar_gchain_free(xpar_chain * c) {
-  u32 i;
-  for (i = 0; i < c->vol_count; i++) {
-    xpar_free(c->vol[i].path);  xpar_free(c->vol[i].data);
-  }
-  for (i = 0; i < c->blob_count; i++) xpar_free(c->blob[i]);
-  for (i = 0; i < c->gen_count; i++) xpar_setd_free(&c->gen[i].sd);
+  For(u32, i, c->vol_count,
+      xpar_free(c->vol[i].path);  xpar_free(c->vol[i].data))
+  For(u32, i, c->blob_count, xpar_free(c->blob[i]))
+  For(u32, i, c->gen_count, xpar_setd_free(&c->gen[i].sd))
   xpar_free(c->vol);  xpar_free(c->blob);  xpar_free(c->gen);
   xpar_free(c->base);  xpar_free(c->dir);
   xpar_critset_free(&c->crit);
@@ -1248,15 +1181,6 @@ static void gen_tables_free(gen_tables * t) {
   xpar_memset(t, 0, sizeof *t);
 }
 
-static u64 gen_default_budget(void) {
-  u64 phys = xpar_physical_memory();
-  u64 cap = sizeof(void *) >= 8 ? ((u64) 1 << 30) : ((u64) 512 << 20);
-  u64 want = phys ? phys / 4 : cap;
-  if (want > cap) want = cap;
-  if (want < ((u64) 1 << 20)) want = (u64) 1 << 20;
-  return want;
-}
-
 static void gen_rec_spill_open(gen_tables * t, const char * base) {
   u32 i;
   for (i = 0; i < 1000; i++) {
@@ -1296,7 +1220,7 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
                        xpar_progress_t * prog) {
   u64 S = p->geom.slice_count, Z = p->geom.slice_size, R = p->encode_r;
   u32 K = p->geom.cells_per_slice, Y = p->geom.cell_bytes;
-  u64 c, i, j, chunk, budget = memory ? memory : gen_default_budget();
+  u64 c, i, j, chunk, budget = memory ? memory : xpar_plan_default_memory();
   u64 cells = 0, meta;
   u8 * data;
   gen_src src;
@@ -1493,62 +1417,10 @@ static void gen_armour_pack(xpar_buf * out, const xpar_options * o,
   xpar_armour_free(a);
 }
 
-typedef struct {
-  const xpar_armour * a;
-  xpar_file * f;
-  u8 * frame;
-  u64 cap, fill;
-} gen_armsink;
-
-static void gen_as_init(gen_armsink * s, const xpar_armour * a,
-                        xpar_file * f) {
-  s->a = a;  s->f = f;
-  s->cap = xpar_armour_frame_plain(a);
-  s->frame = (u8 *) xpar_calloc((sz) xpar_armour_frame_disk(a), 1);
-  s->fill = 0;
-}
-
-static void gen_as_flush(gen_armsink * s) {
-  if (!s->fill) return;
-  xpar_memset(s->frame + s->fill, 0, (sz) (s->cap - s->fill));
-  xpar_armour_encode_frame(s->a, s->frame);
-  xpar_xwrite(s->f, s->frame, (sz) xpar_armour_frame_disk(s->a));
-  s->fill = 0;
-}
-
-static void gen_as_put(gen_armsink * s, const void * data, u64 len) {
-  const u8 * p = (const u8 *) data;
-  while (len) {
-    u64 take = MIN(len, s->cap - s->fill);
-    xpar_memcpy(s->frame + s->fill, p, (sz) take);
-    s->fill += take;  p += take;  len -= take;
-    if (s->fill == s->cap) gen_as_flush(s);
-  }
-}
-
-static void gen_as_free(gen_armsink * s) {
-  xpar_free(s->frame);
-  xpar_memset(s, 0, sizeof *s);
-}
-
-static void gen_strm_header(xpar_buf * out, u64 stream_len,
-                            const u8 * set_id, const xpar_key * key) {
-  const sz fixed = XPAR_PKT_HDR + 16;
-  xpar_blake3_t h;
-  u8 * p;
-  xpar_strm_write(out, 0, NULL, 0, set_id, key);
-  p = out->data + out->len - fixed;
-  xpar_wr64(p + 8, xpar_align_up(fixed + stream_len, XPAR_PKT_ALIGN));
-  if (key) xpar_blake3_init_keyed(&h, key->k_pkt);
-  else     xpar_blake3_init(&h);
-  xpar_blake3_update(&h, p, 40);
-  xpar_blake3_final(&h, p + 40, 8);
-}
-
-static void gen_write_arm_prologue(xpar_file * f,
-                                   const xpar_armour_params * ap,
-                                   u64 plain_len, u64 armoured_len,
-                                   u64 stream_offset, u64 stream_len) {
+void xpar_garm_write_prologue(xpar_file * f,
+                              const xpar_armour_params * ap,
+                              u64 plain_len, u64 armoured_len,
+                              u64 stream_offset, u64 stream_len) {
   xpar_arm_prologue pr;
   xpar_armour_params pp;
   xpar_armour * pa;
@@ -1590,7 +1462,7 @@ void xpar_garm_write_patched(const char * path,
                              xpar_file * staged, const u64 * slot,
                              u64 slice_count, u64 slice_size) {
   xpar_armour * a = xpar_armour_new(ap);
-  gen_armsink sink;
+  xpar_armsink sink;
   xpar_file * f;
   char * tmp;
   u8 * io = NULL;
@@ -1602,16 +1474,16 @@ void xpar_garm_write_patched(const char * path,
   stream_end = stream_offset + stream_len;
   if (staged) io = (u8 *) xpar_alloc_raw(1u << 16);
   f = gen_stage_open(path, &tmp);
-  gen_write_arm_prologue(f, ap, plain_len, xpar_armour_size(a, plain_len),
+  xpar_garm_write_prologue(f, ap, plain_len, xpar_armour_size(a, plain_len),
                          stream_offset, stream_len);
-  gen_as_init(&sink, a, f);
+  xpar_armsink_init(&sink, a, f);
   while (at < plain_len) {
     u64 take;
     if (!staged || !slot || at < stream_offset || at >= stream_end) {
       u64 boundary = at < stream_offset ? stream_offset : plain_len;
       if (at >= stream_end) boundary = plain_len;
       take = MIN(boundary - at, (u64) 1 << 20);
-      gen_as_put(&sink, plain + at, take);
+      xpar_armsink_put(&sink, plain + at, take);
     } else {
       u64 rel = at - stream_offset;
       u64 slice = slice_size ? rel / slice_size : 0;
@@ -1621,18 +1493,18 @@ void xpar_garm_write_patched(const char * path,
       take = MIN(MIN(stream_end - at, slice_size - in),
                  (u64) 1 << 16);
       if (slot[slice] == UINT64_MAX) {
-        gen_as_put(&sink, plain + at, take);
+        xpar_armsink_put(&sink, plain + at, take);
       } else {
         if (xpar_pread(staged, io, (sz) take,
                        slot[slice] * slice_size + in) != (sz) take)
           FATAL_IO("Reading staged armoured repair bytes failed.");
-        gen_as_put(&sink, io, take);
+        xpar_armsink_put(&sink, io, take);
       }
     }
     at += take;
   }
-  gen_as_flush(&sink);
-  gen_as_free(&sink);
+  xpar_armsink_flush(&sink);
+  xpar_armsink_free(&sink);
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
     FATAL_IO("Flushing rebuilt armoured archive '%s' failed.", tmp);
   xpar_xclose(f);
@@ -1649,7 +1521,7 @@ void xpar_garm_write_inserted(const char * path,
                               const u8 * extra, u64 extra_len,
                               u64 stream_offset, u64 stream_len) {
   xpar_armour * a = xpar_armour_new(ap);
-  gen_armsink sink;
+  xpar_armsink sink;
   xpar_file * f;
   char * tmp;
   FATAL_UNLESS("The armoured maintenance parameters are invalid.", a != NULL);
@@ -1660,17 +1532,17 @@ void xpar_garm_write_inserted(const char * path,
                 insert >= stream_offset + stream_len) &&
                extra_len <= UINT64_MAX - plain_len);
   f = gen_stage_open(path, &tmp);
-  gen_write_arm_prologue(f, ap, plain_len + extra_len,
+  xpar_garm_write_prologue(f, ap, plain_len + extra_len,
                          xpar_armour_size(a, plain_len + extra_len),
                          stream_offset + (insert <= stream_offset
                                             ? extra_len : 0),
                          stream_len);
-  gen_as_init(&sink, a, f);
-  gen_as_put(&sink, plain, insert);
-  gen_as_put(&sink, extra, extra_len);
-  gen_as_put(&sink, plain + insert, plain_len - insert);
-  gen_as_flush(&sink);
-  gen_as_free(&sink);
+  xpar_armsink_init(&sink, a, f);
+  xpar_armsink_put(&sink, plain, insert);
+  xpar_armsink_put(&sink, extra, extra_len);
+  xpar_armsink_put(&sink, plain + insert, plain_len - insert);
+  xpar_armsink_flush(&sink);
+  xpar_armsink_free(&sink);
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
     FATAL_IO("Flushing rebuilt armoured archive '%s' failed.", tmp);
   xpar_xclose(f);
@@ -1738,14 +1610,14 @@ static char * gen_stage_arm_archive(const char * path,
                                     const xpar_wropt * w,
                                     gen_read_fn read, void * read_ctx) {
   xpar_armour * a = xpar_armour_new(ap);
-  gen_armsink sink;
+  xpar_armsink sink;
   gen_src src;
   xpar_buf tail, crtr;
   xpar_file * f;
   char * tmp;
   u8 * buf;
   u64 stream_packet, stream_at, plain_len, at, left, e;
-  gen_strm_header(head, m->stream_length, set_id, key);
+  xpar_strm_write_header(head, m->stream_length, set_id, key);
   stream_at = head->len;
   xpar_buf_init(&tail);
   if (tables->slice_tag)
@@ -1763,10 +1635,10 @@ static char * gen_stage_arm_archive(const char * path,
               plan->recovery * (XPAR_PKT_HDR + 16 + plan->geom.slice_size) +
               crtr.len;
   f = gen_stage_open(path, &tmp);
-  gen_write_arm_prologue(f, ap, plain_len, xpar_armour_size(a, plain_len),
+  xpar_garm_write_prologue(f, ap, plain_len, xpar_armour_size(a, plain_len),
                          stream_at, m->stream_length);
-  gen_as_init(&sink, a, f);
-  gen_as_put(&sink, head->data, head->len);
+  xpar_armsink_init(&sink, a, f);
+  xpar_armsink_put(&sink, head->data, head->len);
   buf = (u8 *) xpar_alloc_raw(1u << 16);
   gen_src_init(&src, m, m->stream_base + m->stream_length);
   gen_src_use_reader(&src, read, read_ctx);
@@ -1774,27 +1646,27 @@ static char * gen_stage_arm_archive(const char * path,
   while (left) {
     u64 take = MIN(left, (u64) 1 << 16);
     gen_src_read(&src, at, take, buf);
-    gen_as_put(&sink, buf, take);
+    xpar_armsink_put(&sink, buf, take);
     at += take;  left -= take;
   }
   gen_src_free(&src);
   {
     u8 zero[XPAR_PKT_ALIGN] = { 0 };
     u64 pad = stream_packet - (XPAR_PKT_HDR + 16 + m->stream_length);
-    if (pad) gen_as_put(&sink, zero, pad);
+    if (pad) xpar_armsink_put(&sink, zero, pad);
   }
-  gen_as_put(&sink, tail.data, tail.len);
+  xpar_armsink_put(&sink, tail.data, tail.len);
   for (e = 0; e < plan->recovery; e++) {
     xpar_buf pkt;
     const u8 * rec = gen_rec_get(tables, e, rec_scratch);
     xpar_buf_init(&pkt);
     xpar_rcvs_write(&pkt, e, rec, (sz) plan->geom.slice_size, set_id, key);
-    gen_as_put(&sink, pkt.data, pkt.len);
+    xpar_armsink_put(&sink, pkt.data, pkt.len);
     xpar_buf_free(&pkt);
   }
-  gen_as_put(&sink, crtr.data, crtr.len);
-  gen_as_flush(&sink);
-  gen_as_free(&sink);
+  xpar_armsink_put(&sink, crtr.data, crtr.len);
+  xpar_armsink_flush(&sink);
+  xpar_armsink_free(&sink);
   xpar_free(buf);
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
     FATAL_IO("Cannot flush temporary armoured archive '%s'.", tmp);
@@ -1854,25 +1726,24 @@ static gen_vol * gen_volumes(const xpar_options * o, u64 r, const char * base,
       if (v[i].first > max_first) max_first = v[i].first;
       if (v[i].count > max_count) max_count = v[i].count;
     }
-    gen_recovery_widths(max_first, max_count, &wf, &wc);
+    xpar_vname_widths(max_first, max_count, &wf, &wc);
   }
-  v[0].name = gen_name_index(base, gen);
+  v[0].name = xpar_vname_index(base, gen);
   for (i = 1; i < n; i++)
-    v[i].name = gen_name_recovery(base, gen, v[i].first, v[i].count, wf, wc);
+    v[i].name = xpar_vname_recovery(base, gen, v[i].first, v[i].count,
+                                    wf, wc);
   *count = n;
   return v;
 }
 
 static void gen_volumes_free(gen_vol * v, u32 n) {
-  u32 i;
-  for (i = 0; i < n; i++) xpar_free(v[i].name);
+  For(u32, i, n, xpar_free(v[i].name))
   xpar_free(v);
 }
 
 static bool gen_chain_names(const xpar_chain * c, const char * path) {
-  u32 i;
-  for (i = 0; i < c->vol_count; i++)
-    if (!xpar_strcmp(c->vol[i].path, path)) return true;
+  For(u32, i, c->vol_count,
+      if (!xpar_strcmp(c->vol[i].path, path)) return true)
   return false;
 }
 
@@ -1940,11 +1811,11 @@ static void gen_commit_consolidation(const xpar_chain * c,
       label_published = (bool *) xpar_calloc(data_n, sizeof(bool));
     }
     for (i = 0; i < data_n; i++) {
-      stage_data[i] = gen_name_data(stage_base, 0, i, width);
-      final_data[i] = gen_name_data(final_base, 0, i, width);
+      stage_data[i] = xpar_vname_data(stage_base, 0, i, width);
+      final_data[i] = xpar_vname_data(final_base, 0, i, width);
       if (o->labels) {
-        xpar_asprintf(&stage_label[i], "%s" XPAR_EXT, stage_data[i]);
-        xpar_asprintf(&final_label[i], "%s" XPAR_EXT, final_data[i]);
+        stage_label[i] = xpar_vname_label(stage_data[i]);
+        final_label[i] = xpar_vname_label(final_data[i]);
       }
     }
   }
@@ -2332,12 +2203,12 @@ static void gen_write_set(gen_write_req * rq) {
     layout_data_name = (char **) xpar_calloc(data_n, sizeof(char *));
     label_name = (char **) xpar_calloc(data_n, sizeof(char *));
     for (i = 0; i < data_n; i++) {
-      data_name[i] = gen_name_data(rq->base, rq->generation, i, width);
-      layout_data_name[i] = gen_name_data(
+      data_name[i] = xpar_vname_data(rq->base, rq->generation, i, width);
+      layout_data_name[i] = xpar_vname_data(
         rq->layout_base ? rq->layout_base : rq->base,
         rq->generation, i, width);
       if (o->labels)
-        xpar_asprintf(&label_name[i], "%s" XPAR_EXT, data_name[i]);
+        label_name[i] = xpar_vname_label(data_name[i]);
     }
   }
   if (!o->force)
@@ -2446,7 +2317,7 @@ static void gen_write_set(gen_write_req * rq) {
   if (o->layout == XPAR_LAYOUT_ARMOURED) {
     xpar_armour_params ap;
     xpar_armour * a;
-    gen_armsink sink;
+    xpar_armsink sink;
     xpar_buf head, tail, crtr;
     xpar_volh vh;
     gen_src src;
@@ -2469,7 +2340,7 @@ static void gen_write_set(gen_write_req * rq) {
     gen_crit_group(&head, &sd, m, rq->owned, &t, &layt,
                    XPAR_VOL_STANDALONE, rq->set_id, &w, kp,
                    keyed ? &auth : NULL, rq->auth_only);
-    gen_strm_header(&head, m->stream_length, rq->set_id, kp);
+    xpar_strm_write_header(&head, m->stream_length, rq->set_id, kp);
     stream_at = head.len;
 
     xpar_buf_init(&tail);
@@ -2489,39 +2360,39 @@ static void gen_write_set(gen_write_req * rq) {
                   (XPAR_PKT_HDR + 16 + rq->plan.geom.slice_size) + crtr.len;
 
     f = gen_stage_open(vol[0].name, &tmp);
-    gen_write_arm_prologue(f, &ap, plain_len,
+    xpar_garm_write_prologue(f, &ap, plain_len,
                            xpar_armour_size(a, plain_len), stream_at,
                            m->stream_length);
-    gen_as_init(&sink, a, f);
-    gen_as_put(&sink, head.data, head.len);
+    xpar_armsink_init(&sink, a, f);
+    xpar_armsink_put(&sink, head.data, head.len);
     buf = (u8 *) xpar_alloc_raw(1u << 16);
     gen_src_init(&src, m, m->stream_base + m->stream_length);
     at = m->stream_base;  left = m->stream_length;
     while (left) {
       u64 take = MIN(left, (u64) 1 << 16);
       gen_src_read(&src, at, take, buf);
-      gen_as_put(&sink, buf, take);
+      xpar_armsink_put(&sink, buf, take);
       at += take;  left -= take;
     }
     gen_src_free(&src);
     {
       u8 zero[XPAR_PKT_ALIGN] = { 0 };
       u64 pad = stream_packet - (XPAR_PKT_HDR + 16 + m->stream_length);
-      if (pad) gen_as_put(&sink, zero, pad);
+      if (pad) xpar_armsink_put(&sink, zero, pad);
     }
-    gen_as_put(&sink, tail.data, tail.len);
+    xpar_armsink_put(&sink, tail.data, tail.len);
     for (e = 0; e < rq->plan.recovery; e++) {
       xpar_buf pkt;
       const u8 * rec = gen_rec_get(&t, e, rec_scratch);
       xpar_buf_init(&pkt);
       xpar_rcvs_write(&pkt, e, rec, (sz) rq->plan.geom.slice_size,
                       rq->set_id, kp);
-      gen_as_put(&sink, pkt.data, pkt.len);
+      xpar_armsink_put(&sink, pkt.data, pkt.len);
       xpar_buf_free(&pkt);
     }
-    gen_as_put(&sink, crtr.data, crtr.len);
-    gen_as_flush(&sink);
-    gen_as_free(&sink);
+    xpar_armsink_put(&sink, crtr.data, crtr.len);
+    xpar_armsink_flush(&sink);
+    xpar_armsink_free(&sink);
     xpar_free(buf);
     if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
       FATAL_IO("Cannot flush temporary armoured archive '%s'.", tmp);
@@ -2929,7 +2800,7 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
   xpar_memset(&chunks, 0, sizeof chunks);
   if (o->dedup == XPAR_DEDUP_CHUNK) {
     u64 budget = o->dedup_memory ? o->dedup_memory :
-                 (o->memory ? o->memory : gen_default_budget()) / 4;
+                 (o->memory ? o->memory : xpar_plan_default_memory()) / 4;
     if (!xpar_chunk_index_init(&chunks, budget))
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "--dedup-memory=%llu is too small for a chunk index.",
@@ -3443,10 +3314,10 @@ int xpar_op_addrecovery(const xpar_options * o) {
         if (layt.vol[i].byte_length > max_count)
           max_count = layt.vol[i].byte_length;
       }
-      gen_recovery_widths(max_first, max_count, &wf, &wc);
+      xpar_vname_widths(max_first, max_count, &wf, &wc);
       for (i = 0; i < nvol; i++) {
         char * nd, * nn;
-        vol[i].name = gen_name_recovery(c.base ? c.base : o->set,
+        vol[i].name = xpar_vname_recovery(c.base ? c.base : o->set,
                                         c.gen[g].sd.generation, vol[i].first,
                                         vol[i].count, wf, wc);
         gen_split_path(vol[i].name, &nd, &nn);
@@ -3667,8 +3538,9 @@ int xpar_op_add(const xpar_options * o) {
                          c.gen[head].sd.stream_length;
     wo.dedup_max_refs  = o->dedup_max_refs;
     wo.dedup_chunk     = o->dedup_chunk ? o->dedup_chunk : (u64) 1 << 20;
-    wo.dedup_memory    = o->dedup_memory ? o->dedup_memory :
-                         (o->memory ? o->memory : gen_default_budget()) / 4;
+    wo.dedup_memory    = o->dedup_memory ? o->dedup_memory
+                           : (o->memory ? o->memory
+                                        : xpar_plan_default_memory()) / 4;
     wo.preserve        = o->preserve;
     wo.preserve_explicit = o->preserve_explicit;
     wo.base_dir        = o->base_dir;
@@ -3792,10 +3664,12 @@ int xpar_op_add(const xpar_options * o) {
       bool stale = false;
 
       if (gone) {
-        if (!o->allow_missing)
+        if (!o->allow_missing) {
+          xpar_free(path);
           FATAL("'%.*s' is in the set but not on disk. Pass "
                 "--allow-missing to record the deletion.",
                 (int) old->name_len, old->name);
+        }
         dropped++;  xpar_free(path);  ia++;
         continue;
       }
@@ -4013,14 +3887,14 @@ static void gen_prune_name(xpar_vol * v, const xpar_chain * c, u32 generation,
   int width;
   xpar_free(v->name);  v->name = NULL;
   if (v->kind == XPAR_VOL_INDEX) {
-    full = gen_name_index(c->base, generation);
+    full = xpar_vname_index(c->base, generation);
   } else if (v->kind == XPAR_VOL_RECOVERY) {
-    full = gen_name_recovery(c->base, generation, v->recovery_first,
+    full = xpar_vname_recovery(c->base, generation, v->recovery_first,
                              v->byte_length, wf, wc);
   } else {
     width = xpar_digits10(data_count ? data_count - 1 : 0);
     if (width < 2) width = 2;
-    full = gen_name_data(c->base, generation, data_index, width);
+    full = xpar_vname_data(c->base, generation, data_index, width);
   }
   gen_split_path(full, &dir, &name);
   v->name = name;
@@ -4047,7 +3921,7 @@ static bool gen_prune_layout(const xpar_chain * c, u32 g, u32 generation,
     if (old->vol[i].byte_length > max_count)
       max_count = old->vol[i].byte_length;
   }
-  gen_recovery_widths(max_first, max_count, &wf, &wc);
+  xpar_vname_widths(max_first, max_count, &wf, &wc);
   for (i = 0; i < old->count; i++) {
     now->vol[i] = old->vol[i];
     now->vol[i].name = NULL;
@@ -4176,9 +4050,7 @@ typedef struct {
 } gen_prune_tx;
 
 static i64 gen_prune_find(const gen_prune_tx * t, const char * path) {
-  u32 i;
-  for (i = 0; i < t->count; i++)
-    if (gen_path_equal(t->f[i].old_path, path)) return i;
+  For(u32, i, t->count, if (gen_path_equal(t->f[i].old_path, path)) return i)
   return -1;
 }
 
@@ -4218,9 +4090,7 @@ static void gen_prune_tx_free(gen_prune_tx * t) {
 }
 
 static void gen_prune_discard_stages(gen_prune_tx * t) {
-  u32 i;
-  for (i = 0; i < t->count; i++)
-    if (t->f[i].stage) xpar_remove(t->f[i].stage);
+  For(u32, i, t->count, if (t->f[i].stage) xpar_remove(t->f[i].stage))
 }
 
 static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
@@ -4533,7 +4403,7 @@ int xpar_op_prune(const xpar_options * o) {
           c.vol[i].volume_index < layt.count)
         target = xpar_path_join(c.dir, layt.vol[c.vol[i].volume_index].name);
       else
-        target = gen_name_index(c.base, new_generation[g]);
+        target = xpar_vname_index(c.base, new_generation[g]);
       stage = gen_stage_whole(target, out.data, out.len);
       gen_prune_output(&tx, c.vol[i].path, target, stage, false,
                        c.vol[i].volume_kind == XPAR_VOL_INDEX ||
@@ -5063,12 +4933,6 @@ static bool gen_undo_path_allowed(const xpar_chain * c,
   return false;
 }
 
-static bool gen_has_nul(const u8 * p, u32 n) {
-  u32 i;
-  for (i = 0; i < n; i++) if (!p[i]) return true;
-  return false;
-}
-
 int xpar_op_undo(const xpar_options * o) {
   u8 * j;  sz n = 0;  u64 at, count, i;
   char * path = NULL;
@@ -5186,7 +5050,7 @@ int xpar_op_undo(const xpar_options * o) {
       if (payload + len < payload)
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
-      if (gen_has_nul(rec + UNDO_REC, plen) ||
+      if (xpar_has_nul(rec + UNDO_REC, plen) ||
           !gen_undo_path_allowed(&chain, &manifest,
                                  (const char *) rec + UNDO_REC, plen))
         FATAL_FORMAT("Journal record %llu names a path outside the selected "
@@ -5352,7 +5216,7 @@ int xpar_op_recover_prologue(const xpar_options * o) {
         for (t = MIN(128u, (ncand - 1) / 2); t >= 1 && !found; t--) {
           ap.k = ap.n - 2 * t;
           if (xpar_armour_check(&ap)) continue;
-          fx = (u64) d * ap.n * (ap.symbol_bits / 8);
+          fx = d * ap.n * (ap.symbol_bits / 8);
           a = xpar_armour_new(&ap);
           frame = (u8 *) xpar_realloc(frame, (sz) fx);
           xpar_memcpy(frame, f + ARM_HDR_LEN, (sz) fx);
@@ -5555,8 +5419,7 @@ static u32 st_next(st_rng * r) {
 }
 
 static void st_fill(st_rng * r, u8 * p, sz n) {
-  sz i;
-  for (i = 0; i < n; i++) p[i] = (u8) st_next(r);
+  For(sz, i, n, p[i] = (u8) st_next(r))
 }
 
 static u32 st_cmp(const char * tier, const char * what, const u8 * a,
@@ -5910,13 +5773,12 @@ static void st_measure_gf(const xpar_gf_kernels * k, const char * tier) {
   xpar_gf8_coef coef;
   st_rng rng;
   u64 begin, elapsed;
-  u32 i;
   rng.s = 0x6A09E667F3BCC909ull;
   st_fill(&rng, src, n);
   xpar_memset(dst, 0, n);
   xpar_gf8_prepare(&coef, 173);
   begin = xpar_usec_now();
-  for (i = 0; i < repeat; i++) k->mac8(dst, src, n, &coef);
+  For(u32, i, repeat, k->mac8(dst, src, n, &coef))
   elapsed = xpar_usec_now() - begin;
   st_rate(tier, "gf8-mac", (u64) n * repeat, elapsed);
   xpar_free_aligned(src); xpar_free_aligned(dst);

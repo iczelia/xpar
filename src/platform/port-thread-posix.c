@@ -191,10 +191,9 @@ xpar_pool * xpar_pool_create(int threads) {
 int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
-  sz i;
   if (n == 0) return;
   if (!p || p->nthreads <= 1 || n == 1) {
-    for (i = 0; i < n; i++) fn(i, ctx);
+    For(sz, i, n, fn(i, ctx))
     return;
   }
   pthread_mutex_lock(&p->m);
@@ -213,14 +212,13 @@ void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
 }
 
 void xpar_pool_destroy(xpar_pool * p) {
-  int k;
   if (!p) return;
   pthread_mutex_lock(&p->m);
   p->stop = true;
   pthread_cond_broadcast(&p->ready);
   pthread_mutex_unlock(&p->m);
   if (p->tid) {
-    for (k = 0; k < p->nthreads - 1; k++) pthread_join(p->tid[k], NULL);
+    Fk(p->nthreads - 1, pthread_join(p->tid[k], NULL))
     xpar_free(p->tid);
   }
   pthread_cond_destroy(&p->done);

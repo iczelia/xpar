@@ -800,9 +800,8 @@ static void select_armoured_image(xpar_vset * s) {
 }
 
 static bool split_image_seen(const xpar_vset * s, const char * path) {
-  u32 i;
-  for (i = 0; i < s->img_count; i++)
-    if (!xpar_strcmp(s->img[i].path, path)) return true;
+  For(u32, i, s->img_count,
+      if (!xpar_strcmp(s->img[i].path, path)) return true)
   return false;
 }
 
@@ -1389,23 +1388,21 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
 }
 
 void xpar_vset_close(xpar_vset * s) {
-  u32 i;
   if (!s) return;
   if (s->fh_open) xpar_close(s->fh);
   xpar_erasures_free(&s->er);
   if (s->have_layt) xpar_layt_free(&s->layt);
   xpar_tagset_free(&s->tagset);
   xpar_occindex_free(&s->occ);
-  for (i = 0; i < s->mf.count; i++) xpar_resync_map_free(&s->resync[i]);
+  For(u32, i, s->mf.count, xpar_resync_map_free(&s->resync[i]))
   xpar_manifest_free(&s->mf);
   xpar_setd_free(&s->setd);
   xpar_critset_free(&s->crit);
-  for (i = 0; i < s->plain_count; i++)
-    if (s->plain_owned[i]) xpar_free(s->plain[i]);
+  For(u32, i, s->plain_count, if (s->plain_owned[i]) xpar_free(s->plain[i]))
   xpar_free(s->plain);
   xpar_free(s->plain_len);
   xpar_free(s->plain_owned);
-  for (i = 0; i < s->img_count; i++) vimg_free(&s->img[i]);
+  For(u32, i, s->img_count, vimg_free(&s->img[i]))
   xpar_free(s->img);       xpar_free(s->ext_first);
   xpar_free(s->ext_alias); xpar_free(s->gen);
   xpar_free(s->superseded); xpar_free(s->ignored_cell);

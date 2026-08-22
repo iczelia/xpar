@@ -19,6 +19,7 @@
 #include "auth.h"
 #include "chain.h"
 #include "vset.h"
+#include "volimg.h"
 
 #include "armour.h"
 #include "blake3.h"
@@ -42,14 +43,6 @@ static const char * const ex_sk_name[EX_SK_COUNT] = {
 };
 
 typedef struct {
-  xpar_mmap  map;
-  u8 *       heap;
-  const u8 * data;
-  u64        size;
-  char *     path;
-} ex_vol;
-
-typedef struct {
   const xpar_options * o;
   xpar_json  js;
   bool       quiet;
@@ -57,8 +50,8 @@ typedef struct {
   u8         master[XPAR_BLAKE3_KEY_LEN];
   bool       key_loaded, keyed, auth_only;
 
-  ex_vol *   vol;    u32 vol_count, vol_cap;
-  u8 **      plain;  u32 plain_count, plain_cap;
+  xpar_volimg * vol;  u32 vol_count, vol_cap;
+  u8 **         plain;  u32 plain_count, plain_cap;
 
   xpar_critset crit;
   xpar_setd    sd;
@@ -146,27 +139,12 @@ static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename) {
 }
 
 static bool ex_vol_open(ex * x, const char * path) {
-  ex_vol v;
-  xpar_memset(&v, 0, sizeof v);
-  v.map = xpar_map(path);
-  if (v.map.valid) { v.data = v.map.map;  v.size = v.map.size; }
-  else {
-    xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
-    i64 n;
-    if (!f) return false;
-    n = xpar_size(f);
-    if (n < 0 || (u64) n > (u64) (sz) -1 / 2) { xpar_close(f);  return false; }
-    v.heap = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
-    if (xpar_read(f, v.heap, (sz) n) != (sz) n) {
-      xpar_close(f);  xpar_free(v.heap);  return false;
-    }
-    xpar_close(f);
-    v.data = v.heap;  v.size = (u64) n;
-  }
-  v.path = xpar_strdup(path);
+  xpar_volimg v;
+  if (!xpar_volimg_open(&v, path)) return false;
   if (x->vol_count == x->vol_cap) {
     x->vol_cap = x->vol_cap ? x->vol_cap * 2 : 8;
-    x->vol = (ex_vol *) xpar_realloc(x->vol, x->vol_cap * sizeof(ex_vol));
+    x->vol = (xpar_volimg *)
+               xpar_realloc(x->vol, x->vol_cap * sizeof(xpar_volimg));
   }
   x->vol[x->vol_count++] = v;
   return true;
@@ -182,39 +160,12 @@ static void ex_keep_plain(ex * x, u8 * p) {
 
 static void ex_collect(ex * x, const u8 * buf, u64 size);
 
-static void ex_unwrap_armg(ex * x, const u8 * body, u64 len, bool damaged) {
-  xpar_armg g;
-  xpar_armour_params p;
-  xpar_armour * a;
-  u8 * plain;
-  if (xpar_armg_read(body, (sz) len, &g) != XPAR_OK) return;
-  if (g.plain_length > (u64) (sz) -1 / 2) return;
-  p.symbol_bits = g.symbol_bits;  p.poly = g.poly;
-  p.n = g.n;  p.k = g.k;  p.fcr = g.fcr;  p.prim = g.prim;
-  p.depth = g.depth;
-  if (xpar_armour_check(&p)) return;
-  xpar_gf_init();
-  a = xpar_armour_new(&p);
-  if (!a) return;
-  plain = (u8 *) xpar_alloc_raw((sz) g.plain_length ? (sz) g.plain_length : 1);
-  xpar_armour_extract(a, plain, g.plain_length, g.data);
-  ex_collect(x, plain, g.plain_length);
+/*  Plaintext an armoured group gave up: scan it, then keep it, because
+    the collector now points into it.  */
+static void ex_plain(void * user, u8 * plain, u64 len) {
+  ex * x = (ex *) user;
+  ex_collect(x, plain, len);
   ex_keep_plain(x, plain);
-  if (damaged) {
-    u8 * region = (u8 *) xpar_alloc_raw((sz) g.armoured_length ?
-                                        (sz) g.armoured_length : 1);
-    u8 * fixed  = (u8 *) xpar_alloc_raw((sz) g.plain_length ?
-                                        (sz) g.plain_length : 1);
-    u64 fd = xpar_armour_frame_disk(a), off;
-    xpar_memcpy(region, g.data, (sz) g.armoured_length);
-    for (off = 0; off + fd <= g.armoured_length; off += fd)
-      xpar_armour_decode_frame(a, region + off, NULL);
-    xpar_armour_extract(a, fixed, g.plain_length, region);
-    xpar_free(region);
-    ex_collect(x, fixed, g.plain_length);
-    ex_keep_plain(x, fixed);
-  }
-  xpar_armour_free(a);
 }
 
 static void ex_collect(ex * x, const u8 * buf, u64 size) {
@@ -226,7 +177,7 @@ static void ex_collect(ex * x, const u8 * buf, u64 size) {
   sc.accept_unverified_keyed = false;
   while (xpar_scan_next(&sc, &h, &body, &off)) {
     if (xpar_pkt_is(&h, XPAR_T_ARMG))
-      ex_unwrap_armg(x, body, h.length - XPAR_PKT_HDR, false);
+      xpar_armg_unwrap(body, h.length - XPAR_PKT_HDR, false, ex_plain, x);
     else {
       if (xpar_pkt_is(&h, XPAR_T_STRM)) {
         xpar_strm s;
@@ -242,27 +193,16 @@ static void ex_collect(ex * x, const u8 * buf, u64 size) {
 }
 
 static bool ex_have_setd(const ex * x) {
-  u32 i;
-  for (i = 0; i < x->crit.count; i++)
-    if (xpar_pkt_is(&x->crit.pkt[i].hdr, XPAR_T_SETD)) return true;
+  For(u32, i, x->crit.count,
+      if (xpar_pkt_is(&x->crit.pkt[i].hdr, XPAR_T_SETD)) return true)
   return false;
 }
 
 static void ex_salvage(ex * x, const u8 * buf, u64 size) {
-  u64 at;
-  for (at = 0; at + XPAR_PKT_HDR <= size; at += XPAR_PKT_ALIGN) {
-    xpar_pkt h;
-    if (xpar_memcmp(buf + at, XPAR_PKT_MAGIC, 8)) continue;
-    { xpar_status st = xpar_pkt_read(buf + at, size - at,
-                                     x->key_loaded ? &x->key : NULL, &h);
-      if (st != XPAR_E_CHECKSUM && st != XPAR_E_NEEDKEY) continue; }
-    if (!xpar_pkt_is(&h, XPAR_T_ARMG)) continue;
-    ex_unwrap_armg(x, buf + at + XPAR_PKT_HDR, h.length - XPAR_PKT_HDR,
-                   true);
-  }
+  xpar_armg_salvage(buf, size, x->key_loaded ? &x->key : NULL, ex_plain, x);
 }
 
-static void ex_open_armoured(ex * x, const ex_vol * v) {
+static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   xpar_arm_prologue pr;
   xpar_armour_params p;
   xpar_armour * a;
@@ -720,11 +660,7 @@ static void ex_free(ex * x) {
     xpar_free(x->owner);
     xpar_gchain_free(&x->chain);
   }
-  for (i = 0; i < x->vol_count; i++) {
-    if (x->vol[i].map.valid) xpar_unmap(&x->vol[i].map);
-    xpar_free(x->vol[i].heap);
-    xpar_free(x->vol[i].path);
-  }
+  for (i = 0; i < x->vol_count; i++) xpar_volimg_close(&x->vol[i]);
   xpar_free(x->vol);
   for (i = 0; i < x->plain_count; i++) xpar_free(x->plain[i]);
   xpar_free(x->plain);
@@ -836,7 +772,7 @@ int xpar_op_extract(const xpar_options * o) {
 
   for (i = 0; i < o->set_ref.count; i++) {
     if (!ex_vol_open(&x, o->set_ref.vol[i])) continue;
-    { const ex_vol * v = &x.vol[x.vol_count - 1];
+    { const xpar_volimg * v = &x.vol[x.vol_count - 1];
       if (v->size >= 8 && !xpar_memcmp(v->data, "XPAR2ARM", 8))
         ex_open_armoured(&x, v);
       else
