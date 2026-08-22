@@ -100,7 +100,7 @@ static const char * base_of(const char * path) {
 static char * vol_name(const char * base, u64 first, u64 count, int wf,
                        int wc) {
   char * s = NULL;
-  xpar_asprintf(&s, "%s.v%0*llu+%0*llu.xpar", base, wf,
+  xpar_asprintf(&s, "%s.v%0*llu+%0*llu" XPAR_EXT, base, wf,
                 (unsigned long long) first, wc,
                 (unsigned long long) count);
   return s;
@@ -1027,8 +1027,8 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     to[at] = xpar_strdup(final[i]);
   }
   for (i = 0; i < labels; i++, at++) {
-    xpar_asprintf(&from[at], "%s.xpar", stage[label_first + i]);
-    xpar_asprintf(&to[at], "%s.xpar", final[label_first + i]);
+    xpar_asprintf(&from[at], "%s" XPAR_EXT, stage[label_first + i]);
+    xpar_asprintf(&to[at], "%s" XPAR_EXT, final[label_first + i]);
   }
   from[at] = xpar_strdup(stage[0]);
   to[at] = xpar_strdup(final[0]);
@@ -1303,7 +1303,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
                r * z <= (u64) (sz) -1 && z <= (u64) (sz) -1);
 
   if (o->layout == XPAR_LAYOUT_SPLIT)
-    xpar_asprintf(&final, "%s.d000", o->output);
+    xpar_asprintf(&final, "%s.d00", o->output);
   else
     final = create_join(outdir, o->stdin_name);
   parent = create_dirname(final);
@@ -1675,18 +1675,22 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     else if (data_n > c.geom.slice_count) data_n = (u32) c.geom.slice_count;
   }
   name_count = nvol + 1 + data_n;
+  /*  One width per placeholder, taken from the widest value that will
+      appear in it, so every recovery name of the generation lines up.  */
   wf = digits_of(c.recovery ? c.recovery - 1 : 0);
-  wc = digits_of(nvol ? span[nvol - 1].count : 1);
-  if (wf < 3) wf = 3;
-  if (wc < 3) wc = 3;
+  wc = 1;
+  for (i = 0; i < nvol; i++)
+    if (digits_of(span[i].count) > wc) wc = digits_of(span[i].count);
+  if (wf < 2) wf = 2;
+  if (wc < 2) wc = 2;
   names = (char **) xpar_calloc(name_count ? name_count : 1,
                                  sizeof(char *));
-  xpar_asprintf(&names[0], "%s.xpar", c.base);
+  xpar_asprintf(&names[0], "%s" XPAR_EXT, c.base);
   for (i = 0; i < nvol; i++)
     names[i + 1] = vol_name(c.base, span[i].first, span[i].count, wf, wc);
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     int wd = digits_of(data_n ? data_n - 1 : 0);
-    if (wd < 3) wd = 3;
+    if (wd < 2) wd = 2;
     for (i = 0; i < data_n; i++)
       xpar_asprintf(&names[nvol + 1 + i], "%s.d%0*u", c.base, wd, i);
   }
@@ -1705,7 +1709,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     for (i = 0; i < data_n; i++) {
       char * label;
       xpar_file * probe;
-      xpar_asprintf(&label, "%s.xpar", names[nvol + 1 + i]);
+      xpar_asprintf(&label, "%s" XPAR_EXT, names[nvol + 1 + i]);
       probe = xpar_open(label, XPAR_O_RDONLY);
       if (probe) {
         xpar_close(probe);
@@ -1937,7 +1941,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
         if (o->labels) {
           char * label;
           xpar_buf lb;
-          xpar_asprintf(&label, "%s.xpar", write_names[li]);
+          xpar_asprintf(&label, "%s" XPAR_EXT, write_names[li]);
           xpar_buf_init(&lb);
           layt.this_volume = li;
           emit_head(&c, &lb, &cr, li, XPAR_VOL_DATA, false, true);

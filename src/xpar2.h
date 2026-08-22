@@ -25,6 +25,11 @@
 #define XPAR_SET_ID_LEN  16
 #define XPAR_PKT_ALIGN   8        /*  Every packet length is a multiple.  */
 
+/*  The extension every packet-bearing volume carries. Bare split-layout
+    data volumes are the one exception: they have none.  */
+#define XPAR_EXT         ".xpa"
+#define XPAR_EXT_LEN     4
+
 #define XPAR_PF_CRITICAL       (1u << 0)
 #define XPAR_PF_KEYED          (1u << 1)
 #define XPAR_PF_BODY_UNCHECKED (1u << 2)  /*  Legal only on STRM.  */

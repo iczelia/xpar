@@ -172,7 +172,7 @@ static void gen_split_path(const char * path, char ** dir, char ** name) {
 
 /*  `dir` may or may not carry its separator: gen_split_path keeps one
     and a directory named on the command line has none, and joining
-    "." with "set.xpar" as ".set.xpar" is a file nobody asked for.  */
+    "." with "set.xpa" as ".set.xpa" is a file nobody asked for.  */
 static char * gen_join(const char * dir, const char * name) {
   char * out;
   sz n;
@@ -200,9 +200,9 @@ static bool gen_decimal(const char * s, sz * at, sz end) {
 
 static bool gen_chain_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!gen_ends_with(name, ".xpar") || n - 5 < p ||
+  if (!gen_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
-  n -= 5;
+  n -= XPAR_EXT_LEN;
   if (p == n) return true;
   if (name[p++] != '.' || p == n) return false;
   if (name[p] == 'g') {
@@ -221,9 +221,9 @@ static bool gen_chain_sibling(const char * name, const char * stem) {
 
 static bool gen_chain_index_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!gen_ends_with(name, ".xpar") || n - 5 < p ||
+  if (!gen_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
-  n -= 5;
+  n -= XPAR_EXT_LEN;
   if (p == n) return true;
   if (name[p++] != '.' || p == n || name[p] != 'g') return false;
   i = p + 1;
@@ -235,7 +235,7 @@ static char * gen_unused_base(const char * base, const char * label) {
   for (i = 0; i < 1000; i++) {
     char * candidate, * index;
     xpar_asprintf(&candidate, "%s.%s-%03u", base, label, i);
-    xpar_asprintf(&index, "%s.xpar", candidate);
+    xpar_asprintf(&index, "%s" XPAR_EXT, candidate);
     if (!gen_exists(index)) { xpar_free(index);  return candidate; }
     xpar_free(index);  xpar_free(candidate);
   }
@@ -271,19 +271,28 @@ static int gen_digits(u64 v) {
 
 static char * gen_name_index(const char * base, u32 g) {
   char * s;
-  if (!g) xpar_asprintf(&s, "%s.xpar", base);
-  else    xpar_asprintf(&s, "%s.g%03u.xpar", base, g);
+  if (!g) xpar_asprintf(&s, "%s" XPAR_EXT, base);
+  else    xpar_asprintf(&s, "%s.g%03u" XPAR_EXT, base, g);
   return s;
 }
 
+/*  One width per placeholder, taken from the widest value that will
+    appear in it, so every recovery name of the generation lines up. Two
+    digits unless the generation needs more.  */
+static void gen_recovery_widths(u64 max_first, u64 max_count, int * wf,
+                                int * wc) {
+  *wf = gen_digits(max_first);  if (*wf < 2) *wf = 2;
+  *wc = gen_digits(max_count);  if (*wc < 2) *wc = 2;
+}
+
 static char * gen_name_recovery(const char * base, u32 g, u64 first,
-                                u64 count, int width) {
+                                u64 count, int wf, int wc) {
   char * s;
-  if (!g) xpar_asprintf(&s, "%s.v%0*llu+%0*llu.xpar", base, width,
-                        (unsigned long long) first, width,
+  if (!g) xpar_asprintf(&s, "%s.v%0*llu+%0*llu" XPAR_EXT, base, wf,
+                        (unsigned long long) first, wc,
                         (unsigned long long) count);
-  else    xpar_asprintf(&s, "%s.g%03u.v%0*llu+%0*llu.xpar", base, g, width,
-                        (unsigned long long) first, width,
+  else    xpar_asprintf(&s, "%s.g%03u.v%0*llu+%0*llu" XPAR_EXT, base, g,
+                        wf, (unsigned long long) first, wc,
                         (unsigned long long) count);
   return s;
 }
@@ -633,7 +642,7 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
       char * pfx;
       xpar_asprintf(&pfx, "%s/", o->scan_dir);
       while ((e = xpar_readdir(d)) != NULL)
-        if (!e->is_dir && gen_ends_with(e->name, ".xpar"))
+        if (!e->is_dir && gen_ends_with(e->name, XPAR_EXT))
           chain_add_vol(c, gen_join(pfx, e->name));
       xpar_free(pfx);
       xpar_closedir(d);
@@ -766,9 +775,9 @@ void xpar_gchain_load(const xpar_options * o, xpar_chain * c) {
     for (j = 0; j < c->vol_count; j++) {
       char * stem;  char * dir;
       if (c->vol[j].volume_kind != XPAR_VOL_INDEX) continue;
-      if (!gen_ends_with(c->vol[j].path, ".xpar")) continue;
+      if (!gen_ends_with(c->vol[j].path, XPAR_EXT)) continue;
       gen_split_path(c->vol[j].path, &dir, &stem);
-      stem[xpar_strlen(stem) - 5] = 0;
+      stem[xpar_strlen(stem) - XPAR_EXT_LEN] = 0;
       chain_strip_gen(stem);
       c->base = gen_join(dir, stem);
       if (!c->dir) c->dir = xpar_strdup(dir);
@@ -1869,7 +1878,7 @@ static gen_vol * gen_volumes(const xpar_options * o, u64 r, const char * base,
   gen_vol * v = NULL;
   u32 n = 0, i;
   u64 left = r, step = 1, first = 0;
-  int width;
+  int wf, wc;
 
   v = (gen_vol *) xpar_calloc(1, sizeof(gen_vol));
   v[0].is_index = true;
@@ -1900,11 +1909,17 @@ static gen_vol * gen_volumes(const xpar_options * o, u64 r, const char * base,
     }
   }
 
-  width = gen_digits(r ? r : 1);
-  if (width < 3) width = 3;
+  {
+    u64 max_first = 0, max_count = 1;
+    for (i = 1; i < n; i++) {
+      if (v[i].first > max_first) max_first = v[i].first;
+      if (v[i].count > max_count) max_count = v[i].count;
+    }
+    gen_recovery_widths(max_first, max_count, &wf, &wc);
+  }
   v[0].name = gen_name_index(base, gen);
   for (i = 1; i < n; i++)
-    v[i].name = gen_name_recovery(base, gen, v[i].first, v[i].count, width);
+    v[i].name = gen_name_recovery(base, gen, v[i].first, v[i].count, wf, wc);
   *count = n;
   return v;
 }
@@ -1974,7 +1989,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
     if (!p->geom.slice_count) data_n = 1;
     else if (data_n > p->geom.slice_count) data_n = (u32) p->geom.slice_count;
     width = gen_digits(data_n ? data_n - 1 : 0);
-    if (width < 3) width = 3;
+    if (width < 2) width = 2;
     stage_data = (char **) xpar_calloc(data_n, sizeof(char *));
     final_data = (char **) xpar_calloc(data_n, sizeof(char *));
     data_backup = (char **) xpar_calloc(data_n, sizeof(char *));
@@ -1989,8 +2004,8 @@ static void gen_commit_consolidation(const xpar_chain * c,
       stage_data[i] = gen_name_data(stage_base, 0, i, width);
       final_data[i] = gen_name_data(final_base, 0, i, width);
       if (o->labels) {
-        xpar_asprintf(&stage_label[i], "%s.xpar", stage_data[i]);
-        xpar_asprintf(&final_label[i], "%s.xpar", final_data[i]);
+        xpar_asprintf(&stage_label[i], "%s" XPAR_EXT, stage_data[i]);
+        xpar_asprintf(&final_label[i], "%s" XPAR_EXT, final_data[i]);
       }
     }
   }
@@ -2373,7 +2388,7 @@ static void gen_write_set(gen_write_req * rq) {
     else if (data_n > rq->plan.geom.slice_count)
       data_n = (u32) rq->plan.geom.slice_count;
     width = gen_digits(data_n ? data_n - 1 : 0);
-    if (width < 3) width = 3;
+    if (width < 2) width = 2;
     data_name = (char **) xpar_calloc(data_n, sizeof(char *));
     layout_data_name = (char **) xpar_calloc(data_n, sizeof(char *));
     label_name = (char **) xpar_calloc(data_n, sizeof(char *));
@@ -2382,7 +2397,8 @@ static void gen_write_set(gen_write_req * rq) {
       layout_data_name[i] = gen_name_data(
         rq->layout_base ? rq->layout_base : rq->base,
         rq->generation, i, width);
-      if (o->labels) xpar_asprintf(&label_name[i], "%s.xpar", data_name[i]);
+      if (o->labels)
+        xpar_asprintf(&label_name[i], "%s" XPAR_EXT, data_name[i]);
     }
   }
   if (!o->force)
@@ -3509,24 +3525,38 @@ int xpar_op_addrecovery(const xpar_options * o) {
     vol = NULL;
     while (left) {
       u64 take = MIN(step, left);
-      int width = gen_digits(want);
-      char * name, * nd, * nn;
-      if (width < 3) width = 3;
-      name = gen_name_recovery(c.base ? c.base : o->set,
-                               c.gen[g].sd.generation, first, take, width);
       vol = (gen_vol *) xpar_realloc(vol, (sz) (nvol + 1) * sizeof(gen_vol));
       xpar_memset(&vol[nvol], 0, sizeof(gen_vol));
       vol[nvol].first = first;  vol[nvol].count = take;
-      vol[nvol].name  = name;
-      gen_split_path(name, &nd, &nn);
       layt.vol[layt.count].kind           = XPAR_VOL_RECOVERY;
       layt.vol[layt.count].recovery_first = (u32) first;
       layt.vol[layt.count].byte_length    = take;
-      layt.vol[layt.count].name           = nn;
       layt.count++;
-      xpar_free(nd);
       nvol++;  first += take;  left -= take;  step *= 2;
       if (layt.count >= n + 64) break;
+    }
+    /*  The widths span the old volumes too: the names already on disk
+        keep theirs, and the new ones must not come out narrower.  */
+    {
+      u64 max_first = 0, max_count = 1;
+      int wf, wc;
+      for (i = 0; i < layt.count; i++) {
+        if (layt.vol[i].kind != XPAR_VOL_RECOVERY) continue;
+        if (layt.vol[i].recovery_first > max_first)
+          max_first = layt.vol[i].recovery_first;
+        if (layt.vol[i].byte_length > max_count)
+          max_count = layt.vol[i].byte_length;
+      }
+      gen_recovery_widths(max_first, max_count, &wf, &wc);
+      for (i = 0; i < nvol; i++) {
+        char * nd, * nn;
+        vol[i].name = gen_name_recovery(c.base ? c.base : o->set,
+                                        c.gen[g].sd.generation, vol[i].first,
+                                        vol[i].count, wf, wc);
+        gen_split_path(vol[i].name, &nd, &nn);
+        layt.vol[base_vol + i].name = nn;
+        xpar_free(nd);
+      }
     }
   }
 
@@ -4082,21 +4112,18 @@ static void gen_prune_rebase(const xpar_chain * c, xpar_manifest * m,
 }
 
 static void gen_prune_name(xpar_vol * v, const xpar_chain * c, u32 generation,
-                           u32 data_index, u32 data_count) {
+                           u32 data_index, u32 data_count, int wf, int wc) {
   char * full = NULL, * dir, * name;
   int width;
   xpar_free(v->name);  v->name = NULL;
   if (v->kind == XPAR_VOL_INDEX) {
     full = gen_name_index(c->base, generation);
   } else if (v->kind == XPAR_VOL_RECOVERY) {
-    u64 top = v->recovery_first + v->byte_length;
-    width = gen_digits(top ? top : 1);
-    if (width < 3) width = 3;
     full = gen_name_recovery(c->base, generation, v->recovery_first,
-                             v->byte_length, width);
+                             v->byte_length, wf, wc);
   } else {
     width = gen_digits(data_count ? data_count - 1 : 0);
-    if (width < 3) width = 3;
+    if (width < 2) width = 2;
     full = gen_name_data(c->base, generation, data_index, width);
   }
   gen_split_path(full, &dir, &name);
@@ -4107,6 +4134,8 @@ static void gen_prune_name(xpar_vol * v, const xpar_chain * c, u32 generation,
 static bool gen_prune_layout(const xpar_chain * c, u32 g, u32 generation,
                              xpar_layt * old, xpar_layt * now) {
   u32 i, di = 0, dn = 0;
+  u64 max_first = 0, max_count = 1;
+  int wf, wc;
   if (!c->gen[g].layt_body ||
       xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, old) !=
         XPAR_OK) return false;
@@ -4114,12 +4143,19 @@ static bool gen_prune_layout(const xpar_chain * c, u32 g, u32 generation,
   now->this_volume = old->this_volume;
   now->count = old->count;
   now->vol = (xpar_vol *) xpar_calloc(now->count, sizeof(xpar_vol));
-  for (i = 0; i < old->count; i++)
+  for (i = 0; i < old->count; i++) {
     if (old->vol[i].kind == XPAR_VOL_DATA) dn++;
+    if (old->vol[i].kind != XPAR_VOL_RECOVERY) continue;
+    if (old->vol[i].recovery_first > max_first)
+      max_first = old->vol[i].recovery_first;
+    if (old->vol[i].byte_length > max_count)
+      max_count = old->vol[i].byte_length;
+  }
+  gen_recovery_widths(max_first, max_count, &wf, &wc);
   for (i = 0; i < old->count; i++) {
     now->vol[i] = old->vol[i];
     now->vol[i].name = NULL;
-    gen_prune_name(&now->vol[i], c, generation, di, dn);
+    gen_prune_name(&now->vol[i], c, generation, di, dn, wf, wc);
     if (old->vol[i].kind == XPAR_VOL_DATA) di++;
   }
   return true;
@@ -4523,7 +4559,7 @@ int xpar_op_prune(const xpar_options * o) {
       char * data = gen_join(c.dir, l.vol[i].name);
       char * label;
       gen_prune_add(&tx, data);
-      xpar_asprintf(&label, "%s.xpar", data);
+      xpar_asprintf(&label, "%s" XPAR_EXT, data);
       if (gen_exists(label)) gen_prune_add(&tx, label);
       xpar_free(label);  xpar_free(data);
     }
@@ -4623,8 +4659,8 @@ int xpar_op_prune(const xpar_options * o) {
           char * old_label, * new_label;
           if (gen_exists(old_data))
             gen_prune_output(&tx, old_data, new_data, NULL, true, false, 0);
-          xpar_asprintf(&old_label, "%s.xpar", old_data);
-          xpar_asprintf(&new_label, "%s.xpar", new_data);
+          xpar_asprintf(&old_label, "%s" XPAR_EXT, old_data);
+          xpar_asprintf(&new_label, "%s" XPAR_EXT, new_data);
           if (gen_exists(old_label)) {
             i64 ti = gen_prune_find(&tx, old_label);
             if (ti < 0 || !tx.f[ti].new_path) {

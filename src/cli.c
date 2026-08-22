@@ -729,7 +729,7 @@ static void v1_flag_refuse(int argc, char ** argv) {
 
 static bool ends_with_xpar(const char * p) {
   sz n = xpar_strlen(p);
-  return n > 5 && ci_equal(p + n - 5, ".xpar");
+  return n > XPAR_EXT_LEN && ci_equal(p + n - XPAR_EXT_LEN, XPAR_EXT);
 }
 
 static bool is_dir(const char * p) {
@@ -797,7 +797,7 @@ static char * swap_ext(const char * p) {
       char * head = xpar_strndup(p, i);
       char * out;
       FATAL_UNLESS("Out of memory.", head != NULL);
-      out = cat_str(head, ".xpar");
+      out = cat_str(head, XPAR_EXT);
       xpar_free(head);
       return out;
     }
@@ -836,9 +836,9 @@ static bool decimal_word(const char * s, sz * at, sz end) {
 
 static bool chain_index_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (n <= 5 || !ends_with_xpar(name) || n - 5 < p ||
-      xpar_strncmp(name, stem, p)) return false;
-  n -= 5;
+  if (n <= XPAR_EXT_LEN || !ends_with_xpar(name) ||
+      n - XPAR_EXT_LEN < p || xpar_strncmp(name, stem, p)) return false;
+  n -= XPAR_EXT_LEN;
   if (p == n) return true;
   if (name[p++] != '.' || p == n || name[p] != 'g') return false;
   i = p + 1;
@@ -882,35 +882,36 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
         push_vol(out, join_path(arg, e->name));
     xpar_closedir(d);
     sort_vols(out);
-    FATAL_UNLESS("Directory '%s' holds no .xpar file.", out->count > 0, arg);
+    FATAL_UNLESS("Directory '%s' holds no " XPAR_EXT " file.",
+                 out->count > 0, arg);
   } else if (is_file(arg)) {
     if (ends_with_xpar(arg)) {
-      char * b = xpar_strndup(arg, xpar_strlen(arg) - 5);
+      char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
       FATAL_UNLESS("Out of memory.", b != NULL);
       strip_volume_suffix(b);
       strip_gen_suffix(b);
       out->base = b;
       push_vol(out, dup_str(arg));
     } else {
-      char * a = cat_str(arg, ".xpar");
+      char * a = cat_str(arg, XPAR_EXT);
       char * b = swap_ext(arg);
       if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
       else xpar_free(a);
       if (b && is_file(b)) {
         push_vol(out, b);
         if (!out->base) {
-          out->base = xpar_strndup(b, xpar_strlen(b) - 5);
+          out->base = xpar_strndup(b, xpar_strlen(b) - XPAR_EXT_LEN);
           FATAL_UNLESS("Out of memory.", out->base != NULL);
         }
       } else xpar_free(b);
       if (!out->count)
-        FATAL_FORMAT("No xpar set guards '%s': neither '%s.xpar' nor the "
-                     "same name with its extension replaced by '.xpar' is "
-                     "here.", arg, arg);
+        FATAL_FORMAT("No xpar set guards '%s': neither '%s" XPAR_EXT
+                     "' nor the same name with its extension replaced by '"
+                     XPAR_EXT "' is here.", arg, arg);
     }
   } else {
-    /*  A base name: `base` means `base.xpar`.  */
-    char * a = cat_str(arg, ".xpar");
+    /*  A base name: `base` means `base.xpa`.  */
+    char * a = cat_str(arg, XPAR_EXT);
     if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
     else {
       xpar_free(a);

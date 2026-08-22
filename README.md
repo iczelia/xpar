@@ -150,7 +150,7 @@ redundancy to protect against spurious bit-flips.
 xpar: armoured metadata: 1 regions corrected, 0 past the inner code
 xpar: status: clean
 
-% xpar scrub arch.xpar
+% xpar scrub arch.xpa
 xpar: inner code: 1 regions, 169 codewords, 0 clean, 169 corrected, 0 past capacity
 xpar: corrected symbols: 2000 total, worst codeword 20
 xpar:   codewords corrected at 11 symbols: 25
@@ -249,7 +249,7 @@ Some drawbacks of xpar:
   unreferenced.  `consolidate` collapses generational chains, merging all
   generations into one, and re-encodes the archive.
 ```
-% xpar add -r 15% photos.xpar -R pics
+% xpar add -r 15% photos.xpa -R pics
 xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
       200000 new stream bytes, 7 recovery slices in 3 volumes.
 ```
@@ -257,18 +257,18 @@ xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
   when with `--layout=split --volumes=4`, the data lives in header-free
   `.d00` - `.d03` files, one per disk, then:
 ```
-% rm disc.d001
-% xpar recover --volume=disc.d001 disc.xpar
-xpar: recovered disc.d001 from survivor and parity slices (1253376 bare stream bytes).
-% cat disc.d00* > joined && cmp joined vid.mp4 && echo identical
+% rm disc.d01
+% xpar recover --volume=disc.d01 disc.xpa
+xpar: recovered disc.d01 from survivor and parity slices (1253376 bare stream bytes).
+% cat disc.d0* > joined && cmp joined vid.mp4 && echo identical
 identical
 ```
 - `--auth-key=FILE`: authenticate the set with a keyed MAC, as a precaution
   against doctored archives.  Every subsequent operation requires the key:
 ```
-% xpar verify s.xpar
+% xpar verify s.xpa
 xpar: This set is authenticated; supply --auth-key=FILE.
-% xpar verify --auth-key=wrong.bin s.xpar
+% xpar verify --auth-key=wrong.bin s.xpa
 xpar: The authentication key is wrong for this set.
 ```
 - `--memory`: sets the maximum working set size for the planner.
@@ -321,11 +321,11 @@ Three options are offered:
 - `--layout=sidecar` (default): files are never touched and stay where they
   were. `base.xpa` and `base.v*.xpa` sit beside them. Extraction is never
   necessary.
-- `--layout=split`: the protected data is written into files `base.d000`,
-  `base.d001`, etc., which are raw data volumes with no header, no trailer
+- `--layout=split`: the protected data is written into files `base.d00`,
+  `base.d01`, etc., which are raw data volumes with no header, no trailer
   and no padding, so that `cat base.d* > file` reconstructs the original
   stream exactly.
-- `--layout=armoured`: one self-contained `base.xpar` containing three
+- `--layout=armoured`: one self-contained `base.xpa` containing three
   replicated header copies, alongside an inner-coded packet stream with the
   manifest, the data and the recovery.  Use `extract` to unpack, rather than
   concatenation.

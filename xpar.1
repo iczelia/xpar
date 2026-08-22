@@ -392,20 +392,20 @@ processes every generation oldest first where accepted.
 .TP
 .B sidecar
 Original files remain external. The index is
-.IB base .xpar;
+.IB base .xpa;
 recovery volumes contain packets. Originals have outer-code protection but
 are not inner-armoured.
 .TP
 .B split
 Bare
-.IB base .d NNN
+.IB base .d NN
 volumes hold consecutive set-stream ranges with no header, trailer, or tail
 padding. Concatenating them numerically yields the exact stream. Index and
 recovery volumes contain packets.
 .TP
 .B armoured
 One
-.IB base .xpar
+.IB base .xpa
 contains three protected prologue copies and an inner-coded packet stream
 holding manifest, data, and recovery. Use
 .B extract
@@ -479,7 +479,7 @@ Protect a file at 10% redundancy, then check it:
 .RS
 .nf
 xpar create \-r 10% \-o backup movie.mkv
-xpar verify backup.xpar
+xpar verify backup.xpa
 .fi
 .RE
 .PP
@@ -487,7 +487,7 @@ Repair in place after a bad sector, keeping an undo journal:
 .PP
 .RS
 .nf
-xpar repair \-\-in\-place backup.xpar
+xpar repair \-\-in\-place backup.xpa
 .fi
 .RE
 .PP
@@ -504,7 +504,7 @@ only signal that a disc is degrading before it fails:
 .PP
 .RS
 .nf
-xpar scrub photos.xpar
+xpar scrub photos.xpa
 .fi
 .RE
 .PP
@@ -512,7 +512,7 @@ Print the recipe that recovers the data without xpar:
 .PP
 .RS
 .nf
-xpar explain backup.xpar
+xpar explain backup.xpa
 .fi
 .RE
 .SH ENVIRONMENT
@@ -558,33 +558,35 @@ a message naming the version. To migrate, decode with xpar 1.x and
 re-protect with this version.
 .SH FILES
 .TP
-.IB base .xpar
+.IB base .xpa
 The index volume: the manifest, the slice tables and the volume layout.
 .TP
-.IB base .v NNN + MMM .xpar
+.IB base .v NN + MM .xpa
 A recovery volume holding
-.I MMM
+.I MM
 recovery slices starting at exponent
-.IR NNN .
+.IR NN .
+Each number is padded to two digits, or to as many as the widest value in
+that position needs.
 .TP
-.IB base .d NNN
+.IB base .d NN
 A bare split-layout data volume. Numeric order reconstructs the set stream.
 .TP
-.IB base .g GGG .xpar
+.IB base .g GGG .xpa
 The index volume for generation
 .I GGG
 after generation zero.
 .TP
-.IB base .g GGG .v NNN + MMM .xpar
+.IB base .g GGG .v NN + MM .xpa
 A recovery volume owned by generation
 .IR GGG .
 .TP
-.IB base .g GGG .d NNN
+.IB base .g GGG .d NN
 A split data volume owned by generation
 .IR GGG .
 .TP
-.IB base .xparlabel
-Optional human-readable volume label written by
+.IB base .d NN .xpa
+Optional volume label written beside each bare data volume by
 .BR \-\-labels .
 .TP
 .IB base .xparundo

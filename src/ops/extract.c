@@ -1135,11 +1135,14 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_json_end(&x.js);
     xpar_json_summary(&x.js, rc == XPAR_EXIT_OK ? "ok" : "damaged", rc);
   } else
-    ex_note(&x, "xpar: %llu entries, %llu bytes, %llu links, %llu copies, "
-                "%llu hash mismatches.\n", (unsigned long long) x.entries,
-            (unsigned long long) x.bytes, (unsigned long long) x.links,
-            (unsigned long long) x.copies,
-            (unsigned long long) x.mismatches);
+    ex_note(&x, "xpar: %llu %s, %llu bytes, %llu link%s, %llu cop%s, "
+                "%llu hash mismatch%s.\n", (unsigned long long) x.entries,
+            x.entries == 1 ? "entry" : "entries",
+            (unsigned long long) x.bytes,
+            (unsigned long long) x.links, PLURAL(x.links),
+            (unsigned long long) x.copies, x.copies == 1 ? "y" : "ies",
+            (unsigned long long) x.mismatches,
+            x.mismatches == 1 ? "" : "es");
   ex_free(&x);
   return rc;
 }

@@ -1555,21 +1555,22 @@ Layout & POSIX / Windows & DOS 8.3 \\
 \endhead
 \bottomrule
 \endlastfoot
-index volume & \verb|base.xpar| & \verb|BASE.XPR| \\
+index volume & \verb|base.xpa| & \verb|BASE.XPA| \\
 recovery volume, first exponent $f$, count $c$ &
-\verb|base.v<f>+<c>.xpar|
+\verb|base.v<f>+<c>.xpa|
 & \verb|BASE.V00| through \verb|BASE.V99| \\
 data volume $j$ (split) &
 \verb|base.d<j>| & \verb|BASE.D00| through
 \verb|BASE.D99| \\
-armoured archive & \verb|base.xpar| & \verb|BASE.XPA| \\
+armoured archive & \verb|base.xpa| & \verb|BASE.XPA| \\
 \end{longtable}
 
 \specp The placeholders \verb|<f>|, \verb|<c>| and \verb|<j>| are zero-padded
-decimal values. Their width is the greater of three and the number of digits in
-the largest corresponding value in the generation. Examples are
-\verb|book.v000+001.xpar|, \verb|book.v001+002.xpar| and
-\verb|book.v003+004.xpar|.
+decimal values. Each has its own width: the greater of two and the number of
+digits in the largest value that placeholder takes anywhere in the generation.
+Examples are \verb|book.v00+01.xpa|, \verb|book.v01+02.xpa| and
+\verb|book.v03+04.xpa|; a generation with 150 recovery slices in volumes of 22
+gives \verb|book.v000+22.xpa| through \verb|book.v132+18.xpa|.
 
 \specp Generation 0 uses the names above without a generation component. For
 $g\ge1$, a writer shall insert \verb|.g<g>| before the existing suffix. The
@@ -1581,12 +1582,12 @@ width of \verb|<g>| is at least three digits and increases as necessary:
 \endhead
 \bottomrule
 \endlastfoot
-index volume & \verb|base.xpar| &
-\verb|base.g<g>.xpar| \\
+index volume & \verb|base.xpa| &
+\verb|base.g<g>.xpa| \\
 recovery volume &
-\verb|base.v<f>+<c>.xpar|
+\verb|base.v<f>+<c>.xpa|
 &
-\verb|base.g<g>.v<f>+<c>.xpar| \\
+\verb|base.g<g>.v<f>+<c>.xpa| \\
 data volume (split) & \verb|base.d<j>| &
 \verb|base.g<g>.d<j>| \\
 \end{longtable}
@@ -1603,8 +1604,9 @@ data-volume index $j$. For generation $g\ge1$, the index volume uses
 \verb|BASE.XG<g>|. A recovery volume in that generation uses
 \verb|BASG<g>.V<nn>|, where the fourth character of \verb|BASE| is replaced by
 \verb|G|. A split-layout data volume in that generation uses
-\verb|BASG<g>.D<nn>|. An armoured archive uses \verb|BASE.XPA| for generation 0
-and \verb|BASE.XG<g>| for a later generation. When emitting DOS names, the
+\verb|BASG<g>.D<nn>|. An armoured archive uses the same \verb|BASE.XPA| for
+generation 0 and \verb|BASE.XG<g>| for a later generation; a generation is
+either armoured or packet-bearing, never both, so the two never collide. When emitting DOS names, the
 \verb|create| and \verb|add| operations shall reject a generation number
 greater than 9, more than 100 recovery volumes, more than 100 data volumes, or
 a truncated base name that collides with another required
