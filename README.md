@@ -15,9 +15,9 @@ it.  They can be later used to restore files that fall victim to bad sectors,
 bit flips, truncated copies, media rot or transmission failure.
 
 ```
-$ xpar create -r 10% -o backup movie.mkv     # 10% redundancy
-$ xpar verify backup.xpa                     # writes nothing, exits 0/1/2
-$ xpar repair --in-place backup.xpa          # fix what broke
+% xpar create -r 10% -o backup movie.mkv     # 10% redundancy
+% xpar verify backup.xpa                     # writes nothing, exits 0/1/2
+% xpar repair --in-place backup.xpa          # fix what broke
 ```
 
 xpar and its file format are competitors to PAR2, PAR2-turbo, ParPar, QuickPar,
@@ -90,7 +90,7 @@ Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
 repairable), 2 (hopelessly broken). 
 
 ```
-$ xpar verify backup.xpa
+% xpar verify backup.xpa
 xpar: movie.mkv: content differs
 xpar: 3956 slices of 5056 bytes, 396 recovery slices, erasure unit cell of 5056 bytes (1 per slice)
 xpar: damaged: 1 entries (0 missing), 1 slices, 1 cells; deepest column 1
@@ -146,11 +146,11 @@ an inner error-correcting code.  xpar can augment the slice data with additional
 redundancy to protect against spurious bit-flips.
 
 ```
-$ xpar verify arch.xpa
+% xpar verify arch.xpa
 xpar: armoured metadata: 1 regions corrected, 0 past the inner code
 xpar: status: clean
 
-$ xpar scrub arch.xpar
+% xpar scrub arch.xpar
 xpar: inner code: 1 regions, 169 codewords, 0 clean, 169 corrected, 0 past capacity
 xpar: corrected symbols: 2000 total, worst codeword 20
 xpar:   codewords corrected at 11 symbols: 25
@@ -165,10 +165,10 @@ Thirdly, errors are not necessarily corruption.  xpar handles insertions or
 deletions as well:
 
 ```
-$ xpar repair --in-place p.xpa
+% xpar repair --in-place p.xpa
 xpar: ./data.bin: found 732 displaced slices with 732 strong confirmations.
 xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entries repaired
-$ cmp data.bin data.keep && echo identical
+% cmp data.bin data.keep && echo identical
 identical
 ```
 
@@ -249,7 +249,7 @@ Some drawbacks of xpar:
   unreferenced.  `consolidate` collapses generational chains, merging all
   generations into one, and re-encodes the archive.
 ```
-$ xpar add -r 15% photos.xpar -R pics
+% xpar add -r 15% photos.xpar -R pics
 xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
       200000 new stream bytes, 7 recovery slices in 3 volumes.
 ```
@@ -257,23 +257,23 @@ xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
   when with `--layout=split --volumes=4`, the data lives in header-free
   `.d00` - `.d03` files, one per disk, then:
 ```
-$ rm disc.d001
-$ xpar recover --volume=disc.d001 disc.xpar
+% rm disc.d001
+% xpar recover --volume=disc.d001 disc.xpar
 xpar: recovered disc.d001 from survivor and parity slices (1253376 bare stream bytes).
-$ cat disc.d00* > joined && cmp joined vid.mp4 && echo identical
+% cat disc.d00* > joined && cmp joined vid.mp4 && echo identical
 identical
 ```
 - `--auth-key=FILE`: authenticate the set with a keyed MAC, as a precaution
   against doctored archives.  Every subsequent operation requires the key:
 ```
-$ xpar verify s.xpar
+% xpar verify s.xpar
 xpar: This set is authenticated; supply --auth-key=FILE.
-$ xpar verify --auth-key=wrong.bin s.xpar
+% xpar verify --auth-key=wrong.bin s.xpar
 xpar: The authentication key is wrong for this set.
 ```
 - `--memory`: sets the maximum working set size for the planner.
 ```
-$ xpar create -m 1M -r 20% -o tiny data.bin
+% xpar create -m 1M -r 20% -o tiny data.bin
 xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
       or use --codec=matrix (which does not fit either at -m 1.0 MiB).
 ```
@@ -296,7 +296,7 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
 - `benchmark`: displays the performance metrics for low-level SIMD kernels used
   by xpar.
 ```
-$ xpar selftest --tiers
+% xpar selftest --tiers
 xpar: selftest: avx2         gf8-mac    8388608 bytes    136 us  58823.53 MiB/s
 xpar: selftest: gfni256      gf8-mac    8388608 bytes    164 us  48780.49 MiB/s
 xpar: selftest: scalar       gf8-mac    8388608 bytes   3683 us   2172.14 MiB/s
@@ -350,7 +350,7 @@ Windows specifically has two targets; the default `nt` target uses UTF-16,
 extended-length paths and a Vista+ API floor.  It is used like so:
 
 ```
-$ CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \
+% CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \
       --with-windows-target=nt && make
 ```
 
@@ -358,7 +358,7 @@ The `win95` target is a separate ASCII-only path with an i486 (1989) scalar
 baseline, a freestanding startup/runtime and a PE 4.0 header:
 
 ```
-$ CC=i686-w64-mingw32-gcc ./configure --host=i686-w64-mingw32 \
+% CC=i686-w64-mingw32-gcc ./configure --host=i686-w64-mingw32 \
       --with-windows-target=win95 && make
 ```
 
