@@ -23,46 +23,12 @@
 #include "container.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "plan.h"
 #include "port-fs.h"
 #include "slice.h"
 
 #define ARM_HDR_EXPLAIN 384
-
-static char * li_join(const char * dir, const char * name) {
-  char * p = NULL;
-  sz n = xpar_strlen(dir);
-  xpar_asprintf(&p, "%s%s%s", dir,
-                n && dir[n - 1] != '/' && dir[n - 1] != '\\' ? "/" : "",
-                name);
-  return p;
-}
-
-static bool li_data_tag(const char * path, const xpar_vol * v) {
-  xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
-  xpar_blake3_t h;
-  u8 buf[65536], out[8];
-  i64 size;
-  u64 left;
-  if (!f) return false;
-  size = xpar_size(f);
-  if (size < 0 || (u64) size != v->byte_length) {
-    xpar_close(f); return false;
-  }
-  if (!v->vol_tag) { xpar_close(f); return true; }
-  xpar_blake3_init(&h);
-  xpar_blake3_update(&h, "xpar2 volume tag v1", 19);
-  left = v->byte_length;
-  while (left) {
-    sz take = (sz) MIN(left, (u64) sizeof buf);
-    if (xpar_read(f, buf, take) != take) { xpar_close(f); return false; }
-    xpar_blake3_update(&h, buf, take);
-    left -= take;
-  }
-  xpar_close(f);
-  xpar_blake3_final(&h, out, sizeof out);
-  return xpar_rd64(out) == v->vol_tag;
-}
 
 /*  The packet volumes in xpar_chain are found by their set identity. Bare
     split volumes have no packet to scan, so report them by the content
@@ -72,28 +38,18 @@ static char * li_data_present(const xpar_chain * c, const xpar_vol * v) {
   xpar_dir * d;
   const xpar_dirent * de;
   if (!v->name) return NULL;
-  path = li_join(c->dir, v->name);
-  if (li_data_tag(path, v)) return path;
+  path = xpar_path_join(c->dir, v->name);
+  if (xpar_vol_tag_match(path, v)) return path;
   xpar_free(path);
   if (!v->vol_tag || !(d = xpar_opendir(c->dir))) return NULL;
   while ((de = xpar_readdir(d)) != NULL) {
     if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
-    path = li_join(c->dir, de->name);
-    if (li_data_tag(path, v)) { xpar_closedir(d); return path; }
+    path = xpar_path_join(c->dir, de->name);
+    if (xpar_vol_tag_match(path, v)) { xpar_closedir(d); return path; }
     xpar_free(path);
   }
   xpar_closedir(d);
   return NULL;
-}
-
-static void li_hexid(char * out, const u8 * id, int bytes) {
-  static const char hex[] = "0123456789abcdef";
-  int i;
-  for (i = 0; i < bytes; i++) {
-    out[i * 2]     = hex[id[i] >> 4];
-    out[i * 2 + 1] = hex[id[i] & 15];
-  }
-  out[bytes * 2] = 0;
 }
 
 /*  Binary prefixes, because every size here is a count of bytes chosen
@@ -204,7 +160,7 @@ int xpar_op_list(const xpar_options * o) {
     xpar_gchain_manifest(&c, g, &m, &owner);
     if (o->verbose) pcount = xpar_gchain_posix(&c, g, &posix);
 
-    li_hexid(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
+    xpar_hex(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
     if (o->json) {
       xpar_json_begin(&js, "set");
       xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
@@ -259,7 +215,7 @@ int xpar_op_list(const xpar_options * o) {
         u32 k;
         char hb[65];
         if (o->verbose) {
-          li_hexid(hb, e->content_hash, 32);
+          xpar_hex(hb, e->content_hash, 32);
           xpar_fprintf(xpar_stdout, "      hash %s\n", hb);
         }
         for (k = 0; k < e->extent_count; k++) {
@@ -359,7 +315,7 @@ static void li_chain_table(const xpar_chain * c, u32 sel) {
                c->gen_count == 1 ? "" : "s");
   for (g = 0; g < c->gen_count; g++) {
     u64 s = c->gen[g].sd.data_slice_count;
-    li_hexid(idbuf, c->gen[g].set_id, 4);
+    xpar_hex(idbuf, c->gen[g].set_id, 4);
     xpar_fprintf(xpar_stdout,
                  "    gen %-3u  set %s...  %-10s  S=%llu R=%llu (%.1f%%)  "
                  "volumes %u%s\n", c->gen[g].sd.generation, idbuf,
@@ -462,7 +418,7 @@ int xpar_op_info(const xpar_options * o) {
       xpar_json_init(&js, xpar_stdout, true);
       for (g = 0; g < c.gen_count; g++) if (member[g]) {
         const xpar_setd * gs = &c.gen[g].sd;
-        li_hexid(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
+        xpar_hex(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
         xpar_json_begin(&js, "set");
         xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
         xpar_json_str(&js, "set_id", idbuf);
@@ -502,7 +458,7 @@ int xpar_op_info(const xpar_options * o) {
     return XPAR_EXIT_OK;
   }
   sd  = &c.gen[sel].sd;
-  li_hexid(idbuf, c.gen[sel].set_id, XPAR_SET_ID_LEN);
+  xpar_hex(idbuf, c.gen[sel].set_id, XPAR_SET_ID_LEN);
   have_armour = li_armour_of(&c, sel, &ap, &whole_file);
   if (c.gen[sel].layt_body &&
       xpar_layt_read(c.gen[sel].layt_body, c.gen[sel].layt_len, &layt) ==

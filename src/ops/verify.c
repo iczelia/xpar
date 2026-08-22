@@ -25,6 +25,7 @@
 #include "crc32c.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "plan.h"
 #include "port-fs.h"
 #include "port-thread.h"
@@ -39,26 +40,6 @@ u64 xpar_verify_syndromes(void) { return syndromes; }
 
 #define VERIFY_IOBUF  ((sz) 1 << 20)
 #define VERIFY_BATCH  8u
-
-static bool is_sep(char c) { return c == '/' || c == '\\'; }
-
-/*  Manifest names resolve beside the set volume.  */
-static char * dir_of(const char * path) {
-  sz n = xpar_strlen(path), i;
-  for (i = n; i-- > 0;)
-    if (is_sep(path[i])) return xpar_strndup(path, i ? i : 1);
-  return xpar_strdup(".");
-}
-
-static char * join_name(const char * dir, const char * name, u32 len) {
-  sz dn = xpar_strlen(dir);
-  char * p = (char *) xpar_malloc(dn + 1 + (sz) len + 1);
-  xpar_memcpy(p, dir, dn);
-  p[dn] = '/';
-  if (len) xpar_memcpy(p + dn + 1, name, len);
-  p[dn + 1 + len] = 0;
-  return p;
-}
 
 /*  Feed padding and alignment gaps through the ordinary accumulator.  */
 static const u8 zeros[4096];
@@ -130,16 +111,6 @@ typedef struct {
   u64 base, len;
 } xpar_genid;
 
-typedef struct {
-  u64 expected, physical;
-} v_loc;
-
-typedef struct {
-  v_loc * loc;
-  u32 count, cap;
-  bool searched;
-} v_resync;
-
 struct xpar_vset {
   xpar_vimg *  img;
   u32          img_count, img_cap;
@@ -180,7 +151,7 @@ struct xpar_vset {
   bool hash_sampled, hash_parallel;
   u8 * superseded;
   u8 * ignored_cell;
-  v_resync * resync;
+  xpar_resync_map * resync;
   u64 superseded_entries;
   u64 bytes_read, depth, armg_failed, armg_corrected;
   bool degraded;              /*  SLCL absent or incomplete.  */
@@ -212,29 +183,15 @@ static void keep_plain(xpar_vset * s, u8 * p, u64 len, bool owned) {
 }
 
 static xpar_file * plain_stage_open(const char * archive, char ** path) {
-  u32 attempt, i;
-  for (attempt = 0; attempt < 32; attempt++) {
-    static const char digit[] = "0123456789abcdef";
-    u8 random[8];
-    char hex[17];
-    xpar_file * f;
-    xpar_random_bytes(random, sizeof random);
-    for (i = 0; i < sizeof random; i++) {
-      hex[2 * i] = digit[random[i] >> 4];
-      hex[2 * i + 1] = digit[random[i] & 15];
-    }
-    hex[16] = 0;
-    xpar_asprintf(path, "%s.plain-%s.tmp", archive, hex);
-    f = xpar_open(*path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_EXCL);
-    if (f) {
-      (void) xpar_set_mode(*path, 0, 0600);
-      return f;
-    }
-    xpar_free(*path); *path = NULL;
-  }
-  FATAL_IO("Cannot create a secure plaintext stage beside '%s': %s.",
-           archive, xpar_strerror(xpar_errno()));
-  return NULL;
+  char * stem = NULL;
+  xpar_file * f;
+  xpar_asprintf(&stem, "%s.plain-", archive);
+  f = xpar_stage_open(stem, XPAR_O_RDWR, 0, path);
+  xpar_free(stem);
+  if (!f)
+    FATAL_IO("Cannot create a secure plaintext stage beside '%s': %s.",
+             archive, xpar_strerror(xpar_errno()));
+  return f;
 }
 
 /*  Demodulate whole-file armour frame by frame into private scratch.  */
@@ -504,19 +461,6 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
     } }
 }
 
-static bool hexpfx(const u8 * id, const char * pfx) {
-  static const char hex[] = "0123456789abcdef";
-  sz i;
-  for (i = 0; pfx[i]; i++) {
-    char c, want = pfx[i];
-    if (i / 2 >= XPAR_SET_ID_LEN) return false;
-    c = hex[(i & 1) ? (id[i / 2] & 15) : (id[i / 2] >> 4)];
-    if (want >= 'A' && want <= 'F') want = (char) (want - 'A' + 'a');
-    if (c != want) return false;
-  }
-  return true;
-}
-
 static void collect_gens(xpar_vset * s) {
   u32 i, j, n = 0;
   s->gen = (xpar_genid *) xpar_calloc(s->crit.count ? s->crit.count : 1,
@@ -588,7 +532,7 @@ static u32 pick_gen(const xpar_vset * s, const xpar_options * o) {
   }
   for (i = 0; i < s->gen_count; i++) {
     const xpar_genref * g = &o->gens[0];
-    if (g->by_id ? hexpfx(s->gen[i].id, g->id_prefix)
+    if (g->by_id ? xpar_hex_prefix(s->gen[i].id, XPAR_SET_ID_LEN, g->id_prefix)
                  : (s->gen[i].generation == g->number)) {
       found = i;  matches++;
     }
@@ -807,7 +751,7 @@ static void load_layt(xpar_vset * s) {
                      "the generation's axis.");
       s->recovery += v->byte_length;
       if (!v->name) continue;
-      path = join_name(s->dir, v->name, (u32) xpar_strlen(v->name));
+      path = xpar_path_join(s->dir, v->name);
       /*  Missing recovery volumes do not count toward the budget.  */
       minimum = v->byte_length > ((u64) -1) /
                                   (s->setd.slice_size + 64)
@@ -853,32 +797,6 @@ static void select_armoured_image(xpar_vset * s) {
       return;
     }
   }
-}
-
-/*  A bare data volume's name is a hint; vol_tag is its identity. Hash
-    candidates sequentially so renamed large volumes need no full mapping.  */
-static bool split_volume_tag(const char * path, u64 length, u64 want) {
-  xpar_file * f;
-  xpar_blake3_t h;
-  u8 buf[65536], out[8];
-  i64 size;
-  u64 left;
-  f = xpar_open(path, XPAR_O_RDONLY);
-  if (!f) return false;
-  size = xpar_size(f);
-  if (size < 0 || (u64) size != length) { xpar_close(f); return false; }
-  xpar_blake3_init(&h);
-  xpar_blake3_update(&h, "xpar2 volume tag v1", 19);
-  left = length;
-  while (left) {
-    sz take = (sz) MIN(left, (u64) sizeof buf);
-    if (xpar_read(f, buf, take) != take) { xpar_close(f); return false; }
-    xpar_blake3_update(&h, buf, take);
-    left -= take;
-  }
-  xpar_close(f);
-  xpar_blake3_final(&h, out, sizeof out);
-  return xpar_rd64(out) == want;
 }
 
 static bool split_image_seen(const xpar_vset * s, const char * path) {
@@ -966,8 +884,7 @@ static void split_score_candidate(xpar_vset * s, const xpar_vol * lv,
     directory entries before hashing to preserve the DOS name limit.  */
 static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
                                 char ** found_name) {
-  char * expected = join_name(s->dir, lv->name,
-                              (u32) xpar_strlen(lv->name));
+  char * expected = xpar_path_join(s->dir, lv->name);
   char * best_path = NULL, * best_name = NULL;
   xpar_stat_t st;
   u64 best = 0;
@@ -975,8 +892,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
   *found_name = NULL;
   if (xpar_lstat(expected, &st) == 0 && st.is_regular &&
       st.size == lv->byte_length &&
-      (!lv->vol_tag || split_volume_tag(expected, lv->byte_length,
-                                        lv->vol_tag))) {
+      xpar_vol_tag_match(expected, lv)) {
     *found_name = xpar_strdup(lv->name);
     return expected;
   }
@@ -988,11 +904,9 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
     while ((de = xpar_readdir(d)) != NULL) {
       char * candidate;
       if (!de->is_regular || !xpar_strcmp(de->name, lv->name)) continue;
-      candidate = join_name(s->dir, de->name,
-                            (u32) xpar_strlen(de->name));
+      candidate = xpar_path_join(s->dir, de->name);
       if (xpar_lstat(candidate, &st) == 0 && st.is_regular &&
-          st.size == lv->byte_length &&
-          split_volume_tag(candidate, lv->byte_length, lv->vol_tag)) {
+          xpar_vol_tag_match(candidate, lv)) {
         *found_name = xpar_strdup(de->name);
         xpar_closedir(d);
         return candidate;
@@ -1004,7 +918,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
 
   /*  Fall back to slice certificates; the expected basename gets no
       positional preference.  */
-  expected = join_name(s->dir, lv->name, (u32) xpar_strlen(lv->name));
+  expected = xpar_path_join(s->dir, lv->name);
   split_score_candidate(s, lv, expected, lv->name, &best_path, &best_name,
                         &best, &tied, &candidates);
   xpar_free(expected);
@@ -1015,8 +929,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
       while ((de = xpar_readdir(d)) != NULL) {
         char * candidate;
         if (!de->is_regular || !xpar_strcmp(de->name, lv->name)) continue;
-        candidate = join_name(s->dir, de->name,
-                              (u32) xpar_strlen(de->name));
+        candidate = xpar_path_join(s->dir, de->name);
         split_score_candidate(s, lv, candidate, de->name,
                               &best_path, &best_name, &best, &tied,
                               &candidates);
@@ -1110,29 +1023,6 @@ static bool v_confirm_at(void * user, u32 at, u64 physical) {
     c->s->tagset.t.tag_len);
 }
 
-static bool v_add_delta(u64 expected, i64 delta, u64 * physical) {
-  if (delta >= 0) {
-    if (UINT64_MAX - expected < (u64) delta) return false;
-    *physical = expected + (u64) delta;
-  } else {
-    u64 d = (u64) (-(delta + 1)) + 1;
-    if (expected < d) return false;
-    *physical = expected - d;
-  }
-  return true;
-}
-
-static void v_loc_add(v_resync * m, const xpar_resync_probe * p,
-                      u64 physical) {
-  v_loc * q;
-  if (m->count == m->cap) {
-    m->cap = m->cap ? m->cap * 2 : 16;
-    m->loc = (v_loc *) xpar_realloc(m->loc, m->cap * sizeof(v_loc));
-  }
-  q = &m->loc[m->count++];
-  q->expected = p->expected;  q->physical = physical;
-}
-
 static xpar_resync_probe * v_entry_probes(xpar_vset * s, u32 entry,
                                            u32 * count) {
   const xpar_entry * e = &s->mf.entry[entry];
@@ -1177,7 +1067,7 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
                            const xpar_options * o, xpar_file * f,
                            u64 file_size, const char * path) {
   const xpar_entry * e = &s->mf.entry[entry];
-  v_resync * map = &s->resync[entry];
+  xpar_resync_map * map = &s->resync[entry];
   xpar_resync_probe * p;
   xpar_resync_result result;
   v_confirm confirm;
@@ -1211,7 +1101,8 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
       for (i = 0; i < n; i++) {
         u64 physical;
         if (located[i] != UINT64_MAX ||
-            !v_add_delta(p[i].expected, result.delta[d].delta, &physical) ||
+            !xpar_resync_shift(p[i].expected, result.delta[d].delta,
+                               &physical) ||
             physical > file_size || file_size - physical < z) continue;
         confirmations++;
         if (v_confirm_at(&confirm, i, physical)) located[i] = physical;
@@ -1229,7 +1120,8 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
                  path, (unsigned long long) result.candidates);
   }
   for (i = 0; i < n; i++)
-    if (located[i] != UINT64_MAX) v_loc_add(map, &p[i], located[i]);
+    if (located[i] != UINT64_MAX)
+      xpar_resync_map_add(map, p[i].expected, located[i]);
   if (map->count && !o->quiet)
     xpar_fprintf(xpar_stderr,
                  "xpar: %s: found %u displaced slices with %llu strong "
@@ -1240,32 +1132,6 @@ done:
   xpar_free(confirm.buf);  xpar_free(p);
 }
 
-static bool v_shifted_offset(const v_resync * m, u64 off, u64 * physical) {
-  u32 lo = 0, hi = m->count, at;
-  if (!m->count) return false;
-  while (lo < hi) {
-    u32 mid = lo + (hi - lo) / 2;
-    if (m->loc[mid].expected < off) lo = mid + 1;
-    else hi = mid;
-  }
-  if (!lo) at = 0;
-  else if (lo == m->count) at = lo - 1;
-  else {
-    u64 before = off - m->loc[lo - 1].expected;
-    u64 after = m->loc[lo].expected - off;
-    at = before <= after ? lo - 1 : lo;
-  }
-  if (m->loc[at].physical >= m->loc[at].expected) {
-    u64 d = m->loc[at].physical - m->loc[at].expected;
-    if (UINT64_MAX - off < d) return false;
-    *physical = off + d;
-  } else {
-    u64 d = m->loc[at].expected - m->loc[at].physical;
-    if (off < d) return false;
-    *physical = off - d;
-  }
-  return true;
-}
 
 static void load_key(xpar_vset * s, const char * path) {
   xpar_keyfile_status st = xpar_keyfile_load(path, &s->key, s->master);
@@ -1459,7 +1325,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
   }
   auth_preflight(s);
   s->dir = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                          : dir_of(o->set_ref.vol[0]);
+                          : xpar_path_dir(o->set_ref.vol[0]);
   for (i = 0; i < s->img_count; i++)
     if (!s->img[i].armoured)
       scan_into(s, s->img[i].data, s->img[i].size,
@@ -1503,8 +1369,9 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
 
   build_manifest(s);
   validate_identities(s);
-  s->resync = (v_resync *) xpar_calloc(s->mf.count ? s->mf.count : 1,
-                                       sizeof(v_resync));
+  s->resync = (xpar_resync_map *)
+                xpar_calloc(s->mf.count ? s->mf.count : 1,
+                            sizeof(xpar_resync_map));
   xpar_occindex_build(&s->mf, &s->occ);
   classify(s);
   load_tables(s);
@@ -1529,7 +1396,7 @@ void xpar_vset_close(xpar_vset * s) {
   if (s->have_layt) xpar_layt_free(&s->layt);
   xpar_tagset_free(&s->tagset);
   xpar_occindex_free(&s->occ);
-  for (i = 0; i < s->mf.count; i++) xpar_free(s->resync[i].loc);
+  for (i = 0; i < s->mf.count; i++) xpar_resync_map_free(&s->resync[i]);
   xpar_manifest_free(&s->mf);
   xpar_setd_free(&s->setd);
   xpar_critset_free(&s->crit);
@@ -1716,7 +1583,7 @@ static void verify_written_set_at(const xpar_options * o,
   ro.set = (char *) index_path;
   ro.chain = false;
   ro.gens = (xpar_genref *) generation;
-  ro.gen_count = generation ? 1 : 0;
+  ro.gen_count = generation != NULL;
   ro.json = false;  ro.quiet = true;
   ro.fast = false;
   if (exact_file) {
@@ -1757,8 +1624,7 @@ static void verify_written_set_at(const xpar_options * o,
     for (i = 0; layt && i < layt->count; i++) {
       const xpar_vol * v = &layt->vol[i];
       if (v->kind != XPAR_VOL_RECOVERY) continue;
-      check[at].path = join_name(xpar_vset_dir(s), v->name,
-                                 (u32) xpar_strlen(v->name));
+      check[at].path = xpar_path_join(xpar_vset_dir(s), v->name);
       check[at].key = xpar_vset_key(s);
       check[at].set_id = xpar_vset_id(s);
       check[at].volume_index = i;
@@ -1882,8 +1748,8 @@ bool xpar_vset_cell_covered(const xpar_vset * s, u64 slice) {
 
 static char * entry_path(const xpar_vset * s, u32 entry) {
   if (s->source) return xpar_strdup(s->source[entry]);
-  return join_name(s->dir, s->mf.entry[entry].name,
-                   s->mf.entry[entry].name_len);
+  return xpar_path_join_n(s->dir, s->mf.entry[entry].name,
+                          s->mf.entry[entry].name_len);
 }
 
 static xpar_file * entry_handle(xpar_vset * s, u32 entry) {
@@ -1930,9 +1796,7 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
       if (!lv) { ok = false; break; }
       take = MIN(len, lv->byte_length - (rel - lv->stream_offset));
       for (j = 0; j < s->img_count; j++) {
-        const char * base = s->img[j].path;
-        const char * p;
-        for (p = base; *p; p++) if (is_sep(*p)) base = p + 1;
+        const char * base = xpar_path_base(s->img[j].path);
         if (lv->name && !xpar_strcmp(base, lv->name)) break;
       }
       if (j == s->img_count ||
@@ -1974,7 +1838,7 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
     }
     f = entry_handle(s, sp.entry);
     physical = sp.file_offset;
-    v_shifted_offset(&s->resync[sp.entry], sp.file_offset, &physical);
+    xpar_resync_map_shift(&s->resync[sp.entry], sp.file_offset, &physical);
     if (!f || xpar_pread(f, buf, (sz) take, physical) != take) {
       xpar_memset(buf, 0, (sz) take);
       ok = false;
@@ -2315,7 +2179,7 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
         if (s->resync[i].count)
           take = (sz) MIN((u64) take, s->geom.slice_size -
                           physical % s->geom.slice_size);
-        v_shifted_offset(&s->resync[i], physical, &physical);
+        xpar_resync_map_shift(&s->resync[i], physical, &physical);
         logical[count] = queued;
         req[count].file = f && physical <= r->size &&
                           take <= r->size - physical ? f : NULL;

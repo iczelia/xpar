@@ -632,7 +632,7 @@ void xpar_blake3_subtree_stream_final(const xpar_blake3_t * h, u8 * out,
   u8 cv[XPAR_BLAKE3_OUT_LEN];
   sz left;
   u64 chunks = h->chunk.counter - h->chunk_base +
-               (xpar_b3_chunk_len(&h->chunk) ? 1 : 0);
+               (xpar_b3_chunk_len(&h->chunk) != 0);
   xpar_assert(n <= sizeof cv);
   xpar_assert(chunks && !(chunks & (chunks - 1)));
   if (h->stack_len == 0) {

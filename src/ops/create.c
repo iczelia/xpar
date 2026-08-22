@@ -23,6 +23,7 @@
 #include "container.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "plan.h"
 #include "slice.h"
 #include "v1detect.h"
@@ -80,21 +81,6 @@ static char * base_name(const xpar_options * o) {
     n--;
   b = xpar_strndup(o->paths[0], n);
   return b;
-}
-
-static int digits_of(u64 v) {
-  int d = 1;
-  while (v >= 10) { v /= 10;  d++; }
-  return d;
-}
-
-/*  LAYT stores basenames: accepting a separator would let an archive name
-    a path outside the index directory.  */
-static const char * base_of(const char * path) {
-  const char * p = path, * last = path;
-  for (; *p; p++)
-    if (*p == '/' || *p == '\\') last = p + 1;
-  return last;
 }
 
 static char * vol_name(const char * base, u64 first, u64 count, int wf,
@@ -793,10 +779,8 @@ static u64 create_stream_tag(ctx * c, u64 at, u64 length) {
   reader r;
   xpar_blake3_t h;
   u8 * buf = (u8 *) xpar_alloc_raw(1u << 16);
-  u8 out[8];
   u64 left = length;
-  xpar_blake3_init(&h);
-  xpar_blake3_update(&h, "xpar2 volume tag v1", 19);
+  xpar_vol_tag_begin(&h);
   rd_init(&r, c);
   while (left) {
     u64 take = MIN(left, (u64) 1 << 16);
@@ -805,9 +789,8 @@ static u64 create_stream_tag(ctx * c, u64 at, u64 length) {
     at += take;  left -= take;
   }
   rd_free(&r);
-  xpar_blake3_final(&h, out, sizeof out);
   xpar_free(buf);
-  return xpar_rd64(out);
+  return xpar_vol_tag_final(&h);
 }
 
 static void emit_json_set(ctx * c) {
@@ -937,80 +920,33 @@ static u64 resolve_recovery(const xpar_rspec * rs, u64 s, u64 z, u64 floor) {
 /*  Direct pipe input accumulates fixed Cauchy rows while publishing the
     final data object. The pipe is neither replayed nor copied to scratch.  */
 
-static char * create_dirname(const char * path) {
-  const char * p = path, * cut = NULL;
-  for (; *p; p++) if (*p == '/' || *p == '\\') cut = p;
-  if (!cut) return xpar_strdup(".");
-  if (cut == path) return xpar_strndup(path, 1);
-  return xpar_strndup(path, (sz) (cut - path));
-}
-
-static char * create_join(const char * dir, const char * name) {
-  char * out = NULL;
-  sz n = xpar_strlen(dir);
-  xpar_asprintf(&out, "%s%s%s", dir,
-                n && dir[n - 1] != '/' && dir[n - 1] != '\\' ? "/" : "",
-                name);
-  return out;
-}
-
+/*  A volume is never assembled under its final name: a crash then leaves
+    a stale temporary rather than a truncated set.  */
 static xpar_file * create_stage_open(const char * dir, char ** path) {
-  u32 i;
-  for (i = 0; i < 1000; i++) {
-    static const char digit[] = "0123456789abcdef";
-    u8 rnd[8];
-    char hex[17], * p;
-    xpar_file * f;
-    xpar_random_bytes(rnd, sizeof rnd);
-    for (u32 k = 0; k < sizeof rnd; k++) {
-      hex[2 * k] = digit[rnd[k] >> 4];
-      hex[2 * k + 1] = digit[rnd[k] & 15];
-    }
-    hex[16] = 0;
-    p = NULL;
-    xpar_asprintf(&p, "%s/.xpar-stdin-%s.tmp", dir, hex);
-    f = xpar_open(p, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL);
-    if (f) {
-      (void) xpar_set_mode(p, 0, 0600);
-      *path = p;
-      return f;
-    }
-    xpar_free(p);
-  }
-  FATAL_IO("Cannot create a secure pipe staging file in '%s': %s.", dir,
-           xpar_strerror(xpar_errno()));
-  return NULL;
+  char * stem = xpar_path_join(dir, ".xpar-stdin-");
+  xpar_file * f = xpar_stage_open(stem, XPAR_O_WRONLY, 0, path);
+  xpar_free(stem);
+  if (!f)
+    FATAL_IO("Cannot create a secure pipe staging file in '%s': %s.", dir,
+             xpar_strerror(xpar_errno()));
+  return f;
 }
 
 static char * create_output_stage(const char * base) {
-  static const char digit[] = "0123456789abcdef";
-  char * parent = create_dirname(base);
-  u32 attempt;
-  for (attempt = 0; attempt < 1000; attempt++) {
-    u8 rnd[8];
-    char hex[17], * path = NULL;
-    xpar_random_bytes(rnd, sizeof rnd);
-    for (u32 i = 0; i < sizeof rnd; i++) {
-      hex[2 * i] = digit[rnd[i] >> 4];
-      hex[2 * i + 1] = digit[rnd[i] & 15];
-    }
-    hex[16] = 0;
-    xpar_asprintf(&path, "%s/.xpar-create-%s", parent, hex);
-    if (xpar_mkdir(path, 0700) == 0) {
-      xpar_free(parent);
-      return path;
-    }
-    xpar_free(path);
-  }
-  FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
-  return NULL;
+  char * parent = xpar_path_dir(base);
+  char * stem = xpar_path_join(parent, ".xpar-create-");
+  char * path = xpar_stage_dir(stem);
+  xpar_free(parent);  xpar_free(stem);
+  if (!path)
+    FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
+  return path;
 }
 
 static void publish_outputs(const xpar_options * o, char * const * stage,
                             char * const * final, u32 count, u32 label_first,
                             u32 labels, const char * extra_from,
                             const char * extra_to, const char * stage_dir) {
-  u32 extra = extra_from && extra_to ? 1 : 0;
+  u32 extra = extra_from && extra_to;
   u32 total = count + labels + extra, at = 0, i, published = 0;
   char ** from = (char **) xpar_calloc(total, sizeof(char *));
   char ** to = (char **) xpar_calloc(total, sizeof(char *));
@@ -1120,7 +1056,7 @@ char * xpar_spool_stdin(const xpar_options * o) {
   char * outdir;
   FATAL_UNLESS("A pipe spool needs an output or set path.",
                anchor && anchor[0]);
-  outdir = create_dirname(anchor);
+  outdir = xpar_path_dir(anchor);
   char * dir = o->spool_dir ? xpar_strdup(o->spool_dir) : outdir;
   char * stage = NULL;
   xpar_file * f;
@@ -1154,9 +1090,9 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
   xpar_stat_t st;
   FATAL_UNLESS("Publishing a pipe input needs an output or set path.",
                anchor && anchor[0]);
-  outdir = create_dirname(anchor);
-  final = create_join(outdir, o->stdin_name);
-  parent = create_dirname(final);
+  outdir = xpar_path_dir(anchor);
+  final = xpar_path_join(outdir, o->stdin_name);
+  parent = xpar_path_dir(final);
   if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
   if (xpar_lstat(final, &st) == 0) {
     if (!st.is_regular)
@@ -1204,15 +1140,15 @@ static int create_regular(const xpar_options *, pipe_ready *);
 static int create_from_pipe_spooled(const xpar_options * o) {
   xpar_options nested = *o;
   pipe_ready ready;
-  char * outdir = create_dirname(o->output);
+  char * outdir = xpar_path_dir(o->output);
   char * stage = xpar_spool_stdin(o), * final = NULL;
   char * one[1];
   int rc;
   xpar_stat_t st;
   xpar_memset(&ready, 0, sizeof ready);
   if (o->layout == XPAR_LAYOUT_SIDECAR) {
-    final = create_join(outdir, o->stdin_name);
-    { char * parent = create_dirname(final);
+    final = xpar_path_join(outdir, o->stdin_name);
+    { char * parent = xpar_path_dir(final);
       if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
       xpar_free(parent); }
     if (!o->force && xpar_lstat(final, &st) == 0)
@@ -1274,7 +1210,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   xpar_pool * workers;
   xpar_file * f;
   xpar_stat_t st;
-  char * outdir = create_dirname(o->output);
+  char * outdir = xpar_path_dir(o->output);
   char * final, * parent, * stage = NULL;
   char * one[1];
   u8 * data, ** rec;
@@ -1305,8 +1241,8 @@ static int create_from_pipe_direct(const xpar_options * o) {
   if (o->layout == XPAR_LAYOUT_SPLIT)
     xpar_asprintf(&final, "%s.d00", o->output);
   else
-    final = create_join(outdir, o->stdin_name);
-  parent = create_dirname(final);
+    final = xpar_path_join(outdir, o->stdin_name);
+  parent = xpar_path_dir(final);
   if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
   if (!o->force && xpar_lstat(final, &st) == 0)
     FATAL("'%s' exists; -f overwrites it.", final);
@@ -1416,7 +1352,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     c.auth.kdf_id = 0;
     c.auth.slice_tag_keyed = 1;
     c.auth.packet_tag_keyed = 1;
-    c.auth.unkeyed_retained = o->auth_only ? 0 : 1;
+    c.auth.unkeyed_retained = !o->auth_only;
     xpar_key_check(c.auth.key_check, c.master);
   }
   scan_inputs(o);
@@ -1677,10 +1613,10 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   name_count = nvol + 1 + data_n;
   /*  One width per placeholder, taken from the widest value that will
       appear in it, so every recovery name of the generation lines up.  */
-  wf = digits_of(c.recovery ? c.recovery - 1 : 0);
+  wf = xpar_digits10(c.recovery ? c.recovery - 1 : 0);
   wc = 1;
   for (i = 0; i < nvol; i++)
-    if (digits_of(span[i].count) > wc) wc = digits_of(span[i].count);
+    if (xpar_digits10(span[i].count) > wc) wc = xpar_digits10(span[i].count);
   if (wf < 2) wf = 2;
   if (wc < 2) wc = 2;
   names = (char **) xpar_calloc(name_count ? name_count : 1,
@@ -1689,7 +1625,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   for (i = 0; i < nvol; i++)
     names[i + 1] = vol_name(c.base, span[i].first, span[i].count, wf, wc);
   if (o->layout == XPAR_LAYOUT_SPLIT) {
-    int wd = digits_of(data_n ? data_n - 1 : 0);
+    int wd = xpar_digits10(data_n ? data_n - 1 : 0);
     if (wd < 2) wd = 2;
     for (i = 0; i < data_n; i++)
       xpar_asprintf(&names[nvol + 1 + i], "%s.d%0*u", c.base, wd, i);
@@ -1723,14 +1659,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
                  ? 1 : nvol + 1 + data_n;
   layt.vol = (xpar_vol *) xpar_calloc(layt.count, sizeof(xpar_vol));
   layt.vol[0].kind   = XPAR_VOL_INDEX;
-  layt.vol[0].vflags = c.arm ? 1 : 0;
-  layt.vol[0].name   = (char *) base_of(names[0]);
+  layt.vol[0].vflags = c.arm != NULL;
+  layt.vol[0].name   = (char *) xpar_path_base(names[0]);
   for (i = 0; i < nvol && o->layout != XPAR_LAYOUT_ARMOURED; i++) {
     layt.vol[i + 1].kind           = XPAR_VOL_RECOVERY;
-    layt.vol[i + 1].vflags         = c.arm ? 1 : 0;
+    layt.vol[i + 1].vflags         = c.arm != NULL;
     layt.vol[i + 1].recovery_first = (u32) span[i].first;
     layt.vol[i + 1].byte_length    = span[i].count;
-    layt.vol[i + 1].name           = (char *) base_of(names[i + 1]);
+    layt.vol[i + 1].name           = (char *) xpar_path_base(names[i + 1]);
   }
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     u64 per = c.geom.slice_count
@@ -1746,7 +1682,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       layt.vol[li].stream_offset = off;
       layt.vol[li].byte_length   = len;
       layt.vol[li].vol_tag       = create_stream_tag(&c, off, len);
-      layt.vol[li].name = (char *) base_of(names[nvol + 1 + i]);
+      layt.vol[li].name = (char *) xpar_path_base(names[nvol + 1 + i]);
       slice += count;
     }
   }
@@ -1774,12 +1710,12 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   output_stage = create_output_stage(c.base);
   write_names = (char **) xpar_calloc(name_count, sizeof(char *));
   for (i = 0; i < name_count; i++)
-    write_names[i] = create_join(output_stage, base_of(names[i]));
+    write_names[i] = xpar_path_join(output_stage, xpar_path_base(names[i]));
   if (ready && ready->final_path) {
     for (i = 0; i < name_count; i++)
       FATAL_UNLESS("The pipe destination collides with set output '%s'.",
                    xpar_strcmp(ready->final_path, names[i]) != 0, names[i]);
-    pipe_stage = create_join(output_stage, ".stdin-data");
+    pipe_stage = xpar_path_join(output_stage, ".stdin-data");
     create_stage_input(ready, pipe_stage, &c.m);
   }
 

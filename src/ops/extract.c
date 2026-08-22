@@ -26,6 +26,7 @@
 #include "crc32c.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "port-fs.h"
 #include "slice.h"
 
@@ -118,55 +119,13 @@ static void ex_skip(ex * x, const xpar_entry * e, int cls,
   xpar_json_end(&x->js);
 }
 
-static char * ex_join(const char * dir, const char * name, u32 n) {
-  sz d = dir ? xpar_strlen(dir) : 0, off = d ? d + 1 : 0;
-  char * p = (char *) xpar_alloc_raw(off + n + 1);
-  if (d) { xpar_memcpy(p, dir, d);  p[d] = '/'; }
-  xpar_memcpy(p + off, name, n);
-  p[off + n] = 0;
-  return p;
-}
-
-static char * ex_dir_of(const char * path) {
-  sz n = xpar_strlen(path), i = n;
-  while (i > 0 && path[i - 1] != '/') i--;
-  if (i <= 1) return xpar_strdup(i ? "/" : ".");
-  return xpar_strndup(path, i - 1);
-}
-
-static bool ex_data_tag(const char * path, const xpar_vol * v) {
-  xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
-  xpar_blake3_t h;
-  u8 buf[65536], out[8];
-  i64 size;
-  u64 left;
-  if (!f) return false;
-  size = xpar_size(f);
-  if (size < 0 || (u64) size != v->byte_length) {
-    xpar_close(f); return false;
-  }
-  if (!v->vol_tag) { xpar_close(f); return true; }
-  xpar_blake3_init(&h);
-  xpar_blake3_update(&h, "xpar2 volume tag v1", 19);
-  left = v->byte_length;
-  while (left) {
-    sz take = (sz) MIN(left, (u64) sizeof buf);
-    if (xpar_read(f, buf, take) != take) { xpar_close(f); return false; }
-    xpar_blake3_update(&h, buf, take);
-    left -= take;
-  }
-  xpar_close(f);
-  xpar_blake3_final(&h, out, sizeof out);
-  return xpar_rd64(out) == v->vol_tag;
-}
-
 static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename) {
   char * path;
   xpar_dir * d;
   const xpar_dirent * de;
   *basename = NULL;
-  path = ex_join(x->dir, v->name, (u32) xpar_strlen(v->name));
-  if (ex_data_tag(path, v)) {
+  path = xpar_path_join(x->dir, v->name);
+  if (xpar_vol_tag_match(path, v)) {
     *basename = xpar_strdup(v->name);
     return path;
   }
@@ -174,8 +133,8 @@ static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename) {
   if (!v->vol_tag || !(d = xpar_opendir(x->dir))) return NULL;
   while ((de = xpar_readdir(d)) != NULL) {
     if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
-    path = ex_join(x->dir, de->name, (u32) xpar_strlen(de->name));
-    if (ex_data_tag(path, v)) {
+    path = xpar_path_join(x->dir, de->name);
+    if (xpar_vol_tag_match(path, v)) {
       *basename = xpar_strdup(de->name);
       xpar_closedir(d);
       return path;
@@ -346,19 +305,6 @@ static void ex_open_armoured(ex * x, const ex_vol * v) {
 
 /*  The set.  */
 
-static bool ex_id_prefix(const u8 * id, const char * hex) {
-  sz i, n = xpar_strlen(hex);
-  if (n > XPAR_SET_ID_LEN * 2) return false;
-  for (i = 0; i < n; i++) {
-    static const char d[] = "0123456789abcdef";
-    u8 nib = (u8) (i & 1 ? id[i / 2] & 15 : id[i / 2] >> 4);
-    char c = hex[i];
-    if (c >= 'A' && c <= 'F') c = (char) (c - 'A' + 'a');
-    if (c != d[nib]) return false;
-  }
-  return true;
-}
-
 static void ex_pick_setd(ex * x) {
   u32 i, j;
   const xpar_crit_pkt * want = NULL;
@@ -370,8 +316,10 @@ static void ex_pick_setd(ex * x) {
     if (xpar_setd_read(p->body, (sz) p->body_len, &sd) != XPAR_OK) continue;
     if (x->o->gen_count) {
       const xpar_genref * g = &x->o->gens[0];
-      named = g->by_id ? ex_id_prefix(p->hdr.set_id, g->id_prefix)
-                       : sd.generation == (u32) g->number;
+      named = g->by_id
+                ? xpar_hex_prefix(p->hdr.set_id, XPAR_SET_ID_LEN,
+                                  g->id_prefix)
+                : sd.generation == (u32) g->number;
     }
     for (j = 0; j < x->crit.count && head; j++) {
       const xpar_crit_pkt * q = &x->crit.pkt[j];
@@ -604,7 +552,7 @@ static char * ex_resolve_leaf(ex * x, const xpar_entry * e) {
   if (xpar_path_check(e->name, e->name_len, x->path_flags) != XPAR_PATH_OK)
     return ex_resolve(x, e);
   while (cut && e->name[cut - 1] != '/') cut--;
-  if (!cut) return ex_join(x->dest, e->name, e->name_len);
+  if (!cut) return xpar_path_join_n(x->dest, e->name, e->name_len);
   parent = xpar_path_resolve(x->dest, e->name, cut - 1, x->path_flags,
                              &why);
   if (!parent) {
@@ -613,7 +561,7 @@ static char * ex_resolve_leaf(ex * x, const xpar_entry * e) {
     x->mismatches++;
     return NULL;
   }
-  out = ex_join(parent, e->name + cut, e->name_len - cut);
+  out = xpar_path_join_n(parent, e->name + cut, e->name_len - cut);
   xpar_free(parent);
   return out;
 }
@@ -674,7 +622,7 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
   u64 fo = 0, chunk = 1 << 20;
   u32 k;
   char * stage;
-  { char * d = ex_dir_of(path);
+  { char * d = xpar_path_dir(path);
     if (xpar_mkdir_p(d, 0777) != 0) {
       xpar_free(d);  x->io_failures++;
       return false;
@@ -738,7 +686,7 @@ static void ex_link_entry(ex * x, u32 idx, const char * path) {
   }
   src = ex_resolve(x, &x->mf.entry[t]);
   if (!src) return;
-  { char * d = ex_dir_of(path);
+  { char * d = xpar_path_dir(path);
     xpar_mkdir_p(d, 0777);
     xpar_free(d); }
   if (x->caps & XPAR_FS_HARDLINK) {
@@ -883,7 +831,7 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_vset_close(guard);
   }
   x.dir  = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                          : ex_dir_of(o->set_ref.vol[0]);
+                          : xpar_path_dir(o->set_ref.vol[0]);
   x.dest = xpar_strdup(o->to_dir ? o->to_dir : ".");
 
   for (i = 0; i < o->set_ref.count; i++) {

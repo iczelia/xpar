@@ -25,6 +25,7 @@
 #include "crc32c.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "plan.h"
 #include "port-fs.h"
 #include "slice.h"
@@ -76,15 +77,6 @@ typedef struct {
   u64  link_drift;
   bool write_failed;
 } scrub;
-
-static char * path_join(const char * dir, const char * name) {
-  sz dn = xpar_strlen(dir), nn = xpar_strlen(name);
-  char * p = (char *) xpar_malloc(dn + nn + 2);
-  xpar_memcpy(p, dir, dn);
-  p[dn] = '/';
-  xpar_memcpy(p + dn + 1, name, nn + 1);
-  return p;
-}
 
 static void take_rcvs(scrub * c, const xpar_pkt * hdr, const u8 * body) {
   const xpar_setd * sd = xpar_vset_setd(c->s);
@@ -156,7 +148,7 @@ static void load_recovery(scrub * c) {
     const xpar_vol * v = &l->vol[i];
     char * path;
     if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
-    path = path_join(dir, v->name);
+    path = xpar_path_join(dir, v->name);
     c->rmap[c->rcount] = xpar_map(path);
     if (!c->rmap[c->rcount].valid) {
       xpar_fprintf(xpar_stderr, "xpar: cannot read recovery volume '%s'\n",
@@ -362,7 +354,7 @@ static void check_links(scrub * c) {
     xpar_stat_t st;
     if (e->entry_type != XPAR_ENTRY_REGULAR &&
         e->entry_type != XPAR_ENTRY_HARDLINK) continue;
-    path = path_join(dir, e->name);
+    path = xpar_path_join(dir, e->name);
     if (!(xpar_fs_caps(path) & XPAR_FS_LINKID)) { xpar_free(path);  continue; }
     if (xpar_lstat(path, &st) == 0) {
       id[n].dev = st.dev;  id[n].ino = st.ino;

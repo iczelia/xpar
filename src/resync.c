@@ -271,3 +271,58 @@ u64 xpar_resync_exhaustive(xpar_file * f, u64 file_size, u64 window,
   rs_index_free(&ix);
   return x.confirms;
 }
+
+/*  The displacement map.  */
+
+void xpar_resync_map_add(xpar_resync_map * m, u64 expected, u64 physical) {
+  xpar_resync_loc * q;
+  if (m->count == m->cap) {
+    m->cap = m->cap ? m->cap * 2 : 16;
+    m->loc = (xpar_resync_loc *)
+               xpar_realloc(m->loc, m->cap * sizeof(xpar_resync_loc));
+  }
+  q = &m->loc[m->count++];
+  q->expected = expected;  q->physical = physical;
+}
+
+void xpar_resync_map_free(xpar_resync_map * m) {
+  xpar_free(m->loc);
+  m->loc = NULL;  m->count = m->cap = 0;
+}
+
+bool xpar_resync_shift(u64 expected, i64 delta, u64 * physical) {
+  if (delta >= 0) {
+    if (UINT64_MAX - expected < (u64) delta) return false;
+    *physical = expected + (u64) delta;
+  } else {
+    u64 d = (u64) (-(delta + 1)) + 1;
+    if (expected < d) return false;
+    *physical = expected - d;
+  }
+  return true;
+}
+
+bool xpar_resync_map_shift(const xpar_resync_map * m, u64 off,
+                           u64 * physical) {
+  u32 lo = 0, hi = m->count, at;
+  if (!m->count) return false;
+  while (lo < hi) {
+    u32 mid = lo + (hi - lo) / 2;
+    if (m->loc[mid].expected < off) lo = mid + 1;
+    else hi = mid;
+  }
+  if (!lo) at = 0;
+  else if (lo == m->count) at = lo - 1;
+  else at = off - m->loc[lo - 1].expected <= m->loc[lo].expected - off
+              ? lo - 1 : lo;
+  if (m->loc[at].physical >= m->loc[at].expected) {
+    u64 d = m->loc[at].physical - m->loc[at].expected;
+    if (UINT64_MAX - off < d) return false;
+    *physical = off + d;
+  } else {
+    u64 d = m->loc[at].expected - m->loc[at].physical;
+    if (off < d) return false;
+    *physical = off - d;
+  }
+  return true;
+}

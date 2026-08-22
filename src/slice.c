@@ -316,7 +316,7 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
       ng->erased  = 0;
       for (i = 0; i < e->slice_count; i++) {
         u8 bad = e->bad[i * k + col];
-        ng->present[i] = (u8) (bad ? 0 : 1);
+        ng->present[i] = !bad;
         if (bad) ng->erased++;
       }
       gi = g->group_count++;

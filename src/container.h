@@ -245,6 +245,17 @@ void        xpar_layt_free (xpar_layt *);
 
 xpar_status xpar_layt_tiles(const xpar_layt *, u64 stream_length);
 
+/*  A DATA volume's name is a hint; its vol_tag is its identity. The tag
+    is a BLAKE3-64 over the volume's bytes under one domain string, so a
+    writer that already holds those bytes and a reader that has just
+    found a candidate file agree without either restating the recipe.  */
+void xpar_vol_tag_begin(xpar_blake3_t *);
+u64  xpar_vol_tag_final(xpar_blake3_t *);
+
+/*  Whether the file at `path` is that volume: the right size, and, where
+    the layout records a tag, the right bytes. A missing file is not.  */
+bool xpar_vol_tag_match(const char * path, const xpar_vol *);
+
 typedef struct {
   u32 kdf_id;
   u8  slice_tag_keyed, packet_tag_keyed, unkeyed_retained;

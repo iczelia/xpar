@@ -16,6 +16,7 @@
 
 #include "cli.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "v1detect.h"
 #include "port-fs.h"
 
@@ -826,14 +827,6 @@ static void strip_volume_suffix(char * base) {
   if (i == n) base[dot - 1] = '\0';
 }
 
-static bool decimal_word(const char * s, sz * at, sz end) {
-  sz i = *at;
-  if (i == end || s[i] < '0' || s[i] > '9') return false;
-  while (i < end && s[i] >= '0' && s[i] <= '9') i++;
-  *at = i;
-  return true;
-}
-
 static bool chain_index_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
   if (n <= XPAR_EXT_LEN || !ends_with_xpar(name) ||
@@ -842,7 +835,7 @@ static bool chain_index_sibling(const char * name, const char * stem) {
   if (p == n) return true;
   if (name[p++] != '.' || p == n || name[p] != 'g') return false;
   i = p + 1;
-  return decimal_word(name, &i, n) && i == n;
+  return xpar_scan_digits(name, &i, n) && i == n;
 }
 
 static void gather_chain_siblings(xpar_setref * s) {

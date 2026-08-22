@@ -52,7 +52,7 @@ int xpar_name_cmp(const char * a, u32 alen, const char * b, u32 blen) {
   u32 n = alen < blen ? alen : blen;
   int c = n ? xpar_memcmp(a, b, n) : 0;
   if (c) return c;
-  return alen < blen ? -1 : (alen > blen ? 1 : 0);
+  return (alen > blen) - (alen < blen);
 }
 
 static u8 fold_ascii(u8 c) {
@@ -67,7 +67,7 @@ static int name_cmp_fold(const char * a, u32 alen, const char * b,
     u8 x = fold_ascii((u8) a[i]), y = fold_ascii((u8) b[i]);
     if (x != y) return x < y ? -1 : 1;
   }
-  return alen < blen ? -1 : (alen > blen ? 1 : 0);
+  return (alen > blen) - (alen < blen);
 }
 
 /*  UTF-8..  */
@@ -342,6 +342,24 @@ void xpar_set_id_update(xpar_set_id_ctx * c, const u8 * file_body, sz n) {
 void xpar_set_id_final(const xpar_set_id_ctx * c,
                        u8 out[XPAR_SET_ID_LEN]) {
   xpar_blake3_final(&c->h, out, XPAR_SET_ID_LEN);
+}
+
+void xpar_extents_append(xpar_extent ** list, u32 * count, u32 * capacity,
+                         u64 stream_offset, u32 length) {
+  xpar_extent * e;
+  if (*count && (*list)[*count - 1].stream_offset +
+                (*list)[*count - 1].length == stream_offset) {
+    (*list)[*count - 1].length += length;
+    return;
+  }
+  if (*count == *capacity) {
+    *capacity = *capacity ? *capacity * 2 : 8;
+    *list = (xpar_extent *) xpar_realloc(
+      *list, (sz) *capacity * sizeof(xpar_extent));
+  }
+  e = &(*list)[(*count)++];
+  e->stream_offset = stream_offset;
+  e->length = length;
 }
 
 /*  POSX packets.  */
@@ -1009,21 +1027,6 @@ static bool cache_layout(const xpar_manifest * m,
   return true;
 }
 
-static void chunk_extent(chunk_pack * c, u64 off, u32 len) {
-  if (c->count && c->ext[c->count - 1].stream_offset +
-                  c->ext[c->count - 1].length == off) {
-    c->ext[c->count - 1].length += len;
-    return;
-  }
-  if (c->count == c->capacity) {
-    c->capacity = c->capacity ? c->capacity * 2 : 8;
-    c->ext = (xpar_extent *) xpar_realloc(
-      c->ext, (sz) c->capacity * sizeof(xpar_extent));
-  }
-  c->ext[c->count].stream_offset = off;
-  c->ext[c->count].length = len;
-  c->count++;
-}
 
 static bool pack_chunk(void * user, u64 file_offset, u32 len,
                        const u8 hash[16]) {
@@ -1054,7 +1057,7 @@ static bool pack_chunk(void * user, u64 file_offset, u32 len,
       return false;
     }
   }
-  chunk_extent(c, off, len);
+  xpar_extents_append(&c->ext, &c->count, &c->capacity, off, len);
   return true;
 }
 

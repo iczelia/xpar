@@ -60,6 +60,14 @@ bool xpar_path_ends_with(const char * s, const char * suffix) {
   return n >= m && xpar_strcmp(s + n - m, suffix) == 0;
 }
 
+bool xpar_scan_digits(const char * s, sz * at, sz end) {
+  sz i = *at;
+  if (i == end || s[i] < '0' || s[i] > '9') return false;
+  while (i < end && s[i] >= '0' && s[i] <= '9') i++;
+  *at = i;
+  return true;
+}
+
 xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
                             char ** out) {
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {

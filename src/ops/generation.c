@@ -28,6 +28,7 @@
 #include "gf.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "port-cpu.h"
 #include "port-fs.h"
 #include "slice.h"
@@ -88,13 +89,14 @@ static bool gen_exists(const char * path) {
 /*  A volume is never assembled in its final pathname. Besides avoiding a
     truncated volume after a crash, O_EXCL makes a stale or hostile temporary
     name harmless: another suffix is tried rather than followed.  */
-static xpar_file * gen_stage_open(const char * path, char ** out_tmp) {
+static xpar_file * gen_stage_mode(const char * path, int access,
+                                  char ** out_tmp) {
   xpar_file * f = NULL;
   char * tmp = NULL;
   u32 i;
   for (i = 0; i < 1000; i++) {
     xpar_asprintf(&tmp, "%s.xpar-tmp-%03u", path, i);
-    f = xpar_open(tmp, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL);
+    f = xpar_open(tmp, access | XPAR_O_CREAT | XPAR_O_EXCL);
     if (f) break;
     xpar_free(tmp);  tmp = NULL;
   }
@@ -104,20 +106,12 @@ static xpar_file * gen_stage_open(const char * path, char ** out_tmp) {
   return f;
 }
 
+static xpar_file * gen_stage_open(const char * path, char ** out_tmp) {
+  return gen_stage_mode(path, XPAR_O_WRONLY, out_tmp);
+}
+
 static xpar_file * gen_stage_open_rw(const char * path, char ** out_tmp) {
-  xpar_file * f = NULL;
-  char * tmp = NULL;
-  u32 i;
-  for (i = 0; i < 1000; i++) {
-    xpar_asprintf(&tmp, "%s.xpar-tmp-%03u", path, i);
-    f = xpar_open(tmp, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_EXCL);
-    if (f) break;
-    xpar_free(tmp);  tmp = NULL;
-  }
-  if (!f) FATAL_IO("Cannot create a temporary file beside '%s': %s.", path,
-                   xpar_strerror(xpar_errno()));
-  *out_tmp = tmp;
-  return f;
+  return gen_stage_mode(path, XPAR_O_RDWR, out_tmp);
 }
 
 static char * gen_stage_whole(const char * path, const void * p, sz n) {
@@ -162,72 +156,45 @@ static void gen_write_whole(const char * path, const void * p, sz n,
 /*  The directory part of a path and the part after it, both freshly
     allocated. A path with no separator has an empty directory, which
     every caller joins back with the current directory implicitly.  */
+/*  The directory part keeps its trailing separator here, unlike
+    xpar_path_dir: the two halves must concatenate back to `path` for a
+    caller that only wants to substitute the leaf.  */
 static void gen_split_path(const char * path, char ** dir, char ** name) {
-  sz n = xpar_strlen(path), i, cut = 0;
-  for (i = 0; i < n; i++)
-    if (path[i] == '/' || path[i] == '\\') cut = i + 1;
-  *dir  = xpar_strndup(path, cut);
-  *name = xpar_strdup(path + cut);
-}
-
-/*  `dir` may or may not carry its separator: gen_split_path keeps one
-    and a directory named on the command line has none, and joining
-    "." with "set.xpa" as ".set.xpa" is a file nobody asked for.  */
-static char * gen_join(const char * dir, const char * name) {
-  char * out;
-  sz n;
-  if (!dir || !*dir) return xpar_strdup(name);
-  n = xpar_strlen(dir);
-  if (dir[n - 1] == '/' || dir[n - 1] == '\\')
-    xpar_asprintf(&out, "%s%s", dir, name);
-  else
-    xpar_asprintf(&out, "%s/%s", dir, name);
-  return out;
-}
-
-static bool gen_ends_with(const char * s, const char * suffix) {
-  sz n = xpar_strlen(s), m = xpar_strlen(suffix);
-  return n >= m && xpar_strcmp(s + n - m, suffix) == 0;
-}
-
-static bool gen_decimal(const char * s, sz * at, sz end) {
-  sz i = *at;
-  if (i == end || s[i] < '0' || s[i] > '9') return false;
-  while (i < end && s[i] >= '0' && s[i] <= '9') i++;
-  *at = i;
-  return true;
+  const char * leaf = xpar_path_base(path);
+  *dir  = xpar_strndup(path, (sz) (leaf - path));
+  *name = xpar_strdup(leaf);
 }
 
 static bool gen_chain_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!gen_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
+  if (!xpar_path_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
   n -= XPAR_EXT_LEN;
   if (p == n) return true;
   if (name[p++] != '.' || p == n) return false;
   if (name[p] == 'g') {
     i = p + 1;
-    if (!gen_decimal(name, &i, n)) return false;
+    if (!xpar_scan_digits(name, &i, n)) return false;
     if (i == n) return true;
     if (name[i++] != '.' || i == n || name[i] != 'v') return false;
     p = i;
   }
   if (name[p] != 'v') return false;
   i = p + 1;
-  if (!gen_decimal(name, &i, n) || i == n || name[i++] != '+')
+  if (!xpar_scan_digits(name, &i, n) || i == n || name[i++] != '+')
     return false;
-  return gen_decimal(name, &i, n) && i == n;
+  return xpar_scan_digits(name, &i, n) && i == n;
 }
 
 static bool gen_chain_index_sibling(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
-  if (!gen_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
+  if (!xpar_path_ends_with(name, XPAR_EXT) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
   n -= XPAR_EXT_LEN;
   if (p == n) return true;
   if (name[p++] != '.' || p == n || name[p] != 'g') return false;
   i = p + 1;
-  return gen_decimal(name, &i, n) && i == n;
+  return xpar_scan_digits(name, &i, n) && i == n;
 }
 
 static char * gen_unused_base(const char * base, const char * label) {
@@ -263,12 +230,6 @@ static bool gen_publish_cache(char * stage, const char * final) {
   return xpar_fsync_dir(final) == 0;
 }
 
-static int gen_digits(u64 v) {
-  int d = 1;
-  while (v >= 10) { v /= 10;  d++; }
-  return d;
-}
-
 static char * gen_name_index(const char * base, u32 g) {
   char * s;
   if (!g) xpar_asprintf(&s, "%s" XPAR_EXT, base);
@@ -281,8 +242,8 @@ static char * gen_name_index(const char * base, u32 g) {
     digits unless the generation needs more.  */
 static void gen_recovery_widths(u64 max_first, u64 max_count, int * wf,
                                 int * wc) {
-  *wf = gen_digits(max_first);  if (*wf < 2) *wf = 2;
-  *wc = gen_digits(max_count);  if (*wc < 2) *wc = 2;
+  *wf = xpar_digits10(max_first);  if (*wf < 2) *wf = 2;
+  *wc = xpar_digits10(max_count);  if (*wc < 2) *wc = 2;
 }
 
 static char * gen_name_recovery(const char * base, u32 g, u64 first,
@@ -617,7 +578,7 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
     char * dir;  char * stem;  xpar_dir * d;
     gen_split_path(o->set_ref.base, &dir, &stem);
     chain_strip_gen(stem);
-    c->base = gen_join(dir, stem);
+    c->base = xpar_path_join(dir, stem);
     c->dir  = xpar_strdup(dir);
     d = xpar_opendir(*dir ? dir : ".");
     if (d) {
@@ -627,7 +588,7 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
             (o->chain_metadata_only
                ? gen_chain_index_sibling(e->name, stem)
                : gen_chain_sibling(e->name, stem)))
-          chain_add_vol(c, gen_join(dir, e->name));
+          chain_add_vol(c, xpar_path_join(dir, e->name));
       xpar_closedir(d);
     }
     xpar_free(dir);  xpar_free(stem);
@@ -642,8 +603,8 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
       char * pfx;
       xpar_asprintf(&pfx, "%s/", o->scan_dir);
       while ((e = xpar_readdir(d)) != NULL)
-        if (!e->is_dir && gen_ends_with(e->name, XPAR_EXT))
-          chain_add_vol(c, gen_join(pfx, e->name));
+        if (!e->is_dir && xpar_path_ends_with(e->name, XPAR_EXT))
+          chain_add_vol(c, xpar_path_join(pfx, e->name));
       xpar_free(pfx);
       xpar_closedir(d);
     }
@@ -775,11 +736,11 @@ void xpar_gchain_load(const xpar_options * o, xpar_chain * c) {
     for (j = 0; j < c->vol_count; j++) {
       char * stem;  char * dir;
       if (c->vol[j].volume_kind != XPAR_VOL_INDEX) continue;
-      if (!gen_ends_with(c->vol[j].path, XPAR_EXT)) continue;
+      if (!xpar_path_ends_with(c->vol[j].path, XPAR_EXT)) continue;
       gen_split_path(c->vol[j].path, &dir, &stem);
       stem[xpar_strlen(stem) - XPAR_EXT_LEN] = 0;
       chain_strip_gen(stem);
-      c->base = gen_join(dir, stem);
+      c->base = xpar_path_join(dir, stem);
       if (!c->dir) c->dir = xpar_strdup(dir);
       xpar_free(dir);  xpar_free(stem);
       break;
@@ -829,19 +790,6 @@ static void gen_require_write_key(const xpar_chain * c, const char * verb) {
                "keyless access is read-only.", verb);
 }
 
-static bool hex_prefix_match(const u8 * id, const char * pfx) {
-  static const char hex[] = "0123456789abcdef";
-  sz i, n = xpar_strlen(pfx);
-  if (!n || n > XPAR_SET_ID_LEN * 2) return false;
-  for (i = 0; i < n; i++) {
-    u8 nib = (i & 1) ? (u8) (id[i / 2] & 15) : (u8) (id[i / 2] >> 4);
-    char want = pfx[i];
-    if (want >= 'A' && want <= 'F') want = (char) (want - 'A' + 'a');
-    if (hex[nib] != want) return false;
-  }
-  return true;
-}
-
 u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   u32 i, found = XPAR_GEN_NONE, matches = 0;
   if (!g) {
@@ -852,7 +800,7 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   }
   if (g->by_id) {
     for (i = 0; i < c->gen_count; i++)
-      if (hex_prefix_match(c->gen[i].set_id, g->id_prefix)) {
+      if (xpar_hex_prefix(c->gen[i].set_id, XPAR_SET_ID_LEN, g->id_prefix)) {
         found = i;  matches++;
       }
     if (matches > 1)
@@ -876,14 +824,8 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
 
 void xpar_gchain_genref(const xpar_chain * c, u32 g, xpar_genref * ref,
                         char text[XPAR_SET_ID_LEN * 2 + 1]) {
-  static const char hex[] = "0123456789abcdef";
-  u32 i;
   xpar_memset(ref, 0, sizeof *ref);
-  for (i = 0; i < XPAR_SET_ID_LEN; i++) {
-    text[i * 2]     = hex[c->gen[g].set_id[i] >> 4];
-    text[i * 2 + 1] = hex[c->gen[g].set_id[i] & 15];
-  }
-  text[XPAR_SET_ID_LEN * 2] = 0;
+  xpar_hex(text, c->gen[g].set_id, XPAR_SET_ID_LEN);
   ref->by_id = true;
   ref->id_prefix = text;
 }
@@ -1741,10 +1683,8 @@ static u64 gen_stream_tag(const xpar_manifest * m, u64 local_offset,
   gen_src src;
   xpar_blake3_t h;
   u8 * buf = (u8 *) xpar_alloc_raw(1u << 16);
-  u8 out[8];
   u64 at = m->stream_base + local_offset, left = length;
-  xpar_blake3_init(&h);
-  xpar_blake3_update(&h, "xpar2 volume tag v1", 19);
+  xpar_vol_tag_begin(&h);
   gen_src_init(&src, m, m->stream_base + m->stream_length);
   while (left) {
     u64 take = MIN(left, (u64) 1 << 16);
@@ -1753,9 +1693,8 @@ static u64 gen_stream_tag(const xpar_manifest * m, u64 local_offset,
     at += take;  left -= take;
   }
   gen_src_free(&src);
-  xpar_blake3_final(&h, out, sizeof out);
   xpar_free(buf);
-  return xpar_rd64(out);
+  return xpar_vol_tag_final(&h);
 }
 
 static void gen_write_data_range(const xpar_manifest * m,
@@ -1952,7 +1891,7 @@ static bool gen_chain_data_names(const xpar_chain * c, const char * path) {
         xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, &l) !=
           XPAR_OK) continue;
     for (i = 0; i < l.count; i++) if (l.vol[i].kind == XPAR_VOL_DATA) {
-      char * p = gen_join(c->dir, l.vol[i].name);
+      char * p = xpar_path_join(c->dir, l.vol[i].name);
       bool same = gen_path_equal(p, path);
       xpar_free(p);
       if (same) { xpar_layt_free(&l); return true; }
@@ -1988,7 +1927,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
     data_n = o->volumes == XPAR_VOLS_FIXED ? o->volume_count : 1;
     if (!p->geom.slice_count) data_n = 1;
     else if (data_n > p->geom.slice_count) data_n = (u32) p->geom.slice_count;
-    width = gen_digits(data_n ? data_n - 1 : 0);
+    width = xpar_digits10(data_n ? data_n - 1 : 0);
     if (width < 2) width = 2;
     stage_data = (char **) xpar_calloc(data_n, sizeof(char *));
     final_data = (char **) xpar_calloc(data_n, sizeof(char *));
@@ -2137,7 +2076,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
         xpar_layt_read(c->gen[i].layt_body, c->gen[i].layt_len, &l) !=
           XPAR_OK) continue;
     for (k = 0; k < l.count; k++) if (l.vol[k].kind == XPAR_VOL_DATA) {
-      char * old = gen_join(c->dir, l.vol[k].name);
+      char * old = xpar_path_join(c->dir, l.vol[k].name);
       u32 d;
       for (d = 0; d < data_n; d++)
         if (!xpar_strcmp(old, final_data[d])) break;
@@ -2368,7 +2307,7 @@ static void gen_write_set(gen_write_req * rq) {
     keyed = true; kp = &key; tag_len = 16;
     auth.kdf_id = 0; auth.slice_tag_keyed = 1;
     auth.packet_tag_keyed = 1;
-    auth.unkeyed_retained = rq->auth_only ? 0 : 1;
+    auth.unkeyed_retained = !rq->auth_only;
     xpar_key_check(auth.key_check, master);
     if (rq->auth_only) gen_auth_only_hashes(m, rq->owned, kp);
     for (i = 0; i < m->count; i++) if (rq->owned[i])
@@ -2387,7 +2326,7 @@ static void gen_write_set(gen_write_req * rq) {
     if (!rq->plan.geom.slice_count) data_n = 1;
     else if (data_n > rq->plan.geom.slice_count)
       data_n = (u32) rq->plan.geom.slice_count;
-    width = gen_digits(data_n ? data_n - 1 : 0);
+    width = xpar_digits10(data_n ? data_n - 1 : 0);
     if (width < 2) width = 2;
     data_name = (char **) xpar_calloc(data_n, sizeof(char *));
     layout_data_name = (char **) xpar_calloc(data_n, sizeof(char *));
@@ -2732,23 +2671,6 @@ static void gen_entry_copy(xpar_entry * d, const xpar_entry * s) {
                 (sz) s->extent_count * sizeof(xpar_extent));
 }
 
-static bool gen_posix_same(const xpar_posix_rec * a, const xpar_posix_rec * b) {
-  u32 i;
-  if (a->uid != b->uid || a->gid != b->gid) return false;
-  if (a->xattr_count != b->xattr_count) return false;
-  if (!!a->owner != !!b->owner || !!a->group != !!b->group) return false;
-  if (a->owner && xpar_strcmp(a->owner, b->owner)) return false;
-  if (a->group && xpar_strcmp(a->group, b->group)) return false;
-  for (i = 0; i < a->xattr_count; i++) {
-    if (xpar_strcmp(a->xattrs[i].name, b->xattrs[i].name)) return false;
-    if (a->xattrs[i].value_len != b->xattrs[i].value_len) return false;
-    if (a->xattrs[i].value_len &&
-        xpar_memcmp(a->xattrs[i].value, b->xattrs[i].value,
-                    a->xattrs[i].value_len)) return false;
-  }
-  return true;
-}
-
 /*  Entry equality covers every FILE field, including metadata changes.  */
 static bool gen_entry_same(const xpar_entry * a, const xpar_entry * b,
                            const xpar_posix_rec * ta, u32 na,
@@ -2765,7 +2687,7 @@ static bool gen_entry_same(const xpar_entry * a, const xpar_entry * b,
       (b->posix_index == XPAR_ABSENT_U32)) return false;
   if (a->posix_index != XPAR_ABSENT_U32) {
     if (a->posix_index >= na || b->posix_index >= nb) return false;
-    if (!gen_posix_same(&ta[a->posix_index], &tb[b->posix_index]))
+    if (!xpar_posix_equal(&ta[a->posix_index], &tb[b->posix_index]))
       return false;
   }
   return true;
@@ -2776,12 +2698,12 @@ static char * gen_entry_path(const xpar_options * o, const xpar_entry * e) {
   char * p, * dir, * leaf, * name;
   name = xpar_strndup(e->name, e->name_len);
   if (o->base_dir) {
-    p = gen_join(o->base_dir, name);
+    p = xpar_path_join(o->base_dir, name);
     xpar_free(name);
     return p;
   }
   gen_split_path(o->set, &dir, &leaf);
-  p = gen_join(dir, name);
+  p = xpar_path_join(dir, name);
   xpar_free(dir);
   xpar_free(leaf);
   xpar_free(name);
@@ -2893,22 +2815,6 @@ typedef struct {
   bool aligned, full;
 } gen_chunk_pack;
 
-static void gen_chunk_extent(gen_chunk_pack * c, u64 off, u32 len) {
-  if (c->count && c->ext[c->count - 1].stream_offset +
-                  c->ext[c->count - 1].length == off) {
-    c->ext[c->count - 1].length += len;
-    return;
-  }
-  if (c->count == c->capacity) {
-    c->capacity = c->capacity ? c->capacity * 2 : 8;
-    c->ext = (xpar_extent *) xpar_realloc(
-      c->ext, (sz) c->capacity * sizeof(xpar_extent));
-  }
-  c->ext[c->count].stream_offset = off;
-  c->ext[c->count].length = len;
-  c->count++;
-}
-
 static bool gen_pack_chunk(void * user, u64 file_offset, u32 len,
                            const u8 hash[16]) {
   gen_chunk_pack * c = (gen_chunk_pack *) user;
@@ -2953,7 +2859,7 @@ static bool gen_pack_chunk(void * user, u64 file_offset, u32 len,
       return false;
     }
   }
-  gen_chunk_extent(c, off, len);
+  xpar_extents_append(&c->ext, &c->count, &c->capacity, off, len);
   return true;
 }
 
@@ -3104,16 +3010,6 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
   }
   xpar_vset_close(ancestor);
   if (have_chunks) xpar_chunk_index_free(&chunks);
-}
-
-static void gen_hexid(char * out, const u8 * id) {
-  static const char hex[] = "0123456789abcdef";
-  int i;
-  for (i = 0; i < XPAR_SET_ID_LEN; i++) {
-    out[i * 2]     = hex[id[i] >> 4];
-    out[i * 2 + 1] = hex[id[i] & 15];
-  }
-  out[XPAR_SET_ID_LEN * 2] = 0;
 }
 
 /*  Whole-entry references copy ancestor extents at every deduplication
@@ -3724,7 +3620,7 @@ int xpar_op_add(const xpar_options * o) {
 
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
     if (c.gen[i].parent_missing) {
-      gen_hexid(idbuf, c.gen[i].sd.parent_set_id);
+      xpar_hex(idbuf, c.gen[i].sd.parent_set_id, XPAR_SET_ID_LEN);
       FATAL_FORMAT("Generation %u names parent %s, which is not here; an "
                    "incomplete chain cannot be extended.",
                    c.gen[i].sd.generation, idbuf);
@@ -4025,7 +3921,7 @@ int xpar_op_add(const xpar_options * o) {
     xpar_remove(stage_cache);
   }
 
-  gen_hexid(idbuf, rq.set_id);
+  xpar_hex(idbuf, rq.set_id, XPAR_SET_ID_LEN);
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
                  "xpar: generation %u, set %s: %u %s "
@@ -4083,7 +3979,7 @@ static u64 gen_volume_bytes(const xpar_chain * c, u32 g) {
     if (xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, &l) ==
         XPAR_OK) {
       for (i = 0; i < l.count; i++) if (l.vol[i].kind == XPAR_VOL_DATA) {
-        char * p = gen_join(c->dir, l.vol[i].name);
+        char * p = xpar_path_join(c->dir, l.vol[i].name);
         xpar_stat_t st;
         if (xpar_lstat(p, &st) == 0 && !st.is_dir) n += st.size;
         xpar_free(p);
@@ -4122,7 +4018,7 @@ static void gen_prune_name(xpar_vol * v, const xpar_chain * c, u32 generation,
     full = gen_name_recovery(c->base, generation, v->recovery_first,
                              v->byte_length, wf, wc);
   } else {
-    width = gen_digits(data_count ? data_count - 1 : 0);
+    width = xpar_digits10(data_count ? data_count - 1 : 0);
     if (width < 2) width = 2;
     full = gen_name_data(c->base, generation, data_index, width);
   }
@@ -4556,7 +4452,7 @@ int xpar_op_prune(const xpar_options * o) {
       FATAL_FORMAT("Generation %u has a malformed volume layout.",
                    c.gen[g].sd.generation);
     for (i = 0; i < l.count; i++) if (l.vol[i].kind == XPAR_VOL_DATA) {
-      char * data = gen_join(c.dir, l.vol[i].name);
+      char * data = xpar_path_join(c.dir, l.vol[i].name);
       char * label;
       gen_prune_add(&tx, data);
       xpar_asprintf(&label, "%s" XPAR_EXT, data);
@@ -4635,7 +4531,7 @@ int xpar_op_prune(const xpar_options * o) {
         gen_rebuild(&out, o, c.vol[i].data, c.vol[i].len, &rw, false);
       if (c.vol[i].volume_kind == XPAR_VOL_RECOVERY &&
           c.vol[i].volume_index < layt.count)
-        target = gen_join(c.dir, layt.vol[c.vol[i].volume_index].name);
+        target = xpar_path_join(c.dir, layt.vol[c.vol[i].volume_index].name);
       else
         target = gen_name_index(c.base, new_generation[g]);
       stage = gen_stage_whole(target, out.data, out.len);
@@ -4654,8 +4550,8 @@ int xpar_op_prune(const xpar_options * o) {
       u32 di;
       for (di = 0; di < old_layt.count; di++)
         if (old_layt.vol[di].kind == XPAR_VOL_DATA) {
-          char * old_data = gen_join(c.dir, old_layt.vol[di].name);
-          char * new_data = gen_join(c.dir, layt.vol[di].name);
+          char * old_data = xpar_path_join(c.dir, old_layt.vol[di].name);
+          char * new_data = xpar_path_join(c.dir, layt.vol[di].name);
           char * old_label, * new_label;
           if (gen_exists(old_data))
             gen_prune_output(&tx, old_data, new_data, NULL, true, false, 0);
@@ -4992,7 +4888,7 @@ int xpar_op_recover(const xpar_options * o) {
     if (o->to_dir && xpar_strlen(o->to_dir))
       xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
     else
-      path = gen_join(c.dir, layt.vol[target].name);
+      path = xpar_path_join(c.dir, layt.vol[target].name);
     gen_write_whole(path, source->data, source->len, o->force);
     if (!o->quiet)
       xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%llu armoured "
@@ -5010,7 +4906,7 @@ int xpar_op_recover(const xpar_options * o) {
     if (o->to_dir && xpar_strlen(o->to_dir))
       xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
     else
-      path = gen_join(c.dir, layt.vol[target].name);
+      path = xpar_path_join(c.dir, layt.vol[target].name);
     if (!o->force && gen_exists(path))
       FATAL("'%s' exists; -f overwrites it.", path);
     set = xpar_vset_open(o);
@@ -5115,7 +5011,7 @@ int xpar_op_recover(const xpar_options * o) {
   if (o->to_dir && xpar_strlen(o->to_dir))
     xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
   else
-    path = gen_join(c.dir, layt.vol[target].name);
+    path = xpar_path_join(c.dir, layt.vol[target].name);
   gen_write_whole(path, out.data, out.len, o->force);
   if (!o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%llu bytes, %llu "
@@ -5182,7 +5078,7 @@ int xpar_op_undo(const xpar_options * o) {
   u32 * owner = NULL;
   u32 generation;
 
-  if (o->set && gen_ends_with(o->set, ".xparundo"))
+  if (o->set && xpar_path_ends_with(o->set, ".xparundo"))
     FATAL("undo takes the protected set, not a journal pathname; it needs "
           "the set to bind the journal to the right generation and "
           "manifest.");

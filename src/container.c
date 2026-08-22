@@ -1290,6 +1290,43 @@ xpar_status xpar_layt_tiles(const xpar_layt * l, u64 stream_length) {
   return next == stream_length ? XPAR_OK : XPAR_E_MALFORMED;
 }
 
+/*  Volume tags.  */
+
+void xpar_vol_tag_begin(xpar_blake3_t * h) {
+  xpar_blake3_init(h);
+  xpar_blake3_update(h, "xpar2 volume tag v1", 19);
+}
+
+u64 xpar_vol_tag_final(xpar_blake3_t * h) {
+  u8 out[8];
+  xpar_blake3_final(h, out, sizeof out);
+  return xpar_rd64(out);
+}
+
+bool xpar_vol_tag_match(const char * path, const xpar_vol * v) {
+  xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
+  xpar_blake3_t h;
+  u8 buf[65536];
+  i64 size;
+  u64 left = v->byte_length;
+  if (!f) return false;
+  size = xpar_size(f);
+  if (size < 0 || (u64) size != v->byte_length) {
+    xpar_close(f);  return false;
+  }
+  if (!v->vol_tag) { xpar_close(f);  return true; }
+  /*  Sequentially, so a renamed multi-gigabyte volume needs no mapping.  */
+  xpar_vol_tag_begin(&h);
+  while (left) {
+    sz take = (sz) MIN(left, (u64) sizeof buf);
+    if (xpar_read(f, buf, take) != take) { xpar_close(f);  return false; }
+    xpar_blake3_update(&h, buf, take);
+    left -= take;
+  }
+  xpar_close(f);
+  return xpar_vol_tag_final(&h) == v->vol_tag;
+}
+
 xpar_status xpar_auth_read(const u8 * body, sz n, xpar_auth * out) {
   xpar_memset(out, 0, sizeof *out);
   if (n != 32) return n < 32 ? XPAR_E_SHORT : XPAR_E_MALFORMED;

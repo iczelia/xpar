@@ -54,9 +54,11 @@
   } while (0)
 
 /*  Loop macros.  */
-#define Fi(n, ...)  for (int i = 0; i < (n); i++) { __VA_ARGS__; }
-#define Fj(n, ...)  for (int j = 0; j < (n); j++) { __VA_ARGS__; }
-#define Fk(n, ...)  for (int k = 0; k < (n); k++) { __VA_ARGS__; }
+#define For(t, v, n, ...)  for (t v = 0; v < (n); v++) { __VA_ARGS__; }
+
+#define Fi(n, ...)  For(int, i, n, __VA_ARGS__)
+#define Fj(n, ...)  For(int, j, n, __VA_ARGS__)
+#define Fk(n, ...)  For(int, k, n, __VA_ARGS__)
 #define Fi0(n, s, ...)  for (int i = (s); i < (n); i++) { __VA_ARGS__; }
 #define Fj0(n, s, ...)  for (int j = (s); j < (n); j++) { __VA_ARGS__; }
 #define Fk0(n, s, ...)  for (int k = (s); k < (n); k++) { __VA_ARGS__; }
@@ -132,6 +134,38 @@ static inline void xpar_wr32(u8 * p, u32 v) {
 
 static inline void xpar_wr64(u8 * p, u64 v) {
   xpar_wr32(p, (u32) v);  xpar_wr32(p + 4, (u32) (v >> 32));
+}
+
+/*  Lower-case hexadecimal text for `n` bytes, NUL-terminated; the buffer
+    holds 2n + 1.  */
+static inline void xpar_hex(char * out, const u8 * p, sz n) {
+  static const char d[] = "0123456789abcdef";
+  for (sz i = 0; i < n; i++) {
+    out[2 * i]     = d[p[i] >> 4];
+    out[2 * i + 1] = d[p[i] & 15];
+  }
+  out[2 * n] = 0;
+}
+
+/*  Whether `pfx`, folded to lower case, is a hexadecimal prefix of the
+    `n` bytes at `id`. An empty prefix matches; a longer one cannot.  */
+static inline bool xpar_hex_prefix(const u8 * id, sz n, const char * pfx) {
+  static const char d[] = "0123456789abcdef";
+  for (sz i = 0; pfx[i]; i++) {
+    char c = pfx[i];
+    if (i >= 2 * n) return false;
+    if (c >= 'A' && c <= 'F') c = (char) (c - 'A' + 'a');
+    if (c != d[i & 1 ? id[i / 2] & 15 : id[i / 2] >> 4]) return false;
+  }
+  return true;
+}
+
+/*  Decimal digits in `v`, and so the field width that prints it: 1 for
+    zero, which is what every name-padding caller wants.  */
+static inline int xpar_digits10(u64 v) {
+  int d = 1;
+  while (v >= 10) { v /= 10;  d++; }
+  return d;
 }
 
 /*  Constant-time comparison.  */

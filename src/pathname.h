@@ -32,6 +32,11 @@ char * xpar_path_join_n(const char * dir, const char * name, u32 n);
 
 bool xpar_path_ends_with(const char * s, const char * suffix);
 
+/*  Advance `*at` over a run of decimal digits ending at `end`, failing
+    when there is not at least one. Volume and generation names are
+    parsed with it.  */
+bool xpar_scan_digits(const char * s, sz * at, sz end);
+
 xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
                             char ** out);
 

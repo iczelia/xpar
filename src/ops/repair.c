@@ -26,6 +26,7 @@
 #include "crc32c.h"
 #include "json.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "plan.h"
 #include "port-fs.h"
 #include "resync.h"
@@ -87,15 +88,6 @@ typedef struct {
 } rp_write;
 
 typedef struct {
-  u64 expected, physical, slice;
-} rp_loc;
-
-typedef struct {
-  rp_loc * loc;
-  u32 count, cap;
-} rp_resync;
-
-typedef struct {
   const xpar_options * o;
   xpar_json  js;
   int        verbose;
@@ -140,7 +132,7 @@ typedef struct {
   u32 *        canon;         /*  Per entry: the entry it aliases.  */
   u64 *        fsize;         /*  Per entry, as stat found it.  */
   u8 *         fstate;        /*  Bit 0: the file exists. Bit 1: too long.  */
-  rp_resync *  resync;        /*  Strongly confirmed displaced slices.  */
+  xpar_resync_map * resync;   /*  Strongly confirmed displaced slices.  */
 
   xpar_erasures er;           /*  Cells with no intact occurrence.  */
   u8 *          susp;         /*  Cells damaged in at least one place.  */
@@ -187,23 +179,6 @@ static void rp_tag(const rp * r, u64 slice, const u8 * bytes,
     xpar_slice_tag(&r->sd, slice, bytes, out, n);
 }
 
-static char * rp_join(const char * dir, const char * name, u32 n) {
-  sz d = dir ? xpar_strlen(dir) : 0, off = d ? d + 1 : 0;
-  char * p = (char *) xpar_alloc_raw(off + n + 1);
-  if (d) { xpar_memcpy(p, dir, d);  p[d] = '/'; }
-  xpar_memcpy(p + off, name, n);
-  p[off + n] = 0;
-  return p;
-}
-
-/*  Manifest names resolve beside the index volume.  */
-static char * rp_dir_of(const char * path) {
-  sz n = xpar_strlen(path), i = n;
-  while (i > 0 && path[i - 1] != '/') i--;
-  if (i <= 1) return xpar_strdup(i ? "/" : ".");
-  return xpar_strndup(path, i - 1);
-}
-
 static char * rp_tree_path(const char * dir, const xpar_entry * e,
                            xpar_path_status * why) {
   u32 cut = e->name_len;
@@ -211,10 +186,10 @@ static char * rp_tree_path(const char * dir, const xpar_entry * e,
   *why = xpar_path_check(e->name, e->name_len, 0);
   if (*why != XPAR_PATH_OK) return NULL;
   while (cut && e->name[cut - 1] != '/') cut--;
-  if (!cut) return rp_join(dir, e->name, e->name_len);
+  if (!cut) return xpar_path_join_n(dir, e->name, e->name_len);
   parent = xpar_path_resolve(dir, e->name, cut - 1, 0, why);
   if (!parent) return NULL;
-  out = rp_join(parent, e->name + cut, e->name_len - cut);
+  out = xpar_path_join_n(parent, e->name + cut, e->name_len - cut);
   xpar_free(parent);
   return out;
 }
@@ -417,19 +392,6 @@ static void rp_key_preflight(rp * r) {
   (void) found;  /*  No AUTH means the supplied key is unused.  */
 }
 
-static bool rp_id_prefix(const u8 * id, const char * hex) {
-  sz i, n = xpar_strlen(hex);
-  if (n > XPAR_SET_ID_LEN * 2) return false;
-  for (i = 0; i < n; i++) {
-    static const char d[] = "0123456789abcdef";
-    u8 nib = (u8) (i & 1 ? id[i / 2] & 15 : id[i / 2] >> 4);
-    char c = hex[i];
-    if (c >= 'A' && c <= 'F') c = (char) (c - 'A' + 'a');
-    if (c != d[nib]) return false;
-  }
-  return true;
-}
-
 /*  Resolve chain heads and generation selectors from SETD identities, not
     filenames.  */
 static void rp_pick_setd(rp * r) {
@@ -443,8 +405,10 @@ static void rp_pick_setd(rp * r) {
     if (xpar_setd_read(p->body, (sz) p->body_len, &sd) != XPAR_OK) continue;
     if (r->o->gen_count) {
       const xpar_genref * g = &r->o->gens[0];
-      named = g->by_id ? rp_id_prefix(p->hdr.set_id, g->id_prefix)
-                       : sd.generation == (u32) g->number;
+      named = g->by_id
+                ? xpar_hex_prefix(p->hdr.set_id, XPAR_SET_ID_LEN,
+                                  g->id_prefix)
+                : sd.generation == (u32) g->number;
     }
     for (j = 0; j < r->crit.count && head; j++) {
       const xpar_crit_pkt * q = &r->crit.pkt[j];
@@ -607,7 +571,7 @@ static void rp_open_recovery(rp * r) {
         if (first + count > r->rec_total) r->rec_total = first + count;
       }
       if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
-      path = rp_join(r->dir, v->name, (u32) xpar_strlen(v->name));
+      path = xpar_path_join(r->dir, v->name);
       for (k = 0; k < r->vol_count && !seen; k++)
         if (!xpar_strcmp(r->vol[k].path, path)) seen = true;
       if (!seen && rp_vol_open(r, path))
@@ -676,39 +640,13 @@ static bool rp_read_entry_raw(rp * r, u32 entry, u64 off, u64 len,
   return got == (sz) len;
 }
 
-static bool rp_shifted_offset(const rp_resync * m, u64 off, u64 * physical) {
-  u32 lo = 0, hi = m->count, at;
-  if (!m->count) return false;
-  while (lo < hi) {
-    u32 mid = lo + (hi - lo) / 2;
-    if (m->loc[mid].expected < off) lo = mid + 1;
-    else hi = mid;
-  }
-  if (!lo) at = 0;
-  else if (lo == m->count) at = lo - 1;
-  else {
-    u64 before = off - m->loc[lo - 1].expected;
-    u64 after = m->loc[lo].expected - off;
-    at = before <= after ? lo - 1 : lo;
-  }
-  if (m->loc[at].physical >= m->loc[at].expected) {
-    u64 d = m->loc[at].physical - m->loc[at].expected;
-    if (UINT64_MAX - off < d) return false;
-    *physical = off + d;
-  } else {
-    u64 d = m->loc[at].expected - m->loc[at].physical;
-    if (off < d) return false;
-    *physical = off - d;
-  }
-  return true;
-}
 
 static bool rp_read_entry_resynced(rp * r, u32 entry, u64 off, u64 len,
                                    u8 * dst) {
   xpar_file * f;
   u64 physical;
   sz got;
-  if (!rp_shifted_offset(&r->resync[entry], off, &physical))
+  if (!xpar_resync_map_shift(&r->resync[entry], off, &physical))
     return rp_read_entry_raw(r, entry, off, len, dst);
   xpar_memset(dst, 0, (sz) len);
   if (len > (u64) (sz) -1 || UINT64_MAX - physical < len) return false;
@@ -736,29 +674,6 @@ static bool rp_confirm_at(void * user, u32 at, u64 physical) {
   return xpar_blake3_tag_equal(
     got, c->r->tags.t.slice_tag + p->slice * c->r->tags.t.tag_len,
     c->r->tags.t.tag_len);
-}
-
-static void rp_loc_add(rp_resync * m, const xpar_resync_probe * p,
-                       u64 physical) {
-  rp_loc * q;
-  if (m->count == m->cap) {
-    m->cap = m->cap ? m->cap * 2 : 16;
-    m->loc = (rp_loc *) xpar_realloc(m->loc, m->cap * sizeof(rp_loc));
-  }
-  q = &m->loc[m->count++];
-  q->expected = p->expected;  q->physical = physical;  q->slice = p->slice;
-}
-
-static bool rp_add_delta(u64 expected, i64 delta, u64 * physical) {
-  if (delta >= 0) {
-    if (UINT64_MAX - expected < (u64) delta) return false;
-    *physical = expected + (u64) delta;
-  } else {
-    u64 d = (u64) (-(delta + 1)) + 1;
-    if (expected < d) return false;
-    *physical = expected - d;
-  }
-  return true;
 }
 
 static xpar_resync_probe * rp_entry_probes(rp * r, u32 entry,
@@ -845,7 +760,8 @@ static void rp_resync_entry(rp * r, u32 entry) {
       for (i = 0; i < n; i++) {
         u64 physical;
         if (located[i] != UINT64_MAX ||
-            !rp_add_delta(p[i].expected, result.delta[d].delta, &physical) ||
+            !xpar_resync_shift(p[i].expected, result.delta[d].delta,
+                               &physical) ||
             physical > st.size || st.size - physical < z) continue;
         confirmations++;
         if (rp_confirm_at(&confirm, i, physical)) located[i] = physical;
@@ -864,7 +780,7 @@ static void rp_resync_entry(rp * r, u32 entry) {
   }
   for (i = 0; i < n; i++)
     if (located[i] != UINT64_MAX)
-      rp_loc_add(&r->resync[entry], &p[i], located[i]);
+      xpar_resync_map_add(&r->resync[entry], p[i].expected, located[i]);
   if (r->resync[entry].count)
     rp_note(r, "xpar: %s: found %u displaced slices with %llu strong "
                "confirmations.\n", r->path[entry], r->resync[entry].count,
@@ -1083,7 +999,7 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
     if (e->entry_type != XPAR_ENTRY_REGULAR || !e->extent_count) continue;
     exists = xpar_lstat(r->path[i], &st) == 0;
     r->fsize[i]  = exists ? st.size : 0;
-    r->fstate[i] = (u8) (exists ? 1 : 0);
+    r->fstate[i] = exists;
     /*  Entry hashes exclude an overlong tail; journal and remove it.  */
     if (exists && st.size > e->length) r->fstate[i] |= 2;
     if (!exists || st.size != e->length) certified = false;
@@ -1712,7 +1628,7 @@ static void rp_find_aliases(rp * r) {
   u32 caps = xpar_fs_caps(r->dir), i, j;
   for (i = 0; i < r->mf.count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
-    r->path[i] = rp_join(r->dir, e->name, e->name_len);
+    r->path[i] = xpar_path_join_n(r->dir, e->name, e->name_len);
     r->canon[i] = i;
   }
   for (i = 0; i < r->mf.count; i++) {
@@ -1761,7 +1677,8 @@ static void rp_entry_state_alloc(rp * r) {
   r->canon = (u32 *) xpar_calloc(n, sizeof(u32));
   r->fsize = (u64 *) xpar_calloc(n, sizeof(u64));
   r->fstate = (u8 *) xpar_calloc(n, 1);
-  r->resync = (rp_resync *) xpar_calloc(n, sizeof(rp_resync));
+  r->resync = (xpar_resync_map *)
+                xpar_calloc(n, sizeof(xpar_resync_map));
   rp_find_aliases(r);
   for (i = 0; i < r->mf.count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
@@ -1780,7 +1697,7 @@ static void rp_entry_state_free(rp * r) {
   rp_close_files(r);
   for (i = 0; i < r->mf.count; i++) {
     xpar_free(r->path[i]);
-    xpar_free(r->resync[i].loc);
+    xpar_resync_map_free(&r->resync[i]);
   }
   xpar_free(r->path);  xpar_free(r->alias);  xpar_free(r->canon);
   xpar_free(r->fsize);  xpar_free(r->fstate);  xpar_free(r->resync);
@@ -1831,30 +1748,15 @@ static bool rp_read_repaired(rp * r, u32 entry, u64 off, u64 len, u8 * dst) {
 }
 
 static xpar_file * rp_tree_stage(const char * path, char ** stage) {
-  u32 attempt, i;
-  for (attempt = 0; attempt < 32; attempt++) {
-    static const char digit[] = "0123456789abcdef";
-    u8 rnd[8];
-    char hex[17];
-    xpar_file * f;
-    xpar_random_bytes(rnd, sizeof rnd);
-    for (i = 0; i < sizeof rnd; i++) {
-      hex[2 * i] = digit[rnd[i] >> 4];
-      hex[2 * i + 1] = digit[rnd[i] & 15];
-    }
-    hex[16] = 0;
-    xpar_asprintf(stage, "%s.xpar-repair-%s.tmp", path, hex);
-    f = xpar_open(*stage, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
-                          XPAR_O_NOFOLLOW);
-    if (f) {
-      (void) xpar_set_mode(*stage, 1, 0600);
-      return f;
-    }
-    xpar_free(*stage); *stage = NULL;
-  }
-  FATAL_IO("Cannot create a secure repair stage beside '%s': %s.", path,
-           xpar_strerror(xpar_errno()));
-  return NULL;
+  char * stem = NULL;
+  xpar_file * f;
+  xpar_asprintf(&stem, "%s.xpar-repair-", path);
+  f = xpar_stage_open(stem, XPAR_O_WRONLY | XPAR_O_NOFOLLOW, 1, stage);
+  xpar_free(stem);
+  if (!f)
+    FATAL_IO("Cannot create a secure repair stage beside '%s': %s.", path,
+             xpar_strerror(xpar_errno()));
+  return f;
 }
 
 static char * rp_backup_name(const char * path) {
@@ -2038,7 +1940,7 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       out = xpar_path_resolve(dir, e->name, e->name_len, 0, &why);
       FATAL_UNLESS("Refusing repair output '%.*s': %s.", out != NULL,
                    (int) e->name_len, e->name, xpar_path_reason(why));
-      { char * d = rp_dir_of(out);
+      { char * d = xpar_path_dir(out);
         if (xpar_mkdir_p(d, 0777) != 0) {
           xpar_stat_t st;
           if (xpar_lstat(d, &st) != 0 || !st.is_dir)
@@ -2226,7 +2128,7 @@ static void rp_free(rp * r) {
     { xpar_free(r->wr[i].data);  xpar_free(r->wr[i].old); }
   xpar_free(r->wr);
   for (i = 0; i < r->mf.count; i++) xpar_free(r->path[i]);
-  for (i = 0; i < r->mf.count; i++) xpar_free(r->resync[i].loc);
+  for (i = 0; i < r->mf.count; i++) xpar_resync_map_free(&r->resync[i]);
   xpar_free(r->path);  xpar_free(r->alias);  xpar_free(r->canon);
   xpar_free(r->fsize);  xpar_free(r->fstate);  xpar_free(r->resync);
   xpar_free(r->susp);
@@ -2281,24 +2183,12 @@ static void owned_close(owned_vol * v) {
   xpar_free(v->path);
 }
 
-static char * owned_join(const char * dir, const char * name) {
-  char * p = NULL;
-  xpar_asprintf(&p, "%s%s%s", dir,
-                *dir && dir[xpar_strlen(dir) - 1] != '/' ? "/" : "", name);
-  return p;
-}
-
 static char * owned_chain_gen_dir(const char * root, const u8 * id) {
-  static const char hex[] = "0123456789abcdef";
-  char text[XPAR_SET_ID_LEN * 2 + 1];
-  char * out;
-  u32 i;
-  for (i = 0; i < XPAR_SET_ID_LEN; i++) {
-    text[i * 2] = hex[id[i] >> 4];
-    text[i * 2 + 1] = hex[id[i] & 15];
-  }
-  text[XPAR_SET_ID_LEN * 2] = 0;
-  xpar_asprintf(&out, "%s/g-%s", root, text);
+  char text[XPAR_SET_ID_LEN * 2 + 1], * name = NULL, * out;
+  xpar_hex(text, id, XPAR_SET_ID_LEN);
+  xpar_asprintf(&name, "g-%s", text);
+  out = xpar_path_join(root, name);
+  xpar_free(name);
   return out;
 }
 
@@ -2352,9 +2242,7 @@ static bool owned_chain_read(const xpar_chain * c, xpar_manifest * mf,
 
 static char * owned_chain_stage_new(const char * destination) {
   xpar_stat_t st;
-  u8 rnd[8];
-  char hex[17];
-  u32 attempt, i;
+  char * stem, * path;
   if (xpar_mkdir_p(destination, 0777) != 0 &&
       xpar_lstat(destination, &st) != 0)
     FATAL_IO("Cannot create '%s': %s.", destination,
@@ -2363,22 +2251,10 @@ static char * owned_chain_stage_new(const char * destination) {
                "to write through it.",
                xpar_lstat(destination, &st) == 0 && !st.is_symlink,
                destination);
-  for (attempt = 0; attempt < 32; attempt++) {
-    char * path;
-    xpar_random_bytes(rnd, sizeof rnd);
-    for (i = 0; i < sizeof rnd; i++) {
-      static const char d[] = "0123456789abcdef";
-      hex[i * 2] = d[rnd[i] >> 4];
-      hex[i * 2 + 1] = d[rnd[i] & 15];
-    }
-    hex[16] = 0;
-    xpar_asprintf(&path, "%s%s.xpar-chain-%s.tmp", destination,
-                  *destination &&
-                    destination[xpar_strlen(destination) - 1] != '/' ?
-                    "/" : "", hex);
-    if (xpar_mkdir(path, 0700) == 0) return path;
-    xpar_free(path);
-  }
+  stem = xpar_path_join(destination, ".xpar-chain-");
+  path = xpar_stage_dir(stem);
+  xpar_free(stem);
+  if (path) return path;
   FATAL_IO("Cannot create a private chain-repair stage in '%s': %s.",
            destination, xpar_strerror(xpar_errno()));
   return NULL;
@@ -2428,7 +2304,7 @@ static void owned_backup_path(const char * path) {
   u8 rnd[8], * buf;
   char hex[17];
   u64 at = 0;
-  u32 n, i;
+  u32 n;
   FATAL_UNLESS("Cannot back up missing owned volume '%s'.",
                xpar_lstat(path, &st) == 0 && st.is_regular, path);
   for (n = 1; ; n++) {
@@ -2438,12 +2314,7 @@ static void owned_backup_path(const char * path) {
     FATAL_UNLESS("Too many backups exist for '%s'.", n != UINT32_MAX, path);
   }
   xpar_random_bytes(rnd, sizeof rnd);
-  for (i = 0; i < sizeof rnd; i++) {
-    static const char d[] = "0123456789abcdef";
-    hex[2 * i] = d[rnd[i] >> 4];
-    hex[2 * i + 1] = d[rnd[i] & 15];
-  }
-  hex[16] = 0;
+  xpar_hex(hex, rnd, sizeof rnd);
   xpar_asprintf(&stage, "%s.backup-%s.tmp", path, hex);
   src = xpar_open(path, XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
   dst = xpar_open(stage, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
@@ -2507,7 +2378,7 @@ static void owned_write_split(const xpar_vset * s, u64 off,
     FATAL_UNLESS("The split layout has no data volume for stream offset "
                  "%llu.", v != NULL, (unsigned long long) off);
     take = MIN(len, v->byte_length - (off - v->stream_offset));
-    path = owned_join(dir, v->name);
+    path = xpar_path_join(dir, v->name);
     f = xpar_open(path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
     if (!f) FATAL_PERROR(path);
     if (xpar_pwrite(f, data, (sz) take,
@@ -2561,7 +2432,7 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
   rv = (owned_vol *) xpar_calloc(l->count ? l->count : 1, sizeof(*rv));
   for (u32 q = 0; q < l->count; q++)
     if (l->vol[q].kind == XPAR_VOL_RECOVERY && l->vol[q].name) {
-      char * path = owned_join(xpar_vset_dir(s), l->vol[q].name);
+      char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
       if (owned_open(&rv[rv_count], path)) {
         owned_scan_recovery(s, &rv[rv_count], rec, rtop);
         rv_count++;
@@ -2680,28 +2551,14 @@ no_codec:
 }
 
 static xpar_file * owned_stage_open(const char * dir, char ** path) {
-  u8 rnd[8];
-  char hex[17];
-  u32 attempt, i;
-  for (attempt = 0; attempt < 32; attempt++) {
-    xpar_file * f;
-    xpar_random_bytes(rnd, sizeof rnd);
-    for (i = 0; i < sizeof rnd; i++) {
-      static const char d[] = "0123456789abcdef";
-      hex[2 * i] = d[rnd[i] >> 4];
-      hex[2 * i + 1] = d[rnd[i] & 15];
-    }
-    hex[16] = 0;
-    xpar_asprintf(path, "%s%s.xpar-repair-%s.tmp", dir,
-                  *dir && dir[xpar_strlen(dir) - 1] != '/' ? "/" : "", hex);
-    f = xpar_open(*path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_EXCL |
-                         XPAR_O_NOFOLLOW);
-    if (f) return f;
-    xpar_free(*path); *path = NULL;
-  }
-  FATAL_IO("Cannot create a secure repair stage in '%s': %s.", dir,
-           xpar_strerror(xpar_errno()));
-  return NULL;
+  char * stem = xpar_path_join(dir, ".xpar-repair-");
+  xpar_file * f = xpar_stage_open(stem, XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
+                                  path);
+  xpar_free(stem);
+  if (!f)
+    FATAL_IO("Cannot create a secure repair stage in '%s': %s.", dir,
+             xpar_strerror(xpar_errno()));
+  return f;
 }
 
 static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
@@ -2726,7 +2583,7 @@ static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
                  "%llu.", v != NULL, (unsigned long long) in_stream);
     part = MIN(len - copied,
                v->byte_length - (in_stream - v->stream_offset));
-    path = owned_join(dir, v->name);
+    path = xpar_path_join(dir, v->name);
     dst = xpar_open(path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
     if (!dst) FATAL_PERROR(path);
     while (done < part) {
@@ -2919,7 +2776,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
       owned_backup_path(arm_path);
     } else for (u32 q = 0; q < l->count; q++)
         if (l->vol[q].kind == XPAR_VOL_DATA && l->vol[q].name) {
-          char * path = owned_join(xpar_vset_dir(s), l->vol[q].name);
+          char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
           owned_backup_path(path); xpar_free(path);
         }
   }
@@ -3019,7 +2876,7 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     u32 k;
     FATAL_UNLESS("Refusing repair output '%.*s': %s.", p != NULL,
                  (int) e->name_len, e->name, xpar_path_reason(why));
-    { char * d = rp_dir_of(p);
+    { char * d = xpar_path_dir(p);
       if (xpar_mkdir_p(d, 0777) != 0 && xpar_lstat(d, &st) != 0)
         FATAL_IO("Cannot create '%s': %s.", d, xpar_strerror(xpar_errno()));
       xpar_free(d); }
@@ -3253,7 +3110,7 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked) {
     rv = (owned_vol *) xpar_calloc(l->count ? l->count : 1, sizeof(*rv));
     for (u32 q = 0; q < l->count; q++)
       if (l->vol[q].kind == XPAR_VOL_RECOVERY) {
-      char * path = owned_join(xpar_vset_dir(s), l->vol[q].name);
+      char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
       if (owned_open(&rv[rv_count], path)) {
         owned_scan_recovery(s, &rv[rv_count], rec, rtop); rv_count++;
       }
@@ -3323,7 +3180,7 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked) {
   if (ok && o->dest == XPAR_DEST_BACKUP && l)
     for (u32 q = 0; q < l->count; q++)
       if (l->vol[q].kind == XPAR_VOL_DATA && l->vol[q].name) {
-        char * path = owned_join(xpar_vset_dir(s), l->vol[q].name);
+        char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
         owned_backup_path(path);
         xpar_free(path);
       }
@@ -3524,7 +3381,7 @@ int xpar_op_repair(const xpar_options * o) {
 
   FATAL_UNLESS("Repair needs a set to work on.", o->set_ref.count > 0);
   r.dir = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                         : rp_dir_of(o->set_ref.vol[0]);
+                         : xpar_path_dir(o->set_ref.vol[0]);
   for (i = 0; i < o->set_ref.count; i++)
     (void) rp_vol_open(&r, o->set_ref.vol[i]);
   FATAL_UNLESS("Nothing in '%s' could be opened.", r.vol_count > 0, o->set);
@@ -3670,10 +3527,8 @@ int xpar_op_repair(const xpar_options * o) {
   }
 
   /*  Nothing may change protected data before the journal is durable.  */
-  r.journal = o->set_ref.base
-                ? rp_join(NULL, o->set_ref.base,
-                          (u32) xpar_strlen(o->set_ref.base))
-                : rp_join(r.dir, "xpar", 4);
+  r.journal = o->set_ref.base ? xpar_strdup(o->set_ref.base)
+                              : xpar_path_join(r.dir, "xpar");
   { char * j;
     if (r.sd.generation)
       xpar_asprintf(&j, "%s.g%03u.xparundo", r.journal, r.sd.generation);

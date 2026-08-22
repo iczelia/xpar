@@ -114,6 +114,12 @@ void xpar_set_id_update(xpar_set_id_ctx * c, const u8 * file_body, sz n);
 void xpar_set_id_final (const xpar_set_id_ctx * c,
                         u8 out[XPAR_SET_ID_LEN]);
 
+/*  Append one chunk to a growing extent list, coalescing with the last
+    extent where the two stream ranges abut. Both packers build their
+    lists this way, so neither invents a second coalescing rule.  */
+void xpar_extents_append(xpar_extent ** list, u32 * count, u32 * capacity,
+                         u64 stream_offset, u32 length);
+
 u32 xpar_posix_intern(xpar_manifest * m, const xpar_posix_rec * r);
 bool xpar_posix_equal(const xpar_posix_rec *, const xpar_posix_rec *);
 

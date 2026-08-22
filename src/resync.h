@@ -48,12 +48,25 @@ bool xpar_resync_search(xpar_file * f, u64 file_size, u64 window,
                         const xpar_resync_probe * probe, u32 probe_count,
                         u32 step, u64 max_delta, xpar_resync_result * out);
 
+typedef struct { u64 expected, physical; } xpar_resync_loc;
+
+typedef struct {
+  xpar_resync_loc * loc;
+  u32 count, cap;
+  bool searched;
+} xpar_resync_map;
+
+void xpar_resync_map_add (xpar_resync_map *, u64 expected, u64 physical);
+void xpar_resync_map_free(xpar_resync_map *);
+
+bool xpar_resync_map_shift(const xpar_resync_map *, u64 off, u64 * physical);
+
+/*  `expected` plus a signed displacement, refusing rather than wrapping.  */
+bool xpar_resync_shift(u64 expected, i64 delta, u64 * physical);
+
 typedef bool (*xpar_resync_confirm_fn)(void * user, u32 probe,
                                        u64 physical);
 
-/*  Explicit expensive fallback. Every rolling-CRC candidate is offered
-    to the strong-tag callback until that probe has been located. The
-    caller supplies `located`, initialised here to UINT64_MAX.  */
 u64 xpar_resync_exhaustive(xpar_file * f, u64 file_size, u64 window,
                            const xpar_resync_probe * probe, u32 probe_count,
                            u32 step, u64 max_delta,
