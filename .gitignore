@@ -28,3 +28,4 @@ config.guess
 ChangeLog.tmp
 inject-errors
 test-driver
+.dirstamp
