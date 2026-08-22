@@ -41,8 +41,19 @@ In order to build from source code, download a distribution tarball from the
 releases tab and execute the following commands:
 
 ```
-% ./configure && make && sudo make install
+% ./configure && make && make check && sudo make install
 ```
+
+`configure` probes for all SIMD extensions that xpar can use. Each becomes
+a convenience library with its own compilation flags, while the kernel is
+picked at the runtime based on signals from CPUID + OSXSAVE/XCR0 (x86),
+HWCAP or `riscv_hwprove`.
+
+| option | effect |
+| :--- | :--- |
+| `--disable-simd` | scalar kernels only |
+| `--disable-threads` | single-threaded build |
+| `--enable-sanitizers` | ASan + UBSan, for the test suite |
 
 ## Basic usage
 
@@ -175,7 +186,7 @@ disappears off the face of the planet.
   frames           5
 [...]
 set -e
-in=p.xpar
+in=p.xpa
 out=recovered.bin
 W=1; n=255; k=223; D=1; hdr=168
 Fd=$((D*k*W))          # plaintext bytes per frame = 223
@@ -227,3 +238,130 @@ Some drawbacks of xpar:
 - It's not as mature; PAR2 is interoperable and very solid.
 - ParPar often has a speed edge over xpar and there are currently no plans
   for an OpenCL backend.
+
+## Other features
+
+- `add` / `prune` / `consolidate`: manages a chain of generations in the `xpa`
+  file.  `add` appends a new generation detailing the changes against the
+  current disk contents. unchanged files are inherited and not re-stored.
+  Since redundancy is per-generation, `info --deps` shows old generations that
+  are still required for operation. `prune` removes generations that are
+  unreferenced.  `consolidate` collapses generational chains, merging all
+  generations into one, and re-encodes the archive.
+```
+$ xpar add -r 15% photos.xpar -R pics
+xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
+      200000 new stream bytes, 7 recovery slices in 3 volumes.
+```
+- `recover`: regenerate lost volume(s) from the surviving set. For example,
+  when with `--layout=split --volumes=4`, the data lives in header-free
+  `.d00` - `.d03` files, one per disk, then:
+```
+$ rm disc.d001
+$ xpar recover --volume=disc.d001 disc.xpar
+xpar: recovered disc.d001 from survivor and parity slices (1253376 bare stream bytes).
+$ cat disc.d00* > joined && cmp joined vid.mp4 && echo identical
+identical
+```
+- `--auth-key=FILE`: authenticate the set with a keyed MAC, as a precaution
+  against doctored archives. Every subsequent operation requires the key:
+```
+$ xpar verify s.xpar
+xpar: This set is authenticated; supply --auth-key=FILE.
+$ xpar verify --auth-key=wrong.bin s.xpar
+xpar: The authentication key is wrong for this set.
+```
+- `--memory`: sets the maximum working set size for the planner.
+```
+$ xpar create -m 1M -r 20% -o tiny data.bin
+xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
+      or use --codec=matrix (which does not fit either at -m 1.0 MiB).
+```
+- `info`: displays information about the erasure and error correction
+  data type.
+```
+  geometry   : Z = 2097152 (2.0 MiB), S = 48, L = 100000000 (95.4 MiB)
+  cells      : Y = 65536 bytes, K = 32 per slice; the erasure unit is
+               (slice, column), not a whole slice (4.6)
+  codec      : matrix over GF(2^8), recovery axis 2^8 = 208 slices
+  redundancy : R = 5 (10.4% of S), 5 recovery slices present
+  armour     : GF(2^8) RS(255, 223), t = 16, D = 1
+  ...
+  field      : S + R = 53 <= 256, so GF(2^8)
+  memory     : work buffers 22.1 MiB;  read-ahead 0 B;  stage + hash 32.0 MiB
+               total 54.1 MiB
+  cells      : erasure budget is 5 per column, not 5 per set
+  passes     : 1 sequential read totalling 100,000,000 bytes
+```
+- `benchmark`: displays the performance metrics for low-level SIMD kernels used
+  by xpar.
+```
+$ xpar selftest --tiers
+xpar: selftest: avx2         gf8-mac    8388608 bytes    136 us  58823.53 MiB/s
+xpar: selftest: gfni256      gf8-mac    8388608 bytes    164 us  48780.49 MiB/s
+xpar: selftest: scalar       gf8-mac    8388608 bytes   3683 us   2172.14 MiB/s
+xpar: selftest: 9 tiers checked.
+```
+
+The following exit codes/ERRORLEVELs of all sub-commands are possible:
+- 0: No error.
+- 1: File damaged but repairable.
+- 2: File hopelessly damaged.
+- 3: Not found / Not an xpar set / Wrong version.
+- 4: Wrong usage.
+- 5: I/O error.
+- 6: Authentication error.
+- 7: No feasible plan found.
+- 8: Internal error.
+
+## Binary layouts
+
+Three options are offered:
+
+- `--layout=sidecar` (default): files are never touched and stay where they
+  were. `base.xpa` and `base.v*.xpa` sit beside them. Extraction is never
+  necessary.
+- `--layout=split`: the protected data is written into files `base.d000`,
+  `base.d001`, etc., which are raw data volumes with no header, no trailer
+  and no padding, so that `cat base.d* > file` reconstructs the original
+  stream exactly.
+- `--layout=armoured`: one self-contained `base.xpar` containing three
+  replicated header copies, alongside an inner-coded packet stream with the
+  manifest, the data and the recovery. Use `extract` to unpack, rather than
+  concatenation.
+
+## Performance
+
+Generally, xpar comes close in terms of performance to par2cmdline-turbo and
+ParPar in the single core mode. Parallel workloads are not optimised as well
+yet.
+
+Further, xpar issues a mandatory readback (that can nonetheless be disabled
+with `--no-verify-after`) to ensure that the data has been written correctly.
+
+## Portability
+
+Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
+/ GFNI-512 / VBMI / VPCLMULQDQ, ARM NEON / PMULL / SVE2, PowerPC VSX, and
+RISC-V vector (both shuffle and clmul paths). The binary format is
+platform-agnostic.
+
+Windows specifically has two targets; the default `nt` target uses UTF-16,
+extended-length paths and a Vista+ API floor. It is used like so:
+
+```
+$ CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \
+      --with-windows-target=nt && make
+```
+
+The `win95` target is a separate ASCII-only path with an i486 (1989) scalar
+baseline, a freestanding startup/runtime and a PE 4.0 header:
+
+```
+$ CC=i686-w64-mingw32-gcc ./configure --host=i686-w64-mingw32 \
+      --with-windows-target=win95 && make
+```
+
+That executable imports only `KERNEL32.DLL`. MS-DOS builds through DJGPP
+(`--host=i586-pc-msdosdjgpp`), likewise with an i386 (1985) scalar baseline
+and no optional SIMD. A 32-bit NT build may contain SSSE3 and SSE4.2 objects.
