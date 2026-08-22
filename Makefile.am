@@ -37,7 +37,7 @@ doc/xpar-format.pdf: $(srcdir)/doc/xpar-format.tex
 noinst_HEADERS = \
   src/common.h src/xpar2.h src/cli.h src/yarg.h src/v1detect.h \
   src/container.h src/auth.h src/manifest.h src/chunk.h src/slice.h src/resync.h \
-  src/plan.h src/json.h \
+  src/plan.h src/json.h src/pathname.h \
   src/ops/ops.h src/ops/chain.h src/ops/vset.h \
   src/kernel/gf.h src/kernel/gf-impl.h src/kernel/gf-rvv-int.h \
   src/kernel/armour.h src/kernel/armour-impl.h \
@@ -50,7 +50,7 @@ noinst_HEADERS = \
 noinst_LIBRARIES = libxpar_core.a
 
 libxpar_core_a_SOURCES = \
-  src/cli.c src/progress.c src/v1detect.c \
+  src/cli.c src/progress.c src/v1detect.c src/pathname.c \
   src/container.c src/auth.c src/manifest.c src/chunk.c src/slice.c src/resync.c \
   src/plan.c src/json.c \
   src/ops/create.c src/ops/verify.c src/ops/repair.c src/ops/extract.c \
