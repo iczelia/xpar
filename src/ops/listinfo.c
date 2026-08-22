@@ -381,8 +381,7 @@ static void li_chain_table(const xpar_chain * c, u32 sel) {
     xpar_fprintf(xpar_stdout,
                  "  note       : redundancy is per generation. One "
                  "generation's recovery\n"
-                 "               volumes cannot repair another's stream "
-                 ".\n"
+                 "               volumes cannot repair another's stream.\n"
                  "               `xpar consolidate` collapses the chain "
                  "into one generation.\n");
   if (c->forked)
@@ -404,11 +403,10 @@ static void li_deps(const xpar_chain * c, u32 sel) {
   xpar_gchain_deps(c, &m, owner, ext, pkt);
 
   xpar_fprintf(xpar_stdout,
-               "  deps       : entries of generation %u's manifest that "
-               "would be lost\n"
-               "               if a generation were removed\n"
-               "    gen  stream bytes  owns packets  holds extents  "
-               "unrecoverable\n", c->gen[sel].sd.generation);
+               "  deps       : what generation %u's manifest would lose if "
+               "a generation\n               were removed from the chain\n"
+               "    gen  stream bytes  owns packets  entries using  "
+               "would be lost\n", c->gen[sel].sd.generation);
   for (g = 0; g < c->gen_count; g++) {
     u64 lost = 0;
     for (i = 0; i < m.count; i++) {
@@ -428,11 +426,10 @@ static void li_deps(const xpar_chain * c, u32 sel) {
                  (unsigned long long) lost);
   }
   xpar_fprintf(xpar_stdout,
-               "               A non-zero count in the last column is what "
-               "`prune`\n"
-               "               refuses on. It is computed from the extents, "
-               "not from\n"
-               "               --dedup-scope.\n");
+               "               `prune` refuses to remove a generation whose "
+               "last column\n               is non-zero. That count comes "
+               "from the extents recorded in\n               the manifest, "
+               "not from --dedup-scope.\n");
   xpar_free(ext);  xpar_free(pkt);  xpar_free(owner);
   xpar_manifest_free(&m);
 }
@@ -590,11 +587,13 @@ int xpar_op_info(const xpar_options * o) {
                (unsigned long long) c.gen[sel].recovery_count);
   if (c.gen[sel].recovery_count < c.gen[sel].recovery_top)
     xpar_fprintf(xpar_stdout,
-                 "               %llu recovery slices are missing; this "
-                 "generation can\n               survive that many fewer "
+                 "               %llu recovery slice%s missing, so this "
+                 "generation\n               tolerates that many fewer "
                  "erasures\n",
                  (unsigned long long) (c.gen[sel].recovery_top -
-                                       c.gen[sel].recovery_count));
+                                       c.gen[sel].recovery_count),
+                 c.gen[sel].recovery_top - c.gen[sel].recovery_count == 1
+                   ? " is" : "s are");
   xpar_fprintf(xpar_stdout,
                "  tags       : CRC32C per slice%s%s\n",
                sd->slice_tag_len ? ", BLAKE3 strong tag of " : "",
@@ -690,11 +689,12 @@ int xpar_op_info(const xpar_options * o) {
       crit_bytes = c.vol[i].len;
   if (have_layt && crit_bytes) {
     xpar_fprintf(xpar_stdout,
-                 "  replication: the critical group is about %s per copy; "
+                 "  replication: the critical group is about %s per copy. "
                  "xpar puts a copy\n               in the index volume, in "
                  "volume 0, in every power-of-two\n               volume and "
-                 "in the last, and in every volume at all when the\n"
-                 "               group is at most max(1 MiB, payload / 20)\n",
+                 "in the last one; when the group is at most\n"
+                 "               max(1 MiB, payload / 20) it goes in every "
+                 "volume\n",
                  li_size(sbuf, sizeof sbuf, crit_bytes));
   }
 
@@ -797,7 +797,7 @@ int xpar_op_explain(const xpar_options * o) {
       xpar_fprintf(xpar_stdout,
                    "%s is an armoured xpar archive. Prologue copy %d of 3 "
                    "verifies.\n"
-                   "It carries every parameter needed to demodulate the "
+                   "It carries every parameter needed to decode the "
                    "region and to find\n"
                    "the protected stream inside it, which is why the recipe "
                    "below needs\n"
@@ -934,7 +934,7 @@ int xpar_op_explain(const xpar_options * o) {
       } else xpar_fprintf(xpar_stdout,
                    "%s is a packet-bearing xpar volume with no armoured "
                    "region.\n\n"
-                   "Every packet in it is framed as 8.2 describes: the eight "
+                   "Every packet in it is framed the same way: the eight "
                    "bytes \"XPAR2PKT\",\n"
                    "a little-endian 64-bit total length at offset 8, the "
                    "set identity at 16,\n"

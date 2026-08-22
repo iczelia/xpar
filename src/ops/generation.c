@@ -656,7 +656,8 @@ static void chain_link(xpar_chain * c) {
     g = &c->gen[c->gen_count];
     st = xpar_setd_read(p->body, (sz) p->body_len, &g->sd);
     if (st != XPAR_OK && st != XPAR_E_UNSUPPORTED) {
-      xpar_fprintf(xpar_stderr, "xpar: a set descriptor is %s; ignored.\n",
+      xpar_fprintf(xpar_stderr,
+                   "xpar: a set descriptor is unreadable (%s); ignored.\n",
                    xpar_status_str(st));
       continue;
     }
@@ -924,7 +925,7 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     st = xpar_entry_read(p->body, (sz) p->body_len,
                          c->gen[h].sd.posix_record_count, e);
     if (st != XPAR_OK)
-      FATAL_FORMAT("A manifest entry of generation %u is %s.",
+      FATAL_FORMAT("A manifest entry of generation %u is unreadable (%s).",
                    c->gen[h].sd.generation, xpar_status_str(st));
     if (e->posix_index != XPAR_ABSENT_U32 &&
         e->posix_index >= c->gen[h].sd.posix_record_count)
@@ -1644,7 +1645,7 @@ void xpar_garm_write_patched(const char * path,
   u8 * io = NULL;
   u64 at = 0, stream_end;
   FATAL_UNLESS("The armoured maintenance parameters are invalid.", a != NULL);
-  FATAL_UNLESS("The armoured protected stream lies inside its plaintext.",
+  FATAL_UNLESS("The armoured protected stream lies outside its plaintext.",
                stream_offset <= plain_len && stream_len <= plain_len -
                  stream_offset);
   stream_end = stream_offset + stream_len;
@@ -3330,13 +3331,14 @@ int xpar_op_addrecovery(const xpar_options * o) {
   want = gen_resolve_r(&o->recovery, c.gen[g].sd.data_slice_count,
                        c.gen[g].sd.slice_size);
   if (!want)
-    FATAL("addrecovery needs --recovery=SPEC, read as the total the "
-          "generation should end up with (it has %llu).",
+    FATAL("addrecovery needs --recovery=SPEC, which names the total this "
+          "generation should end up with; it has %llu now.",
           (unsigned long long) have);
   if (want <= have) {
-    xpar_fprintf(xpar_stderr, "xpar: generation %u already has %llu recovery "
-                 "slices; nothing to do.\n", c.gen[g].sd.generation,
-                 (unsigned long long) have);
+    xpar_fprintf(xpar_stderr, "xpar: generation %u already has %llu "
+                 "recovery slice%s; nothing to do.\n",
+                 c.gen[g].sd.generation, (unsigned long long) have,
+                 PLURAL(have));
     gen_json_result(o, "addrecovery", c.gen[g].set_id,
                     c.gen[g].sd.generation, "unchanged", XPAR_EXIT_OK);
     xpar_layt_free(&old);
@@ -3349,12 +3351,13 @@ int xpar_op_addrecovery(const xpar_options * o) {
     if (c.gen[g].sd.codec == XPAR_CODEC_FFT)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "Generation %u was encoded with the FFT codec on a recovery "
-                 "axis of %llu slices, and %llu is past it. Adding slices "
-                 "across a power-of-two bracket changes every existing "
-                 "recovery slice, so they would no longer combine: xpar will "
-                 "not write them. Re-encode with `xpar consolidate "
-                 "--max-recovery=%llu`, or create the set with "
-                 "--codec=matrix, for which topping up is unbounded.",
+                 "axis of %llu slices, and %llu is past it. Growing the axis "
+                 "across a power-of-two boundary changes every recovery slice "
+                 "already on disk, so the old and the new ones would no "
+                 "longer decode together; xpar will not write them. Re-encode "
+                 "with `xpar consolidate --max-recovery=%llu`, or create the "
+                 "set with --codec=matrix, which can be topped up without "
+                 "limit.",
                  c.gen[g].sd.generation, (unsigned long long) axis,
                  (unsigned long long) want, (unsigned long long) want);
     FATAL_CODE(XPAR_EXIT_NOPLAN,
@@ -3471,10 +3474,10 @@ int xpar_op_addrecovery(const xpar_options * o) {
     xpar_verify_written_set_at(o, source->path, &verify_ref);
     if (!o->quiet)
       xpar_fprintf(xpar_stderr,
-                   "xpar: generation %u now carries %llu recovery slices "
+                   "xpar: generation %u now carries %llu recovery slice%s "
                    "inside its armoured archive (%llu added).\n",
                    c.gen[g].sd.generation, (unsigned long long) want,
-                   (unsigned long long) (want - have));
+                   PLURAL(want), (unsigned long long) (want - have));
     gen_json_result(o, "addrecovery", c.gen[g].set_id,
                     c.gen[g].sd.generation, "ok", XPAR_EXIT_OK);
     xpar_layt_free(&old);
@@ -3643,11 +3646,11 @@ int xpar_op_addrecovery(const xpar_options * o) {
 
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: generation %u now carries %llu recovery slices "
-                 "(%llu added in %u volumes); every existing slice is "
+                 "xpar: generation %u now carries %llu recovery slice%s "
+                 "(%llu added in %u volume%s); every existing slice is "
                  "unchanged.\n", c.gen[g].sd.generation,
-                 (unsigned long long) want, (unsigned long long) (want - have),
-                 nvol);
+                 (unsigned long long) want, PLURAL(want),
+                 (unsigned long long) (want - have), nvol, PLURAL(nvol));
   gen_json_result(o, "addrecovery", c.gen[g].set_id,
                   c.gen[g].sd.generation, "ok", XPAR_EXIT_OK);
 
@@ -3697,14 +3700,16 @@ int xpar_op_add(const xpar_options * o) {
                    c.gen[i].sd.generation, idbuf);
     }
   if (o->align == XPAR_ALIGN_SLICE && !o->slice_size)
-    FATAL("--align=slice on an existing set needs an explicit -s, because "
-          "the alignment has to be known before the geometry it feeds.");
+    FATAL("--align=slice on an existing set needs an explicit -s: the "
+          "padding is inserted while the stream is built, which is before "
+          "the planner would otherwise pick a slice size.");
   /*  Whole-file chain deduplication searches the effective ancestor
       manifest; only chunk deduplication needs the disk index.  */
   if (o->dedup == XPAR_DEDUP_NONE && o->verbose)
     xpar_fprintf(xpar_stderr,
-                 "xpar: --dedup=none on a chain re-appends and re-encodes a "
-                 "renamed or chmod-ed file rather than reusing its extents.\n");
+                 "xpar: --dedup=none: a renamed or chmod-ed file is "
+                 "re-appended and re-encoded rather than reusing the extents "
+                 "the chain already holds.\n");
 
   xpar_gchain_manifest(&c, head, &inh, &owner);
   tab  = (xpar_posix_rec **) xpar_calloc(c.gen_count, sizeof(void *));
@@ -3862,7 +3867,7 @@ int xpar_op_add(const xpar_options * o) {
 
       if (gone) {
         if (!o->allow_missing)
-          FATAL("\"%.*s\" is in the set and not on disk. Pass "
+          FATAL("'%.*s' is in the set but not on disk. Pass "
                 "--allow-missing to record the deletion.",
                 (int) old->name_len, old->name);
         dropped++;  xpar_free(path);  ia++;
@@ -3889,7 +3894,7 @@ int xpar_op_add(const xpar_options * o) {
         const xpar_entry * anc;
         if (!gen_refresh(e, path, o, caps, &warn_posix,
                          gen_chain_key(&c), c.auth_only))
-          FATAL_IO("Cannot re-read \"%s\".", path);
+          FATAL_IO("Cannot re-read '%s'.", path);
         g.m.source[g.m.count - 1] = xpar_strdup(path);
         anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, e) : NULL;
         if (anc) { gen_take_extents(e, anc);  g.reuse[g.m.count - 1] = true; }
@@ -3927,9 +3932,9 @@ int xpar_op_add(const xpar_options * o) {
 
   if (warn_posix)
     xpar_fprintf(xpar_stderr,
-                 "xpar: an inherited entry was re-read outside <paths...> "
-                 "and its POSX record was dropped; name its path to keep "
-                 "ownership and extended attributes.\n");
+                 "xpar: an inherited entry was rescanned without being named "
+                 "on the command line, so its POSX record was dropped; name "
+                 "its path to keep ownership and extended attributes.\n");
 
   if (fresh.posix_count) {
     g.m.posix       = fresh.posix;
@@ -3993,13 +3998,16 @@ int xpar_op_add(const xpar_options * o) {
   gen_hexid(idbuf, rq.set_id);
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: generation %u, set %s: %u entries "
+                 "xpar: generation %u, set %s: %u %s "
                  "(%u added, %u changed, %u inherited, %u dropped), "
-                 "%llu new stream bytes, %llu recovery slices in %u "
-                 "volumes.\n", rq.generation, idbuf, g.m.count, added,
+                 "%llu new stream bytes, %llu recovery slice%s in %u "
+                 "volume%s.\n", rq.generation, idbuf, g.m.count,
+                 g.m.count == 1 ? "entry" : "entries", added,
                  changed, kept, dropped,
                  (unsigned long long) g.m.stream_length,
-                 (unsigned long long) rq.plan.recovery, rq.volumes - 1);
+                 (unsigned long long) rq.plan.recovery,
+                 PLURAL(rq.plan.recovery), rq.volumes - 1,
+                 PLURAL(rq.volumes - 1));
   gen_json_result(o, "add", rq.set_id, rq.generation, "ok", XPAR_EXIT_OK);
 
   for (i = 0; i < c.gen_count; i++)
@@ -4066,8 +4074,8 @@ static void gen_prune_rebase(const xpar_chain * c, xpar_manifest * m,
     for (k = 0; k < m->entry[i].extent_count; k++) {
       xpar_extent * x = &m->entry[i].extents[k];
       i64 h = xpar_gchain_gen_of(c, x->stream_offset, x->length);
-      FATAL_UNLESS("A surviving extent belongs to a surviving generation.",
-                   h >= 0 && !removed[h]);
+      FATAL_UNLESS("internal: a surviving extent does not belong to a "
+                   "surviving generation.", h >= 0 && !removed[h]);
       x->stream_offset = base[h] +
                          (x->stream_offset - c->gen[h].sd.stream_base);
     }
@@ -4177,14 +4185,15 @@ static void gen_prune_armoured(xpar_buf * out, const xpar_chain * c,
   const u8 * body;
   u64 off;
   int which;
-  FATAL_UNLESS("An armoured generation has a recoverable prologue.",
+  FATAL_UNLESS("internal: an armoured generation has no recoverable "
+               "prologue.",
                xpar_garm_prologue(v->data, v->len, &pr, &which));
   arm_params_of(&pr, &ap);
   plain = arm_extract(&ap, v->data + ARM_HDR_LEN,
                       (u64) v->len - ARM_HDR_LEN, pr.plain_length, &plen,
                       gen_chain_key(c));
-  FATAL_UNLESS("An armoured generation has a recoverable packet stream.",
-               plain != NULL);
+  FATAL_UNLESS("internal: an armoured generation has no recoverable "
+               "packet stream.", plain != NULL);
   xpar_buf_init(&plain_out);
   gen_rebuild(&plain_out, o, plain, plen, rw, false);
   xpar_free(plain);
@@ -4195,8 +4204,8 @@ static void gen_prune_armoured(xpar_buf * out, const xpar_chain * c,
       stream_len = hdr.length - XPAR_PKT_HDR - 16;
       break;
     }
-  FATAL_UNLESS("A pruned armoured generation still carries its stream.",
-               stream_at != 0);
+  FATAL_UNLESS("internal: a pruned armoured generation no longer carries "
+               "its stream.", stream_at != 0);
   xpar_gf_init();
   a = xpar_armour_new(&ap);
   region = (u8 *) xpar_alloc_raw((sz) xpar_armour_size(a, plain_out.len));
@@ -4261,7 +4270,7 @@ static void gen_prune_output(gen_prune_tx * t, const char * old_path,
                              const char * new_path, char * stage, bool move,
                              bool index, u32 order) {
   gen_prune_file * f = gen_prune_add(t, old_path);
-  FATAL_UNLESS("A pruned volume has only one replacement.",
+  FATAL_UNLESS("internal: a pruned volume was given two replacements.",
                f->new_path == NULL);
   f->new_path = xpar_strdup(new_path);
   f->stage = stage;  f->move = move;  f->index = index;  f->order = order;
@@ -4301,7 +4310,7 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
      other occupant is unrelated and is never overwritten by rotation.  */
   for (i = 0; i < t->count; i++) if (t->f[i].new_path) {
     for (j = i + 1; j < t->count; j++)
-      FATAL_UNLESS("Two surviving volumes do not have the same final name.",
+      FATAL_UNLESS("internal: two surviving volumes share a final name.",
                    !t->f[j].new_path ||
                    !gen_path_equal(t->f[i].new_path, t->f[j].new_path));
     if (gen_exists(t->f[i].new_path) &&
@@ -4399,10 +4408,12 @@ int xpar_op_prune(const xpar_options * o) {
   if (survivors == c.gen_count)
     FATAL("prune needs --before=G or --generation=G to say what to remove.");
   if (!survivors)
-    FATAL("That would remove every generation, which is `rm`, not `prune`.");
+    FATAL("That would remove every generation, leaving nothing behind; "
+          "delete the volumes yourself if that is what you want.");
   if (removed[head])
-    FATAL("Generation %u is the newest and every other generation is an "
-          "older snapshot of it; removing it is not a rotation.",
+    FATAL("Generation %u is the newest one in the chain, and every other "
+          "generation is an older snapshot of it; prune drops older "
+          "generations and cannot drop the newest.",
           c.gen[head].sd.generation);
 
   xpar_gchain_manifest(&c, head, &m, &owner);
@@ -4441,9 +4452,9 @@ int xpar_op_prune(const xpar_options * o) {
                  "unrecoverable.\n", (unsigned long long) orphans,
                  c.gen[head].sd.generation, m.count);
     xpar_fprintf(gen_hout(o),
-                 "run `xpar consolidate` first, which collapses the chain "
-                 "and leaves every earlier generation with a dependency "
-                 "count of zero, or --force to accept the loss.\n");
+                 "run `xpar consolidate` first: it collapses the chain so "
+                 "that no earlier generation is still depended on. Pass "
+                 "--force to prune anyway and accept the loss.\n");
     xpar_free(owner);  xpar_manifest_free(&m);
     xpar_free(removed);  xpar_free(new_id);
     xpar_free(new_generation);  xpar_free(new_base);
@@ -4542,7 +4553,7 @@ int xpar_op_prune(const xpar_options * o) {
             c.gen[g].sd.generation);
 
     gen_prune_rebase(&c, &gm, keep, removed, new_base);
-    FATAL_UNLESS("Every surviving generation has a volume layout.",
+    FATAL_UNLESS("internal: a surviving generation has no volume layout.",
                  gen_prune_layout(&c, g, new_generation[g],
                                   &old_layt, &layt));
 
@@ -4559,7 +4570,8 @@ int xpar_op_prune(const xpar_options * o) {
     if (sd.generation) {
       u32 parent = g;
       while (parent && removed[--parent]) { }
-      FATAL_UNLESS("A non-zero pruned generation has a surviving parent.",
+      FATAL_UNLESS("internal: a pruned generation above zero has no "
+                   "surviving parent.",
                    parent < g && !removed[parent]);
       xpar_memcpy(sd.parent_set_id, new_id[parent], XPAR_SET_ID_LEN);
     }
@@ -4649,10 +4661,11 @@ int xpar_op_prune(const xpar_options * o) {
 
   gen_prune_commit(&tx, c.base);
   xpar_fprintf(gen_hout(o),
-               "pruned %u generations, reclaimed %llu bytes; %llu entries "
+               "pruned %u generation%s, reclaimed %llu bytes; %llu %s "
                "dropped from the surviving manifests.\n",
-               c.gen_count - survivors, (unsigned long long) reclaim,
-               (unsigned long long) orphans);
+               c.gen_count - survivors, PLURAL(c.gen_count - survivors),
+               (unsigned long long) reclaim, (unsigned long long) orphans,
+               orphans == 1 ? "entry was" : "entries were");
   gen_json_result(o, "prune", c.gen[head].set_id,
                   c.gen[head].sd.generation, "ok", XPAR_EXIT_OK);
 
@@ -4720,12 +4733,12 @@ int xpar_op_consolidate(const xpar_options * o) {
     }
     if (!gen_refresh(&m.entry[i], path, o, caps, &warn_posix,
                      gen_chain_key(&c), c.auth_only)) {
-      xpar_fprintf(xpar_stderr, "xpar: cannot read \"%s\".\n", path);
+      xpar_fprintf(xpar_stderr, "xpar: cannot read '%s'.\n", path);
       bad++;  xpar_free(path);  continue;
     }
     if (xpar_memcmp(want, m.entry[i].content_hash, 32)) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: \"%.*s\" does not match the content the chain "
+                   "xpar: '%.*s' does not match the content the chain "
                    "records for it.\n", (int) m.entry[i].name_len,
                    m.entry[i].name);
       bad++;
@@ -4819,10 +4832,12 @@ int xpar_op_consolidate(const xpar_options * o) {
   }
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: collapsed %u generations into one: %u entries, "
-                 "%llu stream bytes, %llu recovery slices.\n", c.gen_count,
-                 m.count, (unsigned long long) m.stream_length,
-                 (unsigned long long) rq.plan.recovery);
+                 "xpar: collapsed %u generations into one: %u %s, "
+                 "%llu stream bytes, %llu recovery slice%s.\n", c.gen_count,
+                 m.count, m.count == 1 ? "entry" : "entries",
+                 (unsigned long long) m.stream_length,
+                 (unsigned long long) rq.plan.recovery,
+                 PLURAL(rq.plan.recovery));
 
 done:
   gen_json_result(o, "consolidate",
@@ -5132,8 +5147,9 @@ int xpar_op_undo(const xpar_options * o) {
   u32 generation;
 
   if (o->set && gen_ends_with(o->set, ".xparundo"))
-    FATAL("undo takes the protected set, not a journal pathname, so the "
-          "journal can be bound to the correct set and manifest.");
+    FATAL("undo takes the protected set, not a journal pathname; it needs "
+          "the set to bind the journal to the right generation and "
+          "manifest.");
   xpar_gchain_load(o, &chain);
   generation = xpar_gchain_select(&chain,
                          o->gen_count ? &o->gens[0] : NULL);
@@ -5178,8 +5194,8 @@ int xpar_op_undo(const xpar_options * o) {
     if (!complete) {
       /*  An incomplete journal predates all protected-data writes.  */
       xpar_fprintf(xpar_stderr,
-                   "xpar: the journal '%s' is incomplete, so the repair it "
-                   "belongs to never began writing and there is nothing to "
+                   "xpar: the journal '%s' is incomplete, so the repair that "
+                   "owns it never wrote anything and there is nothing to "
                    "undo. %s\n", path,
                    o->keep_journal ? "Kept." : "Removing it.");
       if (!o->keep_journal && xpar_remove(path) != 0)
@@ -5326,7 +5342,7 @@ int xpar_op_undo(const xpar_options * o) {
                "xpar: replayed %lu of %llu journal records%s%s.\n",
                (unsigned long) applied, (unsigned long long) count,
                removed ? ", removing files the repair had created" : "",
-               skipped ? ", the rest could not be applied" : "");
+               skipped ? "; the rest could not be applied" : "");
   if (!skipped && !o->keep_journal && xpar_remove(path) != 0)
     xpar_fprintf(xpar_stderr, "xpar: cannot remove '%s'.\n", path);
   gen_json_result(o, "undo", chain.gen[generation].set_id,

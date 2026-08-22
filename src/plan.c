@@ -235,7 +235,7 @@ static void eval(const cand_in * in, cand_out * out) {
       chunk = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
                       in->s, in->r, in->budget, in->z);
       if (!chunk) {
-        out->why = "(S + 2m) buffers do not fit even one column of 64 B";
+        out->why = "(S + 2m) buffers do not fit, even at a 64-byte column";
         return;
       }
     }
@@ -408,7 +408,8 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     in.rotational = req->rotational;
     in.want_chunk = req->column_chunk;
     if (XPAR_CODEC_IS_FFT(in.codec) && req->streaming) {
-      c.why = "the FFT code needs every slice at once; a pipe has one";
+      c.why = "the FFT codec needs every slice at once, and a pipe "
+              "gives one at a time";
       add_cand(out, in.codec, in.field, &c, 0);
       continue;
     }
@@ -600,23 +601,24 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   human(b, sizeof b, budget);
   if (need == (u64) -1) {
     xpar_snprintf(buf, cap,
-                  "no plan fits at any -m this host can address; split the "
-                  "set. %s, and --codec=matrix %s at -m %s",
-                  best_b ? "-b does have a value that fits"
-                         : "no -b fits either",
-                  mat ? "fits" : "does not fit", b);
+                  "no -m this host can address admits a plan; split the set "
+                  "into smaller ones. At -m %s, %s and --codec=matrix %s",
+                  b, best_b ? "some -b does fit" : "no -b fits",
+                  mat ? "does fit" : "does not fit");
     return;
   }
   xpar_snprintf(buf, cap,
-                "raise -m to %s, %s, or use --codec=matrix (which %s at "
-                "-m %s)", a,
-                best_b ? "set -b to a value that fits"
-                       : "note that no -b fits this -m",
-                mat ? "does fit" : "does not fit either", b);
-  if (best_b) {
+                "raise -m to %s, or use --codec=matrix, which %s at -m %s",
+                a, mat ? "does fit" : "does not fit either", b);
+  {
     sz at = xpar_strlen(buf);
-    xpar_snprintf(buf + at, at < cap ? cap - at : 0,
-                  "; -b %llu fits", (unsigned long long) best_b);
+    if (best_b)
+      xpar_snprintf(buf + at, at < cap ? cap - at : 0,
+                    "; -b %llu fits at the current -m",
+                    (unsigned long long) best_b);
+    else
+      xpar_snprintf(buf + at, at < cap ? cap - at : 0,
+                    "; no -b fits at the current -m");
   }
 }
 

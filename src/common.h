@@ -67,6 +67,9 @@
 /*  Element count of a true array. Never pass a pointer.  */
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 
+/*  Message pluralisation: the suffix a regular noun takes for a count.  */
+#define PLURAL(n) ((n) == 1 ? "" : "s")
+
 #define XPAR_EXIT_OK           0  /*  Success; for verify, no damage.  */
 #define XPAR_EXIT_REPAIRABLE   1  /*  verify: damage found, repairable.
                                       repair --exit-on-change: changed.  */

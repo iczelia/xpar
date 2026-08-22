@@ -348,7 +348,7 @@ xpar_codec * xpar_codec_new(u8 codec, u8 field_log2, u64 s, u64 r) {
 
 xpar_codec * xpar_codec_new_axis(u8 codec, u8 field_log2, u64 s, u64 r,
                                  u8 axis_log2) {
-  FATAL_UNLESS("Internal: unsupported codec geometry.",
+  FATAL_UNLESS("internal: unsupported codec geometry.",
                xpar_codec_supports_axis(codec, field_log2, s, r, axis_log2));
   xpar_codec * c = (xpar_codec *) xpar_calloc(1, sizeof(xpar_codec));
   c->kind = codec;

@@ -315,7 +315,7 @@ bool xpar_fft_supports(u8 kind, u8 field_log2, u64 s, u64 r) {
 void * xpar_fft_new_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                          u8 axis_log2) {
   xpar_gf_init();
-  FATAL_UNLESS("Internal: unsupported FFT codec geometry.",
+  FATAL_UNLESS("internal: unsupported FFT codec geometry.",
                xpar_fft_supports_axis(kind, field_log2, s, r, axis_log2));
   fft_codec * cd = (fft_codec *) xpar_calloc(1, sizeof(fft_codec));
   cd->f16   = field_log2 == 16;

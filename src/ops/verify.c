@@ -313,7 +313,7 @@ static void open_armoured_image(xpar_vset * s, xpar_vimg * v) {
   ap.symbol_bits = pr.symbol_bits;  ap.poly = pr.poly;
   ap.n = pr.n;  ap.k = pr.k;  ap.fcr = pr.fcr;  ap.prim = pr.prim;
   ap.depth = pr.depth;
-  FATAL_UNLESS("The armoured prologue of '%s' names valid parameters.",
+  FATAL_UNLESS("The armoured prologue of '%s' names unusable parameters.",
                xpar_armour_check(&ap) == NULL, v->path);
   FATAL_UNLESS("The armoured region of '%s' is truncated.",
                v->size >= 384 && pr.armoured_length <= v->size - 384,
@@ -1480,7 +1480,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
     FATAL_FORMAT("This set requires a format feature this build does not "
                  "implement.");
   if (st != XPAR_OK)
-    FATAL_FORMAT("The set descriptor is malformed: %s.",
+    FATAL_FORMAT("The set descriptor is unreadable: %s.",
                  xpar_status_str(st));
 
   if (s->setd.layout == XPAR_LAYOUT_ARMOURED) select_armoured_image(s);
@@ -2444,7 +2444,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
 
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {
     if (s->geom.slice_size > (u64) (sz) -1)
-      FATAL_FORMAT("slice size exceeds the host address space");
+      FATAL_FORMAT("The slice size exceeds this host's address space.");
     buf_size = MAX(buf_size, (sz) s->geom.slice_size);
   }
   buf = (u8 *) xpar_alloc_raw(buf_size);
@@ -2636,7 +2636,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     xpar_fprintf(xpar_stderr,
                  "xpar: SETD records a %llu-byte cell but no complete cell "
                  "table survives; erasures fall back to slice granularity "
-                 "(scrub --rebuild-cells restores it)\n",
+                 "(`xpar scrub --rebuild-cells` restores it)\n",
                  (unsigned long long) s->geom.cell_bytes);
   if (s->recovery_gone)
     xpar_fprintf(xpar_stderr,
@@ -2651,11 +2651,12 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
       if (aliased(s, i, k)) aliased_bytes += s->mf.entry[i].extents[k].length;
 
   xpar_fprintf(xpar_stderr,
-               "xpar: %llu slices of %llu bytes, %llu recovery slices, "
+               "xpar: %llu slice%s of %llu bytes, %llu recovery slice%s, "
                "erasure unit ",
                (unsigned long long) s->geom.slice_count,
+               PLURAL(s->geom.slice_count),
                (unsigned long long) s->geom.slice_size,
-               (unsigned long long) s->recovery);
+               (unsigned long long) s->recovery, PLURAL(s->recovery));
   if (s->eg.cell_bytes)
     xpar_fprintf(xpar_stderr, "cell of %llu bytes (%lu per slice)\n",
                  (unsigned long long) s->eg.cell_bytes,
@@ -2664,23 +2665,27 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     xpar_fputs("slice\n", xpar_stderr);
   if (s->armg_corrected || s->armg_failed)
     xpar_fprintf(xpar_stderr,
-                 "xpar: armoured metadata: %llu regions corrected, %llu "
+                 "xpar: armoured metadata: %llu region%s corrected, %llu "
                  "past the inner code\n",
                  (unsigned long long) s->armg_corrected,
+                 PLURAL(s->armg_corrected),
                  (unsigned long long) s->armg_failed);
   if (o->fast)
     xpar_fprintf(xpar_stderr,
-                 "xpar: coverage: stream only (%lu entries, %llu bytes of "
+                 "xpar: coverage: stream only (%lu %s, %llu bytes of "
                  "aliased occurrences not checked; run without --fast)\n",
                  (unsigned long) s->mf.count,
+                 s->mf.count == 1 ? "entry" : "entries",
                  (unsigned long long) aliased_bytes);
   else
-    xpar_fprintf(xpar_stderr, "xpar: coverage: tree (%lu entries)\n",
-                 (unsigned long) s->mf.count);
+    xpar_fprintf(xpar_stderr, "xpar: coverage: tree (%lu %s)\n",
+                 (unsigned long) s->mf.count,
+                 s->mf.count == 1 ? "entry" : "entries");
   if (s->superseded_entries)
-    xpar_fprintf(xpar_stderr, "xpar: superseded: %llu entries excluded from "
+    xpar_fprintf(xpar_stderr, "xpar: superseded: %llu %s excluded from "
                  "this generation's verdict\n",
-                 (unsigned long long) s->superseded_entries);
+                 (unsigned long long) s->superseded_entries,
+                 s->superseded_entries == 1 ? "entry" : "entries");
 
   if (rc == XPAR_EXIT_OK) {
     xpar_fprintf(xpar_stderr, "xpar: status: %sclean%s\n",
@@ -2688,24 +2693,28 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     return;
   }
   xpar_fprintf(xpar_stderr,
-               "xpar: damaged: %llu entries (%llu missing), %llu slices, "
-               "%llu cells; deepest column %llu\n",
+               "xpar: damaged: %llu %s (%llu missing), %llu slice%s, "
+               "%llu cell%s; deepest column %llu\n",
                (unsigned long long) s->bad_entries,
+               s->bad_entries == 1 ? "entry" : "entries",
                (unsigned long long) s->missing_entries,
-               (unsigned long long) s->bad_slices,
+               (unsigned long long) s->bad_slices, PLURAL(s->bad_slices),
                (unsigned long long) s->er.bad_count,
+               PLURAL(s->er.bad_count),
                (unsigned long long) s->depth);
   if (s->alias_bad)
     xpar_fprintf(xpar_stderr,
-                 "xpar: %llu entries damaged only at aliased occurrences; "
+                 "xpar: %llu %s damaged only at aliased occurrences; "
                  "repair copies those and spends no recovery\n",
-                 (unsigned long long) s->alias_bad);
+                 (unsigned long long) s->alias_bad,
+                 s->alias_bad == 1 ? "entry is" : "entries are");
   if (rc == XPAR_EXIT_UNREPAIRABLE)
     xpar_fprintf(xpar_stderr,
                  "xpar: status: %sunrepairable%s, short by %llu recovery "
-                 "slices in the deepest column\n",
+                 "slice%s in the deepest column\n",
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
-                 (unsigned long long) (s->depth - s->recovery));
+                 (unsigned long long) (s->depth - s->recovery),
+                 PLURAL(s->depth - s->recovery));
   else
     xpar_fprintf(xpar_stderr, "xpar: status: %srepairable%s\n",
                  color ? "\033[33m" : "", color ? "\033[0m" : "");
@@ -2782,7 +2791,7 @@ int xpar_op_verify(const xpar_options * o) {
 
   FATAL_UNLESS("verify needs random access and cannot read a pipe; see "
                "--spool.", !o->from_stdin);
-  FATAL_UNLESS("--fast and --strong ask for opposite things.",
+  FATAL_UNLESS("Options --fast and --strong are mutually exclusive.",
                !(o->fast && o->strong));
 
   if (o->chain) {

@@ -843,8 +843,8 @@ static void ex_open_chain(ex * x) {
     x->stream_set[x->stream_count] = xpar_vset_open(&ro);
     if (xpar_vset_setd(x->stream_set[x->stream_count])->layout ==
         XPAR_LAYOUT_SIDECAR)
-      FATAL("Generation %u is a sidecar generation whose protected data "
-            "are external files; it cannot be materialised by extract.",
+      FATAL("Generation %u is a sidecar generation: the data it protects "
+            "lives in external files, so extract cannot materialise it.",
             x->chain.gen[g].sd.generation);
     x->stream_count++;
     g = x->chain.gen[g].parent;

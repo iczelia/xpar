@@ -680,7 +680,7 @@ static void check_emit_name(const walker * w, const char * name, u32 len,
                             const char * disk) {
   xpar_path_status s = xpar_path_check(name, len, w->o->path_flags);
   if (s != XPAR_PATH_OK)
-    FATAL("Cannot store \"%s\": %s.", disk, xpar_path_reason(s));
+    FATAL("Cannot store '%s': %s.", disk, xpar_path_reason(s));
 }
 
 static void note_stat(walker * w, u32 idx, const xpar_stat_t * st) {
@@ -716,7 +716,7 @@ static void emit_symlink(xpar_entry * e, const char * path) {
   if (!buf) FATAL_PERROR(path);
   ts = xpar_symlink_target_check((const u8 *) buf, n);
   if (ts != XPAR_PATH_OK)
-    FATAL("Cannot store the target of \"%s\": %s.", path,
+    FATAL("Cannot store the target of '%s': %s.", path,
           xpar_path_reason(ts));
   e->entry_type = XPAR_ENTRY_SYMLINK;
   e->extra      = (u8 *) buf;
@@ -730,13 +730,13 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   pathbuf * path = disk;
   bool excluded = false, keep;
   if (depth > 256)
-    FATAL("Directory nesting past 256 levels at \"%s\".", disk->p);
+    FATAL("Directory nesting past 256 levels at '%s'.", disk->p);
   if (xpar_lstat(disk->p, &st) != 0) FATAL_PERROR(disk->p);
   xpar_memset(&real, 0, sizeof(real));
   if (st.is_symlink && w->o->follow_symlinks) {
     pb_set(&real, disk->p, disk->len);
     if (!follow_link(&real, &st)) {
-      xpar_fprintf(xpar_stderr, "xpar: skipping \"%s\": dangling link.\n",
+      xpar_fprintf(xpar_stderr, "xpar: skipping '%s': dangling link.\n",
                    disk->p);
       xpar_free(real.p);
       return;
@@ -758,12 +758,12 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
     if (w->o->recurse && (!excluded || w->o->include_count))
       walk_dir(w, path, name, name_len, depth);
   } else if (!name_len) {
-    FATAL("Input \"%s\" resolves to no storable name.", path->p);
+    FATAL("Input '%s' resolves to no storable name.", path->p);
   } else if (!keep) {
     /*  A filtered special file is silent just like a filtered regular one.  */
   } else if (!st.is_regular && !st.is_symlink) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: skipping \"%s\": not a file, directory or link.\n",
+                 "xpar: skipping '%s': not a file, directory or link.\n",
                  path->p);
   } else {
     xpar_entry * e = emit_entry(w, name, name_len, path->p, &st);
@@ -1256,7 +1256,7 @@ const char * xpar_mf_reason(xpar_mf_status s) {
     case XPAR_MF_EXTENT_SUM:    return "extents do not sum to the length";
     case XPAR_MF_EXTENT_RANGE:  return "extent outside the stream range";
     case XPAR_MF_EXTENT_FWD:    return "extent names undefined bytes";
-    case XPAR_MF_EXTENT_SPLIT:  return "extent is half definition";
+    case XPAR_MF_EXTENT_SPLIT:  return "extent straddles the defined stream";
     case XPAR_MF_STREAM_GAP:    return "the stream has a gap";
     case XPAR_MF_LINK_MISSING:  return "hard link names no entry of the set";
     case XPAR_MF_LINK_CHAIN:    return "hard link names a non-regular entry";

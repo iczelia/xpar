@@ -460,8 +460,8 @@ static void rp_pick_setd(rp * r) {
     if (r->o->gen_count ? named : head) { want = p;  break; }
   }
   FATAL_UNLESS("No set descriptor survived in '%s'; the critical group is "
-               "gone and `xpar recover-prologue` or another volume is the "
-               "next move.", want != NULL, r->o->set);
+               "gone. Try another volume of the set, or "
+               "`xpar recover-prologue`.", want != NULL, r->o->set);
   if (xpar_setd_read(want->body, (sz) want->body_len, &r->sd) != XPAR_OK)
     FATAL_FORMAT("The set descriptor is malformed.");
   xpar_memcpy(r->set_id, want->hdr.set_id, XPAR_SET_ID_LEN);
@@ -2194,15 +2194,18 @@ static void rp_report(rp * r, const char * status, int code) {
     if (!r->cell_count)
       rp_note(r, "xpar: no damage found.\n");
     else
-      rp_note(r, "xpar: %u cells damaged, %llu copied, %llu decoded; "
-                 "%llu writes, %llu bytes; %llu entries repaired"
-                 " (%llu further names share a repaired inode).\n",
-              r->cell_count, (unsigned long long) r->cells_copied,
+      rp_note(r, "xpar: %u cell%s damaged, %llu copied, %llu decoded; "
+                 "%llu write%s, %llu bytes; %llu %s repaired"
+                 " (%llu further %s a repaired inode).\n",
+              r->cell_count, PLURAL(r->cell_count),
+              (unsigned long long) r->cells_copied,
               (unsigned long long) r->cells_decoded,
-              (unsigned long long) r->writes,
+              (unsigned long long) r->writes, PLURAL(r->writes),
               (unsigned long long) r->bytes_written,
               (unsigned long long) r->entries_repaired,
-              (unsigned long long) r->links_repaired);
+              r->entries_repaired == 1 ? "entry" : "entries",
+              (unsigned long long) r->links_repaired,
+              r->links_repaired == 1 ? "name shares" : "names share");
   }
 }
 
@@ -3545,8 +3548,9 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dest != XPAR_DEST_TO && o->dest != XPAR_DEST_BACKUP &&
       r.sd.slice_tag_len == 0 && !o->force)
     FATAL("This set was written with --slice-tag=none, so a wrong "
-          "reconstruction would be caught only at 2^-32. Repairing in "
-          "place needs -f; `--to <dir>` leaves the originals alone.");
+          "reconstruction would be caught only by a 32-bit CRC, which lets "
+          "one in 2^32 through. Repairing in place needs -f; `--to DIR` "
+          "leaves the originals alone.");
 
   rp_read_manifest(&r);
   rp_read_tags(&r);

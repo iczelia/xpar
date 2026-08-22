@@ -71,8 +71,8 @@ Append a generation protecting new or changed files.
 Collapse a chain of generations into one through re-encoding.
 .TP
 .B prune
-Remove generations from the head of a chain, preserving the generations that
-any surviving entry still depends on unless
+Remove older generations from a chain, keeping any generation that a
+surviving entry still depends on unless
 .B \-f
 is given.
 .TP
@@ -84,7 +84,7 @@ Print geometry, codec, plan and redundancy.
 .B \-\-deps
 adds the per-generation dependency table that
 .B prune
-decides on.
+consults.
 .TP
 .B explain
 Print the hand-recovery recipe: the exact

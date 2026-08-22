@@ -422,7 +422,7 @@ static void matrix_accumulate_job(sz index, void * arg) {
   st = xpar_codec_matrix_accumulate_many(
          b->cd, b->data_first, b->data, b->data_count, first,
          b->rec + first, count, b->bytes, b->clear);
-  FATAL_UNLESS("Internal: matrix streaming encoder rejected a planned "
+  FATAL_UNLESS("internal: matrix streaming encoder rejected a planned "
                "recovery-row range.", st == XPAR_CODEC_OK);
 }
 
@@ -1794,7 +1794,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     u64 rcvs_one = xpar_align_up(XPAR_PKT_HDR + 16 + c.geom.slice_size,
                                  XPAR_PKT_ALIGN);
     u64 rcvs_len;
-    FATAL_UNLESS("recovery payload is too large",
+    FATAL_UNLESS("The recovery payload is too large.",
                  !c.recovery || rcvs_one <= UINT64_MAX / c.recovery);
     rcvs_len = c.recovery * rcvs_one;
     ap = c.region_ap;
@@ -1964,12 +1964,15 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   publish_chunk_cache(&c);
 
   if (!o->quiet && !o->json)
-    xpar_fprintf(xpar_stderr, "xpar: %s: %llu entries, %llu slices of %llu "
-                 "bytes, %llu recovery slices in %u volumes\n", c.base,
+    xpar_fprintf(xpar_stderr, "xpar: %s: %llu %s, %llu slice%s of %llu "
+                 "bytes, %llu recovery slice%s in %u volume%s\n", c.base,
                  (unsigned long long) c.m.count,
+                 c.m.count == 1 ? "entry" : "entries",
                  (unsigned long long) c.geom.slice_count,
+                 PLURAL(c.geom.slice_count),
                  (unsigned long long) c.geom.slice_size,
-                 (unsigned long long) c.recovery, nvol);
+                 (unsigned long long) c.recovery, PLURAL(c.recovery),
+                 nvol, PLURAL(nvol));
   if (o->json) xpar_json_summary(&c.js, "ok", XPAR_EXIT_OK);
 
   rs_close(rsp);

@@ -62,7 +62,7 @@ static void apply_simd(const char * want) {
     for (i = 0; i < n; i++) {
       const xpar_cpu_tier * ct = xpar_cpu_tier_at(i);
       xpar_fprintf(xpar_stderr, " %s%s", ct->name,
-                   xpar_cpu_tier_usable(i) ? "" : "(unsupported here)");
+                   xpar_cpu_tier_usable(i) ? "" : " (unsupported here)");
     }
     xpar_fputs("\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE);

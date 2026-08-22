@@ -44,7 +44,7 @@ static void push_str(char *** v, u32 * n, const char * s) {
 static bool is_dir(const char * p);
 
 static void need_dir(const char * nm, const char * p) {
-  FATAL_UNLESS("Option %s names an existing directory, and '%s' is not "
+  FATAL_UNLESS("Option %s needs an existing directory, and '%s' is not "
                "one.", is_dir(p), nm, p);
 }
 
@@ -224,7 +224,7 @@ static const struct { const char * name;  u32 bits, lit; } pres_tokens[] = {
 };
 
 static void bad_token(const char * nm, const char * tok) {
-  xpar_fprintf(xpar_stderr, "xpar: Option %s does not know the token "
+  xpar_fprintf(xpar_stderr, "xpar: Option %s does not accept the token "
                "'%s'.\n", nm, tok);
   xpar_fputs("xpar: tokens: mtime atime ctime btime times mode setid "
              "attrs owner\n"
@@ -492,7 +492,7 @@ static const char * const verb_desc[] = {
   "Add recovery slices to an existing generation",
   "Append a generation protecting new or changed files",
   "Collapse a chain of generations into one",
-  "Remove generations from the head of a chain",
+  "Remove older generations from a chain",
   "Print the manifest",
   "Print geometry, codec, plan and redundancy",
   "Print the hand-recovery recipe",
@@ -532,7 +532,7 @@ static const char help_global[] =
   "      --color=WHEN     auto (default), always, never\n"
   "      --reproducible   Leave the clock and the host out of the set\n"
   "      --simd=TIER      Force a SIMD tier; 'auto' is the default\n"
-  "      --auth-key=FILE   Authenticate a set with the key in FILE\n"
+  "      --auth-key=FILE  Authenticate a set with the key in FILE\n"
   "  -h, --help           This message, or a verb's own options\n"
   "  -V, --version        Print the version and exit\n";
 
@@ -905,8 +905,8 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
       } else xpar_free(b);
       if (!out->count)
         FATAL_FORMAT("No xpar set guards '%s': neither '%s.xpar' nor the "
-                     "same name with a .xpar extension is there.",
-                     arg, arg);
+                     "same name with its extension replaced by '.xpar' is "
+                     "here.", arg, arg);
     }
   } else {
     /*  A base name: `base` means `base.xpar`.  */
@@ -914,8 +914,8 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
     else {
       xpar_free(a);
-      FATAL_FORMAT("No xpar set found for '%s'; 'xpar --help' lists the "
-                   "verbs.", arg);
+      FATAL_FORMAT("No xpar set found for '%s'; if that was meant to be a "
+                   "verb, 'xpar --help' lists them.", arg);
     }
   }
   if (out->base) gather_chain_siblings(out);
