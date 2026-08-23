@@ -59,9 +59,13 @@ case "$host_os" in
   *)                  xpar_is_dos=no  ;;
 esac
 AM_CONDITIONAL([XPAR_DOS], [test "x$xpar_is_dos" = "xyes"])
+XPAR_DOS_CPPFLAGS=""
 if test "x$xpar_is_dos" = "xyes"; then
   AC_DEFINE([XPAR_DOS], [1], [Define on MS-DOS/DJGPP hosts])
+  dnl  DJGPP hides POSIX and DOS declarations behind __STRICT_ANSI__.
+  XPAR_DOS_CPPFLAGS="-U__STRICT_ANSI__"
 fi
+AC_SUBST([XPAR_DOS_CPPFLAGS])
 
 case "$host_os" in
   mingw*|cygwin*|msys*) xpar_is_windows=yes ;;
@@ -320,11 +324,15 @@ CFLAGS="$save_CFLAGS"
 
 CFLAGS="$save_CFLAGS -march=armv8-a+crypto"
 AC_MSG_CHECKING([for ARM PMULL intrinsics])
+dnl  The PMULL kernel also requires the 128-bit table lookup.
 AC_COMPILE_IFELSE(
   [AC_LANG_PROGRAM([[#include <arm_neon.h>]], [[
      poly8x8_t a = vdup_n_p8((poly8_t) 1);
      poly16x8_t b = vmull_p8(a, a);
-     return (int) vgetq_lane_u16(vreinterpretq_u16_p16(b), 0);
+     uint8x16_t t = vdupq_n_u8(1);
+     t = vqtbl1q_u8(t, t);
+     return (int) vgetq_lane_u16(vreinterpretq_u16_p16(b), 0)
+          + (int) vgetq_lane_u8(t, 0);
    ]])],
   [AC_MSG_RESULT([yes])
    AC_DEFINE([HAVE_PMULL], [1], [Define if ARM PMULL is available])

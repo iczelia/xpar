@@ -143,6 +143,7 @@ struct xpar_file {
   bool             owned;
   bool             at_eof;
   bool             locked;   /*  unlocking a handle that never locked errors  */
+  bool             writable; /*  May call FlushFileBuffers.  */
   DWORD            last_err;
 #if defined(XPAR_WIN_LEGACY)
   CRITICAL_SECTION seek_cs;  /*  serialises seek-plus-transfer  */
@@ -167,6 +168,7 @@ void xpar_host_init(void) {
   g_stdin.kind  = g_stdin.h  ? GetFileType(g_stdin.h)  : FILE_TYPE_UNKNOWN;
   g_stdout.kind = g_stdout.h ? GetFileType(g_stdout.h) : FILE_TYPE_UNKNOWN;
   g_stderr.kind = g_stderr.h ? GetFileType(g_stderr.h) : FILE_TYPE_UNKNOWN;
+  g_stdout.writable = true;  g_stderr.writable = true;
 #if !defined(XPAR_WIN_LEGACY)
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);
@@ -363,6 +365,7 @@ xpar_file * xpar_open(const char * path, int flags) {
   f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
   if (!f) { CloseHandle(h);  SetLastError(ERROR_OUTOFMEMORY);  return NULL; }
   f->h = h;  f->kind = GetFileType(h);  f->owned = true;
+  f->writable = (access & (GENERIC_WRITE | FILE_APPEND_DATA)) != 0;
 #if defined(XPAR_WIN_LEGACY)
   InitializeCriticalSection(&f->seek_cs);
 #endif
@@ -460,8 +463,9 @@ i64 xpar_tell(xpar_file * f) {
 #endif
 }
 
+/*  Windows rejects flushing a read-only handle; POSIX treats it as clean.  */
 int xpar_flush(xpar_file * f) {
-  if (f->kind != FILE_TYPE_DISK) return 0;
+  if (f->kind != FILE_TYPE_DISK || !f->writable) return 0;
   return FlushFileBuffers(f->h) ? 0 : -1;
 }
 
@@ -639,8 +643,7 @@ void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
 
 void xpar_xclose(xpar_file * f) {
   if (!f) return;
-  if (f->kind == FILE_TYPE_DISK && !FlushFileBuffers(f->h))
-    FATAL_PERROR("flush");
+  if (xpar_flush(f) != 0) FATAL_PERROR("flush");
   if (f->owned) {
     if (!CloseHandle(f->h)) FATAL_PERROR("close");
 #if defined(XPAR_WIN_LEGACY)

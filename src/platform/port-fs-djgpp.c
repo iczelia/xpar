@@ -34,6 +34,11 @@
 #include <unistd.h>
 #include <utime.h>
 
+/*  DJGPP does not define ENOTSUP.  */
+#if !defined(ENOTSUP)
+#define ENOTSUP ENOSYS
+#endif
+
 /*  The DOS attribute byte, int 21h AX=4300h. Bit 3 is the volume label and
     bit 4 the directory flag, neither of which is a settable attribute.  */
 #define DOS_A_RDONLY  0x01

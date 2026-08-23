@@ -88,8 +88,10 @@ jobs:
       - name: Install TeX
         run: |
           sudo apt-get update
+          #  Scalable fonts required by microtype.
           sudo apt-get install -y latexmk texlive-latex-recommended \
-                                  texlive-latex-extra texlive-fonts-recommended
+                                  texlive-latex-extra texlive-fonts-recommended \
+                                  cm-super lmodern
 
       - name: Extract the source package
         run: |

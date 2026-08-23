@@ -18,7 +18,7 @@ AM_CFLAGS = -std=c99 $(XPAR_WARN_CFLAGS) $(XPAR_HARDEN_CFLAGS) \
             $(XPAR_SAN_CFLAGS) $(XPAR_WIN_CFLAGS)
 AM_LDFLAGS = $(XPAR_SAN_LDFLAGS) $(XPAR_WIN_LDFLAGS)
 
-AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS) -I$(top_builddir) \
+AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS) $(XPAR_DOS_CPPFLAGS) -I$(top_builddir) \
               -I$(top_srcdir)/src \
               -I$(top_srcdir)/src/kernel \
               -I$(top_srcdir)/src/platform
