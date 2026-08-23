@@ -695,9 +695,7 @@ void xpar_gchain_load(const xpar_options * o, xpar_chain * c) {
     c->auth_only = !a.unkeyed_retained;
   }
   if (c->key_loaded && !c->authenticated)
-    FATAL_CODE(XPAR_EXIT_AUTH,
-               "An authentication key was supplied, but this set has no "
-               "AUTH descriptor.");
+    FATAL_CODE(XPAR_EXIT_AUTH, "This set is not authenticated.");
 }
 
 void xpar_gchain_free(xpar_chain * c) {
@@ -719,16 +717,14 @@ static const xpar_key * gen_chain_key(const xpar_chain * c) {
 static void gen_require_write_key(const xpar_chain * c, const char * verb) {
   if (c->authenticated && !c->key_loaded)
     FATAL_CODE(XPAR_EXIT_AUTH,
-               "%s on an authenticated set requires --auth-key=FILE; "
-               "keyless access is read-only.", verb);
+               "%s requires --auth-key=FILE for this set.", verb);
 }
 
 u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   u32 i, found = XPAR_GEN_NONE, matches = 0;
   if (!g) {
     if (c->forked)
-      FATAL("This chain has forked: two generations name the same parent. "
-            "Name one with --generation; xpar will not guess.");
+      FATAL("This chain has forked; select a branch with --generation.");
     return c->head;
   }
   if (g->by_id) {
@@ -1125,9 +1121,7 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
     else
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "The %s codec cannot express S=%llu, R=%llu over GF(2^%u). "
-                 "The FFT code needs the rounded smaller axis plus the "
-                 "larger axis to fit in 2^field; --codec=matrix has no "
-                 "power-of-two rounding constraint.",
+                 "Try --codec=matrix.",
                  gen_codec_name(p->codec),
                  (unsigned long long) p->geom.slice_count,
                  (unsigned long long) r, p->field_log2);
@@ -3032,9 +3026,8 @@ static void gen_require_source_tables(const xpar_vset * set,
     for (i = 0; i < plan->geom.slice_count; i++)
       if (stored->slice_crc[i] != made->slice_crc[i])
         FATAL_CODE(XPAR_EXIT_REPAIRABLE,
-                   "The selected generation changed while its recovery "
-                   "data was being prepared (slice %llu CRC differs). "
-                   "Nothing was written.", (unsigned long long) i);
+                   "Slice %llu changed while recovery data was prepared; "
+                   "nothing was written.", (unsigned long long) i);
   if ((have & XPAR_TAGS_TAG) && stored->slice_tag && made->slice_tag) {
     if (stored->tag_len != made->tag_len)
       FATAL_FORMAT("The selected generation's slice-tag table has the "
@@ -3044,9 +3037,8 @@ static void gen_require_source_tables(const xpar_vset * set,
                                 made->slice_tag + i * made->tag_len,
                                 made->tag_len))
         FATAL_CODE(XPAR_EXIT_REPAIRABLE,
-                   "The selected generation changed while its recovery "
-                   "data was being prepared (slice %llu tag differs). "
-                   "Nothing was written.", (unsigned long long) i);
+                   "Slice %llu changed while recovery data was prepared; "
+                   "nothing was written.", (unsigned long long) i);
   }
 }
 
@@ -3114,8 +3106,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
   want = gen_resolve_r(&o->recovery, c.gen[g].sd.data_slice_count,
                        c.gen[g].sd.slice_size);
   if (!want)
-    FATAL("addrecovery needs --recovery=SPEC, which names the total this "
-          "generation should end up with; it has %llu now.",
+    FATAL("addrecovery requires --recovery=SPEC (current total: %llu).",
           (unsigned long long) have);
   if (want <= have) {
     xpar_fprintf(xpar_stderr, "xpar: generation %u already has %llu "
@@ -3133,14 +3124,9 @@ int xpar_op_addrecovery(const xpar_options * o) {
   if (want > axis) {
     if (c.gen[g].sd.codec == XPAR_CODEC_FFT)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Generation %u was encoded with the FFT codec on a recovery "
-                 "axis of %llu slices, and %llu is past it. Growing the axis "
-                 "across a power-of-two boundary changes every recovery slice "
-                 "already on disk, so the old and the new ones would no "
-                 "longer decode together; xpar will not write them. Re-encode "
-                 "with `xpar consolidate --max-recovery=%llu`, or create the "
-                 "set with --codec=matrix, which can be topped up without "
-                 "limit.",
+                 "Generation %u's FFT recovery limit is %llu slices, not "
+                 "%llu. Re-encode with `xpar consolidate "
+                 "--max-recovery=%llu`.",
                  c.gen[g].sd.generation, (unsigned long long) axis,
                  (unsigned long long) want, (unsigned long long) want);
     FATAL_CODE(XPAR_EXIT_NOPLAN,
@@ -3165,8 +3151,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
   source_rc = xpar_vset_check(source_set, o, NULL);
   if (source_rc != XPAR_EXIT_OK)
     FATAL_CODE(source_rc,
-               "Generation %u's protected stream is not clean; refusing to "
-               "derive new recovery data from it. Nothing was written.",
+               "Generation %u's protected stream is damaged; recovery data "
+               "was not added.",
                c.gen[g].sd.generation);
 
   gen_manifest_on_disk(&c, g, o, &m, &owner);
@@ -3198,9 +3184,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
     if (xpar_memcmp(r.data, gen_rec_get(&t, r.exponent, rec_scratch),
                     (sz) p.geom.slice_size))
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: re-encoding at R=%llu changed the bytes of "
-                 "recovery slice %llu, which the recovery axis promises it "
-                 "cannot. Nothing was written.",
+                 "internal: re-encoding at R=%llu changed recovery slice "
+                 "%llu; nothing was written.",
                  (unsigned long long) want, (unsigned long long) r.exponent);
   }
 

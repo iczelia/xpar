@@ -18,9 +18,7 @@
 
 #include "port-fs.h"
 
-/*  A stage name is unguessable rather than merely unused: a predictable
-    one in a shared directory is a symlink waiting to be planted, and
-    O_EXCL only helps when the attacker has to win the race first.  */
+/*  Random stage names prevent pre-planted symlinks in shared directories.  */
 #define STAGE_TRIES  32
 #define STAGE_RANDOM 8
 
@@ -43,7 +41,6 @@ char * xpar_path_dir(const char * path) {
 char * xpar_path_join_n(const char * dir, const char * name, u32 n) {
   sz d = dir ? xpar_strlen(dir) : 0;
   sz sep = d && !xpar_path_sep(dir[d - 1]);
-  /*  Every byte below is written, so there is nothing to zero first.  */
   char * p = (char *) xpar_alloc_raw(d + sep + n + 1);
   if (d) xpar_memcpy(p, dir, d);
   if (sep) p[d] = '/';

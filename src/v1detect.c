@@ -60,9 +60,7 @@ void xpar_v1_report(const char * path, const xpar_v1_info * info) {
     xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x %s.\n", path, what);
 
   xpar_fprintf(xpar_stderr,
-    "xpar: version 2.0 does not read version 1 archives.\n"
-    "xpar: decode it with xpar 1.x, then re-protect it with this version.\n"
-    "xpar: xpar 1.x source is tagged 'v1.1' in the project repository.\n");
+    "xpar: decode it with xpar 1.x, then re-protect it.\n");
 }
 
 void xpar_v1_refuse_if_v1(const char * path) {

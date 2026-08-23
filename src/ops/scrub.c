@@ -484,9 +484,8 @@ static void rebuild_cells(scrub * c) {
   u32 * crc;
 
   if (!sd->cell_bytes) {
-    xpar_fputs("xpar: --rebuild-cells: this set has no cell table to "
-               "rebuild; its slice size is below the format's cell "
-               "floor\n", xpar_stderr);
+    xpar_fputs("xpar: --rebuild-cells: this set has no cell table\n",
+               xpar_stderr);
     return;
   }
   for (i = 0; i < g->slice_count; i++)
@@ -696,8 +695,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   xpar_json * js = shared ? shared : &local;
   int rc;
 
-  FATAL_UNLESS("scrub needs random access and cannot read a pipe; see "
-               "--spool.", !o->from_stdin);
+  FATAL_UNLESS("scrub cannot read a pipe; use --spool.", !o->from_stdin);
 
   xpar_memset(&c, 0, sizeof c);
   c.o = o;
@@ -707,13 +705,11 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   if ((o->rewrite || o->rebuild_cells) &&
       xpar_vset_authenticated(c.s) && !xpar_vset_key(c.s))
     FATAL_CODE(XPAR_EXIT_AUTH,
-               "Writing an authenticated set requires --auth-key=FILE; "
-               "keyless access is read-only.");
+               "Writing this set requires --auth-key=FILE.");
 
   if ((o->rewrite || o->rebuild_cells) && !o->force &&
       xpar_vset_setd(c.s)->slice_tag_len == 0)
-    FATAL("This set was written with --slice-tag=none, so no tag here is "
-          "strong enough to authorise a write. Use -f to override.");
+    FATAL("Writing a set without slice tags requires -f.");
 
   rc = xpar_vset_check(c.s, o, o->json ? js : NULL);
   xpar_vset_report(c.s, o, rc);

@@ -601,8 +601,8 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   human(b, sizeof b, budget);
   if (need == (u64) -1) {
     xpar_snprintf(buf, cap,
-                  "no -m this host can address admits a plan; split the set "
-                  "into smaller ones. At -m %s, %s and --codec=matrix %s",
+                  "no addressable -m fits; split the set. At -m %s, %s; "
+                  "--codec=matrix %s",
                   b, best_b ? "some -b does fit" : "no -b fits",
                   mat ? "does fit" : "does not fit");
     return;
@@ -615,8 +615,7 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
     else
       xpar_snprintf(fit, sizeof fit, "no -b fits this -m");
     xpar_snprintf(buf, cap,
-                  "raise -m to %s, note that %s, or use --codec=matrix "
-                  "(which %s at -m %s)",
+                  "raise -m to %s; %s; --codec=matrix %s at -m %s",
                   a, fit, mat ? "does fit" : "does not fit either", b);
   }
 }

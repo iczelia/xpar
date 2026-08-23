@@ -24,16 +24,12 @@ static void progress_emit(const xpar_progress_t * p) {
   u64 elapsed = p->last_usec - p->start_usec;
   u64 done_mib = p->bytes_done >> 20;
   u64 rate;
-  /*  A first emit inside the first microsecond would divide by zero; one
-      microsecond of elapsed time is close enough for a rate that is about
-      to be replaced a second later.  */
+  /*  Avoid division by zero on the first update.  */
   if (elapsed == 0) elapsed = 1;
   rate = p->bytes_done / elapsed;
   if (p->total_bytes) {
     unsigned pct = (unsigned) (p->bytes_done * 100 / p->total_bytes);
-    /*  The caller may overshoot its own estimate (a growing file, a
-        re-read after a repair), and a percentage above 100 reads as a
-        bug in xpar rather than as a moved target.  */
+    /*  The caller may overshoot its estimate.  */
     if (pct > 100) pct = 100;
     xpar_fprintf(xpar_stderr, "%s: %u%% (%llu / %llu MiB) @ %llu MB/s\n",
                  p->op, pct,
@@ -56,9 +52,6 @@ void xpar_progress_init(xpar_progress_t * p, bool on, u64 total,
   p->bytes_at_emit = 0;
   p->since_check   = 0;
   p->op            = op;
-  /*  The clock is read once here even when disabled would allow skipping
-      it, so that an enabled reporter always has a start point and the
-      rate of the first line is not measured from zero.  */
   p->start_usec = on ? xpar_usec_now() : 0;
   p->last_usec  = p->start_usec;
 }
@@ -79,9 +72,7 @@ void xpar_progress_tick(xpar_progress_t * p, u64 bytes) {
 
 void xpar_progress_end(xpar_progress_t * p) {
   if (!p->enabled || p->bytes_done == 0) return;
-  /*  Suppress the final line when a tick has already reported this exact
-      byte count: a run shorter than the emit interval prints one line and
-      a longer one does not repeat its last.  */
+  /*  Do not repeat the last update.  */
   if (p->bytes_at_emit == p->bytes_done) return;
   p->last_usec     = xpar_usec_now();
   p->bytes_at_emit = p->bytes_done;

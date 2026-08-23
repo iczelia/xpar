@@ -269,8 +269,8 @@ static void parse_genref(const char * nm, const char * v, xpar_genref * g) {
   if (all_digits(v)) { g->number = need_u64(nm, v);  return; }
   for (const char * p = v; *p; p++) {
     int c = lower((u8) *p);
-    FATAL_UNLESS("Option %s takes a generation number or a hexadecimal "
-                 "set-id prefix, and '%s' is neither.",
+    FATAL_UNLESS("Option %s expects a generation number or hexadecimal "
+                 "set-id prefix, not '%s'.",
                  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'), nm, v);
   }
   FATAL_UNLESS("Option %s takes at most 32 hexadecimal digits: a set id "
@@ -1209,13 +1209,9 @@ static void validate(xpar_options * o, u32 pres_lit) {
   if (o->verb == XPAR_VERB_EXTRACT) {
     FATAL_UNLESS("ctime cannot be restored because metadata writes reset it.",
                  !(pres_lit & XPAR_PRES_CTIME));
-    FATAL_UNLESS("Restoring setuid, setgid and sticky bits needs -f: "
-                 "from a set of unknown origin they are a privilege "
-                 "escalation.",
+    FATAL_UNLESS("Restoring privileged mode bits requires -f.",
                  !(pres_lit & XPAR_PRES_SETID) || o->force);
-    FATAL_UNLESS("Restoring the security, system and trusted xattr "
-                 "namespaces needs -f: security.capability and "
-                 "security.selinux are privilege escalations.",
+    FATAL_UNLESS("Restoring privileged xattr namespaces requires -f.",
                  !(pres_lit & XPAR_PRES_XATTR_ALL) || o->force);
     o->preserve &= ~(u32) XPAR_PRES_CTIME;
     if (!(pres_lit & XPAR_PRES_SETID)) o->preserve &= ~(u32) XPAR_PRES_SETID;

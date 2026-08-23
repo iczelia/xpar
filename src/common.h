@@ -12,9 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Shared tools for every translation unit: short type names, the
-    fatal-error macros, the loop macros, and the small helpers that would
-    otherwise be rewritten per module.  */
+/*  Shared types, macros, and helpers.  */
 
 #ifndef XPAR_COMMON_H
 #define XPAR_COMMON_H
@@ -92,8 +90,7 @@ static inline u64 xpar_ceil_div(u64 a, u64 b) {
   return a / b + (a % b != 0);
 }
 
-/*  Smallest power of two >= v, for v <= 2^63. Returns 1 for v == 0, which is
-    what NextPow2 means everywhere it is used here.  */
+/*  Smallest power of two >= v, for v <= 2^63. Returns 1 for v == 0.  */
 static inline u64 xpar_next_pow2(u64 v) {
   if (v <= 1) return 1;
   v--;

@@ -572,9 +572,8 @@ static void build_manifest(xpar_vset * s) {
     const xpar_crit_pkt * p = find_file(s, s->setd.file_id[f], &owner);
     xpar_entry * e;
     if (!p)
-      FATAL_FORMAT("Manifest entry %lu of %lu is missing: the critical "
-                   "metadata of this set is not recoverable from the "
-                   "volumes given.", (unsigned long) (f + 1),
+      FATAL_FORMAT("Manifest entry %lu of %lu is missing from the supplied "
+                   "volumes.", (unsigned long) (f + 1),
                    (unsigned long) s->setd.file_count);
     e = xpar_manifest_append(&s->mf);
     if (xpar_entry_read(p->body, (sz) p->body_len,
@@ -1284,9 +1283,7 @@ static void auth_preflight(xpar_vset * s) {
   s->armg_corrected = archive_corrected;
   if (!saw_auth) {
     if (s->key_loaded)
-      FATAL_CODE(XPAR_EXIT_AUTH,
-                 "An authentication key was supplied, but this set has no "
-                 "AUTH descriptor.");
+      FATAL_CODE(XPAR_EXIT_AUTH, "This set is not authenticated.");
     s->keyed = false;
     return;
   }
@@ -2317,8 +2314,8 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   /*  Authenticated deduplicated aliases require full-tree verification.  */
   if (o->fast && s->keyed && s->setd.dedup_level != XPAR_DEDUP_NONE)
     FATAL_CODE(XPAR_EXIT_AUTH,
-               "--fast cannot authenticate a deduplicated set: it would "
-               "leave aliased occurrences unchecked. Drop --fast.");
+               "--fast cannot authenticate a deduplicated set; drop "
+               "--fast.");
 
   xpar_nameidx_build(&s->mf, &nix);
   if (o->fast) total = s->geom.stream_length;
@@ -2650,8 +2647,7 @@ int xpar_op_verify(const xpar_options * o) {
   xpar_vset * s;
   int rc;
 
-  FATAL_UNLESS("verify needs random access and cannot read a pipe; see "
-               "--spool.", !o->from_stdin);
+  FATAL_UNLESS("verify cannot read a pipe; use --spool.", !o->from_stdin);
   FATAL_UNLESS("Options --fast and --strong are mutually exclusive.",
                !(o->fast && o->strong));
 

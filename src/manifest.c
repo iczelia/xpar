@@ -178,11 +178,7 @@ const char * xpar_path_reason(xpar_path_status s) {
   return "malformed path";
 }
 
-/*  Refusing to *follow* a symlink rather than refusing to overwrite one
-    is the whole of the check: the danger is an entry earlier in the same
-    set planting `d -> /etc` and a later entry writing `d/passwd`, which
-    a test on every component catches and a test on the final component
-    alone does not.  */
+/*  Check every component to prevent writes through planted symlinks.  */
 char * xpar_path_resolve(const char * dir, const char * name, u32 len,
                          u32 flags, xpar_path_status * why) {
   sz dlen = dir ? xpar_strlen(dir) : 0, off = dlen ? dlen + 1 : 0;

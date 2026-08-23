@@ -3324,19 +3324,16 @@ int xpar_op_repair(const xpar_options * o) {
 
   rp_pick_setd(&r);
   rp_authenticate(&r);
-  FATAL_UNLESS("This set stores its stream in xpar's own volumes rather "
-               "than in the files it protects; use `xpar extract` to "
-               "reconstruct it.", r.sd.layout == XPAR_LAYOUT_SIDECAR);
+  FATAL_UNLESS("This set requires `xpar extract`, not repair.",
+               r.sd.layout == XPAR_LAYOUT_SIDECAR);
   if (!xpar_geom_from_setd(&r.sd, &r.geom))
     FATAL_FORMAT("The set descriptor's geometry is inconsistent.");
 
   /*  CRC32C alone cannot authorise overwriting the evidence.  */
   if (o->dest != XPAR_DEST_TO && o->dest != XPAR_DEST_BACKUP &&
       r.sd.slice_tag_len == 0 && !o->force)
-    FATAL("This set was written with --slice-tag=none, so a wrong "
-          "reconstruction would be caught only by a 32-bit CRC, which lets "
-          "one in 2^32 through. Repairing in place needs -f; `--to DIR` "
-          "leaves the originals alone.");
+    FATAL("In-place repair without slice tags requires -f; use --to DIR to "
+          "preserve the originals.");
 
   rp_read_manifest(&r);
   rp_read_tags(&r);
@@ -3347,9 +3344,8 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dest == XPAR_DEST_BACKUP && !o->force) {
     for (i = 0; i < r.mf.count; i++)
       if (r.mf.entry[i].entry_type == XPAR_ENTRY_HARDLINK)
-        FATAL("--backup renames one name of a hard-linked inode and "
-              "writes a fresh file at it, which breaks the link group "
-              "('%.*s' and others). Use --in-place or --to, or -f.",
+        FATAL("--backup would break the hard-link group containing '%.*s'; "
+              "use --in-place, --to, or -f.",
               (int) r.mf.entry[i].name_len, r.mf.entry[i].name);
   }
 
@@ -3401,26 +3397,19 @@ int xpar_op_repair(const xpar_options * o) {
       chunk = (u32) ((o->memory / lanes) & ~(u64) 63);
     if (chunk < 64 && r.er.bad_count)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Decoding this set needs at least %llu bytes of buffer "
-                 "(%llu slices plus %llu recovery slices, 64 bytes of "
-                 "each at a time); raise -m.",
-                 (unsigned long long) (lanes * 64),
-                 (unsigned long long) r.geom.slice_count,
-                 (unsigned long long) r.rec_total);
+                 "Decoding needs at least %llu bytes of buffer; raise -m.",
+                 (unsigned long long) (lanes * 64));
     if (chunk < 64) chunk = 64;
   }
   rp_solve_copies(&r);
   if (!rp_solve_decode(&r, chunk)) {
-    rp_note(&r, "xpar: the outer decode did not reproduce the recorded "
-                "cell tags; the damage is past what this recovery data "
-                "can express.\n");
+    rp_note(&r, "xpar: decoded data does not match the recorded cell tags\n");
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
   }
   if (!rp_slice_gate(&r)) {
-    rp_note(&r, "xpar: a reconstructed slice does not match its strong "
-                "tag; refusing to write it (10.2 I2).\n");
+    rp_note(&r, "xpar: a reconstructed slice failed its strong tag\n");
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
@@ -3469,9 +3458,8 @@ int xpar_op_repair(const xpar_options * o) {
   { xpar_stat_t st;
     if (!o->no_journal && !o->force && xpar_lstat(r.journal, &st) == 0 &&
         st.size >= RP_J_HDR + RP_J_FOOT)
-      FATAL("An undo journal is already at '%s': a previous repair did "
-            "not finish. Run `xpar undo` first, or -f to overwrite it "
-            "and lose the ability to undo that repair.", r.journal);
+      FATAL("Undo journal '%s' already exists; run `xpar undo` or use -f "
+            "to replace it.", r.journal);
   }
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);

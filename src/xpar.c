@@ -68,7 +68,7 @@ static void apply_simd(const char * want) {
     xpar_exit(XPAR_EXIT_USAGE);
   }
   if (!xpar_cpu_tier_usable(t))
-    FATAL("This machine cannot run the '%s' SIMD tier.", want);
+    FATAL("SIMD tier '%s' is unavailable on this machine.", want);
 
   xpar_cpu_force(xpar_cpu_tier_at(t)->need);
   xpar_gf_use_default_tier();
