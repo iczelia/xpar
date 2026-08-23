@@ -373,13 +373,7 @@ int xpar_fputs(const char * s, xpar_file * f) {
 }
 
 void xpar_exit(int code) {
-  /*  int 21h AH=4Ch: terminate with a return code.  */
-  __dpmi_regs r;
-  memset(&r, 0, sizeof r);
-  r.h.ah = 0x4C;
-  r.h.al = (unsigned char) code;
-  __dpmi_int(0x21, &r);
-  for (;;) { }   /*  unreachable unless the DPMI host misbehaves  */
+  exit(code);
 }
 
 /*  The codes DJGPP's int 21h wrappers actually produce. Anything else
