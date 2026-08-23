@@ -607,18 +607,17 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
                   mat ? "does fit" : "does not fit");
     return;
   }
-  xpar_snprintf(buf, cap,
-                "raise -m to %s, or use --codec=matrix, which %s at -m %s",
-                a, mat ? "does fit" : "does not fit either", b);
   {
-    sz at = xpar_strlen(buf);
+    char fit[48];
     if (best_b)
-      xpar_snprintf(buf + at, at < cap ? cap - at : 0,
-                    "; -b %llu fits at the current -m",
+      xpar_snprintf(fit, sizeof fit, "-b %llu fits this -m",
                     (unsigned long long) best_b);
     else
-      xpar_snprintf(buf + at, at < cap ? cap - at : 0,
-                    "; no -b fits at the current -m");
+      xpar_snprintf(fit, sizeof fit, "no -b fits this -m");
+    xpar_snprintf(buf, cap,
+                  "raise -m to %s, note that %s, or use --codec=matrix "
+                  "(which %s at -m %s)",
+                  a, fit, mat ? "does fit" : "does not fit either", b);
   }
 }
 

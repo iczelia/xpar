@@ -46,7 +46,7 @@ static const xpar_dispatch dispatch[] = {
   { XPAR_VERB_EXPLAIN,          xpar_op_explain,          "explain"     },
   { XPAR_VERB_UNDO,             xpar_op_undo,             "undo"        },
   { XPAR_VERB_RECOVER_PROLOGUE, xpar_op_recover_prologue, "recover-prologue" },
-  { XPAR_VERB_SELFTEST,         xpar_op_selftest,         "selftest"    }
+  { XPAR_VERB_BENCHMARK,        xpar_op_benchmark,        "benchmark"   }
 };
 
 static void apply_simd(const char * want) {
@@ -79,7 +79,7 @@ int xpar_main(int argc, char ** argv) {
   xpar_options o;
   sz i;
   int rc;
-  
+
   xpar_gf_init();
   xpar_crc32c_init();
 

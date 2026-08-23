@@ -471,7 +471,7 @@ static void chain_add_vol(xpar_chain * c, char * path) {
   xpar_memset(v, 0, sizeof *v);
   v->path = path;  v->data = data;  v->len = len;
   v->gen = XPAR_GEN_NONE;  v->volume_index = XPAR_VOL_STANDALONE;
-  
+
   if (len >= ARM_HDR_LEN) {
     xpar_arm_prologue pr;  xpar_armour_params ap;  u8 * plain;  sz plen;
     int copy = -1;
@@ -5408,27 +5408,27 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-/*  Differential installed selftest: every runtime-selected kernel tier
-    must match scalar output on fixed-seed inputs.  */
+/*  Differential kernel benchmark: every runtime-selected kernel tier
+    must match scalar output on fixed-seed inputs before it is timed.  */
 
-typedef struct { u64 s; } st_rng;
+typedef struct { u64 s; } bm_rng;
 
-static u32 st_next(st_rng * r) {
+static u32 bm_next(bm_rng * r) {
   r->s ^= r->s << 13;  r->s ^= r->s >> 7;  r->s ^= r->s << 17;
   return (u32) (r->s >> 32);
 }
 
-static void st_fill(st_rng * r, u8 * p, sz n) {
-  For(sz, i, n, p[i] = (u8) st_next(r))
+static void bm_fill(bm_rng * r, u8 * p, sz n) {
+  For(sz, i, n, p[i] = (u8) bm_next(r))
 }
 
-static u32 st_cmp(const char * tier, const char * what, const u8 * a,
+static u32 bm_cmp(const char * tier, const char * what, const u8 * a,
                   const u8 * b, sz n) {
   sz i;
   for (i = 0; i < n; i++)
     if (a[i] != b[i]) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: selftest: %s disagrees with scalar in %s at byte "
+                   "xpar: benchmark: %s disagrees with scalar in %s at byte "
                    "%lu of %lu (%02X against %02X).\n", tier, what,
                    (unsigned long) i, (unsigned long) n, a[i], b[i]);
       return 1;
@@ -5437,7 +5437,7 @@ static u32 st_cmp(const char * tier, const char * what, const u8 * a,
 }
 
 /*  Exercise each GF region entry point across vector-width boundaries.  */
-static u32 st_check_gf(const xpar_gf_kernels * k, const char * tier) {
+static u32 bm_check_gf(const xpar_gf_kernels * k, const char * tier) {
   static const sz len[] = { 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64,
                             65, 127, 128, 255, 256, 1023, 4096 };
   const sz big = 4096;
@@ -5447,17 +5447,17 @@ static u32 st_check_gf(const xpar_gf_kernels * k, const char * tier) {
   u8 * b   = (u8 *) xpar_alloc_raw(big);
   u8 * a2  = (u8 *) xpar_alloc_raw(big);
   u8 * b2  = (u8 *) xpar_alloc_raw(big);
-  st_rng r;
+  bm_rng r;
   u32 bad = 0, i;
 
   r.s = 0x9E3779B97F4A7C15ull;
-  st_fill(&r, src, big);
-  st_fill(&r, d0, big);
+  bm_fill(&r, src, big);
+  bm_fill(&r, d0, big);
 
   for (i = 0; i < ARRAY_LEN(len) && !bad; i++) {
     sz n = len[i], n2 = n & ~(sz) 1;
-    u8  c8  = (u8)  (1 + (st_next(&r) & 0xFE));
-    u16 c16 = (u16) (1 + (st_next(&r) & 0xFFFE));
+    u8  c8  = (u8)  (1 + (bm_next(&r) & 0xFE));
+    u16 c16 = (u16) (1 + (bm_next(&r) & 0xFFFE));
     xpar_gf8_coef  m8;
     xpar_gf16_coef m16;
     xpar_gf8_prepare(&m8, c8);
@@ -5465,56 +5465,56 @@ static u32 st_check_gf(const xpar_gf_kernels * k, const char * tier) {
 
     xpar_memcpy(a, d0, n);  k->mac8(a, src, n, &m8);
     xpar_memcpy(b, d0, n);  xpar_gf8_mac_ref(b, src, n, c8);
-    bad += st_cmp(tier, "mac8", a, b, n);
+    bad += bm_cmp(tier, "mac8", a, b, n);
 
     k->mul8(a, src, n, &m8);
     xpar_gf8_mul_ref(b, src, n, c8);
-    bad += st_cmp(tier, "mul8", a, b, n);
+    bad += bm_cmp(tier, "mul8", a, b, n);
 
     xpar_memcpy(a, d0, n);  k->xor2(a, src, n);
     xpar_memcpy(b, d0, n);  xpar_xor2_ref(b, src, n);
-    bad += st_cmp(tier, "xor2", a, b, n);
+    bad += bm_cmp(tier, "xor2", a, b, n);
 
     k->xor3(a, d0, src, n);
     xpar_xor3_ref(b, d0, src, n);
-    bad += st_cmp(tier, "xor3", a, b, n);
+    bad += bm_cmp(tier, "xor3", a, b, n);
 
     xpar_memcpy(a, d0, n);  xpar_memcpy(a2, src, n);
     k->fft8(a, a2, n, &m8);
     xpar_memcpy(b, d0, n);  xpar_memcpy(b2, src, n);
     xpar_gf8_fft2_ref(b, b2, n, c8);
-    bad += st_cmp(tier, "fft8 x", a, b, n);
-    bad += st_cmp(tier, "fft8 y", a2, b2, n);
+    bad += bm_cmp(tier, "fft8 x", a, b, n);
+    bad += bm_cmp(tier, "fft8 y", a2, b2, n);
 
     xpar_memcpy(a, d0, n);  xpar_memcpy(a2, src, n);
     k->ifft8(a, a2, n, &m8);
     xpar_memcpy(b, d0, n);  xpar_memcpy(b2, src, n);
     xpar_gf8_ifft2_ref(b, b2, n, c8);
-    bad += st_cmp(tier, "ifft8 x", a, b, n);
-    bad += st_cmp(tier, "ifft8 y", a2, b2, n);
+    bad += bm_cmp(tier, "ifft8 x", a, b, n);
+    bad += bm_cmp(tier, "ifft8 y", a2, b2, n);
 
     if (!n2) continue;
     xpar_memcpy(a, d0, n2);  k->mac16(a, src, n2, &m16);
     xpar_memcpy(b, d0, n2);  xpar_gf16_mac_ref(b, src, n2, c16);
-    bad += st_cmp(tier, "mac16", a, b, n2);
+    bad += bm_cmp(tier, "mac16", a, b, n2);
 
     k->mul16(a, src, n2, &m16);
     xpar_gf16_mul_ref(b, src, n2, c16);
-    bad += st_cmp(tier, "mul16", a, b, n2);
+    bad += bm_cmp(tier, "mul16", a, b, n2);
 
     xpar_memcpy(a, d0, n2);  xpar_memcpy(a2, src, n2);
     k->fft16(a, a2, n2, &m16);
     xpar_memcpy(b, d0, n2);  xpar_memcpy(b2, src, n2);
     xpar_gf16_fft2_ref(b, b2, n2, c16);
-    bad += st_cmp(tier, "fft16 x", a, b, n2);
-    bad += st_cmp(tier, "fft16 y", a2, b2, n2);
+    bad += bm_cmp(tier, "fft16 x", a, b, n2);
+    bad += bm_cmp(tier, "fft16 y", a2, b2, n2);
 
     xpar_memcpy(a, d0, n2);  xpar_memcpy(a2, src, n2);
     k->ifft16(a, a2, n2, &m16);
     xpar_memcpy(b, d0, n2);  xpar_memcpy(b2, src, n2);
     xpar_gf16_ifft2_ref(b, b2, n2, c16);
-    bad += st_cmp(tier, "ifft16 x", a, b, n2);
-    bad += st_cmp(tier, "ifft16 y", a2, b2, n2);
+    bad += bm_cmp(tier, "ifft16 x", a, b, n2);
+    bad += bm_cmp(tier, "ifft16 y", a2, b2, n2);
   }
   xpar_free(src);  xpar_free(d0);  xpar_free(a);  xpar_free(b);
   xpar_free(a2);   xpar_free(b2);
@@ -5522,62 +5522,62 @@ static u32 st_check_gf(const xpar_gf_kernels * k, const char * tier) {
 }
 
 /*  Exercise armour tiers through encode, t-symbol damage and decode.  */
-static u32 st_armour_frame(const xpar_armour_params * p, u8 * frame,
-                           st_rng * r) {
+static u32 bm_armour_frame(const xpar_armour_params * p, u8 * frame,
+                           bm_rng * r) {
   xpar_armour * a = xpar_armour_new(p);
   u64 fd = xpar_armour_frame_plain(a), fx = xpar_armour_frame_disk(a);
-  st_fill(r, frame, (sz) fx);
+  bm_fill(r, frame, (sz) fx);
   xpar_memset(frame + fd, 0, (sz) (fx - fd));
   xpar_armour_encode_frame(a, frame);
   xpar_armour_free(a);
   return (u32) fx;
 }
 
-static u32 st_check_armour(const char * tier, const xpar_armour_params * p,
+static u32 bm_check_armour(const char * tier, const xpar_armour_params * p,
                            const u8 * ref, u64 fx, const char * what) {
   u8 * frame = (u8 *) xpar_alloc_raw((sz) fx);
   xpar_armour * a = xpar_armour_new(p);
-  st_rng r;
+  bm_rng r;
   u32 bad = 0, i, t = (p->n - p->k) / 2, w = p->symbol_bits / 8;
 
   r.s = 0x243F6A8885A308D3ull;
   xpar_memcpy(frame, ref, (sz) fx);
   xpar_armour_encode_frame(a, frame);
-  bad += st_cmp(tier, what, frame, ref, (sz) fx);
+  bad += bm_cmp(tier, what, frame, ref, (sz) fx);
 
   /*  t errors in every codeword is the capacity, so a tier that decodes
       one symbol differently shows up as a whole frame that will not come
       back.  */
   for (i = 0; i < t; i++) {
-    u32 s = st_next(&r) % p->n;
+    u32 s = bm_next(&r) % p->n;
     u64 at = ((u64) s * p->depth) * w;
     frame[at] ^= 0xA5;
     if (w == 2) frame[at + 1] ^= 0x5A;
   }
   if (xpar_armour_decode_frame(a, frame, NULL) == XPAR_ARMOUR_FAILED) {
-    xpar_fprintf(xpar_stderr, "xpar: selftest: %s failed to decode a frame "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %s failed to decode a frame "
                  "at capacity (%s).\n", tier, what);
     bad++;
   } else {
-    bad += st_cmp(tier, what, frame, ref, (sz) fx);
+    bad += bm_cmp(tier, what, frame, ref, (sz) fx);
   }
   xpar_armour_free(a);
   xpar_free(frame);
   return bad;
 }
 
-static u32 st_check_crc32c(void) {
+static u32 bm_check_crc32c(void) {
   static const sz len[] = { 1, 7, 8, 63, 64, 255, 256, 1024, 8192, 24577,
                             65536 };
   u32 bad = 0, i;
   u8 * buf;
-  st_rng r;
+  bm_rng r;
 #if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32)
   u32 feat = xpar_cpu_features();
 #endif
   r.s = 0xB5026F5AA96619Eull;
   buf = (u8 *) xpar_alloc_raw(65536);
-  st_fill(&r, buf, 65536);
+  bm_fill(&r, buf, 65536);
   for (i = 0; i < ARRAY_LEN(len); i++) {
     u32 want = xpar_crc32c_scalar(0x1234u, buf, len[i]);
     u32 got  = want;
@@ -5593,7 +5593,7 @@ static u32 st_check_crc32c(void) {
     }
 #endif
     if (name && got != want) {
-      xpar_fprintf(xpar_stderr, "xpar: selftest: crc32c %s gives %08lX at "
+      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08lX at "
                    "%lu bytes, scalar gives %08lX.\n", name,
                    (unsigned long) got, (unsigned long) len[i],
                    (unsigned long) want);
@@ -5604,12 +5604,12 @@ static u32 st_check_crc32c(void) {
   return bad;
 }
 
-static u32 st_check_blake3(void) {
+static u32 bm_check_blake3(void) {
   enum { LANES = XPAR_BLAKE3_MAX_DEGREE, BLOCKS = 3 };
   u8 * in = (u8 *) xpar_alloc_raw(LANES * BLOCKS * XPAR_BLAKE3_BLOCK_LEN);
   const u8 * ptr[LANES];
   u8 want[LANES * XPAR_BLAKE3_OUT_LEN], got[LANES * XPAR_BLAKE3_OUT_LEN];
-  st_rng r;
+  bm_rng r;
   u32 bad = 0, i;
   const char * name = NULL;
 #if defined(HAVE_AVX2) || defined(HAVE_NEON)
@@ -5617,7 +5617,7 @@ static u32 st_check_blake3(void) {
 #endif
 
   r.s = 0x452821E638D01377ull;
-  st_fill(&r, in, LANES * BLOCKS * XPAR_BLAKE3_BLOCK_LEN);
+  bm_fill(&r, in, LANES * BLOCKS * XPAR_BLAKE3_BLOCK_LEN);
   for (i = 0; i < LANES; i++)
     ptr[i] = in + (sz) i * BLOCKS * XPAR_BLAKE3_BLOCK_LEN;
   xpar_blake3_hash_many_scalar(ptr, LANES, BLOCKS, xpar_blake3_iv, 7, true,
@@ -5637,26 +5637,26 @@ static u32 st_check_blake3(void) {
     name = "neon";
   }
 #endif
-  if (name) bad += st_cmp(name, "blake3 hash_many", got, want, sizeof got);
+  if (name) bad += bm_cmp(name, "blake3 hash_many", got, want, sizeof got);
   xpar_free(in);
   return bad;
 }
 
-static u8 st_hexdigit(char c) {
+static u8 bm_hexdigit(char c) {
   if (c >= '0' && c <= '9') return (u8) (c - '0');
   if (c >= 'a' && c <= 'f') return (u8) (c - 'a' + 10);
   return (u8) (c - 'A' + 10);
 }
 
-static u32 st_kat_hex(const char * what, const u8 * got, sz n,
+static u32 bm_kat_hex(const char * what, const u8 * got, sz n,
                       const char * hex) {
   sz i;
   for (i = 0; i < n; i++) {
-    u8 want = (u8) ((st_hexdigit(hex[2 * i]) << 4) |
-                    st_hexdigit(hex[2 * i + 1]));
+    u8 want = (u8) ((bm_hexdigit(hex[2 * i]) << 4) |
+                    bm_hexdigit(hex[2 * i + 1]));
     if (got[i] != want) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: selftest: conformance KAT %s differs at byte %lu "
+                   "xpar: benchmark: conformance KAT %s differs at byte %lu "
                    "(%02X against %02X).\n", what, (unsigned long) i,
                    got[i], want);
       return 1;
@@ -5666,7 +5666,7 @@ static u32 st_kat_hex(const char * what, const u8 * got, sz n,
 }
 
 /*  Frozen installed KATs pin the published hash, CRC and generation bytes.  */
-static u32 st_check_kats(void) {
+static u32 bm_check_kats(void) {
   static const u32 roll_want[] = {
     0xcf762298u, 0x96fce802u, 0x35c5ff48u, 0x73771252u,
     0xdff7f330u, 0x6f56d7b1u, 0xa1d86dc4u, 0x4ca80c42u,
@@ -5691,10 +5691,10 @@ static u32 st_check_kats(void) {
     file_body[i] = (u8) (i * 5 + 9);
   xpar_blake3_hash(data, sizeof data, content, sizeof content);
   xpar_blake3_hash(data, 16384, prefix, sizeof prefix);
-  bad += st_kat_hex("V-HASH content_hash", content, sizeof content,
+  bad += bm_kat_hex("V-HASH content_hash", content, sizeof content,
                     "f9d161476303e9b8a45d8a4403d6bd5b"
                     "6649ae5a333b1d1787334fcf603f0011");
-  bad += st_kat_hex("V-HASH prefix_hash", prefix, sizeof prefix,
+  bad += bm_kat_hex("V-HASH prefix_hash", prefix, sizeof prefix,
                     "a24032354ddaf4559e32caf4f14ba510");
   xpar_memset(&entry, 0, sizeof entry);
   entry.name = (char *) "tree/fixed.bin";
@@ -5702,23 +5702,23 @@ static u32 st_check_kats(void) {
   entry.length = sizeof data;
   xpar_memcpy(entry.prefix_hash, prefix, sizeof prefix);
   xpar_file_id(&entry, NULL, file_id);
-  bad += st_kat_hex("V-HASH file_id", file_id, sizeof file_id,
+  bad += bm_kat_hex("V-HASH file_id", file_id, sizeof file_id,
                     "0144119834d4eefb811fb9935c3f7523");
   xpar_set_id_begin(&set_hash, NULL, setd_body, sizeof setd_body);
   xpar_set_id_update(&set_hash, file_body, sizeof file_body);
   xpar_set_id_final(&set_hash, set_id);
-  bad += st_kat_hex("V-HASH set_id", set_id, sizeof set_id,
+  bad += bm_kat_hex("V-HASH set_id", set_id, sizeof set_id,
                     "cf2b9c0a22b17377f7873c716ad20c97");
   xpar_key_master(master, "xpar2 conformance key\n", 22);
   xpar_key_check(check, master);
-  bad += st_kat_hex("V-HASH key_check", check, sizeof check,
+  bad += bm_kat_hex("V-HASH key_check", check, sizeof check,
                     "485ae68f1442ed7c0aead7358b86a037");
   xpar_memset(master, 0, sizeof master);
 
   crc = xpar_crc32c(0, data, 4096);
   if (crc != 0x752b349cu) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: selftest: conformance KAT V-CRC slice is %08lX, "
+                 "xpar: benchmark: conformance KAT V-CRC slice is %08lX, "
                  "expected 752B349C.\n", (unsigned long) crc);
     bad++;
   }
@@ -5729,7 +5729,7 @@ static u32 st_check_kats(void) {
                                        data[i + 63]);
     if (crc != roll_want[i]) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: selftest: conformance KAT V-CRC rolling state "
+                   "xpar: benchmark: conformance KAT V-CRC rolling state "
                    "%lu is %08lX, expected %08lX.\n", (unsigned long) i,
                    (unsigned long) crc, (unsigned long) roll_want[i]);
       bad++;
@@ -5745,103 +5745,103 @@ static u32 st_check_kats(void) {
   xpar_armour_generator(armour, generator);
   if (generator[0] != 0x96 || generator[1] != 0x70 || generator[2] != 1) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: selftest: conformance KAT V-GEN generator differs.\n");
+                 "xpar: benchmark: conformance KAT V-GEN generator differs.\n");
     bad++;
   }
   xpar_armour_encode_frame(armour, frame);
-  bad += st_kat_hex("V-GEN codeword parity", frame + 253, 2, "03fc");
+  bad += bm_kat_hex("V-GEN codeword parity", frame + 253, 2, "03fc");
   xpar_armour_free(armour);
   return bad;
 }
 
-static void st_rate(const char * tier, const char * operation,
+static void bm_rate(const char * tier, const char * operation,
                     u64 bytes, u64 usec) {
   f64 mib_s;
   if (!usec) usec = 1;
   mib_s = ((f64) bytes * 1000000.0) / ((f64) usec * 1048576.0);
   xpar_fprintf(xpar_stderr,
-               "xpar: selftest: %-12s %-12s %10llu bytes %8llu us "
+               "xpar: benchmark: %-12s %-12s %10llu bytes %8llu us "
                "%9.2f MiB/s\n", tier, operation,
                (unsigned long long) bytes, (unsigned long long) usec, mib_s);
 }
 
-static void st_measure_gf(const xpar_gf_kernels * k, const char * tier) {
+static void bm_measure_gf(const xpar_gf_kernels * k, const char * tier) {
   const sz n = (sz) 1 << 20;
   const u32 repeat = 8;
   u8 * src = (u8 *) xpar_alloc_aligned(n, 64);
   u8 * dst = (u8 *) xpar_alloc_aligned(n, 64);
   xpar_gf8_coef coef;
-  st_rng rng;
+  bm_rng rng;
   u64 begin, elapsed;
   rng.s = 0x6A09E667F3BCC909ull;
-  st_fill(&rng, src, n);
+  bm_fill(&rng, src, n);
   xpar_memset(dst, 0, n);
   xpar_gf8_prepare(&coef, 173);
   begin = xpar_usec_now();
   For(u32, i, repeat, k->mac8(dst, src, n, &coef))
   elapsed = xpar_usec_now() - begin;
-  st_rate(tier, "gf8-mac", (u64) n * repeat, elapsed);
+  bm_rate(tier, "gf8-mac", (u64) n * repeat, elapsed);
   xpar_free_aligned(src); xpar_free_aligned(dst);
 }
 
-static void st_measure_armour(const xpar_armour_params * p,
+static void bm_measure_armour(const xpar_armour_params * p,
                               const char * tier, const char * operation) {
   const u32 repeat = 32;
   xpar_armour * a = xpar_armour_new(p);
   u64 plain = xpar_armour_frame_plain(a), disk = xpar_armour_frame_disk(a);
   u8 * frame = (u8 *) xpar_alloc_raw((sz) disk);
-  st_rng rng;
+  bm_rng rng;
   u64 begin, elapsed;
   u32 i;
   rng.s = 0xBB67AE8584CAA73Bull;
-  st_fill(&rng, frame, (sz) plain);
+  bm_fill(&rng, frame, (sz) plain);
   begin = xpar_usec_now();
   for (i = 0; i < repeat; i++) xpar_armour_encode_frame(a, frame);
   elapsed = xpar_usec_now() - begin;
-  st_rate(tier, operation, plain * repeat, elapsed);
+  bm_rate(tier, operation, plain * repeat, elapsed);
   xpar_free(frame); xpar_armour_free(a);
 }
 
-int xpar_op_selftest(const xpar_options * o) {
+int xpar_op_benchmark(const xpar_options * o) {
   u32 bad = 0, tiers = 0;
   int n, i, saved_gf, saved_arm;
   xpar_armour_params p8, p16;
   u8 * ref8;  u8 * ref16;
   u64 fx8, fx16;
-  st_rng r;
+  bm_rng r;
 
   xpar_gf_init();
   xpar_crc32c_init();
   saved_gf  = xpar_gf_tier();
   saved_arm = xpar_armour_tier();
 
-  bad += st_check_kats();
+  bad += bm_check_kats();
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: selftest: V-HASH, V-CRC and V-GEN KATs %s\n",
+                 "xpar: benchmark: V-HASH, V-CRC and V-GEN KATs %s\n",
                  bad ? "failed" : "ok");
-  if (o->selftest_tiers && !o->quiet)
+  if (o->benchmark_tiers && !o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: selftest: tier         operation         bytes"
+                 "xpar: benchmark: tier         operation         bytes"
                  "     time       rate\n");
 
   n = xpar_gf_tier_count();
   for (i = 0; i < n; i++) {
-    if (!o->selftest_tiers && i != saved_gf) continue;
+    if (!o->benchmark_tiers && i != saved_gf) continue;
     if (!xpar_gf_tier_usable(i)) {
       if (o->verbose)
-        xpar_fprintf(xpar_stderr, "xpar: selftest: gf tier %s is compiled "
+        xpar_fprintf(xpar_stderr, "xpar: benchmark: gf tier %s is compiled "
                      "and not runnable here; skipped.\n",
                      xpar_gf_tier_name(i));
       continue;
     }
     if (!xpar_gf_use_tier(i)) continue;
-    bad += st_check_gf(xpar_gf_active(), xpar_gf_tier_name(i));
-    if (o->selftest_tiers && !o->quiet)
-      st_measure_gf(xpar_gf_active(), xpar_gf_tier_name(i));
+    bad += bm_check_gf(xpar_gf_active(), xpar_gf_tier_name(i));
+    if (o->benchmark_tiers && !o->quiet)
+      bm_measure_gf(xpar_gf_active(), xpar_gf_tier_name(i));
     tiers++;
     if (!o->quiet)
-      xpar_fprintf(xpar_stderr, "xpar: selftest: gf tier %-8s ok\n",
+      xpar_fprintf(xpar_stderr, "xpar: benchmark: gf tier %-8s ok\n",
                    xpar_gf_tier_name(i));
   }
   xpar_gf_use_tier(saved_gf);
@@ -5863,46 +5863,46 @@ int xpar_op_selftest(const xpar_options * o) {
   ref8  = (u8 *) xpar_alloc_raw((sz) fx8);
   ref16 = (u8 *) xpar_alloc_raw((sz) fx16);
   xpar_armour_use_tier(xpar_armour_tier_count() - 1);   /*  Scalar.  */
-  st_armour_frame(&p8, ref8, &r);
-  st_armour_frame(&p16, ref16, &r);
+  bm_armour_frame(&p8, ref8, &r);
+  bm_armour_frame(&p16, ref16, &r);
 
   n = xpar_armour_tier_count();
   for (i = 0; i < n; i++) {
-    if (!o->selftest_tiers && i != saved_arm) continue;
+    if (!o->benchmark_tiers && i != saved_arm) continue;
     if (!xpar_armour_tier_usable(i)) continue;
     if (!xpar_armour_use_tier(i)) continue;
-    bad += st_check_armour(xpar_armour_tier_name(i), &p8, ref8, fx8,
+    bad += bm_check_armour(xpar_armour_tier_name(i), &p8, ref8, fx8,
                            "armour GF(2^8)");
-    bad += st_check_armour(xpar_armour_tier_name(i), &p16, ref16, fx16,
+    bad += bm_check_armour(xpar_armour_tier_name(i), &p16, ref16, fx16,
                            "armour GF(2^16)");
-    if (o->selftest_tiers && !o->quiet) {
-      st_measure_armour(&p8, xpar_armour_tier_name(i), "armour-gf8");
-      st_measure_armour(&p16, xpar_armour_tier_name(i), "armour-gf16");
+    if (o->benchmark_tiers && !o->quiet) {
+      bm_measure_armour(&p8, xpar_armour_tier_name(i), "armour-gf8");
+      bm_measure_armour(&p16, xpar_armour_tier_name(i), "armour-gf16");
     }
     tiers++;
     if (!o->quiet)
-      xpar_fprintf(xpar_stderr, "xpar: selftest: armour tier %-8s ok\n",
+      xpar_fprintf(xpar_stderr, "xpar: benchmark: armour tier %-8s ok\n",
                    xpar_armour_tier_name(i));
   }
   xpar_armour_use_tier(saved_arm);
   xpar_free(ref8);  xpar_free(ref16);
 
-  bad += st_check_crc32c();
-  bad += st_check_blake3();
+  bad += bm_check_crc32c();
+  bad += bm_check_blake3();
   if (!o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: selftest: crc32c %s, blake3 %s\n",
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s, blake3 %s\n",
                  xpar_crc32c_variant(), xpar_blake3_variant());
 
   if (bad) {
-    xpar_fprintf(xpar_stderr, "xpar: selftest: %lu differences across %lu "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %lu differences across %lu "
                  "tiers. This build's kernels do not agree on this "
                  "machine.\n", (unsigned long) bad, (unsigned long) tiers);
-    gen_json_result(o, "selftest", NULL, 0, "failed", XPAR_EXIT_INTERNAL);
+    gen_json_result(o, "benchmark", NULL, 0, "failed", XPAR_EXIT_INTERNAL);
     return XPAR_EXIT_INTERNAL;
   }
   if (!o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: selftest: %lu tiers checked, every "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %lu tiers checked, every "
                  "kernel byte-identical to scalar.\n", (unsigned long) tiers);
-  gen_json_result(o, "selftest", NULL, 0, "ok", XPAR_EXIT_OK);
+  gen_json_result(o, "benchmark", NULL, 0, "ok", XPAR_EXIT_OK);
   return XPAR_EXIT_OK;
 }

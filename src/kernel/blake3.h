@@ -94,11 +94,11 @@ static inline bool xpar_blake3_tag_equal(const void * a, const void * b,
   return xpar_ct_equal(a, b, n);
 }
 
-/*  Name of the dispatched kernel, for `info` and the selftest.  */
+/*  Name of the dispatched kernel, for `info` and the benchmark.  */
 const char * xpar_blake3_variant(void);
 
 /*  Lanes the dispatched kernel compresses at once. Exposed so the
-    selftest can drive every tree shape the driver can produce.  */
+    benchmark can drive every tree shape the driver can produce.  */
 sz xpar_blake3_degree(void);
 
 /*  Internal: the per-ISA kernels, dispatched by blake3.c.  */

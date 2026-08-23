@@ -121,7 +121,7 @@ static void gf16_affine(u16 c, u64 blk[4]) {
 
 /*  Coefficient preparation.
     Both forms are always built, so a prepared coefficient outlives a
-    tier change and `selftest --tiers` can switch tiers under one.
+    tier change and `benchmark --tiers` can switch tiers under one.
 
     The split tables come out of the same linearity that gives the affine
     matrices. A nibble table entry is `(i << 4k) * c`, and `i << 4k` is

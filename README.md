@@ -47,7 +47,7 @@ releases tab and execute the following commands:
 `configure` probes for all SIMD extensions that xpar can use.  Each becomes
 a convenience library with its own compilation flags, while the kernel is
 picked at the runtime based on signals from CPUID + OSXSAVE/XCR0 (x86),
-HWCAP or `riscv_hwprove`.
+HWCAP or `riscv_hwprobe`.
 
 | option | effect |
 | :--- | :--- |
@@ -67,7 +67,7 @@ xpar: photos: 8 entries, 245 slices of 4096 bytes, 37 recovery slices in 5 volum
 ```
 
 The `448CANON` directory will not be altered. `photos.xpa` will hold the
-manifest of the data protected (i.e., names, sizes, modes, modification and 
+manifest of the data protected (i.e., names, sizes, modes, modification and
 creation times, checksums, permissions, ...), while `photos.v*.xpa` will hold
 the Reed-Solomon recovery data, split across volumes in a doubling ladder.
 
@@ -87,13 +87,14 @@ generation 0  set 42f3a6c40f8ec6b826a1850458c005eb  8 entries
 
 `verify` checks the integrity of the data.  Nothing is ever written to disk.
 Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
-repairable), 2 (hopelessly broken). 
+repairable), 2 (hopelessly broken).
 
 ```
 % xpar verify backup.xpa
 xpar: movie.mkv: content differs
 xpar: 3956 slices of 5056 bytes, 396 recovery slices, erasure unit cell of 5056 bytes (1 per slice)
-xpar: damaged: 1 entries (0 missing), 1 slices, 1 cells; deepest column 1
+xpar: coverage: tree (1 entry)
+xpar: damaged: 1 entry (0 missing), 1 slice, 1 cell; deepest column 1
 xpar: status: repairable
 ```
 
@@ -101,14 +102,16 @@ xpar: status: repairable
 
 ```
 {"type":"summary","t":4864,"status":"clean","exit":0,"slices_checked":1221,
- "slices_bad":0,"recovery_available":366,"recovery_needed":0,"bytes_read":10001216, ...}
+ "slices_bad":0,"cells_bad":0,"column_depth":0,"recovery_available":366,
+ "recovery_needed":0,"entries_damaged":0,"entries_alias_only":0,
+ "entries_superseded":0,"syndromes":0,"bytes_read":10001216,"bytes_written":0}
 ```
 
 In order to repair broken archives, one may use the `repair` command:
 
 ```
 % xpar repair --in-place backup.xpa
-xpar: 1 cells damaged, 0 copied, 1 decoded; 1 writes, 5056 bytes; 1 entries repaired
+xpar: 1 cell damaged, 0 copied, 1 decoded; 1 write, 5056 bytes; 1 entry repaired (0 further names share a repaired inode).
 ```
 
 In this simulation, one randomly garbled byte in a 20 MB file cost a write
@@ -132,11 +135,12 @@ Firstly, erasures are correctible within a block.
 % xpar verify b.xpa
 xpar: big.bin: content differs
 xpar: 48 slices of 2097152 bytes, 5 recovery slices, erasure unit cell of 65536 bytes (32 per slice)
-xpar: damaged: 1 entries (0 missing), 23 slices, 30 cells; deepest column 3
+xpar: coverage: tree (1 entry)
+xpar: damaged: 1 entry (0 missing), 23 slices, 30 cells; deepest column 3
 xpar: status: repairable
 
 % xpar repair --in-place b.xpa
-xpar: 30 cells damaged, 0 copied, 30 decoded; 28 writes, 1966080 bytes; 1 entries repaired
+xpar: 30 cells damaged, 0 copied, 30 decoded; 28 writes, 1966080 bytes; 1 entry repaired (0 further names share a repaired inode).
 % cmp big.bin big.keep && echo ok
 ok
 ```
@@ -147,7 +151,9 @@ redundancy to protect against spurious bit-flips.
 
 ```
 % xpar verify arch.xpa
-xpar: armoured metadata: 1 regions corrected, 0 past the inner code
+xpar: 74 slices of 4096 bytes, 7 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
+xpar: armoured metadata: 1 region corrected, 0 past the inner code
+xpar: coverage: tree (1 entry)
 xpar: status: clean
 
 % xpar scrub arch.xpa
@@ -167,7 +173,7 @@ deletions as well:
 ```
 % xpar repair --in-place p.xpa
 xpar: ./data.bin: found 732 displaced slices with 732 strong confirmations.
-xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entries repaired
+xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entry repaired (0 further names share a repaired inode).
 % cmp data.bin data.keep && echo identical
 identical
 ```
@@ -250,8 +256,9 @@ Some drawbacks of xpar:
   generations into one, and re-encodes the archive.
 ```
 % xpar add -r 15% photos.xpa -R pics
-xpar: generation 1: 9 entries (1 added, 1 changed, 7 inherited, 0 dropped),
-      200000 new stream bytes, 7 recovery slices in 3 volumes.
+xpar: generation 1, set 9c1d0e5b7a3f48d2b6e0c4a1f75d3e88: 9 entries
+      (1 added, 1 changed, 7 inherited, 0 dropped), 200000 new stream
+      bytes, 7 recovery slices in 3 volumes.
 ```
 - `recover`: regenerate lost volume(s) from the surviving set.  For example,
   when with `--layout=split --volumes=4`, the data lives in header-free
@@ -282,7 +289,7 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
 ```
   geometry   : Z = 2097152 (2.0 MiB), S = 48, L = 100000000 (95.4 MiB)
   cells      : Y = 65536 bytes, K = 32 per slice; the erasure unit is
-               (slice, column), not a whole slice (4.6)
+               (slice, column), not a whole slice
   codec      : matrix over GF(2^8), recovery axis 2^8 = 208 slices
   redundancy : R = 5 (10.4% of S), 5 recovery slices present
   armour     : GF(2^8) RS(255, 223), t = 16, D = 1
@@ -290,17 +297,21 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
   field      : S + R = 53 <= 256, so GF(2^8)
   memory     : work buffers 22.1 MiB;  read-ahead 0 B;  stage + hash 32.0 MiB
                total 54.1 MiB
-  cells      : erasure budget is 5 per column, not 5 per set
+  cells      : Y = 65,536 B, K = 32 per slice (last cell 65,536 B)
+               erasure budget is 5 per column, not 5 per set
   passes     : 1 sequential read totalling 100,000,000 bytes
 ```
 - `benchmark`: displays the performance metrics for low-level SIMD kernels used
   by xpar.
 ```
 % xpar benchmark --tiers
-xpar: benchmark: avx2         gf8-mac    8388608 bytes    136 us  58823.53 MiB/s
-xpar: benchmark: gfni256      gf8-mac    8388608 bytes    164 us  48780.49 MiB/s
-xpar: benchmark: scalar       gf8-mac    8388608 bytes   3683 us   2172.14 MiB/s
-xpar: benchmark: 9 tiers checked.
+xpar: benchmark: V-HASH, V-CRC and V-GEN KATs ok
+xpar: benchmark: tier         operation         bytes     time       rate
+xpar: benchmark: avx2         gf8-mac         8388608 bytes      136 us  58823.53 MiB/s
+xpar: benchmark: gfni256      gf8-mac         8388608 bytes      164 us  48780.49 MiB/s
+xpar: benchmark: scalar       gf8-mac         8388608 bytes     3683 us   2172.14 MiB/s
+xpar: benchmark: ...
+xpar: benchmark: 9 tiers checked, every kernel byte-identical to scalar.
 ```
 
 The following exit codes/ERRORLEVELs of all sub-commands are possible:

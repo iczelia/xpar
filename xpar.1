@@ -54,9 +54,8 @@ recompute recovery data from the protected data.
 .TP
 .B extract
 Reconstruct data from a split or armoured set (see
-.B --layout
-). A
-sidecar set protects files already on disk and needs no extraction.
+.BR \-\-layout ).
+A sidecar set protects files already on disk and needs no extraction.
 .TP
 .B recover
 Regenerate one volume of a set from the others.
@@ -121,10 +120,12 @@ Working-set limit for the planner. When no plan fits, xpar refuses and
 names the three numbers that would make one fit.
 .TP
 .B \-\-json
-Format the standard output as JSON for easy parsing.
+Write JSON Lines to the standard output; the human-readable report goes to
+the standard error instead.
 .TP
 .BR \-\-progress ", " \-\-no\-progress
-Progress on stderr, at most one line a second.
+Report progress on the standard error, at most one line a second, or never
+report it. Without either, progress is shown only on a terminal.
 .TP
 .BI \-\-color= WHEN
 .IR auto " (default), " always ", " never .
@@ -381,7 +382,7 @@ Group link aliases, or show extents and reference counts.
 Show per-generation dependencies used by
 .BR prune .
 .TP
-.B "selftest \-\-tiers"
+.B "benchmark \-\-tiers"
 List and time every runnable kernel tier after differential tests.
 .PP
 .B \-\-generation=G
@@ -604,5 +605,5 @@ with normative source in
 Kamila Szewczyk <k@iczelia.net>
 .SH COPYRIGHT
 Copyright \(co 2022-2026 Kamila Szewczyk. License GPLv3: GNU GPL version
-3 only <https://gnu.org/licenses/gpl.html>. There is NO WARRANTY, to
+3 only <https://gnu.org/licenses/gpl\-3.0.html>. There is NO WARRANTY, to
 the extent permitted by law.

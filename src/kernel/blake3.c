@@ -78,7 +78,7 @@ static void xpar_b3_dispatch(u32 f) {
 }
 
 /*  Re-selects when xpar_cpu_force has narrowed the feature set since the
-    last call, which is what --simd and the selftest's tier sweep do. Once
+    last call, which is what --simd and the benchmark's tier sweep do. Once
     per hasher, never inside a loop.  */
 static void xpar_b3_need_dispatch(void) {
   u32 f = xpar_cpu_features();

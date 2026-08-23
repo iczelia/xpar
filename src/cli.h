@@ -26,7 +26,7 @@ typedef enum {
   XPAR_VERB_ADDRECOVERY, XPAR_VERB_ADD,         XPAR_VERB_CONSOLIDATE,
   XPAR_VERB_PRUNE,       XPAR_VERB_LIST,        XPAR_VERB_INFO,
   XPAR_VERB_EXPLAIN,     XPAR_VERB_UNDO,        XPAR_VERB_RECOVER_PROLOGUE,
-  XPAR_VERB_SELFTEST
+  XPAR_VERB_BENCHMARK
 } xpar_verb;
 
 const char * xpar_verb_name(xpar_verb v);
@@ -200,8 +200,8 @@ typedef struct {
   /*  info.  */
   bool deps;
 
-  /*  list and selftest reporting selectors.  */
-  bool list_links, list_dedup, selftest_tiers;
+  /*  list and benchmark reporting selectors.  */
+  bool list_links, list_dedup, benchmark_tiers;
 } xpar_options;
 
 /*  Entry points.  */

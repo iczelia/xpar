@@ -457,9 +457,9 @@ static const yarg_options t_none[] = {
   { 0, no_argument, NULL }
 };
 
-static const yarg_options t_selftest[] = {
+static const yarg_options t_benchmark[] = {
   { O_TIERS, no_argument, "tiers" },
-  { 0,       no_argument, NULL     }
+  { 0,       no_argument, NULL    }
 };
 
 /*  `add` and `consolidate` inherit the whole of create's table  */
@@ -479,7 +479,7 @@ static const yarg_verb verbs[] = {
   { XPAR_VERB_EXPLAIN,     "explain",     t_explain,     NULL     },
   { XPAR_VERB_UNDO,        "undo",        t_none,        NULL     },
   { XPAR_VERB_RECOVER_PROLOGUE, "recover-prologue", t_none, NULL  },
-  { XPAR_VERB_SELFTEST,    "selftest",    t_selftest,    NULL     },
+  { XPAR_VERB_BENCHMARK,   "benchmark",   t_benchmark,   NULL     },
   { 0,                     NULL,          NULL,          NULL     }
 };
 
@@ -500,7 +500,7 @@ static const char * const verb_desc[] = {
   "Print the hand-recovery recipe",
   "Replay an in-place repair journal",
   "Brute-force a destroyed armoured prologue",
-  "Run the kernel differential tests"
+  "Measure the low-level SIMD kernels"
 };
 
 const char * xpar_verb_name(xpar_verb v) {
@@ -563,7 +563,7 @@ static const char * const verb_usage[] = {
   "xpar explain [options] <set>",
   "xpar undo [options] <set>",
   "xpar recover-prologue [options] <file>",
-  "xpar selftest [options]"
+  "xpar benchmark [options]"
 };
 
 static const char * const verb_opts[] = {
@@ -673,8 +673,8 @@ static const char * const verb_opts[] = {
   "",
   /*  recover-prologue  */
   "",
-  /*  selftest  */
-  "      --tiers                Print every runnable kernel tier\n"
+  /*  benchmark  */
+  "      --tiers                Time every runnable kernel tier\n"
 };
 
 void xpar_cli_help(xpar_verb v) {
@@ -1072,7 +1072,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_CHAIN:  o->chain = true;  break;
     case O_LINKS:      o->list_links = true;  break;
     case O_LIST_DEDUP: o->list_dedup = true;  break;
-    case O_TIERS:      o->selftest_tiers = true;  break;
+    case O_TIERS:      o->benchmark_tiers = true;  break;
     case O_BEFORE: parse_genref(nm, v, &o->before);  o->have_before = true;
                    break;
 
@@ -1126,14 +1126,14 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
 /*  Cross-option rules.  */
 
 static bool takes_set(xpar_verb v) {
-  return v != XPAR_VERB_CREATE && v != XPAR_VERB_SELFTEST &&
+  return v != XPAR_VERB_CREATE && v != XPAR_VERB_BENCHMARK &&
          v != XPAR_VERB_RECOVER_PROLOGUE;
 }
 
 static void positionals(xpar_options * o, char ** pos, int n) {
   int first = 0;
-  if (o->verb == XPAR_VERB_SELFTEST) {
-    FATAL_UNLESS("Verb selftest takes no arguments.", n == 0);
+  if (o->verb == XPAR_VERB_BENCHMARK) {
+    FATAL_UNLESS("Verb benchmark takes no arguments.", n == 0);
     return;
   }
   if (takes_set(o->verb) || o->verb == XPAR_VERB_RECOVER_PROLOGUE) {

@@ -33,7 +33,7 @@ u32 xpar_crc32c_combine(u32 a, u32 b, u64 len_b);
 /*  Builds the tables and the cached shift operators.  */
 void xpar_crc32c_init(void);
 
-/*  Name of the dispatched kernel, for `info` and the selftest.  */
+/*  Name of the dispatched kernel, for `info` and the benchmark.  */
 const char * xpar_crc32c_variant(void);
 
 /*  The rolling window.  */

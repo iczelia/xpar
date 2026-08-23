@@ -33,7 +33,7 @@ int xpar_op_consolidate(const xpar_options *);
 int xpar_op_prune      (const xpar_options *);
 int xpar_op_undo(const xpar_options *);
 int xpar_op_recover_prologue(const xpar_options *);
-int xpar_op_selftest(const xpar_options *);
+int xpar_op_benchmark(const xpar_options *);
 char * xpar_spool_stdin(const xpar_options *);
 char * xpar_publish_spooled_stdin(const xpar_options *, const char *);
 
