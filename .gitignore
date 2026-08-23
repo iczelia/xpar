@@ -35,3 +35,15 @@ ci-check.*/
 xpar-*.tar.*
 xpar-*.zip
 compat/
+
+tests/t_unit
+tests/t_codec
+tests/t_central
+tests/mkdata
+tests/damage
+bench/timeit
+tests/*.log
+tests/*.trs
+test-suite.log
+tw-*/
+bench-results/

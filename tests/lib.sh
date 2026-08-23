@@ -1,0 +1,207 @@
+#  Copyright (C) 2022-2026 Kamila Szewczyk
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; version 3 of the License only.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# Shared shell harness. Failures accumulate; exits follow Automake (0/77/99).
+
+prog=`basename "$0"`
+checks=0
+failures=0
+phase="(starting up)"
+
+: "${abs_top_builddir:=..}"
+: "${abs_top_srcdir:=..}"
+: "${XPAR_TEST_LEVEL:=quick}"
+
+# Override the printed seed to reproduce a failure.
+: "${XPAR_TEST_SEED:=20260823}"
+
+hard_error() { echo "$prog: $*" >&2;  exit 99; }
+skip_all()   { echo "$prog: SKIP: $*" >&2;  exit 77; }
+
+if test -n "${XPAR:-}"; then
+  :
+elif test -x "$abs_top_builddir/xpar"; then
+  XPAR=$abs_top_builddir/xpar
+elif test -x "$abs_top_builddir/xpar.exe"; then
+  XPAR=$abs_top_builddir/xpar.exe
+else
+  hard_error "no xpar binary; set XPAR or build first"
+fi
+
+: "${MKDATA:=$abs_top_builddir/tests/mkdata}"
+: "${DAMAGE:=$abs_top_builddir/tests/damage}"
+test -x "$MKDATA" || test -x "$MKDATA.exe" || hard_error "$MKDATA not built"
+test -x "$DAMAGE" || test -x "$DAMAGE.exe" || hard_error "$DAMAGE not built"
+test -x "$MKDATA" || MKDATA=$MKDATA.exe
+test -x "$DAMAGE" || DAMAGE=$DAMAGE.exe
+
+work=`pwd`/tw-$prog.$$
+rm -rf "$work"
+mkdir "$work" || hard_error "cannot create $work"
+if test -z "${XPAR_TEST_KEEP:-}"; then
+  trap 'cd /; rm -rf "$work"' EXIT HUP INT TERM
+else
+  trap 'cd /; echo "$prog: kept $work" >&2' EXIT HUP INT TERM
+fi
+log=$work/last.log
+cd "$work" || hard_error "cannot enter $work"
+
+echo "$prog: seed $XPAR_TEST_SEED, level $XPAR_TEST_LEVEL"
+
+# Reporting.
+
+step() { phase="$*";  echo;  echo "$prog: --- $* ---"; }
+
+note() { echo "$prog:   $*"; }
+
+ok() { checks=`expr $checks + 1`; }
+
+bad() {
+  checks=`expr $checks + 1`
+  failures=`expr $failures + 1`
+  echo "$prog: FAIL in $phase: $*" >&2
+  if test -s "$log"; then sed 's/^/  | /' "$log" >&2; fi
+}
+
+summary() {
+  echo
+  echo "$prog: $checks checks, $failures failed"
+  test "$failures" -eq 0 || exit 1
+  exit 0
+}
+
+# Running xpar. Statuses above 128, or 8, are always treated as crashes.
+
+explain_status() {
+  case $1 in
+    0) echo "clean" ;;
+    1) echo "damaged, repairable" ;;
+    2) echo "damage beyond the recovery data" ;;
+    3) echo "not found, or not an xpar set" ;;
+    4) echo "usage error" ;;
+    5) echo "I/O error" ;;
+    6) echo "authentication failure" ;;
+    7) echo "no plan fits the memory ceiling" ;;
+    8) echo "INTERNAL ERROR (a bug)" ;;
+    13[0-9]|1[4-8][0-9]|19[01]) echo "CRASHED (signal `expr $1 - 128`)" ;;
+    *) echo "unrecognised status" ;;
+  esac
+}
+
+# Run a command and save its status without asserting it.
+attempt() {
+  status=0
+  "$@" > "$log" 2>&1 || status=$?
+  if test "$status" -ge 128 || test "$status" -eq 8; then
+    bad "$* : `explain_status $status` (status $status)"
+    return 1
+  fi
+  return 0
+}
+
+# Run a command and require an exact status.
+run() {
+  want=$1;  shift
+  attempt "$@" || return 1
+  if test "$status" -ne "$want"; then
+    bad "$*
+       expected: $want (`explain_status $want`)
+       got     : $status (`explain_status $status`)"
+    return 1
+  fi
+  ok
+  return 0
+}
+
+# Run a command and require one of several statuses.
+run_any() {
+  want=$1;  shift
+  attempt "$@" || return 1
+  for w in $want; do
+    if test "$status" -eq "$w"; then ok;  return 0; fi
+  done
+  bad "$*
+       expected one of: $want
+       got            : $status (`explain_status $status`)"
+  return 1
+}
+
+# Assertions.
+
+same() {
+  if cmp -s "$1" "$2"; then ok
+  else bad "$1 and $2 differ"; fi
+}
+
+differs() {
+  if cmp -s "$1" "$2"; then bad "$1 and $2 are identical, expected a change"
+  else ok; fi
+}
+
+equal() {   # equal <what> <got> <want>
+  if test "x$2" = "x$3"; then ok
+  else bad "$1: got '$2', want '$3'"; fi
+}
+
+exists() {
+  if test -e "$1"; then ok;  else bad "$1 does not exist"; fi
+}
+
+# Read flat JSON Lines without adding an interpreter dependency.
+
+# Select a record type because fields such as "status" are not unique.
+json_of() {    # json_of <file> <type>
+  grep '"type":"'"$2"'"' "$1" | head -1
+}
+
+json_num() {   # json_num <file> <key> [<type>]
+  if test -n "${3:-}"; then json_of "$1" "$3"; else cat "$1"; fi |
+    sed -n 's/.*"'"$2"'":\([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+json_str() {   # json_str <file> <key> [<type>]
+  if test -n "${3:-}"; then json_of "$1" "$3"; else cat "$1"; fi |
+    sed -n 's/.*"'"$2"'":"\([^"]*\)".*/\1/p' | head -1
+}
+
+# Geometry of a set, as shell variables: Z, S, Y, K, R, L.
+read_geometry() {   # read_geometry <set>
+  "$XPAR" info --json "$1" > "$work/geom.json" 2> "$log" ||
+    hard_error "info --json failed on $1"
+  Z=`json_num "$work/geom.json" slice_size  set`
+  S=`json_num "$work/geom.json" slices      set`
+  Y=`json_num "$work/geom.json" cell_bytes  set`
+  R=`json_num "$work/geom.json" recovery    set`
+  L=`json_num "$work/geom.json" stream_length set`
+  test -n "$Z" && test -n "$S" || hard_error "no geometry in info --json"
+  if test -z "$Y" || test "$Y" -eq 0; then K=1;  Y=$Z
+  else K=`expr \( $Z + $Y - 1 \) / $Y`; fi
+}
+
+# Deterministic, portable randomness for reproducible corruption matrices.
+
+# Keep LCG intermediates within expr's guaranteed 31-bit range.
+rng_state=`expr $XPAR_TEST_SEED % 65536`
+
+rnd() {   # rnd <n> -> 0 .. n-1 on stdout
+  rng_state=`expr \( $rng_state \* 25173 + 13849 \) % 65536`
+  expr $rng_state % "$1"
+}
+
+# Corpora.
+
+mkfile() {   # mkfile <path> <bytes> [<seed>] [<pattern>]
+  "$MKDATA" "${3:-$XPAR_TEST_SEED}" "$2" "$1" --pattern="${4:-random}" ||
+    hard_error "mkdata failed for $1"
+}

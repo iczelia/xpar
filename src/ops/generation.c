@@ -5432,8 +5432,7 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-/*  Differential kernel benchmark: every runtime-selected kernel tier
-    must match scalar output on fixed-seed inputs before it is timed.  */
+/* Require each selected kernel tier to match scalar before timing it. */
 
 typedef struct { u64 s; } bm_rng;
 
@@ -5569,9 +5568,7 @@ static u32 bm_check_armour(const char * tier, const xpar_armour_params * p,
   xpar_armour_encode_frame(a, frame);
   bad += bm_cmp(tier, what, frame, ref, (sz) fx);
 
-  /*  t errors in every codeword is the capacity, so a tier that decodes
-      one symbol differently shows up as a whole frame that will not come
-      back.  */
+  /* Damage each codeword to capacity before decoding. */
   for (i = 0; i < t; i++) {
     u32 s = bm_next(&r) % p->n;
     u64 at = ((u64) s * p->depth) * w;
@@ -5779,11 +5776,24 @@ static u32 bm_check_kats(void) {
   return bad;
 }
 
+/* Emit raw JSON measurements so callers can compute rates. */
+static xpar_json * bm_js;
+static bool        bm_quiet;
+
 static void bm_rate(const char * tier, const char * operation,
                     u64 bytes, u64 usec) {
   f64 mib_s;
   if (!usec) usec = 1;
   mib_s = ((f64) bytes * 1000000.0) / ((f64) usec * 1048576.0);
+  if (bm_js) {
+    xpar_json_begin(bm_js, "kernel");
+    xpar_json_str(bm_js, "tier", tier);
+    xpar_json_str(bm_js, "operation", operation);
+    xpar_json_u64(bm_js, "bytes", bytes);
+    xpar_json_u64(bm_js, "usec", usec);
+    xpar_json_end(bm_js);
+  }
+  if (bm_quiet) return;
   xpar_fprintf(xpar_stderr,
                "xpar: benchmark: %-12s %-12s %10" PRIu64 " bytes %8" PRIu64 " us "
                "%9.2f MiB/s\n", tier, operation,
@@ -5834,7 +5844,11 @@ int xpar_op_benchmark(const xpar_options * o) {
   u8 * ref8;  u8 * ref16;
   u64 fx8, fx16;
   bm_rng r;
+  xpar_json js;
 
+  xpar_json_init(&js, xpar_stdout, o->json);
+  bm_js = o->json ? &js : NULL;
+  bm_quiet = o->quiet;
   xpar_gf_init();
   xpar_crc32c_init();
   saved_gf  = xpar_gf_tier();
@@ -5855,14 +5869,14 @@ int xpar_op_benchmark(const xpar_options * o) {
     if (!o->benchmark_tiers && i != saved_gf) continue;
     if (!xpar_gf_tier_usable(i)) {
       if (o->verbose)
-        xpar_fprintf(xpar_stderr, "xpar: benchmark: gf tier %s is compiled "
-                     "and not runnable here; skipped.\n",
+        xpar_fprintf(xpar_stderr, "xpar: benchmark: gf tier %s is unavailable; "
+                     "skipped\n",
                      xpar_gf_tier_name(i));
       continue;
     }
     if (!xpar_gf_use_tier(i)) continue;
     bad += bm_check_gf(xpar_gf_active(), xpar_gf_tier_name(i));
-    if (o->benchmark_tiers && !o->quiet)
+    if (o->benchmark_tiers && (!o->quiet || o->json))
       bm_measure_gf(xpar_gf_active(), xpar_gf_tier_name(i));
     tiers++;
     if (!o->quiet)
@@ -5900,7 +5914,7 @@ int xpar_op_benchmark(const xpar_options * o) {
                            "armour GF(2^8)");
     bad += bm_check_armour(xpar_armour_tier_name(i), &p16, ref16, fx16,
                            "armour GF(2^16)");
-    if (o->benchmark_tiers && !o->quiet) {
+    if (o->benchmark_tiers && (!o->quiet || o->json)) {
       bm_measure_armour(&p8, xpar_armour_tier_name(i), "armour-gf8");
       bm_measure_armour(&p16, xpar_armour_tier_name(i), "armour-gf16");
     }
@@ -5918,18 +5932,25 @@ int xpar_op_benchmark(const xpar_options * o) {
     xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s, blake3 %s\n",
                  xpar_crc32c_variant(), xpar_blake3_variant());
 
+  if (bm_js) {
+    xpar_json_begin(bm_js, "hashes");
+    xpar_json_str(bm_js, "crc32c", xpar_crc32c_variant());
+    xpar_json_str(bm_js, "blake3", xpar_blake3_variant());
+    xpar_json_u64(bm_js, "tiers_checked", tiers);
+    xpar_json_end(bm_js);
+  }
+
   if (bad) {
     xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32
-                 " differences across %" PRIu32 " "
-                 "tiers. This build's kernels do not agree on this "
-                 "machine.\n", bad, tiers);
+                 " differences across %" PRIu32 " tiers\n", bad, tiers);
     gen_json_result(o, "benchmark", NULL, 0, "failed", XPAR_EXIT_INTERNAL);
+    bm_js = NULL;
     return XPAR_EXIT_INTERNAL;
   }
   if (!o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32
-                 " tiers checked, every "
-                 "kernel byte-identical to scalar.\n", tiers);
+                 " tiers agree with scalar\n", tiers);
   gen_json_result(o, "benchmark", NULL, 0, "ok", XPAR_EXIT_OK);
+  bm_js = NULL;
   return XPAR_EXIT_OK;
 }

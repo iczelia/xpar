@@ -147,7 +147,7 @@ struct xpar_vset {
   u64           recovery, recovery_gone;
 
   xpar_erasures er;
-  u64 bad_slices, bad_entries, alias_bad, missing_entries;
+  u64 bad_slices, bad_entries, alias_bad, opaque_bad, missing_entries;
   bool hash_sampled, hash_parallel;
   u8 * superseded;
   u8 * ignored_cell;
@@ -2252,6 +2252,14 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
       r->prefix_bad = true; }
 }
 
+/* True when another entry defines any of this entry's bytes. */
+static bool has_alias(const xpar_vset * s, u32 i) {
+  const xpar_entry * e = &s->mf.entry[i];
+  u32 k;
+  for (k = 0; k < e->extent_count; k++) if (aliased(s, i, k)) return true;
+  return false;
+}
+
 /*  Clean canonical cells with a bad entry hash identify alias-local damage,
     which consumes no recovery.  */
 static bool canon_erased(const xpar_vset * s, u32 i) {
@@ -2474,8 +2482,11 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   xpar_nameidx_free(&nix);
 
 scanned:
-  for (i = 0; i < s->mf.count; i++)
-    if (shape[i] && !canon_erased(s, i)) s->alias_bad++;
+  /* Clean canonical cells make hash failures alias-local or unlocalisable. */
+  for (i = 0; i < s->mf.count; i++) {
+    if (!shape[i] || canon_erased(s, i)) continue;
+    if (has_alias(s, i)) s->alias_bad++;  else s->opaque_bad++;
+  }
   xpar_free(shape);
   xpar_free(buf);
   xpar_pool_destroy(pool);
@@ -2483,7 +2494,7 @@ scanned:
   s->depth = xpar_erasures_max_depth(&s->er);
   rc = XPAR_EXIT_OK;
   if (s->er.bad_count || s->bad_entries) rc = XPAR_EXIT_REPAIRABLE;
-  if (s->depth > s->recovery) rc = XPAR_EXIT_UNREPAIRABLE;
+  if (s->depth > s->recovery || s->opaque_bad) rc = XPAR_EXIT_UNREPAIRABLE;
   return rc;
 }
 
@@ -2571,13 +2582,23 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  "repair copies those and spends no recovery\n",
                  s->alias_bad,
                  s->alias_bad == 1 ? "entry is" : "entries are");
-  if (rc == XPAR_EXIT_UNREPAIRABLE)
+  if (s->opaque_bad)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: %" PRIu64 " %s checksum-invisible damage; "
+                 "recovery cannot localise it\n",
+                 s->opaque_bad,
+                 s->opaque_bad == 1 ? "entry has" : "entries have");
+  if (rc == XPAR_EXIT_UNREPAIRABLE && s->depth > s->recovery)
     xpar_fprintf(xpar_stderr,
                  "xpar: status: %sunrepairable%s, short by %" PRIu64 " recovery "
                  "slice%s in the deepest column\n",
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
                  (s->depth - s->recovery),
                  PLURAL(s->depth - s->recovery));
+  else if (rc == XPAR_EXIT_UNREPAIRABLE)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: status: %sunrepairable%s, checksum-invisible damage\n",
+                 color ? "\033[31m" : "", color ? "\033[0m" : "");
   else
     xpar_fprintf(xpar_stderr, "xpar: status: %srepairable%s\n",
                  color ? "\033[33m" : "", color ? "\033[0m" : "");
@@ -2619,6 +2640,7 @@ void xpar_vset_json_summary(const xpar_vset * s, xpar_json * js,
   xpar_json_u64(js, "recovery_needed", s->depth);
   xpar_json_u64(js, "entries_damaged", s->bad_entries);
   xpar_json_u64(js, "entries_alias_only", s->alias_bad);
+  xpar_json_u64(js, "entries_opaque", s->opaque_bad);
   xpar_json_u64(js, "entries_superseded", s->superseded_entries);
   xpar_json_u64(js, "syndromes", syndromes);
   xpar_json_u64(js, "bytes_read", s->bytes_read);

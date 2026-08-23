@@ -93,8 +93,10 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar compat
+      - name: Test suite
+        run: make -j4 check
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
 
   #  aarch64 SIMD on native hardware.
   linux-aarch64:
@@ -139,8 +141,10 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar compat
+      - name: Test suite
+        run: make -j4 check
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
 
   #  macOS on both architectures.
   macos:
@@ -189,8 +193,10 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar compat
+      - name: Test suite
+        run: make -j4 check
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
 
   #  Native 32- and 64-bit Windows through MSYS2.
   windows:
@@ -226,7 +232,7 @@ jobs:
           update: true
           msystem: ${{ matrix.msystem }}
           install: >-
-            make tar gzip diffutils coreutils
+            make tar gzip diffutils coreutils grep sed gawk
             ${{ matrix.toolchain }}
 
       - name: Extract source package
@@ -244,8 +250,10 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar.exe compat
+      - name: Test suite
+        run: make -j4 check
+        env:
+          XPAR_COMPAT: compat
 
   #  Cross-build Windows binaries; the next job runs them.
   windows-cross:

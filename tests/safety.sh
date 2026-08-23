@@ -1,0 +1,303 @@
+#!/bin/sh
+#  Copyright (C) 2022-2026 Kamila Szewczyk
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; version 3 of the License only.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# Checksum-safety tests: success must reproduce the original bytes.
+# CRC-preserving corruption remains detectable only through strong tags.
+
+. "${srcdir:-.}/lib.sh" 2> /dev/null || . "`dirname "$0"`/lib.sh"
+
+# never_false_success <status> <file> <pristine> <what>
+never_false_success() {
+  if test "$1" -ne 0; then ok;  return 0; fi
+  if cmp -s "$2" "$3"; then ok
+  else bad "$4: exited 0 with bytes that are not the original"; fi
+}
+
+# A forgery the stored checksums cannot see.
+
+step "a CRC-preserving forgery is not mistaken for intact data"
+
+mkdir forge;  cd forge || hard_error cd
+mkfile data.bin 2097152
+cp data.bin pristine.bin
+run 0 "$XPAR" create -s 1M -r 2 --dedup=none --align=none -o set data.bin
+read_geometry set.xpa
+note "Z=$Z S=$S Y=$Y K=$K R=$R"
+
+# The forged cell preserves both its cell and slice checksums.
+"$DAMAGE" data.bin -Z "$Z" -Y "$Y" -k forge cell=0,3 ||
+  hard_error "forge failed"
+differs data.bin pristine.bin
+
+"$XPAR" verify --json set.xpa > v.json 2> "$log"
+equal "cells the checksums condemn" "`json_num v.json cells_bad summary`" 0
+equal "entries the checksums condemn" \
+      "`json_num v.json entries_damaged summary`" 1
+equal "entries with damage no cell explains" \
+      "`json_num v.json entries_opaque summary`" 1
+equal "entries blamed on an alias" \
+      "`json_num v.json entries_alias_only summary`" 0
+
+# It must neither report clean nor promise an impossible repair.
+run 2 "$XPAR" verify set.xpa
+equal "verify status" "`json_str v.json status summary`" unrepairable
+run 2 "$XPAR" verify --strong set.xpa
+run_any "1 2" "$XPAR" scrub --deep set.xpa
+
+attempt "$XPAR" repair --in-place set.xpa
+never_false_success "$status" data.bin pristine.bin "repair of a forgery"
+if test "$status" -eq 0; then
+  bad "repair claimed to fix damage no checksum can localise"
+else
+  ok
+  note "repair refused with status $status"
+fi
+grep -q 'strong tag' "$log" && ok || {
+  #  Refusing for another stated reason is fine; refusing silently is not.
+  test -s "$log" && ok || bad "repair refused without saying why"
+}
+
+# A strong tag must catch a forgery alongside repairable damage.
+cp pristine.bin data.bin
+"$DAMAGE" data.bin -Z "$Z" -Y "$Y" -k forge cell=1,5 ||
+  hard_error "forge failed"
+"$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 cell=1,9 ||
+  hard_error "damage failed"
+"$XPAR" verify --json set.xpa > v.json 2> "$log"
+equal "the visible cell is the only one condemned" \
+      "`json_num v.json cells_bad summary`" 1
+attempt "$XPAR" repair --in-place set.xpa
+never_false_success "$status" data.bin pristine.bin \
+                    "repair of a slice carrying a forgery"
+if test "$status" -eq 0; then
+  bad "repair rebuilt a slice whose strong tag cannot match"
+else
+  ok
+  note "the strong tag stopped the write back (status $status)"
+fi
+cd ..
+
+# Keep alias-local damage distinct from checksum-invisible damage.
+
+step "an alias-local difference is still reported as repairable"
+
+mkdir alias;  cd alias || hard_error cd
+mkdir tree
+mkfile tree/a.bin 1048576
+cp tree/a.bin tree/b.bin
+cp -R tree tree.orig
+run 0 "$XPAR" create -R --dedup=file -s 256K -r 3 -o set tree
+"$DAMAGE" tree/b.bin "rand=100,64" || hard_error "damage failed"
+"$XPAR" verify --json set.xpa > v.json 2> "$log"
+equal "entries blamed on an alias" \
+      "`json_num v.json entries_alias_only summary`" 1
+equal "entries with damage no cell explains" \
+      "`json_num v.json entries_opaque summary`" 0
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+same tree/b.bin tree.orig/b.bin
+cd ..
+
+# Corrupted checksum metadata must not be trusted or reported clean.
+
+step "damaged metadata is never trusted"
+
+mkdir meta;  cd meta || hard_error cd
+mkfile data.bin 8388608
+cp data.bin pristine.bin
+# Small slices make checksum tables large enough to damage directly.
+run 0 "$XPAR" create -s 256K -r 4 --dedup=none -o set data.bin
+cp set.xpa index.orig
+size=`wc -c < index.orig | tr -d ' '`
+note "index volume is $size bytes"
+
+case $XPAR_TEST_LEVEL in
+  quick) spots=16 ;;
+  full)  spots=48 ;;
+  *)     spots=128 ;;
+esac
+
+spot=0
+while test "$spot" -lt "$spots"; do
+  cp index.orig set.xpa
+  at=`expr \( $size \* $spot \) / $spots`
+  test "$at" -lt `expr $size - 64` || at=`expr $size - 64`
+  "$DAMAGE" set.xpa "seed=`expr $XPAR_TEST_SEED + $spot`" "rand=$at,48" ||
+    hard_error "damage failed"
+
+  # attempt() rejects internal errors and crashes.
+  attempt "$XPAR" verify set.xpa
+  vstatus=$status
+  if test "$vstatus" -eq 0; then
+    # Validate any clean report by extracting it.
+    rm -rf out;  mkdir out
+    attempt "$XPAR" extract --to out set.xpa
+    if test "$status" -eq 0; then
+      never_false_success 0 out/data.bin pristine.bin \
+                          "extract after a clean verify at offset $at"
+    else ok; fi
+  else
+    ok
+  fi
+  same data.bin pristine.bin
+  spot=`expr $spot + 1`
+done
+cd ..
+
+# Detect damaged recovery slices before using them.
+
+step "damaged recovery is not decoded from"
+
+mkdir rec;  cd rec || hard_error cd
+mkfile data.bin 4194304
+cp data.bin pristine.bin
+run 0 "$XPAR" create -s 512K -r 4 --dedup=none --volumes=equal -o set data.bin
+read_geometry set.xpa
+vols=`ls set.v*.xpa 2> /dev/null`
+if test -z "$vols"; then
+  note "this layout keeps no separate recovery volumes"
+else
+  for v in $vols; do cp "$v" "$v.orig"; done
+  victim=`echo $vols | tr ' ' '\n' | head -1`
+
+  #  Damage inside the recovery payload, then spend the whole budget on
+  #  the data.  Either the tool notices and refuses, or it decodes and is
+  #  right; there is no third outcome.
+  ops=
+  i=0
+  while test "$i" -lt "$R"; do ops="$ops cell=$i,0";  i=`expr $i + 1`; done
+  # shellcheck disable=SC2086
+  "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 $ops || hard_error "damage failed"
+  "$DAMAGE" "$victim" "rand=512,16384" || hard_error "damage failed"
+  attempt "$XPAR" repair --in-place set.xpa
+  never_false_success "$status" data.bin pristine.bin \
+                      "repair against damaged recovery"
+  note "status $status with a damaged recovery volume"
+
+  #  scrub --deep recomputes the recovery, so it has to say so.
+  cp pristine.bin data.bin
+  for v in $vols; do cp "$v.orig" "$v"; done
+  "$DAMAGE" "$victim" "rand=512,16384" || hard_error "damage failed"
+  attempt "$XPAR" scrub --deep set.xpa
+  if test "$status" -eq 0; then
+    bad "scrub --deep called a set clean whose recovery does not recompute"
+  else ok; fi
+fi
+cd ..
+
+# Shape damage: truncation, extension and replacement.
+
+step "a file of the wrong length is never called intact"
+
+mkdir shape;  cd shape || hard_error cd
+mkfile data.bin 2097152
+cp data.bin pristine.bin
+run 0 "$XPAR" create -s 256K -r 6 --dedup=none -o set data.bin
+
+"$DAMAGE" data.bin "truncate=1900000" || hard_error "truncate failed"
+run_any "1 2" "$XPAR" verify set.xpa
+attempt "$XPAR" repair --in-place set.xpa
+never_false_success "$status" data.bin pristine.bin "repair of a truncation"
+if test "$status" -eq 0; then same data.bin pristine.bin; fi
+
+cp pristine.bin data.bin
+"$DAMAGE" data.bin "extend=4096" || hard_error "extend failed"
+run_any "1 2" "$XPAR" verify set.xpa
+attempt "$XPAR" repair --in-place set.xpa
+never_false_success "$status" data.bin pristine.bin "repair of an extension"
+
+# Same-length replacement exceeds this set's recovery capacity.
+cp pristine.bin data.bin
+mkfile other.bin 2097152 999999
+cp other.bin data.bin
+attempt "$XPAR" verify set.xpa
+if test "$status" -eq 0; then bad "a wholly replaced file verified clean"
+else ok; fi
+attempt "$XPAR" repair --in-place set.xpa
+never_false_success "$status" data.bin pristine.bin "repair of a replacement"
+cd ..
+
+# A dry run writes nothing.
+
+step "a dry run changes no bytes"
+
+mkdir dry;  cd dry || hard_error cd
+mkfile data.bin 1048576
+cp data.bin pristine.bin
+run 0 "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin
+"$DAMAGE" data.bin "rand=4096,512" || hard_error "damage failed"
+cp data.bin damaged.bin
+run_any "0 1" "$XPAR" repair --dry-run set.xpa
+same data.bin damaged.bin
+run 0 "$XPAR" repair --in-place --paranoid set.xpa
+same data.bin pristine.bin
+cd ..
+
+# Volumes from another set are not recovery data.
+
+step "a volume from another set is refused"
+
+mkdir cross;  cd cross || hard_error cd
+mkdir a b
+( cd a && mkfile data.bin 1048576 1111 )
+( cd b && mkfile data.bin 1048576 2222 )
+( cd a && "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin ) \
+  > "$log" 2>&1 || hard_error "create failed"
+( cd b && "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin ) \
+  > "$log" 2>&1 || hard_error "create failed"
+cp a/data.bin a/pristine.bin
+avol=`cd a && ls set.v*.xpa 2> /dev/null | head -1`
+if test -z "$avol"; then
+  note "no separate recovery volumes to swap"
+else
+  cp "b/$avol" "a/$avol"
+  ( cd a && "$DAMAGE" data.bin "rand=8192,256" ) || hard_error "damage failed"
+  cd a || hard_error cd
+  attempt "$XPAR" repair --in-place set.xpa
+  never_false_success "$status" data.bin pristine.bin \
+                      "repair with a foreign recovery volume"
+  note "status $status with a foreign volume in place"
+  cd ..
+fi
+cd ..
+
+# Auth-only sets must still distinguish localisable damage.
+
+step "an authenticated set classifies damage the same way"
+
+mkdir auth;  cd auth || hard_error cd
+mkfile key.bin 32 4242
+mkdir tree
+mkfile tree/a.bin 1048576 11
+mkfile tree/b.bin 262144 12
+cp -R tree tree.orig
+run 0 "$XPAR" create -R -s 256K -r 25% --auth-key=key.bin --auth-only \
+    --dedup=none -o set tree
+run 0 "$XPAR" verify --auth-key=key.bin set.xpa
+
+# A missing key is an authentication failure, not a clean result.
+run 6 "$XPAR" verify set.xpa
+
+"$DAMAGE" tree/a.bin "rand=70000,64" || hard_error "damage failed"
+"$XPAR" verify --auth-key=key.bin --json set.xpa > v.json 2> "$log"
+equal "damage a cell explains" "`json_num v.json entries_opaque summary`" 0
+if test "`json_num v.json cells_bad summary`" -ge 1; then ok
+else bad "a keyed set did not localise ordinary damage"; fi
+run 1 "$XPAR" verify --auth-key=key.bin set.xpa
+run 0 "$XPAR" repair --auth-key=key.bin --in-place set.xpa
+same tree/a.bin tree.orig/a.bin
+cd ..
+
+summary

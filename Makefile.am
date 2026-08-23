@@ -221,18 +221,90 @@ endif
 
 xpar_LDADD += libxpar_core.a
 
+## Tests define xpar_main because libxpar_core supplies the platform main.
+## Standalone data, damage and timing tools do not link the code under test.
+
+if XPAR_WIN_LEGACY
+## Legacy Windows cannot link or run the test programs.
+check_PROGRAMS =
+TESTS =
+else
+check_PROGRAMS = tests/t_unit tests/t_codec tests/t_central \
+                 tests/mkdata tests/damage
+
+tests_t_unit_SOURCES    = tests/t_unit.c
+tests_t_unit_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
+tests_t_unit_LDADD      = $(xpar_LDADD)
+
+tests_t_codec_SOURCES   = tests/t_codec.c
+tests_t_codec_CPPFLAGS  = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
+tests_t_codec_LDADD     = $(xpar_LDADD)
+
+tests_t_central_SOURCES  = tests/t_central.c
+tests_t_central_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
+tests_t_central_LDADD    = $(xpar_LDADD)
+
+tests_mkdata_SOURCES    = tests/mkdata.c
+tests_mkdata_CPPFLAGS   =
+tests_mkdata_LDADD      =
+
+tests_damage_SOURCES    = tests/damage.c
+tests_damage_CPPFLAGS   =
+tests_damage_LDADD      =
+
+TESTS = tests/t_unit tests/t_codec tests/t_central \
+        tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh
+endif
+
+TEST_EXTENSIONS = .sh
+SH_LOG_COMPILER = $(SHELL)
+
+AM_TESTS_ENVIRONMENT = \
+  abs_top_builddir='$(abs_top_builddir)';  export abs_top_builddir; \
+  abs_top_srcdir='$(abs_top_srcdir)';      export abs_top_srcdir; \
+  srcdir='$(abs_top_srcdir)/tests';        export srcdir; \
+  XPAR='$(abs_top_builddir)/xpar$(EXEEXT)';           export XPAR; \
+  MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
+  DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
+  XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
+  XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED;
+
+## Benchmarks are opt-in because they take minutes.
+
+EXTRA_PROGRAMS   = bench/timeit
+bench_timeit_SOURCES  = bench/timeit.c
+bench_timeit_CPPFLAGS =
+bench_timeit_LDADD    =
+
 EXTRA_DIST = \
   bootstrap README.md \
   contrib/inject-errors.c contrib/check-win95-pe.sh contrib/ci-check.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
-  contrib/dos/run-check.sh contrib/dos/run2.c
+  contrib/dos/run-check.sh contrib/dos/run2.c \
+  tests/t_harness.h tests/lib.sh \
+  tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
+  bench/run.sh bench/plot.py
 
 VENDORED = src/yarg.h
 
 .PHONY: docs doc-check format-check vectors vectors-check fuzz \
-        sanitizer-check win95-check
+        sanitizer-check win95-check check-full check-torture \
+        bench-tools bench
 docs: doc/xpar-format.pdf
+
+## Wider test matrices for nightly and release builds.
+check-full:
+	$(MAKE) check XPAR_TEST_LEVEL=full
+
+check-torture:
+	$(MAKE) check XPAR_TEST_LEVEL=torture
+
+bench-tools: xpar$(EXEEXT) tests/mkdata$(EXEEXT) tests/damage$(EXEEXT) \
+             bench/timeit$(EXEEXT)
+
+bench: bench-tools
+	$(SHELL) $(top_srcdir)/bench/run.sh $(BENCHFLAGS)
 
 win95-check: xpar$(EXEEXT)
 	OBJDUMP=$(OBJDUMP) NM=$(NM) $(SHELL) \
