@@ -1,0 +1,417 @@
+name: Build
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  #  Build every target from the same source package.
+  dist:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Bootstrap and configure
+        run: ./bootstrap && ./configure
+
+      - name: Make source package
+        run: make VERSION=${{ github.sha }} dist-gzip
+
+      - name: Upload source package artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+          path: xpar-${{ github.sha }}.tar.gz
+
+      - name: Run distcheck
+        run: make distcheck
+
+      #  Fixture read by every runnable target.
+      - name: Write the cross-host compatibility fixture
+        run: |
+          make -j4 all
+          mkdir compat
+          cd compat
+          head -c 1200000 /dev/urandom > corpus.bin
+          ../xpar create --layout=armoured -r 20% -o compat corpus.bin
+
+      - name: Upload compatibility fixture
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+  #  Linux compiler, SIMD, thread, and sanitizer matrix.
+  linux:
+    name: Linux ${{ matrix.cc }} ${{ matrix.simd }} ${{ matrix.threads }} ${{ matrix.san }}
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [ gcc, clang ]
+        simd: [ enable-simd, disable-simd ]
+        threads: [ enable-threads, disable-threads ]
+        san: [ none, sanitized ]
+    env:
+      ASAN_OPTIONS: abort_on_error=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.san }}" = none ]; then
+            ./configure CC=${{ matrix.cc }} \
+              --${{ matrix.simd }} --${{ matrix.threads }}
+          else
+            ./configure CC=${{ matrix.cc }} \
+              --${{ matrix.simd }} --${{ matrix.threads }} \
+              --enable-sanitizers=address,undefined CFLAGS="-O1 -g"
+          fi
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar compat
+
+  #  aarch64 SIMD on native hardware.
+  linux-aarch64:
+    name: Linux aarch64 ${{ matrix.cc }} ${{ matrix.simd }} ${{ matrix.san }}
+    needs: [ dist ]
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [ gcc, clang ]
+        simd: [ enable-simd, disable-simd ]
+        san: [ none, sanitized ]
+    env:
+      ASAN_OPTIONS: abort_on_error=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.san }}" = none ]; then
+            ./configure CC=${{ matrix.cc }} --${{ matrix.simd }}
+          else
+            ./configure CC=${{ matrix.cc }} --${{ matrix.simd }} \
+              --enable-sanitizers=address,undefined CFLAGS="-O1 -g"
+          fi
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar compat
+
+  #  macOS on both architectures.
+  macos:
+    name: macOS ${{ matrix.os }} ${{ matrix.simd }} ${{ matrix.san }}
+    needs: [ dist ]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, macos-26-intel ]
+        simd: [ enable-simd, disable-simd ]
+        san: [ none, sanitized ]
+        #  Linux already covers scalar sanitizer builds.
+        exclude:
+          - simd: disable-simd
+            san: sanitized
+    env:
+      ASAN_OPTIONS: abort_on_error=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.san }}" = none ]; then
+            ./configure CC=clang --${{ matrix.simd }}
+          else
+            ./configure CC=clang --${{ matrix.simd }} \
+              --enable-sanitizers=address,undefined CFLAGS="-O1 -g"
+          fi
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar compat
+
+  #  Native 32- and 64-bit Windows through MSYS2.
+  windows:
+    name: Windows ${{ matrix.msystem }}
+    needs: [ dist ]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - msystem: UCRT64
+            toolchain: mingw-w64-ucrt-x86_64-gcc
+            host: x86_64-w64-mingw32
+          - msystem: MINGW32
+            toolchain: mingw-w64-i686-gcc
+            host: i686-w64-mingw32
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: ${{ matrix.msystem }}
+          install: >-
+            make tar gzip diffutils coreutils
+            ${{ matrix.toolchain }}
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --build="`sh ./config.guess`" \
+                      --host=${{ matrix.host }} \
+                      CC=${{ matrix.host }}-gcc LDFLAGS=-static
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar.exe compat
+
+  #  Win95-compatible i386 PE.
+  windows-win95:
+    name: Windows i386 (Win95 target)
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+
+      - name: Install the i686 mingw-w64 cross-toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --host=i686-w64-mingw32 --with-windows-target=win95 \
+                      CC=i686-w64-mingw32-gcc CFLAGS=-O2 LDFLAGS=-s
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Verify the PE image is a Win95-era binary
+        run: |
+          file xpar.exe
+          file xpar.exe | grep -q 'MS Windows 4\.00'
+          make win95-check
+
+  #  Foreign architectures under qemu-user, including big-endian s390x.
+  cross:
+    name: Cross ${{ matrix.target.arch }}
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - arch: ppc64le
+            host: powerpc64le-linux-gnu
+            qemu: ppc64le
+            libc: ppc64el
+          - arch: riscv64
+            host: riscv64-linux-gnu
+            qemu: riscv64
+            libc: riscv64
+          - arch: s390x
+            host: s390x-linux-gnu
+            qemu: s390x
+            libc: s390x
+          - arch: armhf
+            host: arm-linux-gnueabihf
+            qemu: arm
+            libc: armhf
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - name: Install the cross-toolchain and qemu-user
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static \
+            gcc-${{ matrix.target.host }} libc6-dev-${{ matrix.target.libc }}-cross
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --host=${{ matrix.target.host }} \
+                      CC=${{ matrix.target.host }}-gcc \
+                      CFLAGS=-O2 LDFLAGS=-static
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check under qemu
+        run: |
+          file xpar
+          cat > run-xpar <<EOF
+          #!/bin/sh
+          exec qemu-${{ matrix.target.qemu }}-static "$PWD/xpar" "\$@"
+          EOF
+          chmod +x run-xpar
+          ./run-xpar --version
+          sh contrib/ci-check.sh ./run-xpar compat
+
+  #  MS-DOS cross-build.
+  dos:
+    name: MS-DOS i386 (DJGPP)
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    env:
+      DJGPP_RELEASE: "v3.4"
+      DJGPP_GCC: "1220"
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+
+      - name: Install the DJGPP cross-toolchain
+        run: |
+          curl -fL -o /tmp/djgpp.tar.bz2 \
+            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
+          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
+          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --host=i586-pc-msdosdjgpp --disable-simd \
+                      CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Verify the DOS binary format
+        run: |
+          file xpar.exe
+          file xpar.exe | grep -Eq 'MS-DOS executable|COFF'
+
+  #  Format specification.
+  docs:
+    name: Format specification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install TeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y latexmk texlive-latex-recommended \
+                                  texlive-latex-extra texlive-fonts-recommended
+
+      - name: Bootstrap and configure
+        run: ./bootstrap && ./configure
+
+      - name: Typeset
+        run: make docs
+
+      - name: Upload the specification
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-format-${{ github.sha }}
+          path: doc/xpar-format.pdf

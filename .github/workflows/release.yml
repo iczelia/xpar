@@ -1,0 +1,315 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  #  Manual runs supply the version through the tag input.
+  XPAR_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  #  Package once for all release jobs.
+  sources:
+    name: Publish sources
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install the archivers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bzip3 zstd zip
+          bzip3 --version
+
+      - name: Regenerate the ChangeLog from the git history
+        run: |
+          contrib/gitlog-to-changelog --format='%s%n%n%b%n' > ChangeLog.tmp
+          mv ChangeLog.tmp ChangeLog
+          head -20 ChangeLog
+
+      - name: Bootstrap and configure
+        run: ./bootstrap && ./configure
+
+      - name: Build the source packages
+        run: |
+          pkg=`sed -n 's/^PACKAGE_VERSION = //p' Makefile`
+          test "$pkg" = "$XPAR_VERSION" || \
+            echo "::warning::tag $XPAR_VERSION but configure.ac says $pkg"
+          make VERSION="$XPAR_VERSION" dist
+          make VERSION="$XPAR_VERSION" dist-zip
+          gzip -dk "xpar-$XPAR_VERSION.tar.gz"
+          bzip3 -k "xpar-$XPAR_VERSION.tar"
+          zstd -19 -k "xpar-$XPAR_VERSION.tar"
+          ls -l xpar-$XPAR_VERSION.*
+
+      - name: Publish the source packages
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: |
+            xpar-${{ env.XPAR_VERSION }}.tar
+            xpar-${{ env.XPAR_VERSION }}.tar.bz2
+            xpar-${{ env.XPAR_VERSION }}.tar.bz3
+            xpar-${{ env.XPAR_VERSION }}.tar.gz
+            xpar-${{ env.XPAR_VERSION }}.tar.xz
+            xpar-${{ env.XPAR_VERSION }}.tar.zst
+            xpar-${{ env.XPAR_VERSION }}.zip
+
+      - name: Upload the source package artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+          path: xpar-${{ env.XPAR_VERSION }}.tar.gz
+
+  #  Format specification.
+  spec:
+    name: Publish the format specification
+    needs: [ sources ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Install TeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y latexmk texlive-latex-recommended \
+                                  texlive-latex-extra texlive-fonts-recommended
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure and typeset
+        run: |
+          ./configure
+          make docs
+          mv doc/xpar-format.pdf "xpar-format-$XPAR_VERSION.pdf"
+
+      - name: Publish the specification
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: xpar-format-${{ env.XPAR_VERSION }}.pdf
+
+  #  Statically linked Windows binaries.
+  windows:
+    name: Publish Windows ${{ matrix.target.name }}
+    needs: [ sources ]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            host: x86_64-w64-mingw32
+            packages: gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+            extra: ""
+          - name: i686
+            host: i686-w64-mingw32
+            packages: gcc-mingw-w64-i686 binutils-mingw-w64-i686
+            extra: ""
+          - name: i686-win95
+            host: i686-w64-mingw32
+            packages: gcc-mingw-w64-i686 binutils-mingw-w64-i686
+            extra: "--with-windows-target=win95"
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Install the cross-toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.target.packages }}
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --host=${{ matrix.target.host }} \
+                      CC=${{ matrix.target.host }}-gcc \
+                      ${{ matrix.target.extra }} \
+                      --bindir=/ --program-suffix=-${{ matrix.target.name }} \
+                      CFLAGS=-O2 LDFLAGS="-static -s"
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Check the Win95 image
+        if: ${{ matrix.target.name == 'i686-win95' }}
+        run: |
+          file xpar.exe
+          file xpar.exe | grep -q 'MS Windows 4\.00'
+          make win95-check
+
+      - name: Stage the binary
+        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+
+      - name: Publish the binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: output/xpar-${{ matrix.target.name }}*
+
+  #  Linux binaries built on the oldest supported image.
+  linux:
+    name: Publish Linux ${{ matrix.target.name }}
+    needs: [ sources ]
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            runner: ubuntu-22.04
+          - name: aarch64
+            runner: ubuntu-22.04-arm
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --bindir=/ --program-suffix=-linux-${{ matrix.target.name }} \
+                      CFLAGS=-O2 LDFLAGS=-s
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar
+
+      - name: Stage the binary
+        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+
+      - name: Publish the binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: output/xpar-linux-${{ matrix.target.name }}*
+
+  #  Unsigned macOS binaries.
+  macos:
+    name: Publish macOS ${{ matrix.target.name }}
+    needs: [ sources ]
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: arm64
+            runner: macos-latest
+          - name: x86_64
+            runner: macos-26-intel
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --bindir=/ --program-suffix=-macos-${{ matrix.target.name }} \
+                      CC=clang CFLAGS=-O2 LDFLAGS=-Wl,-x
+
+      - name: Make
+        run: make -j4 all
+
+      - name: CI check
+        run: sh contrib/ci-check.sh ./xpar
+
+      - name: Stage the binary
+        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+
+      - name: Publish the binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: output/xpar-macos-${{ matrix.target.name }}*
+
+  #  MS-DOS binary.
+  dos:
+    name: Publish MS-DOS i386
+    needs: [ sources ]
+    runs-on: ubuntu-latest
+    env:
+      DJGPP_RELEASE: "v3.4"
+      DJGPP_GCC: "1220"
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Install the DJGPP cross-toolchain
+        run: |
+          curl -fL -o /tmp/djgpp.tar.bz2 \
+            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
+          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
+          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          ./configure --host=i586-pc-msdosdjgpp --disable-simd \
+                      --bindir=/ --program-suffix=-dos \
+                      CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 LDFLAGS=-s
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Verify the DOS binary format
+        run: |
+          file xpar.exe
+          file xpar.exe | grep -Eq 'MS-DOS executable|COFF'
+
+      - name: Stage the binary
+        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+
+      - name: Publish the binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.XPAR_VERSION }}
+          files: output/xpar-dos*
