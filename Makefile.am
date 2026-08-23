@@ -100,7 +100,7 @@ xpar_LDADD = libxpar_core.a
 if XPAR_WIN_LEGACY
 xpar_SOURCES += src/platform/port-win95-crt.c
 xpar_CFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns
-xpar_LDFLAGS += -nostartfiles -nodefaultlibs -Wl,-e,xpar_entry \
+xpar_LDFLAGS += -nostartfiles -nodefaultlibs -Wl,-e,_xpar_entry \
                  -static -static-libgcc -Wl,--subsystem,console
 xpar_LDADD += -lgcc -lkernel32
 endif
@@ -235,5 +235,5 @@ VENDORED = src/yarg.h
 docs: doc/xpar-format.pdf
 
 win95-check: xpar$(EXEEXT)
-	OBJDUMP=$(OBJDUMP) $(SHELL) \
+	OBJDUMP=$(OBJDUMP) NM=$(NM) $(SHELL) \
 	  $(top_srcdir)/contrib/check-win95-pe.sh ./xpar$(EXEEXT) ./config.h

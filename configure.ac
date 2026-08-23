@@ -37,6 +37,7 @@ esac
 AM_PROG_AR
 AC_PROG_RANLIB
 AC_CHECK_TOOL([OBJDUMP], [objdump])
+AC_CHECK_TOOL([NM], [nm])
 
 AC_DEFINE([XPAR_MAJOR], [xpar_version_major], [Major version number])
 AC_DEFINE([XPAR_MINOR], [xpar_version_minor], [Minor version number])

@@ -19,7 +19,7 @@ REM  RUN2 merges stderr into stdout for COMMAND.COM.
 D:
 CD \
 
-REM  Smoke test.
+REM  Sanity check.
 RUN2.EXE XPAR.EXE --version > E:\VERSION.TXT
 IF ERRORLEVEL 1 GOTO DONE
 ECHO version >> E:\RESULT.TXT

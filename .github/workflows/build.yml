@@ -93,7 +93,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar compat
 
   #  aarch64 SIMD on native hardware.
@@ -139,7 +139,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar compat
 
   #  macOS on both architectures.
@@ -189,7 +189,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar compat
 
   #  Native 32- and 64-bit Windows through MSYS2.
@@ -244,7 +244,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar.exe compat
 
   #  Cross-build Windows binaries; the next job runs them.
@@ -340,10 +340,11 @@ jobs:
       - name: Extract source package
         run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
 
-      - name: Smoke test
+      - name: Sanity check
         run: |
           chmod +x bin/xpar.exe
           sh contrib/ci-check.sh ./bin/xpar.exe compat
+
 
   #  Foreign architectures under qemu-user, including big-endian s390x.
   cross:
@@ -403,7 +404,7 @@ jobs:
         run: make -j4 all
 
       #  Invoke qemu directly; do not depend on binfmt_misc.
-      - name: Smoke test under qemu
+      - name: Sanity check under qemu
         run: |
           file xpar
           cat > run-xpar <<EOF

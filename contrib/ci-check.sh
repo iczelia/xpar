@@ -13,17 +13,13 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-#  contrib/ci-check.sh [path/to/xpar] [compat-dir]
-#
-#  The binary defaults to ./xpar[.exe]. A compat directory contains
-#  corpus.bin and an armoured compat.xpa from another host.
-
 set -e
 
 prog=`basename "$0"`
 
 fail() { echo "$prog: $*" >&2; exit 1; }
-step() { echo; echo "$prog: --- $* ---"; }
+phase="(starting up)"
+step() { phase="$*";  echo;  echo "$prog: --- $* ---"; }
 
 xpar=${1:-}
 if test -z "$xpar"; then
@@ -52,21 +48,75 @@ trap 'cd /; rm -rf "$work"' EXIT HUP INT TERM
 log=$work/last.log
 cd "$work"
 
-#  Run a command and require exit status WANT.
+explain_status() {
+  st=$1
+  if test "$st" -gt 128 && test "$st" -lt 192; then
+    sig=`expr "$st" - 128`
+    case $sig in
+      2)  echo "killed by SIGINT" ;;
+      4)  echo "CRASHED: SIGILL, illegal instruction" ;;
+      6)  echo "CRASHED: SIGABRT, aborted" ;;
+      7)  echo "CRASHED: SIGBUS, bad address" ;;
+      8)  echo "CRASHED: SIGFPE, arithmetic fault" ;;
+      9)  echo "killed by SIGKILL" ;;
+      11) echo "CRASHED: SIGSEGV, invalid memory reference" ;;
+      13) echo "killed by SIGPIPE" ;;
+      15) echo "killed by SIGTERM" ;;
+      *)  echo "killed by signal $sig" ;;
+    esac
+    return
+  fi
+  case $st in
+    3221225477) echo "CRASHED: 0xC0000005, access violation" ;       return ;;
+    3221225725) echo "CRASHED: 0xC00000FD, stack overflow" ;         return ;;
+    3221225620) echo "CRASHED: 0xC0000094, integer divide by zero" ; return ;;
+    3221225786) echo "interrupted (0xC000013A)" ;                    return ;;
+    32212*)     echo "CRASHED: Windows exception $st" ;              return ;;
+  esac
+  case $st in
+    0) echo "clean" ;;
+    1) echo "damaged, repairable" ;;
+    2) echo "damage beyond the recovery data" ;;
+    3) echo "not found, or not an xpar set" ;;
+    4) echo "usage error" ;;
+    5) echo "I/O error" ;;
+    6) echo "authentication failure" ;;
+    7) echo "no plan fits the memory ceiling" ;;
+    8) echo "internal error (a bug)" ;;
+    *) echo "unrecognised status" ;;
+  esac
+}
+
+describe_subject() {
+  echo "$prog: the binary under test:" >&2
+  ls -l "$xpar" 2>&1 | sed 's/^/  /' >&2
+  if command -v file > /dev/null 2>&1; then
+    file "$xpar" 2>&1 | sed 's/^/  /' >&2
+  fi
+}
+
 run() {
   want=$1; shift
   got=0
   "$@" > "$log" 2>&1 || got=$?
   if test "$got" -ne "$want"; then
-    echo "$prog: expected exit $want, got $got, from:" >&2
-    echo "  $*" >&2
-    sed 's/^/  | /' "$log" >&2
+    echo >&2
+    echo "$prog: FAILED in phase: $phase" >&2
+    echo "$prog:   command : $*" >&2
+    echo "$prog:   expected: $want (`explain_status "$want"`)" >&2
+    echo "$prog:   got     : $got (`explain_status "$got"`)" >&2
+    if test -s "$log"; then
+      echo "$prog:   output  :" >&2
+      sed 's/^/  | /' "$log" >&2
+    else
+      echo "$prog:   output  : none -- it produced nothing at all" >&2
+    fi
+    describe_subject
     exit 1
   fi
-  sed 's/^/  | /' "$log"
+  if test -s "$log"; then sed 's/^/  | /' "$log"; fi
 }
 
-#  Overwrite LENGTH bytes at OFFSET in FILE.
 smash() {
   dd if=/dev/urandom of="$1" bs=1 seek="$2" count="$3" conv=notrunc 2>/dev/null
 }
@@ -75,11 +125,12 @@ same() {
   cmp "$1" "$2" || fail "$1 and $2 differ"
 }
 
-step "kernel tiers agree with scalar"
+step "the binary runs at all"
 run 0 "$xpar" --version
+
+step "kernel tiers agree with scalar"
 run 0 "$xpar" benchmark --tiers
 
-#  Files around the default slice size, including duplicate content.
 step "corpus"
 mkdir -p tree/sub
 dd if=/dev/urandom of=tree/big.bin   bs=1024 count=700 2>/dev/null
@@ -89,7 +140,6 @@ printf 'the quick brown fox jumps over the lazy dog\n' > tree/sub/note.txt
 cp -R tree tree.orig
 ls -l tree tree/sub
 
-#  Sidecar layout.
 step "sidecar: create"
 run 0 "$xpar" create -R -r 25% --dedup=file -o sidecar tree
 
@@ -137,7 +187,6 @@ dd if=/dev/urandom of=tree/late.bin bs=1024 count=64 2>/dev/null
 run 0 "$xpar" add -R -r 25% sidecar.xpa tree
 run 0 "$xpar" verify --chain sidecar.xpa
 
-#  Cross-check dispatched and scalar kernels in both directions.
 step "kernels: encode scalar, decode dispatched"
 cp tree.orig/big.bin cross.bin
 run 0 "$xpar" create --simd=scalar -r 25% -o crossa cross.bin
@@ -153,7 +202,6 @@ run 1 "$xpar" verify --simd=scalar crossb.xpa
 run 0 "$xpar" repair --simd=scalar --in-place crossb.xpa
 same cross.bin tree.orig/big.bin
 
-#  Armoured layout.
 step "armoured: create and extract"
 run 0 "$xpar" create --layout=armoured -r 25% -o armour cross.bin
 cp armour.xpa prologue.xpa
@@ -168,12 +216,10 @@ mkdir armour.fix
 run 0 "$xpar" repair --to armour.fix armour.xpa
 same armour.fix/cross.bin tree.orig/big.bin
 
-#  Recover a lost prologue from an otherwise intact archive.
 step "armoured: a wrecked prologue is brute-forced back"
 smash prologue.xpa 0 12
 run 0 "$xpar" recover-prologue prologue.xpa
 
-#  Split layout.
 step "split: create, extract and verify"
 run 0 "$xpar" create --layout=split -R -r 25% -o split tree.orig
 mkdir split.out
@@ -181,7 +227,6 @@ run 0 "$xpar" extract --to split.out split.xpa
 same split.out/tree.orig/big.bin tree.orig/big.bin
 run 0 "$xpar" verify split.xpa
 
-#  Planner edge cases.
 step "geometry: explicit slice size, matrix codec, GF(2^16)"
 run 0 "$xpar" create -s 1K --codec=matrix --field=16 -r 30% -o geom1 cross.bin
 run 0 "$xpar" verify geom1.xpa
@@ -200,14 +245,12 @@ step "geometry: single-threaded planning"
 run 0 "$xpar" create -j 1 -r 25% -o geom4 one.bin
 run 0 "$xpar" verify -j 1 geom4.xpa
 
-#  Unrecoverable damage.
 step "hopeless damage is reported as such"
 run 0 "$xpar" create -r 5% -o doomed cross.bin
 rm -f doomed.v*.xpa
 smash cross.bin 0 8192
 run 2 "$xpar" verify doomed.xpa
 
-#  Cross-host compatibility corpus.
 if test -n "$compat"; then
   step "compat: a set written on another host reads back here"
   cp "$compat/compat.xpa" .

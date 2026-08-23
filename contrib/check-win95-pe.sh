@@ -3,6 +3,7 @@
 set -eu
 
 objdump=${OBJDUMP:-objdump}
+nm=${NM:-nm}
 exe=${1:-./xpar.exe}
 config=${2:-./config.h}
 tmp=${TMPDIR:-/tmp}/xpar-pe-$$
@@ -18,6 +19,23 @@ check() {
 }
 
 check 'file format pei-i386' 'not a 32-bit PE image'
+
+entry=`"$objdump" -f "$exe" |
+       sed -n 's/^start address 0x0*\([0-9a-fA-F]*\).*/\1/p' |
+       tr 'A-F' 'a-f'`
+want=`"$nm" "$exe" |
+      sed -n 's/^0*\([0-9a-fA-F]*\) [Tt] _xpar_entry$/\1/p' |
+      tr 'A-F' 'a-f'`
+if test -z "$entry" || test -z "$want"; then
+  echo 'win95-check: cannot read the entry point out of the image' >&2
+  exit 1
+fi
+if test "$entry" != "$want"; then
+  echo "win95-check: entry is 0x$entry but _xpar_entry is 0x$want" >&2
+  echo 'win95-check: the linker did not resolve the -e symbol' >&2
+  exit 1
+fi
+
 check 'MajorOSystemVersion[[:space:]]+4' 'OS version is not 4.x'
 check 'MinorOSystemVersion[[:space:]]+0' 'OS revision is not 0'
 check 'MajorSubsystemVersion[[:space:]]+4' 'subsystem is not 4.x'

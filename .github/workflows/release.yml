@@ -208,7 +208,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar
 
       - name: Stage the binary
@@ -253,7 +253,7 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check
+      - name: Sanity check
         run: sh contrib/ci-check.sh ./xpar
 
       - name: Stage the binary
