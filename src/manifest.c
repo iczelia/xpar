@@ -955,6 +955,7 @@ static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
   e->length = total;
 }
 
+/*  Prefix hashes cover no stored bytes here; content_hash still covers `p`.  */
 static void hash_bytes(const u8 * p, u32 n, u8 out32[32], u8 out16[16]) {
   xpar_blake3_t h;
   xpar_blake3_init(&h);

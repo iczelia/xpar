@@ -53,7 +53,6 @@ bool xpar_chunk_file(const char * path, u64 average,
   if (!average) average = (u64) 1 << 20;
   if (average > ((u64) 1 << 30)) average = (u64) 1 << 30;
   min = MAX(average / 4, 1);
-  
   max = MIN(average * 4, (u64) UINT32_MAX);
   while (bits < 62 && ((u64) 1 << bits) < average) bits++;
   strong = low_mask(bits < 62 ? bits + 1 : bits);

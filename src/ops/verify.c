@@ -2591,7 +2591,8 @@ void xpar_vset_json_set(const xpar_vset * s, xpar_json * js) {
   xpar_json_u64(js, "recovery", s->recovery);
   xpar_json_u64(js, "field", s->setd.field_log2);
   xpar_json_str(js, "codec",
-                s->setd.codec == XPAR_CODEC_FFT ? "fft" : "matrix");
+                s->setd.codec == XPAR_CODEC_FFT_LOW ? "fft-low" :
+                s->setd.codec == XPAR_CODEC_FFT     ? "fft" : "matrix");
   xpar_json_str(js, "layout",
                 s->setd.layout == XPAR_LAYOUT_SPLIT ? "split" :
                 s->setd.layout == XPAR_LAYOUT_ARMOURED ? "armoured" :

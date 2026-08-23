@@ -87,19 +87,25 @@ static void emit_int(fmt_ctx * c, i64 v, int width, int prec, int flags) {
   emit_uint(c, uv, 10, 0, width, prec, flags);
 }
 
+/*  Largest decimal scale that fits in u64.  */
+#define FMT_PREC_MAX 19
+
+#define FMT_FIELD_MAX 65536
+
 static void emit_double(fmt_ctx * c, double v, int width, int prec,
                         int flags) {
   char sign = 0, ibuf[24];
   u64 ip, fp, mult = 1;
   double frac;
-  int in = 0, total, pad;
+  int in = 0, total, pad, keep;
   if (prec < 0) prec = 6;
+  keep = prec > FMT_PREC_MAX ? FMT_PREC_MAX : prec;
   if (v < 0)                { sign = '-';  v = -v; }
   else if (flags & F_PLUS)  { sign = '+'; }
   else if (flags & F_SPACE) { sign = ' '; }
   ip   = (u64) v;
   frac = v - (double) ip;
-  for (int i = 0; i < prec; i++) mult *= 10;
+  for (int i = 0; i < keep; i++) mult *= 10;
   fp = (u64) (frac * (double) mult + 0.5);
   if (fp >= mult) { ip++;  fp -= mult; }
   if (ip == 0) ibuf[in++] = '0';
@@ -112,13 +118,14 @@ static void emit_double(fmt_ctx * c, double v, int width, int prec,
   if (!(flags & F_MINUS) && (flags & F_ZERO)) emit_pad(c, pad, '0');
   while (in) emit_c(c, ibuf[--in]);
   if (prec > 0) {
-    char fbuf[24];
+    char fbuf[FMT_PREC_MAX];
     int fn = 0;
     u64 x = fp;
     emit_c(c, '.');
-    for (int i = 0; i < prec; i++) { fbuf[fn++] = (char) ('0' + (x % 10));
+    for (int i = 0; i < keep; i++) { fbuf[fn++] = (char) ('0' + (x % 10));
                                      x /= 10; }
     while (fn) emit_c(c, fbuf[--fn]);
+    emit_pad(c, prec - keep, '0');
   }
   if (flags & F_MINUS) emit_pad(c, pad, ' ');
 }
@@ -139,15 +146,22 @@ int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
       else if (*fmt == '#') flags |= F_HASH;
       else break;
     }
+    /*  Saturate parsed fields to avoid signed overflow.  */
     if (*fmt == '*') { width = va_arg(ap, int);  fmt++; }
-    else while (*fmt >= '0' && *fmt <= '9')
-      { width = width * 10 + (*fmt - '0');  fmt++; }
+    else while (*fmt >= '0' && *fmt <= '9') {
+      if (width <= FMT_FIELD_MAX) width = width * 10 + (*fmt - '0');
+      fmt++;
+    }
     if (*fmt == '.') {
       fmt++;  prec = 0;
       if (*fmt == '*') { prec = va_arg(ap, int);  fmt++; }
-      else while (*fmt >= '0' && *fmt <= '9')
-        { prec = prec * 10 + (*fmt - '0');  fmt++; }
+      else while (*fmt >= '0' && *fmt <= '9') {
+        if (prec <= FMT_FIELD_MAX) prec = prec * 10 + (*fmt - '0');
+        fmt++;
+      }
     }
+    if (width > FMT_FIELD_MAX) width = FMT_FIELD_MAX;
+    if (prec  > FMT_FIELD_MAX) prec  = FMT_FIELD_MAX;
     /*  0 = int, 1 = long, 2 = long long, 3 = size_t  */
     if (*fmt == 'z') { longness = 3;  fmt++; }
     else if (*fmt == 'l') {

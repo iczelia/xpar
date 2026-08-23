@@ -334,7 +334,10 @@ static void rp_pick_setd(rp * r) {
     const xpar_crit_pkt * p = &r->crit.pkt[i];
     bool named = false, head = true;
     if (!xpar_pkt_is(&p->hdr, XPAR_T_SETD)) continue;
-    if (xpar_setd_read(p->body, (sz) p->body_len, &sd) != XPAR_OK) continue;
+    if (xpar_setd_read(p->body, (sz) p->body_len, &sd) != XPAR_OK) {
+      xpar_setd_free(&sd);
+      continue;
+    }
     if (r->o->gen_count) {
       const xpar_genref * g = &r->o->gens[0];
       named = g->by_id
@@ -346,8 +349,10 @@ static void rp_pick_setd(rp * r) {
       const xpar_crit_pkt * q = &r->crit.pkt[j];
       xpar_setd other;
       if (j == i || !xpar_pkt_is(&q->hdr, XPAR_T_SETD)) continue;
-      if (xpar_setd_read(q->body, (sz) q->body_len, &other) != XPAR_OK)
+      if (xpar_setd_read(q->body, (sz) q->body_len, &other) != XPAR_OK) {
+        xpar_setd_free(&other);
         continue;
+      }
       if (!xpar_memcmp(other.parent_set_id, p->hdr.set_id,
                        XPAR_SET_ID_LEN)) head = false;
       xpar_setd_free(&other);

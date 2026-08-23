@@ -1392,7 +1392,9 @@ static void gen_armour_params(const xpar_options * o,
   p->k = p->n - 2 * t;
   if (o->depth) p->depth = o->depth;
   else if (o->burst) {
-    p->depth = xpar_ceil_div(o->burst + 1, (u64) t * (p->symbol_bits / 8));
+    /*  Saturate the increment to prevent wraparound.  */
+    u64 want = o->burst == (u64) -1 ? (u64) -1 : o->burst + 1;
+    p->depth = xpar_ceil_div(want, (u64) t * (p->symbol_bits / 8));
     if (!p->depth) p->depth = 1;
   }
 }
@@ -5325,21 +5327,24 @@ int xpar_op_recover_prologue(const xpar_options * o) {
                    authenticated && key_loaded ? &key : NULL, true);
     while (xpar_scan_next(&sc, &hdr, &body, &off)) {
       if (off + hdr.length > last) last = off + hdr.length;
-      if (xpar_pkt_is(&hdr, XPAR_T_STRM)) {
+      if (xpar_pkt_is(&hdr, XPAR_T_STRM) &&
+          hdr.length >= XPAR_PKT_HDR + 16) {
         pr.stream_offset = off + XPAR_PKT_HDR + 16;
         pr.stream_length = hdr.length - XPAR_PKT_HDR - 16;
       }
       if (xpar_pkt_is(&hdr, XPAR_T_SETD)) {
         xpar_setd sd;
-        if (xpar_setd_read(body, (sz) (hdr.length - XPAR_PKT_HDR), &sd) ==
-            XPAR_OK) {
+        xpar_status sst = xpar_setd_read(body,
+                                         (sz) (hdr.length - XPAR_PKT_HDR),
+                                         &sd);
+        if (sst == XPAR_OK) {
           if (o->verbose > 1)
             xpar_fprintf(xpar_stderr,
                          "xpar: recovered SETD stream length %" PRIu64 ".\n",
                          sd.stream_length);
           declared_stream = sd.stream_length;
-          xpar_setd_free(&sd);
         }
+        if (sst == XPAR_OK || sst == XPAR_E_UNSUPPORTED) xpar_setd_free(&sd);
       }
     }
     if (declared_stream &&

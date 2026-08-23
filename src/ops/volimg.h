@@ -40,7 +40,7 @@ void xpar_armg_unwrap(const u8 * body, u64 length, bool damaged,
 void xpar_armg_salvage(const u8 * buf, u64 size, const xpar_key *,
                        xpar_armg_plain_fn, void * user);
 
-                       typedef struct {
+typedef struct {
   const xpar_armour * armour;
   xpar_file * file;
   u8 * frame;

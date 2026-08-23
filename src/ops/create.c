@@ -179,10 +179,15 @@ static void armour_depth(const xpar_options * o, u64 budget,
                          xpar_armour_params * p) {
   u64 w = p->symbol_bits / 8, t = (p->n - p->k) / 2, d = 1;
   if (o->depth) d = o->depth;
-  else if (o->burst) d = xpar_ceil_div(o->burst / w + 1, t ? t : 1);
+  else if (o->burst) {
+    /*  Saturate the increment to prevent wraparound.  */
+    u64 sym = o->burst / w;
+    d = sym == (u64) -1 ? (u64) -1 : xpar_ceil_div(sym + 1, t ? t : 1);
+  }
   if (!d) d = 1;
-  while (d > 1 && 2 * d * p->n * w > budget / 4) d /= 2;
+  /*  Clamp before computing the footprint to avoid overflow.  */
   if (d > XPAR_ARMG_DEPTH_MAX) d = XPAR_ARMG_DEPTH_MAX;
+  while (d > 1 && 2 * d * p->n * w > budget / 4) d /= 2;
   p->depth = d;
 }
 
@@ -1560,12 +1565,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     layt.vol[i + 1].name           = (char *) xpar_path_base(names[i + 1]);
   }
   if (o->layout == XPAR_LAYOUT_SPLIT) {
-    u64 per = c.geom.slice_count
-                ? xpar_ceil_div(c.geom.slice_count, data_n) : 0;
+    /*  Spread the remainder across the leading volumes.  */
+    u64 base = data_n ? c.geom.slice_count / data_n : 0;
+    u64 rem  = data_n ? c.geom.slice_count % data_n : 0;
     u64 slice = 0;
     for (i = 0; i < data_n; i++) {
       u32 li = nvol + 1 + i;
-      u64 count = MIN(per, c.geom.slice_count - slice);
+      u64 count = base + (i < rem ? 1 : 0);
       u64 off = slice * c.geom.slice_size;
       u64 len = MIN(count * c.geom.slice_size,
                     c.geom.stream_length - off);

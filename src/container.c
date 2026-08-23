@@ -1087,9 +1087,13 @@ u32 xpar_rcvs_stream_header(u8 out[XPAR_PKT_HDR + 16], u64 exponent,
 }
 
 static bool layt_names_unique(const xpar_layt * l) {
-  u32 capacity = 16, i;
+  u64 want = 16;
+  u32 capacity, i;
   u32 * slot;
-  while (capacity < l->count * 2) capacity *= 2;
+  /*  Use u64 so an untrusted count cannot wrap the table size.  */
+  while (want < (u64) l->count * 2) want *= 2;
+  if (want > (u64) 1 << 31) return false;
+  capacity = (u32) want;
   slot = (u32 *) xpar_calloc(capacity, sizeof *slot);
   for (i = 0; i < l->count; i++) {
     const char * name = l->vol[i].name;
@@ -1660,9 +1664,12 @@ xpar_status xpar_posx_collect(const xpar_critset * c, const u8 * set_id,
     u32 j;
     if (!xpar_pkt_is(&p->hdr, XPAR_T_POSX) ||
         xpar_memcmp(p->hdr.set_id, set_id, XPAR_SET_ID_LEN)) continue;
-    if (xpar_posx_read(p->body, (sz) p->body_len, &t) != XPAR_OK ||
-        t.first_record >= count || t.count > count - t.first_record)
+    if (xpar_posx_read(p->body, (sz) p->body_len, &t) != XPAR_OK)
       goto malformed;
+    if (t.first_record >= count || t.count > count - t.first_record) {
+      xpar_posx_free(&t);
+      goto malformed;
+    }
     for (j = 0; j < t.count; j++) {
       u32 at = t.first_record + j;
       if (seen[at]) { xpar_posx_free(&t);  goto malformed; }

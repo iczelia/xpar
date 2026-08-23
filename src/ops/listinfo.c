@@ -224,7 +224,7 @@ int xpar_op_list(const xpar_options * o) {
         for (k = 0; k < e->extent_count; k++) {
           i64 h = xpar_gchain_gen_of(&c, e->extents[k].stream_offset,
                                      e->extents[k].length);
-          char gb[16];
+          char gb[32];
           /*  An extent may belong to a different generation than its entry.  */
           if (h < 0) xpar_snprintf(gb, sizeof gb, "outside the chain");
           else xpar_snprintf(gb, sizeof gb, "generation %" PRIu32,

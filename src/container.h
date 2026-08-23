@@ -116,6 +116,7 @@ xpar_status xpar_volh_read (const u8 * body, sz n, xpar_volh * out);
 void        xpar_volh_write(xpar_buf *, const xpar_volh *, const u8 * set_id,
                             const xpar_key *);
 
+/*  XPAR_E_UNSUPPORTED populates out; xpar_setd_free accepts all results.  */
 xpar_status xpar_setd_read (const u8 * body, sz n, xpar_setd * out);
 void        xpar_setd_write(xpar_buf *, const xpar_setd *, const u8 * set_id,
                             const xpar_key *);

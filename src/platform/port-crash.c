@@ -118,10 +118,12 @@ unsigned xpar_crash_walk_fp(void * const * fp, void ** out, unsigned max) {
   unsigned n = 0;
   const void * const * prev = NULL;
   while (fp && n < max) {
-    void * const * next = (void * const *) fp[0];
-    void * ret = fp[1];
+    void * const * next;
+    void * ret;
     if (((uintptr_t) fp & (sizeof(void *) - 1)) != 0) break;
     if (prev && (const void * const *) fp <= prev) break;
+    next = (void * const *) fp[0];
+    ret  = fp[1];
     if (!ret) break;
     out[n++] = ret;
     prev = (const void * const *) fp;
