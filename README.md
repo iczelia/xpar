@@ -41,7 +41,7 @@ In order to build from source code, download a distribution tarball from the
 releases tab and execute the following commands:
 
 ```
-% ./configure && make && make check && sudo make install
+% ./configure && make && sudo make install
 ```
 
 `configure` probes for all SIMD extensions that xpar can use.  Each becomes
