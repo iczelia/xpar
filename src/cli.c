@@ -19,6 +19,7 @@
 #include "pathname.h"
 #include "v1detect.h"
 #include "volname.h"
+#include "port-cpu.h"
 #include "port-fs.h"
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -513,7 +514,9 @@ const char * xpar_verb_name(xpar_verb v) {
 /*  Help.  */
 
 void xpar_cli_version(void) {
-  xpar_fprintf(xpar_stdout, "xpar %s\n", PACKAGE_VERSION);
+  const xpar_cpu_tier * best = xpar_cpu_tier_at(xpar_cpu_tier_best());
+  xpar_fprintf(xpar_stdout, "xpar %s (%s, %s)\n", PACKAGE_VERSION,
+               XPAR_HOST_TRIPLE, best ? best->name : "scalar");
   xpar_fputs(
     "Copyright (C) 2022-2026 Kamila Szewczyk.\n"
     "License GPLv3: GNU GPL version 3 only"

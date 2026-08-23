@@ -35,6 +35,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/uio.h>
+#include <signal.h>
+
+#if defined(HAVE_UCONTEXT_H)
+  #include <ucontext.h>
+#endif
 
 #if defined(HAVE_SYS_MMAN_H)
   #include <sys/mman.h>
@@ -911,5 +916,98 @@ void xpar_random_bytes(void * buf, sz n) {
     can replace it wholesale; xpar_main is the portable one.  */
 int main(int argc, char ** argv) {
   xpar_host_init();
+  xpar_crash_install();
   return xpar_main(argc, argv);
 }
+
+/*  Report the fault, then re-raise it with the default disposition.  */
+#if defined(HAVE_SIGACTION)
+
+#if defined(HAVE_EXECINFO_H)
+#include <execinfo.h>
+#endif
+
+#define XPAR_CRASH_FRAMES 48
+
+static const char * crash_name(int sig) {
+  switch (sig) {
+    case SIGSEGV: return "invalid memory reference (SIGSEGV)";
+    case SIGBUS:  return "bus error (SIGBUS)";
+    case SIGILL:  return "illegal instruction (SIGILL)";
+    case SIGFPE:  return "arithmetic exception (SIGFPE)";
+    case SIGABRT: return "aborted (SIGABRT)";
+    default:      return "fatal signal";
+  }
+}
+
+/*  Extract the faulting instruction address when available.  */
+static const void * crash_pc(void * uc) {
+#if defined(__linux__) && defined(HAVE_UCONTEXT_H)
+  ucontext_t * u = (ucontext_t *) uc;
+  if (!u) return NULL;
+#if defined(__x86_64__)
+  return (const void *) (uintptr_t) u->uc_mcontext.gregs[REG_RIP];
+#elif defined(__i386__)
+  return (const void *) (uintptr_t) u->uc_mcontext.gregs[REG_EIP];
+#elif defined(__aarch64__)
+  return (const void *) (uintptr_t) u->uc_mcontext.pc;
+#elif defined(__arm__)
+  return (const void *) (uintptr_t) u->uc_mcontext.arm_pc;
+#else
+  return NULL;
+#endif
+#else
+  (void) uc;
+  return NULL;
+#endif
+}
+
+static void crash_handler(int sig, siginfo_t * si, void * uc) {
+  void * frames[XPAR_CRASH_FRAMES];
+  unsigned n = 0;
+  int have_addr = si && si->si_code > 0 &&
+                  (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL ||
+                   sig == SIGFPE);
+  if (xpar_crash_entered()) _exit(XPAR_EXIT_INTERNAL);
+#if defined(HAVE_BACKTRACE)
+  { int got = backtrace(frames, XPAR_CRASH_FRAMES);
+    if (got > 0) n = (unsigned) got; }
+#else
+  n = xpar_crash_walk_fp((void * const *) __builtin_frame_address(0),
+                         frames, XPAR_CRASH_FRAMES);
+#endif
+  xpar_crash_head(crash_name(sig), (u64) sig, 1, crash_pc(uc),
+                  have_addr ? si->si_addr : NULL, have_addr, NULL);
+#if defined(HAVE_BACKTRACE)
+  /*  Avoid backtrace_symbols(), which allocates.  */
+  if (n) backtrace_symbols_fd(frames, (int) n, 2);
+#else
+  { unsigned i;
+    for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], NULL); }
+#endif
+  xpar_crash_tail(n != 0);
+  /*  Preserve normal core-dump behavior.  */
+  { struct sigaction sa;
+    xpar_memset(&sa, 0, sizeof sa);
+    sa.sa_handler = SIG_DFL;
+    sigaction(sig, &sa, NULL); }
+  raise(sig);
+  _exit(XPAR_EXIT_INTERNAL);
+}
+
+void xpar_crash_install(void) {
+  if (!xpar_crash_wanted()) return;
+  static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
+  struct sigaction sa;
+  sz i;
+  xpar_memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = crash_handler;
+  sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
+  sigemptyset(&sa.sa_mask);
+  for (i = 0; i < sizeof sigs / sizeof *sigs; i++)
+    (void) sigaction(sigs[i], &sa, NULL);
+}
+
+#else
+void xpar_crash_install(void) { }
+#endif

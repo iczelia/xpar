@@ -297,10 +297,12 @@ fail:
 
 XPAR_KEEP XPAR_NORETURN void __cdecl xpar_entry(void) {
   char ** argv;
-  int argc = split(GetCommandLineA(), &argv);
+  int argc;
   int rc;
-  if (argc < 0) ExitProcess(XPAR_EXIT_NOPLAN);
   xpar_host_init();
+  xpar_crash_install();
+  argc = split(GetCommandLineA(), &argv);
+  if (argc < 0) ExitProcess(XPAR_EXIT_NOPLAN);
   rc = xpar_main(argc, argv);
   ExitProcess((UINT) rc);
 }

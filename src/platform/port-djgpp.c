@@ -32,6 +32,7 @@
 #include <go32.h>
 #include <io.h>
 #include <pc.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/farptr.h>
@@ -451,5 +452,42 @@ void xpar_random_bytes(void * buf, sz n) {
 
 int main(int argc, char ** argv) {
   xpar_host_init();
+  xpar_crash_install();
   return xpar_main(argc, argv);
+}
+
+/*  Print a portable summary before DJGPP's default traceback.  */
+
+#define XPAR_CRASH_FRAMES 32
+
+static const char * crash_name(int sig) {
+  switch (sig) {
+    case SIGSEGV: return "invalid memory reference (SIGSEGV)";
+    case SIGILL:  return "illegal instruction (SIGILL)";
+    case SIGFPE:  return "arithmetic exception (SIGFPE)";
+    case SIGABRT: return "aborted (SIGABRT)";
+    default:      return "fatal signal";
+  }
+}
+
+static void crash_handler(int sig) {
+  void * frames[XPAR_CRASH_FRAMES];
+  unsigned n, i;
+  if (xpar_crash_entered()) xpar_exit(XPAR_EXIT_INTERNAL);
+  n = xpar_crash_walk_fp((void * const *) __builtin_frame_address(0),
+                         frames, XPAR_CRASH_FRAMES);
+  xpar_crash_head(crash_name(sig), (u64) sig, 1, NULL, NULL, 0, NULL);
+  for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], NULL);
+  xpar_crash_tail(n != 0);
+  signal(sig, SIG_DFL);
+  raise(sig);
+  xpar_exit(XPAR_EXIT_INTERNAL);
+}
+
+void xpar_crash_install(void) {
+  if (!xpar_crash_wanted()) return;
+  signal(SIGSEGV, crash_handler);
+  signal(SIGILL,  crash_handler);
+  signal(SIGFPE,  crash_handler);
+  signal(SIGABRT, crash_handler);
 }

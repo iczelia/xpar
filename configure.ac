@@ -41,6 +41,10 @@ AC_CHECK_TOOL([OBJDUMP], [objdump])
 AC_DEFINE([XPAR_MAJOR], [xpar_version_major], [Major version number])
 AC_DEFINE([XPAR_MINOR], [xpar_version_minor], [Minor version number])
 
+dnl  Identify the target in crash reports.
+AC_DEFINE_UNQUOTED([XPAR_HOST_TRIPLE], ["$host"],
+                   [Canonical host this build targets])
+
 AC_C_RESTRICT
 AC_C_INLINE
 AC_C_BIGENDIAN
@@ -60,12 +64,16 @@ case "$host_os" in
 esac
 AM_CONDITIONAL([XPAR_DOS], [test "x$xpar_is_dos" = "xyes"])
 XPAR_DOS_CPPFLAGS=""
+XPAR_DOS_CFLAGS=""
 if test "x$xpar_is_dos" = "xyes"; then
   AC_DEFINE([XPAR_DOS], [1], [Define on MS-DOS/DJGPP hosts])
   dnl  DJGPP hides POSIX and DOS declarations behind __STRICT_ANSI__.
   XPAR_DOS_CPPFLAGS="-U__STRICT_ANSI__"
+  dnl  Crash reporting walks frame pointers on DJGPP.
+  XPAR_DOS_CFLAGS="-fno-omit-frame-pointer"
 fi
 AC_SUBST([XPAR_DOS_CPPFLAGS])
+AC_SUBST([XPAR_DOS_CFLAGS])
 
 case "$host_os" in
   mingw*|cygwin*|msys*) xpar_is_windows=yes ;;
@@ -92,7 +100,9 @@ case "$xpar_win_target" in
   win95)
     xpar_win_cppflags="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400"
     xpar_win_cppflags="$xpar_win_cppflags -DXPAR_WIN_LEGACY=1"
+    dnl  Legacy crash reporting walks frame pointers.
     xpar_win_cflags="-march=i486 -mtune=i486 -mfpmath=387"
+    xpar_win_cflags="$xpar_win_cflags -fno-omit-frame-pointer"
     xpar_win_ldflags="-Wl,--major-subsystem-version=4"
     xpar_win_ldflags="$xpar_win_ldflags,--minor-subsystem-version=0"
     xpar_win_ldflags="$xpar_win_ldflags,--major-os-version=4"
@@ -132,6 +142,10 @@ AM_CONDITIONAL([XPAR_WIN_LEGACY],
 
 AM_CONDITIONAL([XPAR_IS_POSIX],
   [test "x$xpar_is_windows" = "xno" && test "x$xpar_is_dos" = "xno"])
+
+dnl  Detect native backtrace and signal APIs.
+AC_CHECK_HEADERS([execinfo.h signal.h ucontext.h])
+AC_CHECK_FUNCS([backtrace sigaction])
 
 AC_CHECK_FUNCS([mmap madvise posix_fadvise posix_memalign aligned_alloc \
                 pread pwrite ftruncate fsync fdatasync getauxval \
@@ -532,6 +546,11 @@ case "$enable_sanitizers" in
 esac
 AC_SUBST([XPAR_SAN_CFLAGS])
 AC_SUBST([XPAR_SAN_LDFLAGS])
+if test "x$enable_sanitizers" != "xno"; then
+  dnl  Preserve sanitizer fault handlers.
+  AC_DEFINE([XPAR_SANITIZED], [1],
+            [Define when a sanitizer owns the fault handlers])
+fi
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

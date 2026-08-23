@@ -52,6 +52,19 @@ typedef size_t   sz;   typedef double  f64;
 #define XPAR_NORETURN
 #endif
 
+/*  Install the host crash reporter.  */
+void xpar_crash_install(void);
+
+/*  Allocation-free helpers for host crash reporters.  */
+int  xpar_crash_wanted(void);
+int  xpar_crash_entered(void);
+void xpar_crash_head(const char * what, u64 code, int have_code,
+                     const void * pc, const void * addr, int have_addr,
+                     const void * module_base);
+void xpar_crash_frame(unsigned i, const void * pc, const void * module_base);
+void xpar_crash_tail(int had_frames);
+unsigned xpar_crash_walk_fp(void * const * fp, void ** out, unsigned max);
+
 /*  Process.  */
 
 void xpar_host_init(void);

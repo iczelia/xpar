@@ -52,7 +52,8 @@ GlobalMemoryStatus HeapAlloc HeapFree HeapReAlloc
 InitializeCriticalSection LeaveCriticalSection LoadLibraryA LockFile
 MapViewOfFile MoveFileA QueryPerformanceCounter QueryPerformanceFrequency
 ReadFile RemoveDirectoryA SetEndOfFile SetEvent SetFileAttributesA
-SetFilePointer SetFileTime SetLastError UnlockFile UnmapViewOfFile
+SetFilePointer SetFileTime SetLastError SetUnhandledExceptionFilter
+UnlockFile UnmapViewOfFile
 WaitForSingleObject WriteFile '
 for sym in `awk '$2 == "<none>" {print $4}' "$tmp.k32"`; do
   found=no

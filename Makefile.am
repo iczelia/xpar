@@ -15,7 +15,7 @@
 ACLOCAL_AMFLAGS = -I m4
 
 AM_CFLAGS = -std=c99 $(XPAR_WARN_CFLAGS) $(XPAR_HARDEN_CFLAGS) \
-            $(XPAR_SAN_CFLAGS) $(XPAR_WIN_CFLAGS)
+            $(XPAR_SAN_CFLAGS) $(XPAR_WIN_CFLAGS) $(XPAR_DOS_CFLAGS)
 AM_LDFLAGS = $(XPAR_SAN_LDFLAGS) $(XPAR_WIN_LDFLAGS)
 
 AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS) $(XPAR_DOS_CPPFLAGS) -I$(top_builddir) \
@@ -62,7 +62,7 @@ libxpar_core_a_SOURCES = \
   src/kernel/codec-matrix.c src/kernel/codec-fft.c \
   src/kernel/blake3.c src/kernel/blake3-scalar.c \
   src/kernel/crc32c.c src/kernel/crc32c-scalar.c \
-  src/platform/port-common.c \
+  src/platform/port-common.c src/platform/port-crash.c \
   src/platform/port-cpu-x86.c src/platform/port-cpu-arm.c \
   src/platform/port-cpu-other.c
 

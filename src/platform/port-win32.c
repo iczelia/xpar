@@ -1098,8 +1098,88 @@ int main(int argc, char ** argv) {
   int wargc;
   char ** wargv;
   xpar_host_init();
+  xpar_crash_install();
   if (utf8_argv(&wargc, &wargv) == 0) return xpar_main(wargc, wargv);
   return xpar_main(argc, argv);
 }
 
 #endif
+
+/*  Report unhandled exceptions with image-relative addresses.  */
+
+#define XPAR_CRASH_FRAMES 48
+
+static const char * crash_name(DWORD code) {
+  switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:      return "access violation";
+    case EXCEPTION_IN_PAGE_ERROR:         return "page could not be read";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:   return "illegal instruction";
+    case EXCEPTION_PRIV_INSTRUCTION:      return "privileged instruction";
+    case EXCEPTION_STACK_OVERFLOW:        return "stack overflow";
+    case EXCEPTION_DATATYPE_MISALIGNMENT: return "misaligned access";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:    return "integer divide by zero";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:    return "floating-point divide by zero";
+    case EXCEPTION_INT_OVERFLOW:          return "integer overflow";
+    case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+                                          return "noncontinuable exception";
+    default:                              return "fatal exception";
+  }
+}
+
+#if !defined(XPAR_WIN_LEGACY)
+typedef USHORT (WINAPI * xpar_capture_fn)(ULONG, ULONG, PVOID *, PULONG);
+#endif
+
+static unsigned crash_frames(EXCEPTION_POINTERS * ep, void ** out,
+                             unsigned max) {
+#if defined(_M_IX86) || defined(__i386__)
+  /*  Walk the faulting context rather than the filter's stack.  */
+  if (ep && ep->ContextRecord)
+    return xpar_crash_walk_fp((void * const *)
+                              (uintptr_t) ep->ContextRecord->Ebp, out, max);
+#endif
+#if !defined(XPAR_WIN_LEGACY)
+  { HMODULE k = GetModuleHandleA("kernel32.dll");
+    xpar_capture_fn cap = k ? (xpar_capture_fn) (void (*)(void))
+        GetProcAddress(k, "RtlCaptureStackBackTrace") : NULL;
+    if (cap) return (unsigned) cap(0, (ULONG) max, out, NULL); }
+#endif
+  (void) ep;  (void) out;  (void) max;
+  return 0;
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS * ep) {
+  void * frames[XPAR_CRASH_FRAMES];
+  const void * base = (const void *) GetModuleHandleA(NULL);
+  const void * pc = NULL, * addr = NULL;
+  int have_addr = 0;
+  DWORD code = 0;
+  unsigned n, i;
+
+  if (xpar_crash_entered()) ExitProcess(XPAR_EXIT_INTERNAL);
+
+  if (ep && ep->ExceptionRecord) {
+    code = ep->ExceptionRecord->ExceptionCode;
+    pc   = ep->ExceptionRecord->ExceptionAddress;
+    /*  The second exception parameter is the inaccessible address.  */
+    if ((code == EXCEPTION_ACCESS_VIOLATION ||
+         code == EXCEPTION_IN_PAGE_ERROR) &&
+        ep->ExceptionRecord->NumberParameters >= 2) {
+      addr = (const void *) (uintptr_t)
+             ep->ExceptionRecord->ExceptionInformation[1];
+      have_addr = 1;
+    }
+  }
+  n = crash_frames(ep, frames, XPAR_CRASH_FRAMES);
+
+  xpar_crash_head(crash_name(code), (u64) code, 1, pc, addr, have_addr, base);
+  for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], base);
+  xpar_crash_tail(n != 0);
+
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+void xpar_crash_install(void) {
+  if (!xpar_crash_wanted()) return;
+  SetUnhandledExceptionFilter(crash_filter);
+}
