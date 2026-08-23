@@ -108,11 +108,8 @@ sz  xpar_pread (xpar_file *, void * buf, sz n, u64 off);
 sz  xpar_pwrite(xpar_file *, const void * buf, sz n, u64 off);
 int xpar_ftruncate(xpar_file *, u64 length);
 
-/*  A small positional-read batch. Linux submits it through io_uring when
-    the running kernel permits the raw interface; every other host and an
-    io_uring refusal execute the same requests with xpar_pread. Results are
-    always in request order, so callers can reduce hashes deterministically.
-    A NULL file records a zero result without issuing I/O.  */
+/*  Ordered positional-read batch, optionally backed by io_uring. A NULL
+    file produces a zero result without I/O.  */
 typedef struct {
   xpar_file * file;
   void *      buf;

@@ -3482,9 +3482,7 @@ int xpar_op_add(const xpar_options * o) {
                    c.gen[i].sd.generation, idbuf);
     }
   if (o->align == XPAR_ALIGN_SLICE && !o->slice_size)
-    FATAL("--align=slice on an existing set needs an explicit -s: the "
-          "padding is inserted while the stream is built, which is before "
-          "the planner would otherwise pick a slice size.");
+    FATAL("--align=slice on an existing set requires explicit -s.");
   /*  Whole-file chain deduplication searches the effective ancestor
       manifest; only chunk deduplication needs the disk index.  */
   if (o->dedup == XPAR_DEDUP_NONE && o->verbose)
@@ -5260,11 +5258,9 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   xpar_free(frame);
   if (!found)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "No (symbol width, t, depth) triple gives clean syndromes on "
-               "the first frame of '%s'. Either the region is damaged at its "
-               "head, or the archive was written with a non-default field "
-               "polynomial, first root or primitive step, which the search "
-               "cannot cover.", o->set);
+               "No supported armour parameters decode the first frame of "
+               "'%s'; it may be damaged or use non-default field "
+               "parameters.", o->set);
 
   /*  The parameters demodulate the region; the stream range comes out of
       the packets inside it, which is where SETD says how long the

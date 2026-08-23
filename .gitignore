@@ -31,3 +31,7 @@ test-driver
 .dirstamp
 conftest
 conftest.*
+ci-smoke.*/
+xpar-*.tar.*
+xpar-*.zip
+compat/

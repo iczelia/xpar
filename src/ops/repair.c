@@ -33,10 +33,8 @@
 #include "resync.h"
 #include "slice.h"
 
-/*  Undo journals contain a checked 64-byte header, aligned old-byte
-    records and a checked 24-byte footer. Missing or invalid footers mean
-    pass 4 had not begun and must never be replayed. Each record carries
-    the original size; RP_J_CREATED instead removes a newly created file.  */
+/*  Undo journals store checked old-byte records. A valid footer marks a
+    journal safe to replay; RP_J_CREATED records newly created files.  */
 
 #define RP_J_MAGIC  "XPARUNDO"
 #define RP_J_END    "XPARUNDN"
@@ -1450,8 +1448,8 @@ static void rp_apply(rp * r) {
         continue;
       }
       if (xpar_pwrite(f, w->data, (sz) w->len, w->off) != (sz) w->len)
-        FATAL_IO("Write to '%s' failed at offset %llu: %s. `xpar undo` "
-                 "restores the original bytes from '%s'.", r->path[entry],
+        FATAL_IO("Write to '%s' failed at offset %llu: %s. Undo journal: "
+                 "'%s'.", r->path[entry],
                  (unsigned long long) w->off, xpar_strerror(xpar_errno()),
                  r->journal);
       r->bytes_written += w->len;  r->writes++;

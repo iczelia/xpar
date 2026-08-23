@@ -207,8 +207,7 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
                fd <= s->memory_budget && fd <= (u64) (sz) -1,
                (unsigned long long) fd,
                (unsigned long long) s->memory_budget);
-  FATAL_UNLESS("The armoured prologue's plaintext or encoded length is "
-               "inconsistent with its frame geometry.",
+  FATAL_UNLESS("The armoured frame geometry is invalid.",
                pr->plain_length != 0 &&
                (!frames || fd <= UINT64_MAX / frames) &&
                pr->armoured_length == frames * fd);
@@ -1194,8 +1193,8 @@ static void authenticate_armoured_images(xpar_vset * s) {
                  "remapped.", v->plain_map.valid, v->path);
     v->plain = v->plain_map.map;
     if (j < s->archive_plain) s->plain[j] = v->plain;
-    FATAL_UNLESS("The authenticated metadata in '%s' is damaged past the "
-                 "inner code's capacity.",
+    FATAL_UNLESS("Authenticated metadata in '%s' exceeds inner-code "
+                 "recovery.",
                  xpar_verify_packets_ok(v->plain, v->plain_len, &s->key),
                  v->path);
     if (corrected) s->armg_corrected++;

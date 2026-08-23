@@ -683,10 +683,7 @@ static void ex_free(ex * x) {
   xpar_key_forget(&x->key, x->master);
 }
 
-/*  Open one reader for every stream in the selected lineage. The ordinary
-    vset reader already handles split data-volume discovery, whole-archive
-    demodulation, authentication and volume tags; extraction only has to
-    route a global extent to the generation whose SETD range contains it.  */
+/*  Open one stream reader per generation in the selected lineage.  */
 static void ex_open_chain(ex * x) {
   u32 g, walked = 0, i;
   xpar_gchain_load(x->o, &x->chain);
@@ -727,8 +724,7 @@ static void ex_open_chain(ex * x) {
     x->stream_set[x->stream_count] = xpar_vset_open(&ro);
     if (xpar_vset_setd(x->stream_set[x->stream_count])->layout ==
         XPAR_LAYOUT_SIDECAR)
-      FATAL("Generation %u is a sidecar generation: the data it protects "
-            "lives in external files, so extract cannot materialise it.",
+      FATAL("Generation %u uses external files and cannot be extracted.",
             x->chain.gen[g].sd.generation);
     x->stream_count++;
     g = x->chain.gen[g].parent;
@@ -786,9 +782,7 @@ int xpar_op_extract(const xpar_options * o) {
 
   ex_pick_setd(&x);
   ex_authenticate(&x);
-  FATAL_UNLESS("This set protects files that are already on disk; there "
-               "is nothing to extract. `xpar verify` checks them and "
-               "`xpar repair` fixes them.",
+  FATAL_UNLESS("This set uses external files; use verify or repair.",
                x.sd.layout != XPAR_LAYOUT_SIDECAR);
 
   if (x.sd.generation) ex_open_chain(&x);
@@ -802,9 +796,7 @@ int xpar_op_extract(const xpar_options * o) {
       x.have_layt = true;
   }
   if (!x.stream_count && !x.strm) {
-    FATAL_UNLESS("This set has no volume layout, so there is no way to "
-                 "tell which file holds which part of the stream.",
-                 x.have_layt);
+    FATAL_UNLESS("This set has no volume layout.", x.have_layt);
     if (xpar_layt_tiles(&x.layt, x.sd.stream_length) != XPAR_OK)
       FATAL_FORMAT("The data volumes do not tile the stream.");
     for (i = 0; i < x.layt.count; i++) {
@@ -899,8 +891,7 @@ int xpar_op_extract(const xpar_options * o) {
     s = xpar_manifest_validate(&x.mf, &lim, &res);
     if (s != XPAR_MF_OK) {
       const xpar_entry * e = &x.mf.entry[res.entry];
-      FATAL_FORMAT("Refusing to extract: entry %u ('%.*s') %s. Nothing "
-                   "has been written.", res.entry, (int) e->name_len,
+      FATAL_FORMAT("Entry %u ('%.*s') %s.", res.entry, (int) e->name_len,
                    e->name, xpar_mf_reason(s));
     }
     xpar_free(anc);

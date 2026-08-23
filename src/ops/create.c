@@ -1124,8 +1124,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   q = (u64) 1 << field;
   FATAL_UNLESS("Recovery count exhausts GF(2^%u); reduce -r or use "
                "--field=16.", r < q, field);
-  FATAL_UNLESS("A one-pass matrix pipe needs R*Z plus one input slice: "
-               "%llu bytes are required but -m admits %llu.",
+  FATAL_UNLESS("A one-pass matrix pipe needs %llu bytes; -m allows %llu.",
                r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
                (unsigned long long) ((r + 1) * z),
                (unsigned long long) budget);

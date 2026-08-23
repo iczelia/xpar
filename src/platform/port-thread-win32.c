@@ -12,11 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Win32 worker pool using events and CRITICAL_SECTION.
-
-    Condition variables require Vista; auto-reset events preserve the
-    Windows 95 floor and cannot lose an early signal. The queue cursor stays
-    under the lock because sz and LONG need not have the same width.  */
+/*  Win32 worker pool using Windows 95-compatible synchronization.  */
 
 #if !(defined(_WIN32) || defined(__MINGW32__) || defined(__MINGW64__))
 #error "port-thread-win32.c compiled for a non-Windows target"

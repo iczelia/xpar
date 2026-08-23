@@ -245,10 +245,7 @@ void        xpar_layt_free (xpar_layt *);
 
 xpar_status xpar_layt_tiles(const xpar_layt *, u64 stream_length);
 
-/*  A DATA volume's name is a hint; its vol_tag is its identity. The tag
-    is a BLAKE3-64 over the volume's bytes under one domain string, so a
-    writer that already holds those bytes and a reader that has just
-    found a candidate file agree without either restating the recipe.  */
+/*  A DATA volume's BLAKE3-64 tag is its identity; its name is only a hint.  */
 void xpar_vol_tag_begin(xpar_blake3_t *);
 u64  xpar_vol_tag_final(xpar_blake3_t *);
 

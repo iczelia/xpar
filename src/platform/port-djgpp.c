@@ -412,14 +412,8 @@ const char * xpar_strerror(int err) {
 
 int xpar_errno(void) { return errno; }
 
-/*  8254 PIT channel 0 runs at 1,193,181.8 Hz and the BIOS programs it in
-    mode 3 with N = 65536, giving the 54.9254 ms tick at 0040:006C. In mode
-    3 the counter descends N -> 0 twice per tick, decrementing by two per
-    clock, and OUT is high for the first half and low for the second. The
-    read-back command latches the count and the status byte together, and
-    the OUT bit is what disambiguates the two halves into one monotonic
-    timeline. Resolution is about 1.68 us; the tick counter wraps at
-    midnight, which is the one discontinuity a long run can see.  */
+/*  Combine the BIOS tick with the 8254 counter for microsecond resolution.
+    The OUT bit distinguishes the counter's two mode-3 half-cycles.  */
 u64 xpar_usec_now(void) {
   u32 bios0, bios1, count, out_hi, elapsed;
   u64 pit;
@@ -439,9 +433,7 @@ u64 xpar_usec_now(void) {
   return (pit * 1000000ULL) / 1193182ULL;
 }
 
-/*  The DOS clock is the BIOS tick, so this is accurate to 55 ms and no
-    better. Stored timestamps on this host are FAT timestamps anyway,
-    which are quantised to two seconds.  */
+/*  Wall-clock precision is limited to the 55 ms BIOS tick.  */
 i64 xpar_wall_ns(void) {
   struct timeval tv;
   if (gettimeofday(&tv, NULL) != 0) return (i64) time(NULL) * 1000000000LL;

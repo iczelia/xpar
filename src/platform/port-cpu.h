@@ -75,12 +75,7 @@ bool xpar_cpu_tier_usable(int i);
     Always >= 0 because tier 0 is `scalar` and needs nothing.  */
 int  xpar_cpu_tier_best(void);
 
-/*  Per-architecture back end.
-    Provided by port-cpu-x86.c, port-cpu-arm.c or port-cpu-other.c, exactly
-    one of which is live per target; the other two compile to nothing. The
-    caching, forcing and ladder queries above are shared and live in
-    port-cpu-other.c, which is the file that is compiled unconditionally on
-    every host.  */
+/*  Per-architecture feature probe and tier table.  */
 
 u32 xpar_cpu_probe(void);
 

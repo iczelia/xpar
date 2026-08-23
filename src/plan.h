@@ -87,14 +87,10 @@ typedef struct {
   int            cand_count;
 } xpar_plan;
 
-/*  Decide. Never allocates and never reads a file, so it is safe to call
-    speculatively, which `info` does to describe a set it will not touch.  */
+/*  Select a plan without allocation or I/O.  */
 xpar_plan_status xpar_plan_make(const xpar_plan_req *, xpar_plan * out);
 
-/*  The decode-side footprint for an existing set, which differs from the
-    encode side and is larger for the FFT codec. Repair calls
-    this before it starts so it can refuse with a number rather than fail
-    partway.  */
+/*  Compute the decode-side footprint for an existing set.  */
 xpar_plan_status xpar_plan_for_repair(const xpar_setd *, u64 recovery_slices,
                                       u64 memory_budget, int threads,
                                       xpar_plan * out);
@@ -105,9 +101,7 @@ u64 xpar_plan_repair_crossover(u8 fft_codec, u8 field_log2, u64 slices,
 
 void xpar_plan_print(const xpar_plan *, xpar_file * out, bool verbose);
 
-/*  When xpar_plan_make returns XPAR_PLAN_NO_FIT, this fills `buf` with the
-    three numbers that would make it fit: the memory to raise -m to, the
-    slice count to lower -b to, and whether --codec=matrix would help.  */
+/*  Explain how to resolve XPAR_PLAN_NO_FIT.  */
 void xpar_plan_explain_no_fit(const xpar_plan_req *, char * buf, sz cap);
 
 #endif

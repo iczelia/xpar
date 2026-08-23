@@ -1081,8 +1081,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_TO: {
       int want = a->opt == O_IN_PLACE ? XPAR_DEST_IN_PLACE
                : a->opt == O_BACKUP   ? XPAR_DEST_BACKUP : XPAR_DEST_TO;
-      FATAL_UNLESS("Options --in-place, --to and --backup name one "
-                   "destination and only one may be given.",
+      FATAL_UNLESS("Options --in-place, --to, and --backup are exclusive.",
                    o->dest == XPAR_DEST_DEFAULT || o->dest == want);
       o->dest = want;
       if (want == XPAR_DEST_TO) {

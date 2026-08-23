@@ -222,10 +222,7 @@ int xpar_op_list(const xpar_options * o) {
           i64 h = xpar_gchain_gen_of(&c, e->extents[k].stream_offset,
                                      e->extents[k].length);
           char gb[16];
-          /*  Which generation the bytes are in is the load-bearing part:
-              it is what `prune` will refuse on and what the entry's
-              survival depends on, and it is not always the generation
-              whose manifest lists the entry.  */
+          /*  An extent may belong to a different generation than its entry.  */
           if (h < 0) xpar_snprintf(gb, sizeof gb, "outside the chain");
           else xpar_snprintf(gb, sizeof gb, "generation %u",
                              c.gen[h].sd.generation);
@@ -273,10 +270,7 @@ int xpar_op_list(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-/*  The armour parameters actually in force, taken from an ARMG packet in
-    one of the generation's volumes or from the archive's prologue. They
-    are not derivable from the options a user typed, and a set written by
-    another build is exactly the case `info` exists for.  */
+/*  Read the stored armour parameters from ARMG or the archive prologue.  */
 static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
                          bool * whole_file) {
   u32 i;

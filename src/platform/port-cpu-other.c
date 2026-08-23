@@ -71,11 +71,7 @@ int xpar_cpu_tier_best(void) {
       defined(__aarch64__) || defined(__arm__) ||                             \
       defined(_M_ARM64) || defined(_M_ARM))
 
-/*  Every other target: MIPS, POWER, RISC-V, SPARC. The scalar kernels are
-    the whole ladder and there is nothing to probe. A DOS build does not
-    land here (it is i386, so port-cpu-x86.c claims it) and does not need
-    to: configure skips the SIMD probes on DJGPP, so its ladder comes out
-    of the x86 file with the scalar row and nothing else.  */
+/*  Feature probes for non-x86 and non-ARM targets.  */
 
 #if defined(__riscv)
 

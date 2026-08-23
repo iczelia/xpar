@@ -12,10 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  A freestanding vsnprintf for the hosts whose C library has none worth
-    trusting: the Windows CRT truncates without saying how much it wanted
-    and predates %zu, and the DOS one is no better. Only the conversions
-    xpar itself emits are implemented.  */
+/*  Minimal vsnprintf for legacy Windows and DOS C libraries.  */
 
 #include "common.h"
 

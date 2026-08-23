@@ -12,18 +12,8 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  codec-fft.c's entry points, shared with the dispatcher in
-    codec-matrix.c. Not part of codec.h, because nothing outside the two
-    codec files may reach a codec by name: which one a set uses is read
-    from SETD and never chosen at a call site.
-
-    They deal in void * because codec-matrix.c owns the public handle
-    types and codec-fft.c does not see them.
-
-    This header exists because the declarations previously sat inside
-    codec-matrix.c, so codec-fft.c compiled its definitions with no
-    prototype in scope: ten -Wmissing-prototypes warnings, and no compiler
-    check that the two files agreed on a single signature.  */
+/*  Private FFT entry points used by the codec dispatcher. Handles are
+    void * because codec-matrix.c owns their public types.  */
 
 #ifndef XPAR_CODEC_INT_H
 #define XPAR_CODEC_INT_H

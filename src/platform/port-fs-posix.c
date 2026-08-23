@@ -46,10 +46,7 @@
   #include <sys/vfs.h>
 #endif
 
-/*  st_mtim is POSIX 2008 and st_mtimespec is what the Apple headers call
-    the same field. Both hosts define st_mtime as a macro over it, which is
-    the portable way to ask "are the nanosecond fields here" without a
-    configure probe.  */
+/*  Apple and POSIX use different names for nanosecond timestamps.  */
 #if defined(__APPLE__)
   #define XPAR_MTIM(st) ((st).st_mtimespec)
   #define XPAR_ATIM(st) ((st).st_atimespec)
@@ -62,10 +59,7 @@
   #define XPAR_NSEC_STAT 1
 #endif
 
-/*  A symlink-safe setter exists for every field this host records, so
-    nofollow = 1 is honoured rather than approximated. The mode fallback
-    (O_NOFOLLOW plus fchmod) needs no macro: O_NOFOLLOW is POSIX 2008 and
-    fchmod is older still.  */
+/*  Enable no-follow metadata setters only when every primitive is safe.  */
 #if defined(HAVE_UTIMENSAT) && defined(HAVE_AT_SYMLINK_NOFOLLOW) &&          \
     defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
   #define XPAR_NOFOLLOW_TIMES 1
@@ -127,10 +121,7 @@ int xpar_lstat(const char * path, xpar_stat_t * out) {
   return 0;
 }
 
-/*  Filesystem magics from Linux's include/uapi/linux/magic.h. Only the
-    FAT family is listed: it is the one a POSIX host mounts often, and the
-    one where inode identity, links, ownership and sub-second times are all
-    absent at once.  */
+/*  FAT filesystem magics from Linux UAPI.  */
 #define XPAR_MSDOS_MAGIC  0x4d44UL
 #define XPAR_EXFAT_MAGIC  0x2011BAB0UL
 

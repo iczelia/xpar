@@ -160,11 +160,6 @@ typedef struct {
   u32 extra_len;
 } xpar_entry;
 
-/*  Release an entry's owned buffers and zero it. Defined here, with the
-    type, because both container.c (which parses entries off disk) and
-    manifest.c (which builds them from a tree) allocate them, and each had
-    an identical copy with external linkage: the tree did not link once
-    both translation units existed.  */
 static inline void xpar_entry_free(xpar_entry * e) {
   xpar_free(e->extents);  xpar_free(e->name);  xpar_free(e->extra);
   xpar_memset(e, 0, sizeof *e);

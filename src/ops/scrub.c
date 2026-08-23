@@ -30,18 +30,12 @@
 #include "port-fs.h"
 #include "slice.h"
 
-/*  The per-codeword histogram of the last scrub, for a conformance
-    harness: `out` takes at most `n` entries and the return is how many
-    the run filled. Exposed rather than parsed back out of the report,
-    because a test that scrapes a diagnostic tests the diagnostic.  */
+/*  Copy up to `n` entries from the last scrub's codeword histogram.  */
 u32 xpar_scrub_histogram(u64 * out, u32 n);
 
 /*  Scrub state.  */
 
-/*  Histogram width. `t` reaches 2^15 in GF(2^16) but a codeword carrying
-    thousands of errors is not a degradation signal, it is a dead medium,
-    so the tail past this is counted in the totals and dropped from the
-    distribution (armour.h drops counts past hist_len).  */
+/*  Counts above this limit remain in totals but not the distribution.  */
 #define SCRUB_HIST_MAX  4096u
 
 typedef struct {

@@ -106,9 +106,7 @@ void                xpar_closedir(xpar_dir * d);
 
 /*  Links and directories.  */
 
-/*  Bytes of the target written to buf, NUL-terminated, or -1. A target
-    that does not fit is an error (ENAMETOOLONG) rather than a truncation,
-    because a truncated symlink target is a wrong path, not a short one.  */
+/*  Read a NUL-terminated link target; fail if it does not fit.  */
 i64 xpar_readlink(const char * path, char * buf, sz n);
 
 int xpar_symlink(const char * target, const char * path);
@@ -121,15 +119,9 @@ int xpar_rmdir  (const char * path);
 int xpar_remove (const char * path);
 int xpar_rename (const char * from, const char * to);
 
-/*  Metadata setters.
-    `nofollow` is not advisory. Where the host cannot honour it for a given
-    field it returns -1 rather than falling back to the following call, and
-    xpar_fs_caps clears XPAR_FS_NOFOLLOW so the caller knows in advance.  */
+/*  Metadata setters fail when `nofollow` cannot be honoured.  */
 
-/*  XPAR_TIME_NONE leaves a field alone, which is how rule 4 sets mtime
-    without inventing an atime. btime is applied only where
-    XPAR_FS_BTIME is set and ignored everywhere else, since POSIX has no
-    portable setter for it.  */
+/*  XPAR_TIME_NONE leaves a field unchanged. Unsupported btime is ignored.  */
 int xpar_set_times(const char * path, int nofollow,
                    i64 atime_ns, i64 mtime_ns, i64 btime_ns);
 
@@ -139,11 +131,8 @@ int xpar_set_owner(const char * path, int nofollow, u32 uid, u32 gid,
 int xpar_set_mode (const char * path, int nofollow, u32 mode);
 int xpar_set_attrs(const char * path, int nofollow, u16 attrs);
 
-/*  Extended attributes.
-    Sizes are returned rather than written when `n` is 0 or too small, so
-    the probe-then-fetch pattern needs no second entry point. The error
-    return is XPAR_FS_NOSIZE and not 0, because 0 is a legitimate answer
-    for an empty value and for a file with no attributes.  */
+/*  Extended attributes return the required size when the buffer is too
+    small. XPAR_FS_NOSIZE reports errors because zero is a valid size.  */
 
 #define XPAR_FS_NOSIZE  ((sz) -1)
 
