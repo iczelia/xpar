@@ -810,6 +810,8 @@ int xpar_op_explain(const xpar_options * o) {
     xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
     bool found = false, packet = false;
     xpar_scan_init(&sc, data, len, NULL, false);
+    /*  Framing can be described without authenticating packet content.  */
+    sc.accept_unverified_keyed = true;
     while (xpar_scan_next(&sc, &hdr, &body, &off)) {
       xpar_armg ag;
       u64 fx, frames;

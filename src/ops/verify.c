@@ -1820,9 +1820,10 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
       return ok;
     }
     if (!xpar_stream_locate(&s->occ, off, &sp)) {
-      /*  A range no extent names: only --align=slice leaves one, and it
-          is per-entry padding.  */
+      /*  Zero alignment padding only to the next extent.  */
       take = MIN(len, end - off);
+      take = MIN(take, xpar_occindex_next(&s->occ, off, off + take) - off);
+      if (!take) take = MIN(len, end - off);
       xpar_memset(buf, 0, (sz) take);
       off += take;  buf += take;  len -= take;
       continue;

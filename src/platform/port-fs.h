@@ -101,8 +101,8 @@ typedef struct {
     entry where the host supplies one and from an lstat otherwise, so they
     describe the entry and not what a symlink points at.  */
 xpar_dir *          xpar_opendir (const char * path);
-const xpar_dirent * xpar_readdir (xpar_dir * d);   /*  NULL at end  */
-void                xpar_closedir(xpar_dir * d);
+const xpar_dirent * xpar_readdir (xpar_dir * d);   /*  d non-NULL; NULL at end  */
+void                xpar_closedir(xpar_dir * d);   /*  NULL is a no-op  */
 
 /*  Links and directories.  */
 

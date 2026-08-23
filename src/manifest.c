@@ -1535,6 +1535,19 @@ bool xpar_occindex_canonical(const xpar_occindex * ix, u64 off,
   return true;
 }
 
+u64 xpar_occindex_next(const xpar_occindex * ix, u64 off, u64 limit) {
+  u32 i, lo, hi;
+  if (off >= limit) return limit;
+  lo = occ_lower(ix, off);
+  hi = occ_upper(ix, limit);
+  for (i = lo; i < hi; i++) {
+    u64 begin = ix->occ[i].stream_offset;
+    if (begin > off) return begin;
+    if (begin + ix->occ[i].length > off) return off;
+  }
+  return limit;
+}
+
 bool xpar_occindex_repair_source(const xpar_occindex * ix, u64 off,
                                  u64 len,
                                  bool (* intact)(const xpar_occurrence *,

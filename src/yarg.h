@@ -56,16 +56,19 @@ static int yarg_asprintf(char ** strp, const char * fmt, ...) {
   return len;
 }
 
+/*  Exact matches win; reject prefixes shared by distinct option codes.  */
 static yarg_options * yarg_find_long(yarg_options * opt, const char * name,
-                                     int len) {
+                                     int len, int * ambiguous) {
   yarg_options * o = NULL;
+  *ambiguous = 0;
   if (!len) return NULL;
   for (int j = 0; opt[j].opt; j++) {
     if (!opt[j].long_opt || strncmp(opt[j].long_opt, name, len)) continue;
-    if (!opt[j].long_opt[len]) return &opt[j];
+    if (!opt[j].long_opt[len]) { *ambiguous = 0;  return &opt[j]; }
     if (!o) o = &opt[j];
+    else if (o->opt != opt[j].opt) *ambiguous = 1;
   }
-  return o;
+  return *ambiguous ? NULL : o;
 }
 
 static char * yarg_strdup(const char * str) {
@@ -85,10 +88,15 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
           { no_pos_args += argc - i - 1; break; }
         char * long_opt = argv[i] + 2;
         int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
-        yarg_options * o = yarg_find_long(opt, long_opt, len);
+        int amb = 0;
+        yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
-          yarg_asprintf(&res->error, "--%.*s -- unknown option\n",
-                        len, long_opt);
+          if (amb)
+            yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
+                          len, long_opt);
+          else
+            yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
+                          len, long_opt);
           return 0;
         }
         if (o->type == no_argument) {
@@ -155,10 +163,15 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         }
         char * long_opt = argv[i] + 2;
         int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
-        yarg_options * o = yarg_find_long(opt, long_opt, len);
+        int amb = 0;
+        yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
-          yarg_asprintf(&res->error, "--%.*s -- unknown option\n",
-                        len, long_opt);
+          if (amb)
+            yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
+                          len, long_opt);
+          else
+            yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
+                          len, long_opt);
           return 0;
         }
         res->args[res->argc].opt = o->opt;
@@ -214,9 +227,15 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
         { no_pos_args += argc - i - 1;  break; }
       char * long_opt = argv[i] + 1;
       int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
-      yarg_options * o = yarg_find_long(opt, long_opt, len);
+      int amb = 0;
+      yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
-        yarg_asprintf(&res->error, "%c%.*s -- unknown option\n", opt_char, len, long_opt);
+        if (amb)
+          yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
+                        opt_char, len, long_opt);
+        else
+          yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
+                        opt_char, len, long_opt);
         return 0;
       }
       if (o->type == no_argument) {
@@ -252,9 +271,15 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       }
       char * long_opt = argv[i] + 1;
       int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
-      yarg_options * o = yarg_find_long(opt, long_opt, len);
+      int amb = 0;
+      yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
-        yarg_asprintf(&res->error, "%c%.*s -- unknown option\n", opt_char, len, long_opt);
+        if (amb)
+          yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
+                        opt_char, len, long_opt);
+        else
+          yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
+                        opt_char, len, long_opt);
         return 0;
       }
       res->args[res->argc].opt = o->opt;

@@ -251,6 +251,9 @@ u32 xpar_occindex_overlaps(const xpar_occindex * ix, u64 off, u64 len,
                            xpar_occ_fn fn, void * user);
 bool xpar_occindex_canonical(const xpar_occindex * ix, u64 off,
                              xpar_occurrence * out, u64 * run);
+
+/*  Return `off` if covered, otherwise the next extent start or `limit`.  */
+u64 xpar_occindex_next(const xpar_occindex * ix, u64 off, u64 limit);
 bool xpar_occindex_repair_source(const xpar_occindex * ix, u64 off,
                                  u64 len,
                                  bool (* intact)(const xpar_occurrence *,

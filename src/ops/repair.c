@@ -776,7 +776,13 @@ static bool rp_read_stream(rp * r, u64 off, u64 len, u8 * dst) {
   while (off < end && off < l_end) {
     xpar_occurrence o;
     u64 run, take;
-    if (!xpar_occindex_canonical(&r->ox, off, &o, &run)) { ok = false;  break; }
+    if (!xpar_occindex_canonical(&r->ox, off, &o, &run)) {
+      /*  Skip alignment padding to the next extent.  */
+      u64 gap = xpar_occindex_next(&r->ox, off, MIN(end, l_end)) - off;
+      if (!gap) { ok = false;  break; }
+      off += gap;
+      continue;
+    }
     take = MIN(run, end - off);
     if (off + take > l_end) take = l_end - off;
     if (!rp_read_entry_raw(r, o.entry,

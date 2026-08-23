@@ -1001,11 +1001,20 @@ static void gen_src_read(gen_src * s, u64 off, u64 len, u8 * out) {
   }
   while (len) {
     xpar_occurrence occ;  u64 run = 0, take, at;
-    if (off >= s->limit || !xpar_occindex_canonical(&s->ix, off, &occ, &run)) {
+    if (off >= s->limit) {
       /*  Past L: the zero padding of 4.1, which is never stored and is
           regenerated here for the coder and the tags alike.  */
       xpar_memset(out, 0, (sz) len);
       return;
+    }
+    if (!xpar_occindex_canonical(&s->ix, off, &occ, &run)) {
+      /*  Zero only to the next extent; gaps may be interior.  */
+      u64 gap = xpar_occindex_next(&s->ix, off,
+                                   MIN(off + len, s->limit)) - off;
+      if (!gap) gap = len;
+      xpar_memset(out, 0, (sz) gap);
+      out += gap;  off += gap;  len -= gap;
+      continue;
     }
     take = MIN(run, len);
     if (occ.entry != s->open_entry) {
@@ -2191,6 +2200,13 @@ static void gen_write_set(gen_write_req * rq) {
   }
   FATAL_UNLESS("--align=1k needs slice tags; choose --slice-tag=8 or 16.",
                o->align != XPAR_ALIGN_1K || tag_len != 0);
+  /*  Subtree tags require a 1 KiB-aligned generation base.  */
+  FATAL_UNLESS("--align=1k requires a 1 KiB-aligned stream base; offset "
+               "%" PRIu64 " is %" PRIu64 " bytes past one.",
+               o->align != XPAR_ALIGN_1K ||
+               rq->stream_base % XPAR_BLAKE3_CHUNK_LEN == 0,
+               rq->stream_base,
+               rq->stream_base % XPAR_BLAKE3_CHUNK_LEN);
 
   gen_wropt(o, &w);
   gen_choose(o, m->stream_length, &rq->plan);
@@ -2281,14 +2297,15 @@ static void gen_write_set(gen_write_req * rq) {
     layt.vol[i].vflags = o->armour != XPAR_ARMOUR_NONE ||
                          o->layout == XPAR_LAYOUT_ARMOURED;
   if (o->layout == XPAR_LAYOUT_SPLIT) {
-    u64 per = rq->plan.geom.slice_count
-                ? xpar_ceil_div(rq->plan.geom.slice_count, data_n) : 0;
+    /*  Spread the remainder across the leading volumes.  */
+    u64 base = data_n ? rq->plan.geom.slice_count / data_n : 0;
+    u64 rem  = data_n ? rq->plan.geom.slice_count % data_n : 0;
     u64 slice = 0;
     layt.vol = (xpar_vol *) xpar_realloc(layt.vol,
                    (sz) (layt.count + data_n) * sizeof(xpar_vol));
     for (i = 0; i < data_n; i++) {
       char * dir, * name;
-      u64 count = MIN(per, rq->plan.geom.slice_count - slice);
+      u64 count = base + (i < rem ? 1 : 0);
       u64 off = slice * rq->plan.geom.slice_size;
       u64 len = MIN(count * rq->plan.geom.slice_size,
                     m->stream_length - off);
@@ -5117,7 +5134,8 @@ int xpar_op_undo(const xpar_options * o) {
       xpar_free(full);
       continue;
     }
-    f = xpar_open(full, XPAR_O_RDWR);
+    /*  Refuse links created after the journal was written.  */
+    f = xpar_open(full, XPAR_O_RDWR | XPAR_O_NOFOLLOW);
     if (!f) {
       xpar_fprintf(xpar_stderr, "xpar: cannot open '%s': %s\n", full,
                    xpar_strerror(xpar_errno()));

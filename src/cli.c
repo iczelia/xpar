@@ -268,7 +268,11 @@ static void parse_genref(const char * nm, const char * v, xpar_genref * g) {
   FATAL_UNLESS("Option %s expects a generation number or a set id.",
                v && *v, nm);
   g->by_id = false;  g->number = 0;  g->id_prefix = NULL;
-  if (all_digits(v)) { g->number = need_u64(nm, v);  return; }
+  /*  Reject generation selectors that would narrow to u32.  */
+  if (all_digits(v)) {
+    g->number = need_range(nm, v, 0, 0xFFFFFFFFu);
+    return;
+  }
   for (const char * p = v; *p; p++) {
     int c = lower((u8) *p);
     FATAL_UNLESS("Option %s expects a generation number or hexadecimal "
@@ -858,6 +862,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   if (is_dir(arg)) {
     xpar_dir * d = xpar_opendir(arg);
     const xpar_dirent * e;
+    if (!d) FATAL_PERROR(arg);
     out->dir = dup_str(arg);
     while ((e = xpar_readdir(d)) != NULL)
       if (!e->is_dir && xpar_vname_has_ext(e->name))
@@ -1173,6 +1178,12 @@ static void validate(xpar_options * o, u32 pres_lit) {
                o->dedup_chunk <= ((u64) 1 << 30));
   FATAL_UNLESS("--auth-only needs --auth-key=FILE.",
                !o->auth_only || o->auth_key);
+  /*  Sidecar verification uses lstat, so followed links cannot match.  */
+  FATAL_UNLESS("--follow-symlinks cannot write a sidecar set; use "
+               "--layout=split or --layout=armoured.",
+               !o->follow_symlinks || o->layout != XPAR_LAYOUT_SIDECAR ||
+               (o->verb != XPAR_VERB_CREATE && o->verb != XPAR_VERB_ADD &&
+                o->verb != XPAR_VERB_CONSOLIDATE));
 
   if (o->from_stdin) {
     xpar_path_status ns;

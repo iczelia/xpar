@@ -229,9 +229,12 @@ static void rd_bytes(reader * r, u64 off, u8 * buf, u64 len) {
     xpar_span sp;
     u64 take;
     if (!xpar_stream_locate(&c->ix, off, &sp)) {
-      /*  Unstored final-slice padding participates in the code.  */
-      xpar_memset(buf, 0, (sz) len);
-      return;
+      /*  Zero only to the next extent; gaps may be interior.  */
+      u64 gap = xpar_occindex_next(&c->ix, off, off + len) - off;
+      if (!gap) gap = len;
+      xpar_memset(buf, 0, (sz) gap);
+      buf += gap;  off += gap;  len -= gap;
+      continue;
     }
     take = MIN(sp.length, len);
     if (!r->open || r->entry != sp.entry) {

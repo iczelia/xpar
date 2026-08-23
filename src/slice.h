@@ -25,9 +25,7 @@
 #include "manifest.h"
 #include "xpar2.h"
 
-/*  The planner's floor for Y, above the format's 4096:
-    below this the cell table starts to rival the recovery data on a
-    small set. --cell overrides down to XPAR_CELL_MIN.  */
+/*  Planner floor for Y; smaller cells burden small sets with large tables.  */
 #define XPAR_CELL_DEFAULT  65536u
 
 #define XPAR_SLICE_TARGET  4000u
@@ -53,7 +51,7 @@ typedef struct {
                             yet, which is the -r 10% case, and then 1 is
                             assumed so the field bound stays honest.  */
   u64 stream_base;
-  u32 cell_bytes;       /*  --cell; 0 asks for the planner's default.  */
+  u32 cell_bytes;       /*  Y; 0 asks for the planner's default.  */
   u32 armour_frame;     /*  Frame bytes when the sliced stream is itself
                             armoured; 0 otherwise.  */
   u8  field_log2;       /*  8 or 16.  */
