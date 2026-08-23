@@ -22,6 +22,7 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -30,12 +31,7 @@
 
 typedef uint8_t  u8;   typedef int8_t  i8;
 typedef uint16_t u16;  typedef int16_t i16;
-/*  DJGPP's int32_t is long, but the code formats u32/i32 as int.  */
-#if defined(__DJGPP__)
-typedef unsigned int u32;  typedef int i32;
-#else
 typedef uint32_t u32;  typedef int32_t i32;
-#endif
 typedef uint64_t u64;  typedef int64_t i64;
 typedef size_t   sz;   typedef double  f64;
 

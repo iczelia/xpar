@@ -21,7 +21,7 @@
 char * xpar_vname_index(const char * base, u32 gen) {
   char * s;
   if (!gen) xpar_asprintf(&s, "%s" XPAR_EXT, base);
-  else      xpar_asprintf(&s, "%s.g%03u" XPAR_EXT, base, gen);
+  else      xpar_asprintf(&s, "%s.g%03" PRIu32 XPAR_EXT, base, gen);
   return s;
 }
 
@@ -29,20 +29,20 @@ char * xpar_vname_recovery(const char * base, u32 gen, u64 first, u64 count,
                            int wfirst, int wcount) {
   char * s;
   if (!gen)
-    xpar_asprintf(&s, "%s.v%0*llu+%0*llu" XPAR_EXT, base,
-                  wfirst, (unsigned long long) first,
-                  wcount, (unsigned long long) count);
+    xpar_asprintf(&s, "%s.v%0*" PRIu64 "+%0*" PRIu64 XPAR_EXT, base,
+                  wfirst, first,
+                  wcount, count);
   else
-    xpar_asprintf(&s, "%s.g%03u.v%0*llu+%0*llu" XPAR_EXT, base, gen,
-                  wfirst, (unsigned long long) first,
-                  wcount, (unsigned long long) count);
+    xpar_asprintf(&s, "%s.g%03" PRIu32 ".v%0*" PRIu64 "+%0*" PRIu64 XPAR_EXT, base, gen,
+                  wfirst, first,
+                  wcount, count);
   return s;
 }
 
 char * xpar_vname_data(const char * base, u32 gen, u32 index, int width) {
   char * s;
-  if (!gen) xpar_asprintf(&s, "%s.d%0*u", base, width, index);
-  else      xpar_asprintf(&s, "%s.g%03u.d%0*u", base, gen, width, index);
+  if (!gen) xpar_asprintf(&s, "%s.d%0*" PRIu32, base, width, index);
+  else      xpar_asprintf(&s, "%s.g%03" PRIu32 ".d%0*" PRIu32, base, gen, width, index);
   return s;
 }
 

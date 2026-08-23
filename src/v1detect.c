@@ -54,8 +54,8 @@ void xpar_v1_report(const char * path, const xpar_v1_info * info) {
   }
 
   if (info->kind == XPAR_V1_JOINT)
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar %u.%u %s.\n",
-                 path, (unsigned) info->major, (unsigned) info->minor, what);
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar %" PRIu8 ".%" PRIu8 " %s.\n",
+                 path, info->major, info->minor, what);
   else
     xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x %s.\n", path, what);
 

@@ -141,7 +141,7 @@ u32 xpar_fs_caps(const char * path) {
 #if defined(__linux__)
   { struct statfs sfs;
     if (statfs(path, &sfs) == 0) {
-      unsigned long t = (unsigned long) sfs.f_type;
+      unsigned long t = sfs.f_type;
       if (t == XPAR_MSDOS_MAGIC || t == XPAR_EXFAT_MAGIC)
         c &= ~(u32) (XPAR_FS_LINKID | XPAR_FS_HARDLINK | XPAR_FS_OWNER |
                      XPAR_FS_NSEC_TIME);

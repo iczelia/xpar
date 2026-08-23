@@ -98,7 +98,7 @@ static xpar_file * gen_stage_mode(const char * path, int access,
   char * tmp = NULL;
   u32 i;
   for (i = 0; i < 1000; i++) {
-    xpar_asprintf(&tmp, "%s.xpar-tmp-%03u", path, i);
+    xpar_asprintf(&tmp, "%s.xpar-tmp-%03" PRIu32, path, i);
     f = xpar_open(tmp, access | XPAR_O_CREAT | XPAR_O_EXCL);
     if (f) break;
     xpar_free(tmp);  tmp = NULL;
@@ -172,7 +172,7 @@ static char * gen_unused_base(const char * base, const char * label) {
   u32 i;
   for (i = 0; i < 1000; i++) {
     char * candidate, * index;
-    xpar_asprintf(&candidate, "%s.%s-%03u", base, label, i);
+    xpar_asprintf(&candidate, "%s.%s-%03" PRIu32, base, label, i);
     xpar_asprintf(&index, "%s" XPAR_EXT, candidate);
     if (!gen_exists(index)) { xpar_free(index);  return candidate; }
     xpar_free(index);  xpar_free(candidate);
@@ -186,7 +186,7 @@ static char * gen_unused_path(const char * path, const char * label) {
   for (i = 0; i < 1000; i++) {
     char * candidate;
     xpar_stat_t st;
-    xpar_asprintf(&candidate, "%s.%s-%03u", path, label, i);
+    xpar_asprintf(&candidate, "%s.%s-%03" PRIu32, path, label, i);
     if (xpar_lstat(candidate, &st) != 0) return candidate;
     xpar_free(candidate);
   }
@@ -567,9 +567,9 @@ static void chain_link(xpar_chain * c) {
       continue;
     }
     if (st == XPAR_E_UNSUPPORTED)
-      xpar_fprintf(xpar_stderr, "xpar: generation %u requires features this "
-                   "build does not implement (0x%08lx).\n", g->sd.generation,
-                   (unsigned long) g->sd.required_features);
+      xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " requires features this "
+                   "build does not implement (0x%08" PRIx32 ").\n", g->sd.generation,
+                   g->sd.required_features);
     xpar_memcpy(g->set_id, p->hdr.set_id, XPAR_SET_ID_LEN);
     g->parent = XPAR_GEN_NONE;
     c->gen_count++;
@@ -599,7 +599,7 @@ static void chain_link(xpar_chain * c) {
                                               c->gen[g->parent].set_id,
                                               &c->gen[g->parent].sd);
       if (st != XPAR_OK)
-        FATAL_FORMAT("Generation %u does not follow generation %u: %s.",
+        FATAL_FORMAT("Generation %" PRIu32 " does not follow generation %" PRIu32 ": %s.",
                      g->sd.generation, c->gen[g->parent].sd.generation,
                      xpar_status_str(st));
     }
@@ -744,10 +744,10 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
       found = i;  matches++;
     }
   if (matches > 1)
-    FATAL("Generation %llu is ambiguous across fork branches; select it "
-          "by set-id prefix.", (unsigned long long) g->number);
+    FATAL("Generation %" PRIu64 " is ambiguous across fork branches; select it "
+          "by set-id prefix.", g->number);
   if (matches == 1) return found;
-  FATAL("This set has no generation %llu.", (unsigned long long) g->number);
+  FATAL("This set has no generation %" PRIu64 ".", g->number);
   return 0;
 }
 
@@ -799,18 +799,18 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     xpar_entry * e;
     xpar_status st;
     if (!p)
-      FATAL_FORMAT("Generation %u names a manifest entry no generation "
+      FATAL_FORMAT("Generation %" PRIu32 " names a manifest entry no generation "
                    "owns; the chain is incomplete.", sd->generation);
     e  = xpar_manifest_append(m);
     st = xpar_entry_read(p->body, (sz) p->body_len,
                          c->gen[h].sd.posix_record_count, e);
     if (st != XPAR_OK)
-      FATAL_FORMAT("A manifest entry of generation %u is unreadable (%s).",
+      FATAL_FORMAT("A manifest entry of generation %" PRIu32 " is unreadable (%s).",
                    c->gen[h].sd.generation, xpar_status_str(st));
     if (e->posix_index != XPAR_ABSENT_U32 &&
         e->posix_index >= c->gen[h].sd.posix_record_count)
-      FATAL_FORMAT("Manifest entry %u names a POSX record outside generation "
-                   "%u's table.", i, c->gen[h].sd.generation);
+      FATAL_FORMAT("Manifest entry %" PRIu32 " names a POSX record outside generation "
+                   "%" PRIu32 "'s table.", i, c->gen[h].sd.generation);
     own[i] = h;
   }
   m->stream_base   = sd->stream_base;
@@ -851,10 +851,10 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     lim.ancestor           = na ? anc : NULL;
     lim.ancestor_count     = na;
     if (xpar_manifest_validate(m, &lim, &res) != XPAR_MF_OK)
-      FATAL_FORMAT("Manifest entry %u is invalid: %s.", res.entry,
+      FATAL_FORMAT("Manifest entry %" PRIu32 " is invalid: %s.", res.entry,
                    xpar_mf_reason(res.status));
     if (res.link_meta_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %u hard-link aliases disagree with "
+      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32 " hard-link aliases disagree with "
                    "their canonical metadata; canonical values will be "
                    "used.\n", res.link_meta_mismatch);
     xpar_free(anc);
@@ -892,7 +892,7 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
       own[i] = own[target];
     }
     if (posix_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %u hard-link aliases disagree with "
+      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32 " hard-link aliases disagree with "
                    "their canonical POSX metadata; canonical values will "
                    "be used.\n", posix_mismatch);
     for (i = 0; i < c->gen_count; i++)
@@ -907,7 +907,7 @@ u32 xpar_gchain_posix(const xpar_chain * c, u32 g, xpar_posix_rec ** out) {
   u32 count = c->gen[g].sd.posix_record_count;
   *out = NULL;
   if (xpar_posx_collect(&c->crit, c->gen[g].set_id, count, out) != XPAR_OK)
-    FATAL_FORMAT("Generation %u's POSX table has gaps, overlaps, or invalid "
+    FATAL_FORMAT("Generation %" PRIu32 "'s POSX table has gaps, overlaps, or invalid "
                  "ranges.", c->gen[g].sd.generation);
   return count;
 }
@@ -1005,8 +1005,8 @@ static void gen_src_read(gen_src * s, u64 off, u64 len, u8 * out) {
       s->open_file  = NULL;
       s->open_entry = occ.entry;
       if (!path)
-        FATAL("Entry %lu has no readable source; the stream cannot be "
-              "rebuilt.", (unsigned long) occ.entry);
+        FATAL("Entry %" PRIu32 " has no readable source; the stream cannot be "
+              "rebuilt.", occ.entry);
       s->open_file = xpar_open(path, XPAR_O_RDONLY);
       if (!s->open_file)
         FATAL_IO("Cannot open '%s': %s.", path, xpar_strerror(xpar_errno()));
@@ -1014,8 +1014,8 @@ static void gen_src_read(gen_src * s, u64 off, u64 len, u8 * out) {
     /*  Offset the read within the occurrence, not merely its entry.  */
     at = occ.file_offset + (off - occ.stream_offset);
     if (xpar_pread(s->open_file, out, (sz) take, at) != (sz) take)
-      FATAL_IO("Short read from '%s' at %llu.",
-               s->m->source[occ.entry], (unsigned long long) at);
+      FATAL_IO("Short read from '%s' at %" PRIu64 ".",
+               s->m->source[occ.entry], at);
     out += take;  off += take;  len -= take;
   }
 }
@@ -1120,11 +1120,11 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
       p->field_log2 = 16;
     else
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "The %s codec cannot express S=%llu, R=%llu over GF(2^%u). "
+                 "The %s codec cannot express S=%" PRIu64 ", R=%" PRIu64 " over GF(2^%" PRIu8 "). "
                  "Try --codec=matrix.",
                  gen_codec_name(p->codec),
-                 (unsigned long long) p->geom.slice_count,
-                 (unsigned long long) r, p->field_log2);
+                 p->geom.slice_count,
+                 r, p->field_log2);
   }
 
   /*  Matrix uses the whole field axis; FFT records its power-of-two
@@ -1143,9 +1143,9 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
       if (!xpar_codec_supports(p->codec, p->field_log2, p->geom.slice_count,
                                wide))
         FATAL_CODE(XPAR_EXIT_NOPLAN,
-                   "--max-recovery=%llu needs a recovery axis of %llu, "
+                   "--max-recovery=%" PRIu64 " needs a recovery axis of %" PRIu64 ", "
                    "which this field and S cannot express.",
-                   (unsigned long long) maxr, (unsigned long long) wide);
+                   maxr, wide);
       m = wide;
     }
     p->axis = (u8) xpar_log2_floor(m);
@@ -1178,7 +1178,7 @@ static void gen_tables_free(gen_tables * t) {
 static void gen_rec_spill_open(gen_tables * t, const char * base) {
   u32 i;
   for (i = 0; i < 1000; i++) {
-    xpar_asprintf(&t->rec_path, "%s.xpar-encode-tmp-%03u", base, i);
+    xpar_asprintf(&t->rec_path, "%s.xpar-encode-tmp-%03" PRIu32, base, i);
     t->rec_spill = xpar_open(t->rec_path, XPAR_O_RDWR | XPAR_O_CREAT |
                                           XPAR_O_EXCL);
     if (t->rec_spill) return;
@@ -1244,9 +1244,9 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
       (tag_len && S > ((u64) (sz) -1) / tag_len) ||
       cells > ((u64) (sz) -1) / 4 || meta > budget || Z > budget - meta)
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "The checksum tables plus one %llu-byte slice need more than "
-               "-m %llu; raise -m or choose a smaller slice size.",
-               (unsigned long long) Z, (unsigned long long) budget);
+               "The checksum tables plus one %" PRIu64 "-byte slice need more than "
+               "-m %" PRIu64 "; raise -m or choose a smaller slice size.",
+               Z, budget);
 
   t->slice_crc = (u32 *) xpar_calloc((sz) S, 4);
   if (tag_len)
@@ -1303,8 +1303,8 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
                  (sz) Z) > budget)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "The matrix encoder needs one data slice and one recovery "
-                 "accumulator (%llu bytes each), which do not fit -m %llu.",
-                 (unsigned long long) Z, (unsigned long long) budget);
+                 "accumulator (%" PRIu64 " bytes each), which do not fit -m %" PRIu64 ".",
+                 Z, budget);
     pool = t->rec ? NULL : (u8 *) xpar_alloc_aligned((sz) (batch * Z), 64);
     rptr = (u8 **) xpar_alloc_raw((sz) batch * sizeof(u8 *));
     while (first < R) {
@@ -1340,7 +1340,7 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
     if (chunk < 64)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "The FFT encoder's minimum 64-byte column does not fit "
-                 "-m %llu.", (unsigned long long) budget);
+                 "-m %" PRIu64 ".", budget);
     xpar_free(data);  data = NULL;
     pool = (u8 *) xpar_alloc_aligned(
              (sz) ((S + (t->rec ? 0 : R)) * chunk), 64);
@@ -1846,7 +1846,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   for (i = 0; i < c->vol_count; i++) {
     u32 suffix;
     for (suffix = 0; suffix < 1000; suffix++) {
-      xpar_asprintf(&backup[i], "%s.xpar-old-%03u", c->vol[i].path, suffix);
+      xpar_asprintf(&backup[i], "%s.xpar-old-%03" PRIu32, c->vol[i].path, suffix);
       if (!gen_exists(backup[i])) break;
       xpar_free(backup[i]);  backup[i] = NULL;
     }
@@ -1859,7 +1859,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   for (i = 0; i < data_n; i++) if (gen_exists(final_data[i])) {
     u32 suffix;
     for (suffix = 0; suffix < 1000; suffix++) {
-      xpar_asprintf(&data_backup[i], "%s.xpar-old-%03u", final_data[i],
+      xpar_asprintf(&data_backup[i], "%s.xpar-old-%03" PRIu32, final_data[i],
                     suffix);
       if (!gen_exists(data_backup[i])) break;
       xpar_free(data_backup[i]); data_backup[i] = NULL;
@@ -2797,8 +2797,8 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
                  (o->memory ? o->memory : xpar_plan_default_memory()) / 4;
     if (!xpar_chunk_index_init(&chunks, budget))
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "--dedup-memory=%llu is too small for a chunk index.",
-                 (unsigned long long) budget);
+                 "--dedup-memory=%" PRIu64 " is too small for a chunk index.",
+                 budget);
     have_chunks = true;
     if (o->dedup_scope == XPAR_SCOPE_CHAIN) {
       u64 average = o->dedup_chunk ? o->dedup_chunk : (u64) 1 << 20;
@@ -3026,8 +3026,8 @@ static void gen_require_source_tables(const xpar_vset * set,
     for (i = 0; i < plan->geom.slice_count; i++)
       if (stored->slice_crc[i] != made->slice_crc[i])
         FATAL_CODE(XPAR_EXIT_REPAIRABLE,
-                   "Slice %llu changed while recovery data was prepared; "
-                   "nothing was written.", (unsigned long long) i);
+                   "Slice %" PRIu64 " changed while recovery data was prepared; "
+                   "nothing was written.", i);
   if ((have & XPAR_TAGS_TAG) && stored->slice_tag && made->slice_tag) {
     if (stored->tag_len != made->tag_len)
       FATAL_FORMAT("The selected generation's slice-tag table has the "
@@ -3037,8 +3037,8 @@ static void gen_require_source_tables(const xpar_vset * set,
                                 made->slice_tag + i * made->tag_len,
                                 made->tag_len))
         FATAL_CODE(XPAR_EXIT_REPAIRABLE,
-                   "Slice %llu changed while recovery data was prepared; "
-                   "nothing was written.", (unsigned long long) i);
+                   "Slice %" PRIu64 " changed while recovery data was prepared; "
+                   "nothing was written.", i);
   }
 }
 
@@ -3094,24 +3094,24 @@ int xpar_op_addrecovery(const xpar_options * o) {
   axis = xpar_setd_recovery_limit(&c.gen[g].sd);
 
   if (!c.gen[g].sd.data_slice_count)
-    FATAL("Generation %u is stream-empty, so it has nothing to protect.",
+    FATAL("Generation %" PRIu32 " is stream-empty, so it has nothing to protect.",
           c.gen[g].sd.generation);
   if (!c.gen[g].layt_body)
-    FATAL_FORMAT("Generation %u carries no volume layout.",
+    FATAL_FORMAT("Generation %" PRIu32 " carries no volume layout.",
                  c.gen[g].sd.generation);
   if (xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &old) != XPAR_OK)
-    FATAL_FORMAT("Generation %u's volume layout is malformed.",
+    FATAL_FORMAT("Generation %" PRIu32 "'s volume layout is malformed.",
                  c.gen[g].sd.generation);
 
   want = gen_resolve_r(&o->recovery, c.gen[g].sd.data_slice_count,
                        c.gen[g].sd.slice_size);
   if (!want)
-    FATAL("addrecovery requires --recovery=SPEC (current total: %llu).",
-          (unsigned long long) have);
+    FATAL("addrecovery requires --recovery=SPEC (current total: %" PRIu64 ").",
+          have);
   if (want <= have) {
-    xpar_fprintf(xpar_stderr, "xpar: generation %u already has %llu "
+    xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " already has %" PRIu64 " "
                  "recovery slice%s; nothing to do.\n",
-                 c.gen[g].sd.generation, (unsigned long long) have,
+                 c.gen[g].sd.generation, have,
                  PLURAL(have));
     gen_json_result(o, "addrecovery", c.gen[g].set_id,
                     c.gen[g].sd.generation, "unchanged", XPAR_EXIT_OK);
@@ -3124,26 +3124,26 @@ int xpar_op_addrecovery(const xpar_options * o) {
   if (want > axis) {
     if (c.gen[g].sd.codec == XPAR_CODEC_FFT)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Generation %u's FFT recovery limit is %llu slices, not "
-                 "%llu. Re-encode with `xpar consolidate "
-                 "--max-recovery=%llu`.",
-                 c.gen[g].sd.generation, (unsigned long long) axis,
-                 (unsigned long long) want, (unsigned long long) want);
+                 "Generation %" PRIu32 "'s FFT recovery limit is %" PRIu64 " slices, not "
+                 "%" PRIu64 ". Re-encode with `xpar consolidate "
+                 "--max-recovery=%" PRIu64 "`.",
+                 c.gen[g].sd.generation, axis,
+                 want, want);
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "Generation %u's recovery axis holds %llu slices and %llu was "
+               "Generation %" PRIu32 "'s recovery axis holds %" PRIu64 " slices and %" PRIu64 " was "
                "asked for; exponents must stay inside the axis.",
-               c.gen[g].sd.generation, (unsigned long long) axis,
-               (unsigned long long) want);
+               c.gen[g].sd.generation, axis,
+               want);
   }
   if (!xpar_codec_supports_axis(c.gen[g].sd.codec,
                                 c.gen[g].sd.field_log2,
                                 c.gen[g].sd.data_slice_count, want,
                                 c.gen[g].sd.recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "The %s codec cannot express S=%llu with R=%llu over "
-               "GF(2^%u).", gen_codec_name(c.gen[g].sd.codec),
-               (unsigned long long) c.gen[g].sd.data_slice_count,
-               (unsigned long long) want, c.gen[g].sd.field_log2);
+               "The %s codec cannot express S=%" PRIu64 " with R=%" PRIu64 " over "
+               "GF(2^%" PRIu8 ").", gen_codec_name(c.gen[g].sd.codec),
+               c.gen[g].sd.data_slice_count,
+               want, c.gen[g].sd.field_log2);
 
   /*  Strongly verify the stored generation stream before encoding new
       recovery.  */
@@ -3151,14 +3151,14 @@ int xpar_op_addrecovery(const xpar_options * o) {
   source_rc = xpar_vset_check(source_set, o, NULL);
   if (source_rc != XPAR_EXIT_OK)
     FATAL_CODE(source_rc,
-               "Generation %u's protected stream is damaged; recovery data "
+               "Generation %" PRIu32 "'s protected stream is damaged; recovery data "
                "was not added.",
                c.gen[g].sd.generation);
 
   gen_manifest_on_disk(&c, g, o, &m, &owner);
   xpar_memset(&p, 0, sizeof p);
   if (!xpar_geom_from_setd(&c.gen[g].sd, &p.geom))
-    FATAL_FORMAT("Generation %u's geometry is malformed.",
+    FATAL_FORMAT("Generation %" PRIu32 "'s geometry is malformed.",
                  c.gen[g].sd.generation);
   p.recovery   = want;
   p.encode_r   = want;
@@ -3184,9 +3184,9 @@ int xpar_op_addrecovery(const xpar_options * o) {
     if (xpar_memcmp(r.data, gen_rec_get(&t, r.exponent, rec_scratch),
                     (sz) p.geom.slice_size))
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: re-encoding at R=%llu changed recovery slice "
-                 "%llu; nothing was written.",
-                 (unsigned long long) want, (unsigned long long) r.exponent);
+                 "internal: re-encoding at R=%" PRIu64 " changed recovery slice "
+                 "%" PRIu64 "; nothing was written.",
+                 want, r.exponent);
   }
 
   if (c.gen[g].sd.layout == XPAR_LAYOUT_ARMOURED) {
@@ -3203,7 +3203,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
         break;
       }
     if (!source || !xpar_garm_prologue(source->data, source->len, &pr, NULL))
-      FATAL_FORMAT("Generation %u's armoured archive is unavailable.",
+      FATAL_FORMAT("Generation %" PRIu32 "'s armoured archive is unavailable.",
                    c.gen[g].sd.generation);
     arm_params_of(&pr, &ap);
     xpar_buf_init(&head);
@@ -3242,10 +3242,10 @@ int xpar_op_addrecovery(const xpar_options * o) {
     xpar_verify_written_set_at(o, source->path, &verify_ref);
     if (!o->quiet)
       xpar_fprintf(xpar_stderr,
-                   "xpar: generation %u now carries %llu recovery slice%s "
-                   "inside its armoured archive (%llu added).\n",
-                   c.gen[g].sd.generation, (unsigned long long) want,
-                   PLURAL(want), (unsigned long long) (want - have));
+                   "xpar: generation %" PRIu32 " now carries %" PRIu64 " recovery slice%s "
+                   "inside its armoured archive (%" PRIu64 " added).\n",
+                   c.gen[g].sd.generation, want,
+                   PLURAL(want), (want - have));
     gen_json_result(o, "addrecovery", c.gen[g].set_id,
                     c.gen[g].sd.generation, "ok", XPAR_EXIT_OK);
     xpar_layt_free(&old);
@@ -3421,18 +3421,18 @@ int xpar_op_addrecovery(const xpar_options * o) {
     xpar_buf_free(&out);
   }
 
-  FATAL_UNLESS("Generation %u has no index volume to verify after writing.",
+  FATAL_UNLESS("Generation %" PRIu32 " has no index volume to verify after writing.",
                verify_path != NULL, c.gen[g].sd.generation);
   gen_addrec_publish(staged, staged_count);
   xpar_verify_written_set_at(o, verify_path, &verify_ref);
 
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: generation %u now carries %llu recovery slice%s "
-                 "(%llu added in %u volume%s); every existing slice is "
+                 "xpar: generation %" PRIu32 " now carries %" PRIu64 " recovery slice%s "
+                 "(%" PRIu64 " added in %" PRIu32 " volume%s); every existing slice is "
                  "unchanged.\n", c.gen[g].sd.generation,
-                 (unsigned long long) want, PLURAL(want),
-                 (unsigned long long) (want - have), nvol, PLURAL(nvol));
+                 want, PLURAL(want),
+                 (want - have), nvol, PLURAL(nvol));
   gen_json_result(o, "addrecovery", c.gen[g].set_id,
                   c.gen[g].sd.generation, "ok", XPAR_EXIT_OK);
 
@@ -3477,7 +3477,7 @@ int xpar_op_add(const xpar_options * o) {
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
     if (c.gen[i].parent_missing) {
       xpar_hex(idbuf, c.gen[i].sd.parent_set_id, XPAR_SET_ID_LEN);
-      FATAL_FORMAT("Generation %u names parent %s, which is not here; an "
+      FATAL_FORMAT("Generation %" PRIu32 " names parent %s, which is not here; an "
                    "incomplete chain cannot be extended.",
                    c.gen[i].sd.generation, idbuf);
     }
@@ -3781,14 +3781,14 @@ int xpar_op_add(const xpar_options * o) {
   xpar_hex(idbuf, rq.set_id, XPAR_SET_ID_LEN);
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: generation %u, set %s: %u %s "
-                 "(%u added, %u changed, %u inherited, %u dropped), "
-                 "%llu new stream bytes, %llu recovery slice%s in %u "
+                 "xpar: generation %" PRIu32 ", set %s: %" PRIu32 " %s "
+                 "(%" PRIu32 " added, %" PRIu32 " changed, %" PRIu32 " inherited, %" PRIu32 " dropped), "
+                 "%" PRIu64 " new stream bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " "
                  "volume%s.\n", rq.generation, idbuf, g.m.count,
                  g.m.count == 1 ? "entry" : "entries", added,
                  changed, kept, dropped,
-                 (unsigned long long) g.m.stream_length,
-                 (unsigned long long) rq.plan.recovery,
+                 g.m.stream_length,
+                 rq.plan.recovery,
                  PLURAL(rq.plan.recovery), rq.volumes - 1,
                  PLURAL(rq.volumes - 1));
   gen_json_result(o, "add", rq.set_id, rq.generation, "ok", XPAR_EXIT_OK);
@@ -4196,7 +4196,7 @@ int xpar_op_prune(const xpar_options * o) {
     FATAL("That would remove every generation, leaving nothing behind; "
           "delete the volumes yourself if that is what you want.");
   if (removed[head])
-    FATAL("Generation %u is the newest one in the chain, and every other "
+    FATAL("Generation %" PRIu32 " is the newest one in the chain, and every other "
           "generation is an older snapshot of it; prune drops older "
           "generations and cannot drop the newest.",
           c.gen[head].sd.generation);
@@ -4217,14 +4217,14 @@ int xpar_op_prune(const xpar_options * o) {
     if (!removed[g]) continue;
     reclaim += gen_volume_bytes(&c, g);
     xpar_fprintf(gen_hout(o),
-                 "  gen %-3u: %llu bytes of stream, %llu bytes of volumes, "
-                 "%u entries owned\n", c.gen[g].sd.generation,
-                 (unsigned long long) c.gen[g].sd.stream_length,
-                 (unsigned long long) gen_volume_bytes(&c, g),
+                 "  gen %-3" PRIu32 ": %" PRIu64 " bytes of stream, %" PRIu64 " bytes of volumes, "
+                 "%" PRIu32 " entries owned\n", c.gen[g].sd.generation,
+                 c.gen[g].sd.stream_length,
+                 gen_volume_bytes(&c, g),
                  c.gen[g].sd.file_count);
     xpar_fprintf(gen_hout(o),
-                 "           %llu of generation %u's %u entries still depend "
-                 "on it\n", (unsigned long long) dep,
+                 "           %" PRIu64 " of generation %" PRIu32 "'s %" PRIu32 " entries still depend "
+                 "on it\n", dep,
                  c.gen[head].sd.generation, m.count);
   }
 
@@ -4233,8 +4233,8 @@ int xpar_op_prune(const xpar_options * o) {
 
   if (orphans && !o->force) {
     xpar_fprintf(gen_hout(o),
-                 "refusing: %llu of generation %u's %u entries would become "
-                 "unrecoverable.\n", (unsigned long long) orphans,
+                 "refusing: %" PRIu64 " of generation %" PRIu32 "'s %" PRIu32 " entries would become "
+                 "unrecoverable.\n", orphans,
                  c.gen[head].sd.generation, m.count);
     xpar_fprintf(gen_hout(o),
                  "run `xpar consolidate` first: it collapses the chain so "
@@ -4256,8 +4256,8 @@ int xpar_op_prune(const xpar_options * o) {
                      m.entry[i].name);
   }
   if (o->dry_run) {
-    xpar_fprintf(gen_hout(o), "would reclaim %llu bytes of volumes.\n",
-                 (unsigned long long) reclaim);
+    xpar_fprintf(gen_hout(o), "would reclaim %" PRIu64 " bytes of volumes.\n",
+                 reclaim);
     xpar_free(owner);  xpar_manifest_free(&m);
     xpar_free(removed);  xpar_free(new_id);
     xpar_free(new_generation);  xpar_free(new_base);
@@ -4302,7 +4302,7 @@ int xpar_op_prune(const xpar_options * o) {
   for (g = 0; g < c.gen_count; g++) if (c.gen[g].layt_body) {
     xpar_layt l;
     if (xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &l) != XPAR_OK)
-      FATAL_FORMAT("Generation %u has a malformed volume layout.",
+      FATAL_FORMAT("Generation %" PRIu32 " has a malformed volume layout.",
                    c.gen[g].sd.generation);
     for (i = 0; i < l.count; i++) if (l.vol[i].kind == XPAR_VOL_DATA) {
       char * data = xpar_path_join(c.dir, l.vol[i].name);
@@ -4333,7 +4333,7 @@ int xpar_op_prune(const xpar_options * o) {
       if (keep[i]) kept++;
     }
     if (!kept)
-      FATAL("Generation %u would be left with no entries at all; that is a "
+      FATAL("Generation %" PRIu32 " would be left with no entries at all; that is a "
             "chain with nothing in it, so nothing was written.",
             c.gen[g].sd.generation);
 
@@ -4446,10 +4446,10 @@ int xpar_op_prune(const xpar_options * o) {
 
   gen_prune_commit(&tx, c.base);
   xpar_fprintf(gen_hout(o),
-               "pruned %u generation%s, reclaimed %llu bytes; %llu %s "
+               "pruned %" PRIu32 " generation%s, reclaimed %" PRIu64 " bytes; %" PRIu64 " %s "
                "dropped from the surviving manifests.\n",
                c.gen_count - survivors, PLURAL(c.gen_count - survivors),
-               (unsigned long long) reclaim, (unsigned long long) orphans,
+               reclaim, orphans,
                orphans == 1 ? "entry was" : "entries were");
   gen_json_result(o, "prune", c.gen[head].set_id,
                   c.gen[head].sd.generation, "ok", XPAR_EXIT_OK);
@@ -4535,21 +4535,21 @@ int xpar_op_consolidate(const xpar_options * o) {
 
   if (o->dry_run) {
     xpar_fprintf(gen_hout(o),
-                 "  chain      : %u generations, %u entries\n"
-                 "  stream     : %llu bytes across the chain, %llu still "
+                 "  chain      : %" PRIu32 " generations, %" PRIu32 " entries\n"
+                 "  stream     : %" PRIu64 " bytes across the chain, %" PRIu64 " still "
                  "referenced (%.1f%%)\n"
-                 "  reclaim    : %llu bytes of stream\n"
-                 "  cost       : read %llu bytes, one full encode\n",
-                 c.gen_count, m.count, (unsigned long long) total,
-                 (unsigned long long) live,
+                 "  reclaim    : %" PRIu64 " bytes of stream\n"
+                 "  cost       : read %" PRIu64 " bytes, one full encode\n",
+                 c.gen_count, m.count, total,
+                 live,
                  total ? 100.0 * (f64) live / (f64) total : 100.0,
-                 (unsigned long long) (total - live),
-                 (unsigned long long) live);
+                 (total - live),
+                 live);
     goto done;
   }
   if (bad && !o->force)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "%u entries do not match the chain; consolidating would "
+               "%" PRIu32 " entries do not match the chain; consolidating would "
                "record the damage as the new truth. Repair first, or pass "
                "--force.", bad);
 
@@ -4617,11 +4617,11 @@ int xpar_op_consolidate(const xpar_options * o) {
   }
   if (!o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: collapsed %u generations into one: %u %s, "
-                 "%llu stream bytes, %llu recovery slice%s.\n", c.gen_count,
+                 "xpar: collapsed %" PRIu32 " generations into one: %" PRIu32 " %s, "
+                 "%" PRIu64 " stream bytes, %" PRIu64 " recovery slice%s.\n", c.gen_count,
                  m.count, m.count == 1 ? "entry" : "entries",
-                 (unsigned long long) m.stream_length,
-                 (unsigned long long) rq.plan.recovery,
+                 m.stream_length,
+                 rq.plan.recovery,
                  PLURAL(rq.plan.recovery));
 
 done:
@@ -4684,11 +4684,11 @@ int xpar_op_recover(const xpar_options * o) {
   gen_require_write_key(&c, "recover");
   g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   if (!c.gen[g].layt_body)
-    FATAL_FORMAT("Generation %u carries no volume layout, so there is "
+    FATAL_FORMAT("Generation %" PRIu32 " carries no volume layout, so there is "
                  "nothing to say what the lost volume held.",
                  c.gen[g].sd.generation);
   if (xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) != XPAR_OK)
-    FATAL_FORMAT("Generation %u's volume layout is malformed.",
+    FATAL_FORMAT("Generation %" PRIu32 "'s volume layout is malformed.",
                  c.gen[g].sd.generation);
 
   for (i = 0; i < layt.count; i++) {
@@ -4715,18 +4715,18 @@ int xpar_op_recover(const xpar_options * o) {
               !xpar_strcmp(other.vol[i].name, o->volume_name)) {
             u32 num = c.gen[h].sd.generation;
             xpar_layt_free(&other);
-            FATAL("'%s' belongs to generation %u, not to generation %u; "
-                  "pass --generation=%u.", o->volume_name, num,
+            FATAL("'%s' belongs to generation %" PRIu32 ", not to generation %" PRIu32 "; "
+                  "pass --generation=%" PRIu32 ".", o->volume_name, num,
                   c.gen[g].sd.generation, num);
           }
         xpar_layt_free(&other);
       }
     if (o->volume_name)
-      FATAL("Generation %u's layout names no volume '%s'.",
+      FATAL("Generation %" PRIu32 "'s layout names no volume '%s'.",
             c.gen[g].sd.generation, o->volume_name);
-    FATAL("Generation %u's layout has %u volumes, so there is no volume "
-          "%llu.", c.gen[g].sd.generation, layt.count,
-          (unsigned long long) o->volume_index);
+    FATAL("Generation %" PRIu32 "'s layout has %" PRIu32 " volumes, so there is no volume "
+          "%" PRIu64 ".", c.gen[g].sd.generation, layt.count,
+          o->volume_index);
   }
   if (c.gen[g].sd.layout == XPAR_LAYOUT_ARMOURED) {
     const xpar_chain_vol * source = NULL;
@@ -4736,7 +4736,7 @@ int xpar_op_recover(const xpar_options * o) {
         break;
       }
     if (!source)
-      FATAL_FORMAT("Generation %u's armoured archive is unavailable.",
+      FATAL_FORMAT("Generation %" PRIu32 "'s armoured archive is unavailable.",
                    c.gen[g].sd.generation);
     if (o->to_dir && xpar_strlen(o->to_dir))
       xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
@@ -4744,8 +4744,8 @@ int xpar_op_recover(const xpar_options * o) {
       path = xpar_path_join(c.dir, layt.vol[target].name);
     gen_write_whole(path, source->data, source->len, o->force);
     if (!o->quiet)
-      xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%llu armoured "
-                   "bytes).\n", path, (unsigned long long) source->len);
+      xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%zu armoured "
+                   "bytes).\n", path, source->len);
     xpar_free(path);
     xpar_layt_free(&layt);
     xpar_gchain_free(&c);
@@ -4784,8 +4784,8 @@ int xpar_op_recover(const xpar_options * o) {
     gen_publish_whole(tmp, path, o->force);
     if (!o->quiet)
       xpar_fprintf(xpar_stderr, "xpar: recovered %s from survivor and "
-                   "parity slices (%llu bare stream bytes).\n", path,
-                   (unsigned long long) layt.vol[target].byte_length);
+                   "parity slices (%" PRIu64 " bare stream bytes).\n", path,
+                   layt.vol[target].byte_length);
     xpar_free(path);
     xpar_layt_free(&layt);
     xpar_gchain_free(&c);
@@ -4794,7 +4794,7 @@ int xpar_op_recover(const xpar_options * o) {
   gen_manifest_on_disk(&c, g, o, &m, &owner);
   xpar_memset(&p, 0, sizeof p);
   if (!xpar_geom_from_setd(&c.gen[g].sd, &p.geom))
-    FATAL_FORMAT("Generation %u's geometry is malformed.",
+    FATAL_FORMAT("Generation %" PRIu32 "'s geometry is malformed.",
                  c.gen[g].sd.generation);
   p.recovery   = r_total;
   p.encode_r   = r_total;
@@ -4806,7 +4806,7 @@ int xpar_op_recover(const xpar_options * o) {
   source_rc = xpar_vset_check(source_set, o, NULL);
   if (source_rc != XPAR_EXIT_OK)
     FATAL_CODE(source_rc,
-               "Generation %u's protected stream is not clean; refusing to "
+               "Generation %" PRIu32 "'s protected stream is not clean; refusing to "
                "derive a replacement recovery volume from it.",
                c.gen[g].sd.generation);
   gen_encode(&m, &p, c.gen[g].sd.slice_tag_len, o->memory,
@@ -4867,9 +4867,9 @@ int xpar_op_recover(const xpar_options * o) {
     path = xpar_path_join(c.dir, layt.vol[target].name);
   gen_write_whole(path, out.data, out.len, o->force);
   if (!o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%llu bytes, %llu "
-                 "recovery slices).\n", path, (unsigned long long) out.len,
-                 (unsigned long long) layt.vol[target].byte_length);
+    xpar_fprintf(xpar_stderr, "xpar: regenerated %s (%zu bytes, %" PRIu64 " "
+                 "recovery slices).\n", path, out.len,
+                 layt.vol[target].byte_length);
   gen_json_result(o, "recover", c.gen[g].set_id,
                   c.gen[g].sd.generation, "ok", XPAR_EXIT_OK);
 
@@ -4934,7 +4934,7 @@ int xpar_op_undo(const xpar_options * o) {
                          o->gen_count ? &o->gens[0] : NULL);
   if (o->set_ref.base) {
     if (chain.gen[generation].sd.generation)
-      xpar_asprintf(&path, "%s.g%03u.xparundo", o->set_ref.base,
+      xpar_asprintf(&path, "%s.g%03" PRIu32 ".xparundo", o->set_ref.base,
                     chain.gen[generation].sd.generation);
     else
       xpar_asprintf(&path, "%s.xparundo", o->set_ref.base);
@@ -4956,8 +4956,8 @@ int xpar_op_undo(const xpar_options * o) {
   if (n < UNDO_HDR + UNDO_FOOT || xpar_memcmp(j, "XPARUNDO", 8))
     FATAL_FORMAT("'%s' is not an xpar repair journal.", path);
   if (xpar_rd32(j + 8) != 1)
-    FATAL_FORMAT("'%s' is a version %lu journal; this build reads 1.", path,
-                 (unsigned long) xpar_rd32(j + 8));
+    FATAL_FORMAT("'%s' is a version %" PRIu32 " journal; this build reads 1.", path,
+                 xpar_rd32(j + 8));
   if (xpar_crc32c(0, j, 60) != xpar_rd32(j + 60))
     FATAL_FORMAT("The header of '%s' does not verify.", path);
   if (xpar_rd32(j + 12) || xpar_rd32(j + 56))
@@ -5009,8 +5009,8 @@ int xpar_op_undo(const xpar_options * o) {
       u64 k;
       if (at > (u64) n - UNDO_FOOT ||
           (u64) n - UNDO_FOOT - at < UNDO_REC)
-        FATAL_FORMAT("Journal '%s' ends before record %llu.", path,
-                     (unsigned long long) i);
+        FATAL_FORMAT("Journal '%s' ends before record %" PRIu64 ".", path,
+                     i);
       rec = j + at;
       plen = xpar_rd32(rec);
       rflags = xpar_rd32(rec + 4);
@@ -5020,32 +5020,32 @@ int xpar_op_undo(const xpar_options * o) {
       if ((rflags & ~UNDO_CREATED) || !plen || off + len < off ||
           (u64) UNDO_REC + plen > remain ||
           len > remain - UNDO_REC - plen)
-        FATAL_FORMAT("Journal '%s' has invalid framing in record %llu.", path,
-                     (unsigned long long) i);
+        FATAL_FORMAT("Journal '%s' has invalid framing in record %" PRIu64 ".", path,
+                     i);
       raw = (u64) UNDO_REC + plen + len;
       if (raw > (u64) -1 - 7)
-        FATAL_FORMAT("Journal '%s' overflows record %llu's length.", path,
-                     (unsigned long long) i);
+        FATAL_FORMAT("Journal '%s' overflows record %" PRIu64 "'s length.", path,
+                     i);
       step = xpar_align_up(raw, 8);
       if (step > remain)
-        FATAL_FORMAT("Journal '%s' truncates record %llu.", path,
-                     (unsigned long long) i);
+        FATAL_FORMAT("Journal '%s' truncates record %" PRIu64 ".", path,
+                     i);
       if (payload + len < payload)
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
       if (xpar_has_nul(rec + UNDO_REC, plen) ||
           !gen_undo_path_allowed(&chain, &manifest,
                                  (const char *) rec + UNDO_REC, plen))
-        FATAL_FORMAT("Journal record %llu names a path outside the selected "
-                     "set.", (unsigned long long) i);
+        FATAL_FORMAT("Journal record %" PRIu64 " names a path outside the selected "
+                     "set.", i);
       old = rec + UNDO_REC + plen;
       if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
           xpar_crc32c(0, old, (sz) len) != xpar_rd32(rec + 32))
-        FATAL_FORMAT("Journal record %llu does not verify.",
-                     (unsigned long long) i);
+        FATAL_FORMAT("Journal record %" PRIu64 " does not verify.",
+                     i);
       for (k = raw; k < step; k++)
-        if (rec[k]) FATAL_FORMAT("Journal record %llu has non-zero padding.",
-                                 (unsigned long long) i);
+        if (rec[k]) FATAL_FORMAT("Journal record %" PRIu64 " has non-zero padding.",
+                                 i);
       at += step;
     }
     if (at != (u64) n - UNDO_FOOT || payload != xpar_rd64(j + 40))
@@ -5075,9 +5075,9 @@ int xpar_op_undo(const xpar_options * o) {
     if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
         xpar_crc32c(0, old, (sz) len) != xpar_rd32(rec + 32)) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: journal record %llu does not verify; it and "
+                   "xpar: journal record %" PRIu64 " does not verify; it and "
                    "everything after it are a torn tail and are not "
-                   "replayed.\n", (unsigned long long) i);
+                   "replayed.\n", i);
       skipped += (u32) (count - i);
       break;
     }
@@ -5118,8 +5118,8 @@ int xpar_op_undo(const xpar_options * o) {
   }
 
   xpar_fprintf(xpar_stderr,
-               "xpar: replayed %lu of %llu journal records%s%s.\n",
-               (unsigned long) applied, (unsigned long long) count,
+               "xpar: replayed %" PRIu32 " of %" PRIu64 " journal records%s%s.\n",
+               applied, count,
                removed ? ", removing files the repair had created" : "",
                skipped ? "; the rest could not be applied" : "");
   if (!skipped && !o->keep_journal && xpar_remove(path) != 0)
@@ -5315,8 +5315,8 @@ int xpar_op_recover_prologue(const xpar_options * o) {
             XPAR_OK) {
           if (o->verbose > 1)
             xpar_fprintf(xpar_stderr,
-                         "xpar: recovered SETD stream length %llu.\n",
-                         (unsigned long long) sd.stream_length);
+                         "xpar: recovered SETD stream length %" PRIu64 ".\n",
+                         sd.stream_length);
           declared_stream = sd.stream_length;
           xpar_setd_free(&sd);
         }
@@ -5337,20 +5337,20 @@ int xpar_op_recover_prologue(const xpar_options * o) {
 
   xpar_fprintf(gen_hout(o),
                "recovered prologue for %s:\n"
-               "  symbol_bits     %u\n  poly            0x%lX\n"
-               "  n               %lu\n  k               %lu   (t = %lu)\n"
-               "  fcr             %lu\n  prim            %lu\n"
-               "  depth D         %llu\n  plain_length    %llu\n"
-               "  armoured_length %llu\n  stream_offset   %llu\n"
-               "  stream_length   %llu\n",
-               o->set, pr.symbol_bits, (unsigned long) pr.poly,
-               (unsigned long) pr.n, (unsigned long) pr.k,
-               (unsigned long) ((pr.n - pr.k) / 2), (unsigned long) pr.fcr,
-               (unsigned long) pr.prim, (unsigned long long) pr.depth,
-               (unsigned long long) pr.plain_length,
-               (unsigned long long) pr.armoured_length,
-               (unsigned long long) pr.stream_offset,
-               (unsigned long long) pr.stream_length);
+               "  symbol_bits     %" PRIu8 "\n  poly            0x%" PRIX32 "\n"
+               "  n               %" PRIu32 "\n  k               %" PRIu32 "   (t = %" PRIu32 ")\n"
+               "  fcr             %" PRIu32 "\n  prim            %" PRIu32 "\n"
+               "  depth D         %" PRIu64 "\n  plain_length    %" PRIu64 "\n"
+               "  armoured_length %" PRIu64 "\n  stream_offset   %" PRIu64 "\n"
+               "  stream_length   %" PRIu64 "\n",
+               o->set, pr.symbol_bits, pr.poly,
+               pr.n, pr.k,
+               ((pr.n - pr.k) / 2), pr.fcr,
+               pr.prim, pr.depth,
+               pr.plain_length,
+               pr.armoured_length,
+               pr.stream_offset,
+               pr.stream_length);
 
   if (!o->dry_run) {
     xpar_armour_params ap;
@@ -5410,8 +5410,8 @@ static u32 bm_cmp(const char * tier, const char * what, const u8 * a,
     if (a[i] != b[i]) {
       xpar_fprintf(xpar_stderr,
                    "xpar: benchmark: %s disagrees with scalar in %s at byte "
-                   "%lu of %lu (%02X against %02X).\n", tier, what,
-                   (unsigned long) i, (unsigned long) n, a[i], b[i]);
+                   "%zu of %zu (%02" PRIX8 " against %02" PRIX8 ").\n", tier, what,
+                   i, n, a[i], b[i]);
       return 1;
     }
   return 0;
@@ -5574,10 +5574,10 @@ static u32 bm_check_crc32c(void) {
     }
 #endif
     if (name && got != want) {
-      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08lX at "
-                   "%lu bytes, scalar gives %08lX.\n", name,
-                   (unsigned long) got, (unsigned long) len[i],
-                   (unsigned long) want);
+      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32 " at "
+                   "%zu bytes, scalar gives %08" PRIX32 ".\n", name,
+                   got, len[i],
+                   want);
       bad++;
     }
   }
@@ -5637,8 +5637,8 @@ static u32 bm_kat_hex(const char * what, const u8 * got, sz n,
                     bm_hexdigit(hex[2 * i + 1]));
     if (got[i] != want) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: benchmark: conformance KAT %s differs at byte %lu "
-                   "(%02X against %02X).\n", what, (unsigned long) i,
+                   "xpar: benchmark: conformance KAT %s differs at byte %zu "
+                   "(%02" PRIX8 " against %02" PRIX8 ").\n", what, i,
                    got[i], want);
       return 1;
     }
@@ -5699,8 +5699,8 @@ static u32 bm_check_kats(void) {
   crc = xpar_crc32c(0, data, 4096);
   if (crc != 0x752b349cu) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: benchmark: conformance KAT V-CRC slice is %08lX, "
-                 "expected 752B349C.\n", (unsigned long) crc);
+                 "xpar: benchmark: conformance KAT V-CRC slice is %08" PRIX32 ", "
+                 "expected 752B349C.\n", crc);
     bad++;
   }
   xpar_crc32c_roll_init(&roll, 64);
@@ -5711,8 +5711,8 @@ static u32 bm_check_kats(void) {
     if (crc != roll_want[i]) {
       xpar_fprintf(xpar_stderr,
                    "xpar: benchmark: conformance KAT V-CRC rolling state "
-                   "%lu is %08lX, expected %08lX.\n", (unsigned long) i,
-                   (unsigned long) crc, (unsigned long) roll_want[i]);
+                   "%" PRIu32 " is %08" PRIX32 ", expected %08" PRIX32 ".\n", i,
+                   crc, roll_want[i]);
       bad++;
       break;
     }
@@ -5741,9 +5741,9 @@ static void bm_rate(const char * tier, const char * operation,
   if (!usec) usec = 1;
   mib_s = ((f64) bytes * 1000000.0) / ((f64) usec * 1048576.0);
   xpar_fprintf(xpar_stderr,
-               "xpar: benchmark: %-12s %-12s %10llu bytes %8llu us "
+               "xpar: benchmark: %-12s %-12s %10" PRIu64 " bytes %8" PRIu64 " us "
                "%9.2f MiB/s\n", tier, operation,
-               (unsigned long long) bytes, (unsigned long long) usec, mib_s);
+               bytes, usec, mib_s);
 }
 
 static void bm_measure_gf(const xpar_gf_kernels * k, const char * tier) {
@@ -5875,15 +5875,15 @@ int xpar_op_benchmark(const xpar_options * o) {
                  xpar_crc32c_variant(), xpar_blake3_variant());
 
   if (bad) {
-    xpar_fprintf(xpar_stderr, "xpar: benchmark: %lu differences across %lu "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32 " differences across %" PRIu32 " "
                  "tiers. This build's kernels do not agree on this "
-                 "machine.\n", (unsigned long) bad, (unsigned long) tiers);
+                 "machine.\n", bad, tiers);
     gen_json_result(o, "benchmark", NULL, 0, "failed", XPAR_EXIT_INTERNAL);
     return XPAR_EXIT_INTERNAL;
   }
   if (!o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: benchmark: %lu tiers checked, every "
-                 "kernel byte-identical to scalar.\n", (unsigned long) tiers);
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32 " tiers checked, every "
+                 "kernel byte-identical to scalar.\n", tiers);
   gen_json_result(o, "benchmark", NULL, 0, "ok", XPAR_EXIT_OK);
   return XPAR_EXIT_OK;
 }

@@ -317,12 +317,13 @@ void xpar_free_aligned(void * p) {
   if (p) free(((void **) p)[-1]);
 }
 
-/*  DPMI function 0500h reports the host's idea of available memory. The
-    page count is what the planner wants; a DPMI host that declines the
-    call leaves the planner on its 8 MiB default.  */
+/*  Prefer the largest allocatable block; fall back to free pages.  */
 u64 xpar_physical_memory(void) {
   __dpmi_free_mem_info info;
   if (__dpmi_get_free_memory_information(&info) != 0) return 0;
+  if (info.largest_available_free_block_in_bytes != 0 &&
+      info.largest_available_free_block_in_bytes != (unsigned long) -1L)
+    return (u64) info.largest_available_free_block_in_bytes;
   if (info.total_number_of_free_pages == 0) return 0;
   return (u64) info.total_number_of_free_pages * 4096ULL;
 }

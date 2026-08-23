@@ -1065,8 +1065,8 @@ static void pack_regular_chunks(xpar_manifest * m,
     if (c.full)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "The chunk fingerprint index exceeded --dedup-memory "
-                 "(%llu bytes); raise it or --dedup-chunk.",
-                 (unsigned long long) o->dedup_memory);
+                 "(%" PRIu64 " bytes); raise it or --dedup-chunk.",
+                 o->dedup_memory);
     FATAL_PERROR(m->source[i]);
   }
   if (c.bytes != expected) {
@@ -1185,8 +1185,8 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
   if (o->dedup == XPAR_DEDUP_CHUNK &&
       !xpar_chunk_index_init(&chunks, o->dedup_memory))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "--dedup-memory=%llu is too small for a chunk index.",
-               (unsigned long long) o->dedup_memory);
+               "--dedup-memory=%" PRIu64 " is too small for a chunk index.",
+               o->dedup_memory);
 
   for (i = 0; i < m->count; i++) {
     xpar_entry * e = &m->entry[i];

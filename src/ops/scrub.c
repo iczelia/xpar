@@ -421,9 +421,9 @@ static void deep(scrub * c) {
   if (!xpar_codec_supports_axis(sd->codec, sd->field_log2, s_count, r_count,
                                 sd->recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "--deep: this build's codec cannot express S = %llu with "
-               "R = %llu.", (unsigned long long) s_count,
-               (unsigned long long) r_count);
+               "--deep: this build's codec cannot express S = %" PRIu64 " with "
+               "R = %" PRIu64 ".", s_count,
+               r_count);
 
   chunk = budget / (s_count + r_count);
   chunk &= ~(u64) 63;
@@ -455,8 +455,8 @@ static void deep(scrub * c) {
           c->rcvs_wrong++;
           if (!c->o->quiet)
             xpar_fprintf(xpar_stderr,
-                         "xpar: recovery slice %llu does not recompute "
-                         "from the data\n", (unsigned long long) j);
+                         "xpar: recovery slice %" PRIu64 " does not recompute "
+                         "from the data\n", j);
         }
       }
     }
@@ -516,9 +516,9 @@ static void rebuild_cells(scrub * c) {
       c->cells_unseeded++;
       if (!c->o->quiet)
         xpar_fprintf(xpar_stderr,
-                     "xpar: --rebuild-cells: slice %llu does not verify "
+                     "xpar: --rebuild-cells: slice %" PRIu64 " does not verify "
                      "and cannot seed a cell table\n",
-                     (unsigned long long) i);
+                     i);
       continue;
     }
     for (col = 0; col < k; col++)
@@ -530,8 +530,8 @@ static void rebuild_cells(scrub * c) {
 
   if (c->cells_unseeded) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: --rebuild-cells: %llu slices could not be seeded\n",
-                 (unsigned long long) c->cells_unseeded);
+                 "xpar: --rebuild-cells: %" PRIu64 " slices could not be seeded\n",
+                 c->cells_unseeded);
   } else {
     xpar_buf out;
     u64 first = 0;
@@ -579,9 +579,9 @@ static void rebuild_cells(scrub * c) {
                                    g->stream_length);
           wrote = 1;
           xpar_fprintf(xpar_stderr,
-                       "xpar: --rebuild-cells: wrote %llu cell checksums "
+                       "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums "
                        "inside '%s'\n",
-                       (unsigned long long) c->cells_rebuilt, path);
+                       c->cells_rebuilt, path);
         }
       } else for (v = 0; v < xpar_vset_volumes(c->s) && wrote < 2; v++) {
         const char * path = xpar_vset_volume_path(c->s, v);
@@ -608,8 +608,8 @@ static void rebuild_cells(scrub * c) {
         xpar_xclose(f);
         wrote++;
         xpar_fprintf(xpar_stderr,
-                     "xpar: --rebuild-cells: wrote %llu cell checksums to "
-                     "'%s'\n", (unsigned long long) c->cells_rebuilt, path);
+                     "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums to "
+                     "'%s'\n", c->cells_rebuilt, path);
       }
       if (!wrote) {
         c->write_failed = true;
@@ -640,45 +640,45 @@ static void report(const scrub * c, int rc) {
   for (i = 0; i < last_hist_len; i++) last_hist[i] = c->hist[i];
   if (c->o->quiet) return;
   xpar_fprintf(xpar_stderr,
-               "xpar: recovery: %llu slices named, %llu present, %llu "
+               "xpar: recovery: %" PRIu64 " slices named, %" PRIu64 " present, %" PRIu64 " "
                "packets failed their checksum\n",
-               (unsigned long long) c->rcvs_count,
-               (unsigned long long) c->rcvs_present,
-               (unsigned long long) c->pkt_bad);
+               c->rcvs_count,
+               c->rcvs_present,
+               c->pkt_bad);
   if (c->regions) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: inner code: %llu regions, %llu codewords, %llu "
-                 "clean, %llu corrected, %llu past capacity\n",
-                 (unsigned long long) c->regions,
-                 (unsigned long long) c->codewords,
-                 (unsigned long long) c->clean,
-                 (unsigned long long) c->corrected,
-                 (unsigned long long) c->failed);
+                 "xpar: inner code: %" PRIu64 " regions, %" PRIu64 " codewords, %" PRIu64 " "
+                 "clean, %" PRIu64 " corrected, %" PRIu64 " past capacity\n",
+                 c->regions,
+                 c->codewords,
+                 c->clean,
+                 c->corrected,
+                 c->failed);
     xpar_fprintf(xpar_stderr,
-                 "xpar: corrected symbols: %llu total, worst codeword %lu\n",
-                 (unsigned long long) c->symbols,
-                 (unsigned long) c->worst);
+                 "xpar: corrected symbols: %" PRIu64 " total, worst codeword %" PRIu32 "\n",
+                 c->symbols,
+                 c->worst);
     for (i = 1; i < c->hist_len; i++)
       if (c->hist[i])
         xpar_fprintf(xpar_stderr,
-                     "xpar:   codewords corrected at %lu symbols: %llu\n",
-                     (unsigned long) i, (unsigned long long) c->hist[i]);
+                     "xpar:   codewords corrected at %" PRIu32 " symbols: %" PRIu64 "\n",
+                     i, c->hist[i]);
   }
   if (c->regions_rewritten)
-    xpar_fprintf(xpar_stderr, "xpar: --rewrite: refreshed %llu regions\n",
-                 (unsigned long long) c->regions_rewritten);
+    xpar_fprintf(xpar_stderr, "xpar: --rewrite: refreshed %" PRIu64 " regions\n",
+                 c->regions_rewritten);
   if (c->rcvs_wrong)
     xpar_fprintf(xpar_stderr,
-                 "xpar: --deep: %llu recovery slices do not recompute "
-                 "from the data\n", (unsigned long long) c->rcvs_wrong);
+                 "xpar: --deep: %" PRIu64 " recovery slices do not recompute "
+                 "from the data\n", c->rcvs_wrong);
   if (c->rcvs_unchecked)
     xpar_fprintf(xpar_stderr,
-                 "xpar: --deep: %llu recovery slices were not present and "
+                 "xpar: --deep: %" PRIu64 " recovery slices were not present and "
                  "could not be compared\n",
-                 (unsigned long long) c->rcvs_unchecked);
+                 c->rcvs_unchecked);
   if (c->link_drift)
-    xpar_fprintf(xpar_stderr, "xpar: %llu link-structure-drift reports\n",
-                 (unsigned long long) c->link_drift);
+    xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " link-structure-drift reports\n",
+                 c->link_drift);
   xpar_fprintf(xpar_stderr, "xpar: scrub: exit %d\n", rc);
 }
 

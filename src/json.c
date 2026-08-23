@@ -133,13 +133,13 @@ void xpar_json_str(xpar_json * j, const char * k, const char * v) {
 void xpar_json_u64(xpar_json * j, const char * k, u64 v) {
   if (!j->enabled) return;
   key(j, k);
-  xpar_fprintf(j->out, "%llu", (unsigned long long) v);
+  xpar_fprintf(j->out, "%" PRIu64, v);
 }
 
 void xpar_json_i64(xpar_json * j, const char * k, i64 v) {
   if (!j->enabled) return;
   key(j, k);
-  xpar_fprintf(j->out, "%lld", (long long) v);
+  xpar_fprintf(j->out, "%" PRId64, v);
 }
 
 void xpar_json_bool(xpar_json * j, const char * k, bool v) {

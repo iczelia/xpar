@@ -84,12 +84,12 @@ static void human(char * buf, sz cap, u64 v) {
   int i = 0;
   while (i < 5 && v >= scale * 1024) { scale *= 1024;  i++; }
   if (!i) {
-    xpar_snprintf(buf, cap, "%llu B", (unsigned long long) v);
+    xpar_snprintf(buf, cap, "%" PRIu64 " B", v);
     return;
   }
-  xpar_snprintf(buf, cap, "%llu.%llu %s",
-                (unsigned long long) (v / scale),
-                (unsigned long long) (v % scale * 10 / scale), u[i]);
+  xpar_snprintf(buf, cap, "%" PRIu64 ".%" PRIu64 " %s",
+                (v / scale),
+                (v % scale * 10 / scale), u[i]);
 }
 
 const char * xpar_plan_reason(xpar_plan_status s) {
@@ -610,8 +610,8 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   {
     char fit[48];
     if (best_b)
-      xpar_snprintf(fit, sizeof fit, "-b %llu fits this -m",
-                    (unsigned long long) best_b);
+      xpar_snprintf(fit, sizeof fit, "-b %" PRIu64 " fits this -m",
+                    best_b);
     else
       xpar_snprintf(fit, sizeof fit, "no -b fits this -m");
     xpar_snprintf(buf, cap,
@@ -630,10 +630,10 @@ static void expo(char * buf, sz cap, u64 v) {
   u64 t = v;
   if (!v) { xpar_snprintf(buf, cap, "0");  return; }
   while (t >= 1000) { t /= 10;  e++; }
-  if (t < 100) { xpar_snprintf(buf, cap, "%llu", (unsigned long long) t);
+  if (t < 100) { xpar_snprintf(buf, cap, "%" PRIu64, t);
                  return; }
-  xpar_snprintf(buf, cap, "%llu.%02llue%d", (unsigned long long) (t / 100),
-                (unsigned long long) (t % 100), e + 2);
+  xpar_snprintf(buf, cap, "%" PRIu64 ".%02" PRIu64 "e%d", (t / 100),
+                (t % 100), e + 2);
 }
 
 void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
@@ -651,15 +651,15 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
                g1, g2, g3, g4);
 
   group(g1, p->geom.slice_count + p->recovery_slices);
-  xpar_fprintf(out, "  field      : S + R = %s %s 256, so GF(2^%u)\n", g1,
+  xpar_fprintf(out, "  field      : S + R = %s %s 256, so GF(2^%" PRIu8 ")\n", g1,
                p->geom.slice_count + p->recovery_slices > 256 ? ">" : "<=",
-               (unsigned) p->field_log2);
+               p->field_log2);
 
   if (verbose) {
     for (i = 0; i < p->cand_count; i++) {
       const xpar_plan_cand * c = &p->cand[i];
-      xpar_fprintf(out, "  %-11s: %s/GF%u  ", i ? "" : "candidates",
-                   codec_name(c->codec), (unsigned) c->field_log2);
+      xpar_fprintf(out, "  %-11s: %s/GF%" PRIu8 "  ", i ? "" : "candidates",
+                   codec_name(c->codec), c->field_log2);
       if (!c->feasible) {
         xpar_fprintf(out, "dropped: %s\n", c->why ? c->why : "does not fit");
         continue;
@@ -679,8 +679,8 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
   human(h3, sizeof h3, p->mem_stage);
   human(h4, sizeof h4, p->mem_total);
   group(g1, p->column_chunk);
-  xpar_fprintf(out, "  codec      : %s  (GF(2^%u), C = %s B)\n",
-               codec_name(p->codec), (unsigned) p->field_log2, g1);
+  xpar_fprintf(out, "  codec      : %s  (GF(2^%" PRIu8 "), C = %s B)\n",
+               codec_name(p->codec), p->field_log2, g1);
   xpar_fprintf(out, "  memory     : work buffers %s;  read-ahead %s;  "
                "stage + hash %s\n               total %s\n",
                h1, h2, h3, h4);
@@ -694,11 +694,11 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
     group(g4, 4 * p->geom.slice_count * p->geom.cells_per_slice);
     xpar_fprintf(out, "  cells      : Y = %s B, K = %s per slice "
                  "(last cell %s B)\n"
-                 "               erasure budget is %llu per column, not "
-                 "%llu per set\n"
+                 "               erasure budget is %" PRIu64 " per column, not "
+                 "%" PRIu64 " per set\n"
                  "               SLCL = %s B\n", g1, g2, g3,
-                 (unsigned long long) p->recovery_slices,
-                 (unsigned long long) p->recovery_slices, g4);
+                 p->recovery_slices,
+                 p->recovery_slices, g4);
     /*  Equal C and Y remain independent choices.  */
     if (p->geom.cell_bytes == p->column_chunk)
       xpar_fputs("               note Y == C here by coincidence; C is "
@@ -724,13 +724,13 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
     xpar_fprintf(out, "  repair     : FFT decode cost does not depend on "
                  "the loss count;\n"
                  "               decode needs %s buffers against the "
-                 "encoder's %llu\n",
-                 g1, (unsigned long long) (p->geom.slice_count + 2 * m));
+                 "encoder's %" PRIu64 "\n",
+                 g1, (p->geom.slice_count + 2 * m));
     if (cross)
       xpar_fprintf(out,
                    "               calibrated matrix/FFT crossover is "
-                   "about %llu lost slices (%.2f%% of S)\n",
-                   (unsigned long long) cross,
+                   "about %" PRIu64 " lost slices (%.2f%% of S)\n",
+                   cross,
                    p->geom.slice_count
                      ? 100.0 * (f64) cross / (f64) p->geom.slice_count : 0.0);
   }

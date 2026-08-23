@@ -254,10 +254,10 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
       xpar_critset_add(&r->crit, &h, body);
   }
   if (r->verbose > 2)
-    rp_note(r, "xpar: scan: %llu packets, %llu bad tags, %llu need key.\n",
-            (unsigned long long) sc.emitted,
-            (unsigned long long) sc.skip_checksum,
-            (unsigned long long) sc.skip_keyed);
+    rp_note(r, "xpar: scan: %" PRIu64 " packets, %" PRIu64 " bad tags, %" PRIu64 " need key.\n",
+            sc.emitted,
+            sc.skip_checksum,
+            sc.skip_keyed);
 }
 
 static bool rp_have_setd(const rp * r) {
@@ -706,16 +706,16 @@ static void rp_resync_entry(rp * r, u32 entry) {
   } else if (result.candidates) {
     rp_note(r, "xpar: %s: misplaced slices have no dominant displacement; "
                "use --resync=always --resync-exhaustive to confirm all "
-               "%llu candidates.\n", r->path[entry],
-            (unsigned long long) result.candidates);
+               "%" PRIu64 " candidates.\n", r->path[entry],
+            result.candidates);
   }
   for (i = 0; i < n; i++)
     if (located[i] != UINT64_MAX)
       xpar_resync_map_add(&r->resync[entry], p[i].expected, located[i]);
   if (r->resync[entry].count)
-    rp_note(r, "xpar: %s: found %u displaced slices with %llu strong "
+    rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64 " strong "
                "confirmations.\n", r->path[entry], r->resync[entry].count,
-            (unsigned long long) confirmations);
+            confirmations);
   xpar_free(located);
 done:
   xpar_free(confirm.buf);  xpar_free(p);
@@ -1123,9 +1123,9 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
                                 r->rec_total,
                                 r->sd.recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "The recorded codec cannot express S = %llu with R = %llu "
-               "in GF(2^%u).", (unsigned long long) s,
-               (unsigned long long) r->rec_total, r->sd.field_log2);
+               "The recorded codec cannot express S = %" PRIu64 " with R = %" PRIu64 " "
+               "in GF(2^%" PRIu8 ").", s,
+               r->rec_total, r->sd.field_log2);
   cd = xpar_codec_new_axis(r->sd.codec, r->sd.field_log2, s, r->rec_total,
                            r->sd.recovery_axis_log2);
   pool = (u8 *) xpar_alloc_raw((sz) ((s + r->rec_total) * chunk));
@@ -1402,9 +1402,9 @@ static void rp_journal(rp * r) {
   /*  Make the journal directory entry durable before data writes.  */
   xpar_fsync_dir(r->journal);
   if (r->verbose)
-    rp_note(r, "xpar: journalled %llu ranges (%llu bytes) to '%s'.\n",
-            (unsigned long long) r->wr_count,
-            (unsigned long long) payload, r->journal);
+    rp_note(r, "xpar: journalled %" PRIu32 " ranges (%" PRIu64 " bytes) to '%s'.\n",
+            r->wr_count,
+            payload, r->journal);
 }
 
 static void rp_read_old(rp * r) {
@@ -1441,16 +1441,16 @@ static void rp_apply(rp * r) {
       rp_write * w = &r->wr[j];
       if (w->trunc) {
         if (xpar_ftruncate(f, w->off) != 0)
-          FATAL_IO("Cannot remove the %llu bytes past the end of '%s': %s.",
-                   (unsigned long long) w->len, r->path[entry],
+          FATAL_IO("Cannot remove the %" PRIu64 " bytes past the end of '%s': %s.",
+                   w->len, r->path[entry],
                    xpar_strerror(xpar_errno()));
         r->writes++;
         continue;
       }
       if (xpar_pwrite(f, w->data, (sz) w->len, w->off) != (sz) w->len)
-        FATAL_IO("Write to '%s' failed at offset %llu: %s. Undo journal: "
+        FATAL_IO("Write to '%s' failed at offset %" PRIu64 ": %s. Undo journal: "
                  "'%s'.", r->path[entry],
-                 (unsigned long long) w->off, xpar_strerror(xpar_errno()),
+                 w->off, xpar_strerror(xpar_errno()),
                  r->journal);
       r->bytes_written += w->len;  r->writes++;
     }
@@ -1540,9 +1540,9 @@ static bool rp_paranoid(rp * r, u32 chunk) {
       for (i = 0; i < r->rec_total; i++) {
         if (!r->rec_present[i]) continue;
         if (xpar_memcmp(rptr[i], r->rec[i] + base + at, (sz) n)) {
-          rp_note(r, "xpar: recovery slice %llu disagrees with the "
-                     "repaired data at column %llu.\n",
-                  (unsigned long long) i, (unsigned long long) col);
+          rp_note(r, "xpar: recovery slice %" PRIu64 " disagrees with the "
+                     "repaired data at column %" PRIu64 ".\n",
+                  i, col);
           ok = false;
         }
       }
@@ -1695,7 +1695,7 @@ static char * rp_backup_name(const char * path) {
   u32 n;
   for (n = 1; ; n++) {
     xpar_free(out);
-    xpar_asprintf(&out, "%s.%lu", path, (unsigned long) n);
+    xpar_asprintf(&out, "%s.%" PRIu32, path, n);
     if (xpar_lstat(out, &st) != 0) return out;
     FATAL_UNLESS("Too many backups exist for '%s'.", n != UINT32_MAX, path);
   }
@@ -2026,17 +2026,17 @@ static void rp_report(rp * r, const char * status, int code) {
     if (!r->cell_count)
       rp_note(r, "xpar: no damage found.\n");
     else
-      rp_note(r, "xpar: %u cell%s damaged, %llu copied, %llu decoded; "
-                 "%llu write%s, %llu bytes; %llu %s repaired"
-                 " (%llu further %s a repaired inode).\n",
+      rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %" PRIu64 " decoded; "
+                 "%" PRIu64 " write%s, %" PRIu64 " bytes; %" PRIu64 " %s repaired"
+                 " (%" PRIu64 " further %s a repaired inode).\n",
               r->cell_count, PLURAL(r->cell_count),
-              (unsigned long long) r->cells_copied,
-              (unsigned long long) r->cells_decoded,
-              (unsigned long long) r->writes, PLURAL(r->writes),
-              (unsigned long long) r->bytes_written,
-              (unsigned long long) r->entries_repaired,
+              r->cells_copied,
+              r->cells_decoded,
+              r->writes, PLURAL(r->writes),
+              r->bytes_written,
+              r->entries_repaired,
               r->entries_repaired == 1 ? "entry" : "entries",
-              (unsigned long long) r->links_repaired,
+              r->links_repaired,
               r->links_repaired == 1 ? "name shares" : "names share");
   }
 }
@@ -2235,7 +2235,7 @@ static void owned_backup_path(const char * path) {
                xpar_lstat(path, &st) == 0 && st.is_regular, path);
   for (n = 1; ; n++) {
     xpar_free(target);
-    xpar_asprintf(&target, "%s.%lu", path, (unsigned long) n);
+    xpar_asprintf(&target, "%s.%" PRIu32, path, n);
     if (xpar_lstat(target, &dstst) != 0) break;
     FATAL_UNLESS("Too many backups exist for '%s'.", n != UINT32_MAX, path);
   }
@@ -2303,7 +2303,7 @@ static void owned_write_split(const xpar_vset * s, u64 off,
         v = &l->vol[i]; break;
       }
     FATAL_UNLESS("The split layout has no data volume for stream offset "
-                 "%llu.", v != NULL, (unsigned long long) off);
+                 "%" PRIu64 ".", v != NULL, off);
     take = MIN(len, v->byte_length - (off - v->stream_offset));
     path = xpar_path_join(dir, v->name);
     f = xpar_open(path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
@@ -2507,7 +2507,7 @@ static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
         v = &l->vol[q]; break;
       }
     FATAL_UNLESS("The split layout has no data volume for stream offset "
-                 "%llu.", v != NULL, (unsigned long long) in_stream);
+                 "%" PRIu64 ".", v != NULL, in_stream);
     part = MIN(len - copied,
                v->byte_length - (in_stream - v->stream_offset));
     path = xpar_path_join(dir, v->name);
@@ -2596,9 +2596,9 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
     chunk = (chunk / 2) & ~(u64) 63;
   if (chunk < 64)
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "Owned-layout repair needs at least %llu bytes for one "
+               "Owned-layout repair needs at least %" PRIu64 " bytes for one "
                "64-byte decode column; raise -m.",
-               (unsigned long long) xpar_codec_decode_footprint_axis(
+               xpar_codec_decode_footprint_axis(
                  sd->codec, sd->field_log2, g->slice_count, rtop,
                  sd->recovery_axis_log2, 64));
   FATAL_UNLESS("The repair column allocation overflows this host.",
@@ -3364,10 +3364,10 @@ int xpar_op_repair(const xpar_options * o) {
 
   depth = xpar_erasures_max_depth(&r.er);
   if (depth > r.rec_avail) {
-    rp_note(&r, "xpar: the deepest column has %llu erasures against %llu "
-                "recovery slices; %llu short.\n",
-            (unsigned long long) depth, (unsigned long long) r.rec_avail,
-            (unsigned long long) (depth - r.rec_avail));
+    rp_note(&r, "xpar: the deepest column has %" PRIu64 " erasures against %" PRIu64 " "
+                "recovery slices; %" PRIu64 " short.\n",
+            depth, r.rec_avail,
+            (depth - r.rec_avail));
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
@@ -3395,8 +3395,8 @@ int xpar_op_repair(const xpar_options * o) {
       chunk = (u32) ((o->memory / lanes) & ~(u64) 63);
     if (chunk < 64 && r.er.bad_count)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Decoding needs at least %llu bytes of buffer; raise -m.",
-                 (unsigned long long) (lanes * 64));
+                 "Decoding needs at least %" PRIu64 " bytes of buffer; raise -m.",
+                 (lanes * 64));
     if (chunk < 64) chunk = 64;
   }
   rp_solve_copies(&r);
@@ -3434,9 +3434,9 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dry_run) {
     u64 total = 0;
     for (i = 0; i < r.wr_count; i++) if (!r.wr[i].trunc) total += r.wr[i].len;
-    rp_note(&r, "xpar: --dry-run: %llu writes totalling %llu bytes would "
-                "be made.\n", (unsigned long long) r.wr_count,
-            (unsigned long long) total);
+    rp_note(&r, "xpar: --dry-run: %" PRIu32 " writes totalling %" PRIu64 " bytes would "
+                "be made.\n", r.wr_count,
+            total);
     rp_report(&r, "dry-run", XPAR_EXIT_OK);
     rp_free(&r);
     return XPAR_EXIT_OK;
@@ -3447,7 +3447,7 @@ int xpar_op_repair(const xpar_options * o) {
                               : xpar_path_join(r.dir, "xpar");
   { char * j;
     if (r.sd.generation)
-      xpar_asprintf(&j, "%s.g%03u.xparundo", r.journal, r.sd.generation);
+      xpar_asprintf(&j, "%s.g%03" PRIu32 ".xparundo", r.journal, r.sd.generation);
     else
       xpar_asprintf(&j, "%s.xparundo", r.journal);
     xpar_free(r.journal);

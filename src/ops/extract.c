@@ -309,11 +309,11 @@ static void ex_read_manifest(ex * x) {
     const xpar_crit_pkt * p = xpar_critset_find_file(
                                 &x->crit, x->set_id, x->sd.file_id[i]);
     xpar_entry tmp, * e;
-    FATAL_UNLESS("Manifest entry %u of %u is missing from every volume.",
+    FATAL_UNLESS("Manifest entry %" PRIu32 " of %" PRIu32 " is missing from every volume.",
                  p != NULL, i + 1, x->sd.file_count);
     if (xpar_entry_read(p->body, (sz) p->body_len, x->sd.posix_record_count,
                         &tmp) != XPAR_OK)
-      FATAL_FORMAT("Manifest entry %u is malformed.", i + 1);
+      FATAL_FORMAT("Manifest entry %" PRIu32 " is malformed.", i + 1);
     e  = xpar_manifest_append(&x->mf);
     *e = tmp;
   }
@@ -511,7 +511,7 @@ static char * ex_stage_name(const char * path) {
   u32 i;
   for (i = 0; i < 1000; i++) {
     char * p = NULL;
-    xpar_asprintf(&p, "%s.xpar-stage-%03u", path, i);
+    xpar_asprintf(&p, "%s.xpar-stage-%03" PRIu32, path, i);
     if (xpar_lstat(p, &st) != 0) return p;
     xpar_free(p);
   }
@@ -526,7 +526,7 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
   if (had && (st.is_dir || !x->o->force)) goto refuse;
   if (had) {
     for (i = 0; i < 1000; i++) {
-      xpar_asprintf(&backup, "%s.xpar-old-%03u", path, i);
+      xpar_asprintf(&backup, "%s.xpar-old-%03" PRIu32, path, i);
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }
@@ -582,10 +582,10 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
     while (left) {
       u64 take = MIN(left, chunk);
       if (!ex_read_stream(x, at, take, buf))
-        FATAL_IO("The set stream is missing bytes [%llu, %llu) that "
+        FATAL_IO("The set stream is missing bytes [%" PRIu64 ", %" PRIu64 ") that "
                  "'%.*s' needs; the data volume holding them is not "
-                 "here.", (unsigned long long) at,
-                 (unsigned long long) (at + take), (int) e->name_len,
+                 "here.", at,
+                 (at + take), (int) e->name_len,
                  e->name);
       xpar_xwrite(f, buf, (sz) take);
       xpar_blake3_update(&h, buf, (sz) take);
@@ -693,7 +693,7 @@ static void ex_open_chain(ex * x) {
   g = x->selected;
   while (g != XPAR_GEN_NONE) {
     if (x->chain.gen[g].parent_missing)
-      FATAL_FORMAT("Generation %u's parent is missing; extraction needs "
+      FATAL_FORMAT("Generation %" PRIu32 "'s parent is missing; extraction needs "
                    "the complete selected lineage.",
                    x->chain.gen[g].sd.generation);
     if (++walked > x->chain.gen_count)
@@ -724,7 +724,7 @@ static void ex_open_chain(ex * x) {
     x->stream_set[x->stream_count] = xpar_vset_open(&ro);
     if (xpar_vset_setd(x->stream_set[x->stream_count])->layout ==
         XPAR_LAYOUT_SIDECAR)
-      FATAL("Generation %u uses external files and cannot be extracted.",
+      FATAL("Generation %" PRIu32 " uses external files and cannot be extracted.",
             x->chain.gen[g].sd.generation);
     x->stream_count++;
     g = x->chain.gen[g].parent;
@@ -830,7 +830,7 @@ int xpar_op_extract(const xpar_options * o) {
     for (i = 0; i < x.mf.count; i++)
       if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) regs++;
     FATAL_UNLESS("--stdout writes the stream of a single-entry set, and "
-                 "this one holds %u entries; extract to a directory "
+                 "this one holds %" PRIu32 " entries; extract to a directory "
                  "instead.", regs == 1, regs);
     while (at < x.sd.stream_length) {
       u64 take = MIN(chunk, x.sd.stream_length - at);
@@ -891,12 +891,12 @@ int xpar_op_extract(const xpar_options * o) {
     s = xpar_manifest_validate(&x.mf, &lim, &res);
     if (s != XPAR_MF_OK) {
       const xpar_entry * e = &x.mf.entry[res.entry];
-      FATAL_FORMAT("Entry %u ('%.*s') %s.", res.entry, (int) e->name_len,
+      FATAL_FORMAT("Entry %" PRIu32 " ('%.*s') %s.", res.entry, (int) e->name_len,
                    e->name, xpar_mf_reason(s));
     }
     xpar_free(anc);
     if (res.link_meta_mismatch)
-      ex_note(&x, "xpar: %u hard-link aliases disagree with their "
+      ex_note(&x, "xpar: %" PRIu32 " hard-link aliases disagree with their "
                   "canonical entry's metadata; the canonical values are "
                   "used.\n", res.link_meta_mismatch);
   }
@@ -988,8 +988,8 @@ int xpar_op_extract(const xpar_options * o) {
   xpar_free(order);
 
   if ((o->require & o->preserve & XPAR_PRES_LINKS) && x.copies) {
-    ex_note(&x, "xpar: --require=links: %llu aliases were materialised "
-                "as copies.\n", (unsigned long long) x.copies);
+    ex_note(&x, "xpar: --require=links: %" PRIu64 " aliases were materialised "
+                "as copies.\n", x.copies);
     rc = XPAR_EXIT_IO;
   }
   if ((o->require & o->preserve & XPAR_PRES_OWNER) && x.owner_failed)
@@ -1010,13 +1010,13 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_json_end(&x.js);
     xpar_json_summary(&x.js, rc == XPAR_EXIT_OK ? "ok" : "damaged", rc);
   } else
-    ex_note(&x, "xpar: %llu %s, %llu bytes, %llu link%s, %llu cop%s, "
-                "%llu hash mismatch%s.\n", (unsigned long long) x.entries,
+    ex_note(&x, "xpar: %" PRIu64 " %s, %" PRIu64 " bytes, %" PRIu64 " link%s, %" PRIu64 " cop%s, "
+                "%" PRIu64 " hash mismatch%s.\n", x.entries,
             x.entries == 1 ? "entry" : "entries",
-            (unsigned long long) x.bytes,
-            (unsigned long long) x.links, PLURAL(x.links),
-            (unsigned long long) x.copies, x.copies == 1 ? "y" : "ies",
-            (unsigned long long) x.mismatches,
+            x.bytes,
+            x.links, PLURAL(x.links),
+            x.copies, x.copies == 1 ? "y" : "ies",
+            x.mismatches,
             x.mismatches == 1 ? "" : "es");
   ex_free(&x);
   return rc;

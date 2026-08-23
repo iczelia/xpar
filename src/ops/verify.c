@@ -202,11 +202,11 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
   u64 fp = xpar_armour_frame_plain(a), fd = xpar_armour_frame_disk(a);
   u64 frames = xpar_ceil_div(pr->plain_length, fp), f, at = 0;
   u8 * frame = NULL;
-  FATAL_UNLESS("The armoured frame needs %llu bytes but -m permits %llu; "
+  FATAL_UNLESS("The armoured frame needs %" PRIu64 " bytes but -m permits %" PRIu64 "; "
                "raise -m to read this archive.",
                fd <= s->memory_budget && fd <= (u64) (sz) -1,
-               (unsigned long long) fd,
-               (unsigned long long) s->memory_budget);
+               fd,
+               s->memory_budget);
   FATAL_UNLESS("The armoured frame geometry is invalid.",
                pr->plain_length != 0 &&
                (!frames || fd <= UINT64_MAX / frames) &&
@@ -571,14 +571,14 @@ static void build_manifest(xpar_vset * s) {
     const xpar_crit_pkt * p = find_file(s, s->setd.file_id[f], &owner);
     xpar_entry * e;
     if (!p)
-      FATAL_FORMAT("Manifest entry %lu of %lu is missing from the supplied "
-                   "volumes.", (unsigned long) (f + 1),
-                   (unsigned long) s->setd.file_count);
+      FATAL_FORMAT("Manifest entry %" PRIu32 " of %" PRIu32 " is missing from the supplied "
+                   "volumes.", (f + 1),
+                   s->setd.file_count);
     e = xpar_manifest_append(&s->mf);
     if (xpar_entry_read(p->body, (sz) p->body_len,
                         s->gen[owner].posix_count, e) != XPAR_OK)
-      FATAL_FORMAT("Manifest entry %lu is malformed.",
-                   (unsigned long) (f + 1));
+      FATAL_FORMAT("Manifest entry %" PRIu32 " is malformed.",
+                   (f + 1));
   }
   s->mf.stream_base   = s->setd.stream_base;
   s->mf.stream_length = s->setd.stream_length;
@@ -593,7 +593,7 @@ static void build_manifest(xpar_vset * s) {
   while (f != XPAR_GEN_NONE && na < s->gen_count) {
     lineage[na++] = f;
     if (s->gen[f].generation && s->gen[f].parent == XPAR_GEN_NONE)
-      FATAL_FORMAT("Generation %u's parent is missing or malformed.",
+      FATAL_FORMAT("Generation %" PRIu32 "'s parent is missing or malformed.",
                    s->gen[f].generation);
     f = s->gen[f].parent;
   }
@@ -616,8 +616,8 @@ static void build_manifest(xpar_vset * s) {
   lim.ancestor           = na ? anc : NULL;
   lim.ancestor_count     = na;
   if (xpar_manifest_validate(&s->mf, &lim, &res) != XPAR_MF_OK)
-    FATAL_FORMAT("Manifest entry %lu is invalid: %s.",
-                 (unsigned long) res.entry, xpar_mf_reason(res.status));
+    FATAL_FORMAT("Manifest entry %" PRIu32 " is invalid: %s.",
+                 res.entry, xpar_mf_reason(res.status));
   xpar_free(anc);
 }
 
@@ -632,7 +632,7 @@ static void validate_identities(xpar_vset * s) {
   for (i = 0; i < s->mf.count; i++) {
     xpar_file_id(&s->mf.entry[i], file_key, got);
     if (!xpar_ct_equal(got, s->mf.entry[i].file_id, sizeof got))
-      FATAL_FORMAT("Manifest entry %u has a forged or inconsistent file_id.",
+      FATAL_FORMAT("Manifest entry %" PRIu32 " has a forged or inconsistent file_id.",
                    i);
   }
   setp = xpar_critset_find(&s->crit, s->set_id, XPAR_T_SETD, 0);
@@ -642,7 +642,7 @@ static void validate_identities(xpar_vset * s) {
   for (i = 0; i < s->setd.file_count; i++) {
     u32 owner = XPAR_GEN_NONE;
     const xpar_crit_pkt * fp = find_file(s, s->setd.file_id[i], &owner);
-    FATAL_UNLESS("Manifest entry %u disappeared during set identity "
+    FATAL_UNLESS("Manifest entry %" PRIu32 " disappeared during set identity "
                  "validation.", fp != NULL, i);
     xpar_set_id_update(&sh, fp->body, (sz) fp->body_len);
   }
@@ -1113,17 +1113,17 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
     xpar_fprintf(xpar_stderr,
                  "xpar: %s: misplaced slices have no dominant "
                  "displacement; use --resync=always "
-                 "--resync-exhaustive to confirm all %llu candidates.\n",
-                 path, (unsigned long long) result.candidates);
+                 "--resync-exhaustive to confirm all %" PRIu64 " candidates.\n",
+                 path, result.candidates);
   }
   for (i = 0; i < n; i++)
     if (located[i] != UINT64_MAX)
       xpar_resync_map_add(map, p[i].expected, located[i]);
   if (map->count && !o->quiet)
     xpar_fprintf(xpar_stderr,
-                 "xpar: %s: found %u displaced slices with %llu strong "
+                 "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64 " strong "
                  "confirmations.\n", path, map->count,
-                 (unsigned long long) confirmations);
+                 confirmations);
   xpar_free(located);
 done:
   xpar_free(confirm.buf);  xpar_free(p);
@@ -1355,7 +1355,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
       xpar_posix_rec * tab = NULL;
       if (xpar_posx_collect(&s->crit, s->gen[g].id,
                             s->gen[g].posix_count, &tab) != XPAR_OK)
-        FATAL_FORMAT("Generation %u's POSX table has gaps, overlaps, or "
+        FATAL_FORMAT("Generation %" PRIu32 "'s POSX table has gaps, overlaps, or "
                      "invalid ranges.", s->gen[g].generation);
       xpar_posix_records_free(tab, s->gen[g].posix_count);
       g = s->gen[g].parent;
@@ -1639,10 +1639,10 @@ static void verify_written_set_at(const xpar_options * o,
     if (check[i].result != XPAR_EXIT_OK) rc = check[i].result;
   if (xpar_vset_recovery(s) != xpar_vset_recovery_total(s)) {
     xpar_fprintf(xpar_stderr,
-                 "xpar: internal read-back found only %llu of %llu "
+                 "xpar: internal read-back found only %" PRIu64 " of %" PRIu64 " "
                  "recovery slices in '%s'.\n",
-                 (unsigned long long) xpar_vset_recovery(s),
-                 (unsigned long long) xpar_vset_recovery_total(s),
+                 xpar_vset_recovery(s),
+                 xpar_vset_recovery_total(s),
                  index_path);
     rc = XPAR_EXIT_REPAIRABLE;
   }
@@ -2491,16 +2491,16 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
   /*  --quiet still reports reduced protection despite a clean-data exit.  */
   if (s->degraded)
     xpar_fprintf(xpar_stderr,
-                 "xpar: SETD records a %llu-byte cell but no complete cell "
+                 "xpar: SETD records a %" PRIu32 "-byte cell but no complete cell "
                  "table survives; erasures fall back to slice granularity "
                  "(`xpar scrub --rebuild-cells` restores it)\n",
-                 (unsigned long long) s->geom.cell_bytes);
+                 s->geom.cell_bytes);
   if (s->recovery_gone)
     xpar_fprintf(xpar_stderr,
-                 "xpar: warning: %llu of %llu recovery slices named by the "
+                 "xpar: warning: %" PRIu64 " of %" PRIu64 " recovery slices named by the "
                  "layout are not on disk; available protection is reduced\n",
-                 (unsigned long long) s->recovery_gone,
-                 (unsigned long long) (s->recovery + s->recovery_gone));
+                 s->recovery_gone,
+                 (s->recovery + s->recovery_gone));
 
   if (o->quiet) return;
   for (i = 0; i < s->mf.count; i++)
@@ -2508,40 +2508,40 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
       if (aliased(s, i, k)) aliased_bytes += s->mf.entry[i].extents[k].length;
 
   xpar_fprintf(xpar_stderr,
-               "xpar: %llu slice%s of %llu bytes, %llu recovery slice%s, "
+               "xpar: %" PRIu64 " slice%s of %" PRIu64 " bytes, %" PRIu64 " recovery slice%s, "
                "erasure unit ",
-               (unsigned long long) s->geom.slice_count,
+               s->geom.slice_count,
                PLURAL(s->geom.slice_count),
-               (unsigned long long) s->geom.slice_size,
-               (unsigned long long) s->recovery, PLURAL(s->recovery));
+               s->geom.slice_size,
+               s->recovery, PLURAL(s->recovery));
   if (s->eg.cell_bytes)
-    xpar_fprintf(xpar_stderr, "cell of %llu bytes (%lu per slice)\n",
-                 (unsigned long long) s->eg.cell_bytes,
-                 (unsigned long) s->eg.cells_per_slice);
+    xpar_fprintf(xpar_stderr, "cell of %" PRIu32 " bytes (%" PRIu32 " per slice)\n",
+                 s->eg.cell_bytes,
+                 s->eg.cells_per_slice);
   else
     xpar_fputs("slice\n", xpar_stderr);
   if (s->armg_corrected || s->armg_failed)
     xpar_fprintf(xpar_stderr,
-                 "xpar: armoured metadata: %llu region%s corrected, %llu "
+                 "xpar: armoured metadata: %" PRIu64 " region%s corrected, %" PRIu64 " "
                  "past the inner code\n",
-                 (unsigned long long) s->armg_corrected,
+                 s->armg_corrected,
                  PLURAL(s->armg_corrected),
-                 (unsigned long long) s->armg_failed);
+                 s->armg_failed);
   if (o->fast)
     xpar_fprintf(xpar_stderr,
-                 "xpar: coverage: stream only (%lu %s, %llu bytes of "
+                 "xpar: coverage: stream only (%" PRIu32 " %s, %" PRIu64 " bytes of "
                  "aliased occurrences not checked; run without --fast)\n",
-                 (unsigned long) s->mf.count,
+                 s->mf.count,
                  s->mf.count == 1 ? "entry" : "entries",
-                 (unsigned long long) aliased_bytes);
+                 aliased_bytes);
   else
-    xpar_fprintf(xpar_stderr, "xpar: coverage: tree (%lu %s)\n",
-                 (unsigned long) s->mf.count,
+    xpar_fprintf(xpar_stderr, "xpar: coverage: tree (%" PRIu32 " %s)\n",
+                 s->mf.count,
                  s->mf.count == 1 ? "entry" : "entries");
   if (s->superseded_entries)
-    xpar_fprintf(xpar_stderr, "xpar: superseded: %llu %s excluded from "
+    xpar_fprintf(xpar_stderr, "xpar: superseded: %" PRIu64 " %s excluded from "
                  "this generation's verdict\n",
-                 (unsigned long long) s->superseded_entries,
+                 s->superseded_entries,
                  s->superseded_entries == 1 ? "entry" : "entries");
 
   if (rc == XPAR_EXIT_OK) {
@@ -2550,27 +2550,27 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     return;
   }
   xpar_fprintf(xpar_stderr,
-               "xpar: damaged: %llu %s (%llu missing), %llu slice%s, "
-               "%llu cell%s; deepest column %llu\n",
-               (unsigned long long) s->bad_entries,
+               "xpar: damaged: %" PRIu64 " %s (%" PRIu64 " missing), %" PRIu64 " slice%s, "
+               "%" PRIu64 " cell%s; deepest column %" PRIu64 "\n",
+               s->bad_entries,
                s->bad_entries == 1 ? "entry" : "entries",
-               (unsigned long long) s->missing_entries,
-               (unsigned long long) s->bad_slices, PLURAL(s->bad_slices),
-               (unsigned long long) s->er.bad_count,
+               s->missing_entries,
+               s->bad_slices, PLURAL(s->bad_slices),
+               s->er.bad_count,
                PLURAL(s->er.bad_count),
-               (unsigned long long) s->depth);
+               s->depth);
   if (s->alias_bad)
     xpar_fprintf(xpar_stderr,
-                 "xpar: %llu %s damaged only at aliased occurrences; "
+                 "xpar: %" PRIu64 " %s damaged only at aliased occurrences; "
                  "repair copies those and spends no recovery\n",
-                 (unsigned long long) s->alias_bad,
+                 s->alias_bad,
                  s->alias_bad == 1 ? "entry is" : "entries are");
   if (rc == XPAR_EXIT_UNREPAIRABLE)
     xpar_fprintf(xpar_stderr,
-                 "xpar: status: %sunrepairable%s, short by %llu recovery "
+                 "xpar: status: %sunrepairable%s, short by %" PRIu64 " recovery "
                  "slice%s in the deepest column\n",
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
-                 (unsigned long long) (s->depth - s->recovery),
+                 (s->depth - s->recovery),
                  PLURAL(s->depth - s->recovery));
   else
     xpar_fprintf(xpar_stderr, "xpar: status: %srepairable%s\n",

@@ -31,16 +31,17 @@ static void progress_emit(const xpar_progress_t * p) {
     unsigned pct = (unsigned) (p->bytes_done * 100 / p->total_bytes);
     /*  The caller may overshoot its estimate.  */
     if (pct > 100) pct = 100;
-    xpar_fprintf(xpar_stderr, "%s: %u%% (%llu / %llu MiB) @ %llu MB/s\n",
+    xpar_fprintf(xpar_stderr, "%s: %u%% (%" PRIu64 " / %" PRIu64 " MiB) @ %" PRIu64
+                 " MB/s\n",
                  p->op, pct,
-                 (unsigned long long) done_mib,
-                 (unsigned long long) (p->total_bytes >> 20),
-                 (unsigned long long) rate);
+                 done_mib,
+                 (p->total_bytes >> 20),
+                 rate);
   } else {
-    xpar_fprintf(xpar_stderr, "%s: %llu MiB @ %llu MB/s\n",
+    xpar_fprintf(xpar_stderr, "%s: %" PRIu64 " MiB @ %" PRIu64 " MB/s\n",
                  p->op,
-                 (unsigned long long) done_mib,
-                 (unsigned long long) rate);
+                 done_mib,
+                 rate);
   }
 }
 

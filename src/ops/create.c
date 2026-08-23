@@ -373,10 +373,10 @@ static u64 encode_chunk(const ctx * c, u64 budget) {
   if (want > z) want = z;
   if (!want)
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "The matrix encoder needs %llu resident column buffers and "
+               "The matrix encoder needs %" PRIu64 " resident column buffers and "
                "-m admits none at the 64-byte minimum; raise -m to at "
-               "least %llu bytes.", (unsigned long long) per,
-               (unsigned long long) (per * 64));
+               "least %" PRIu64 " bytes.", per,
+               (per * 64));
   return want;
 }
 
@@ -761,7 +761,7 @@ static void stage_chunk_cache(ctx * c, const xpar_walk_opts * w) {
   xpar_asprintf(&c->chunk_cache_path, "%s.xparidx", c->base);
   for (i = 0; i < 1000; i++) {
     xpar_stat_t st;
-    xpar_asprintf(&c->chunk_cache_stage, "%s.xpar-cache-%03u",
+    xpar_asprintf(&c->chunk_cache_stage, "%s.xpar-cache-%03" PRIu32,
                   c->chunk_cache_path, i);
     if (xpar_lstat(c->chunk_cache_stage, &st) != 0) break;
     xpar_free(c->chunk_cache_stage);  c->chunk_cache_stage = NULL;
@@ -863,7 +863,7 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   from[at] = xpar_strdup(stage[0]);
   to[at] = xpar_strdup(final[0]);
   for (i = 0; i < total; i++) {
-    xpar_asprintf(&backup[i], "%s/.backup-%u", stage_dir, i);
+    xpar_asprintf(&backup[i], "%s/.backup-%" PRIu32, stage_dir, i);
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular)
       FATAL("Refusing to replace non-regular output '%s'.", to[i]);
@@ -995,7 +995,7 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
     had = true;
   }
   for (i = 0; i < 1000; i++) {
-    xpar_asprintf(&local, "%s.xpar-input-%03u", final, i);
+    xpar_asprintf(&local, "%s.xpar-input-%03" PRIu32, final, i);
     if (xpar_lstat(local, &st) != 0 &&
         (xpar_rename(stage, local) == 0 || create_copy_file(stage, local)))
       break;
@@ -1004,7 +1004,7 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
   if (!local) FATAL_IO("Cannot stage pipe input beside '%s'.", final);
   if (had) {
     for (i = 0; i < 1000; i++) {
-      xpar_asprintf(&backup, "%s.xpar-old-%03u", final, i);
+      xpar_asprintf(&backup, "%s.xpar-old-%03" PRIu32, final, i);
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }
@@ -1122,12 +1122,12 @@ static int create_from_pipe_direct(const xpar_options * o) {
   FATAL_UNLESS("Direct pipe slices must be at least 4 KiB and 64-byte aligned.",
                z >= XPAR_SLICE_MIN && !(z & 63));
   q = (u64) 1 << field;
-  FATAL_UNLESS("Recovery count exhausts GF(2^%u); reduce -r or use "
+  FATAL_UNLESS("Recovery count exhausts GF(2^%" PRIu8 "); reduce -r or use "
                "--field=16.", r < q, field);
-  FATAL_UNLESS("A one-pass matrix pipe needs %llu bytes; -m allows %llu.",
+  FATAL_UNLESS("A one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %" PRIu64 ".",
                r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
-               (unsigned long long) ((r + 1) * z),
-               (unsigned long long) budget);
+               ((r + 1) * z),
+               budget);
   FATAL_UNLESS("The pipe buffers exceed this host's address space.",
                r * z <= (u64) (sz) -1 && z <= (u64) (sz) -1);
 
@@ -1157,9 +1157,9 @@ static int create_from_pipe_direct(const xpar_options * o) {
       filled += got;
     }
     if (filled == z) {
-      FATAL_UNLESS("The pipe exceeds GF(2^%u)'s %llu-slice data limit; "
+      FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64 "-slice data limit; "
                    "raise -s or use --spool.", slices < max_s, field,
-                   (unsigned long long) max_s);
+                   max_s);
       create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
       slices++;  filled = 0;
     }
@@ -1169,9 +1169,9 @@ static int create_from_pipe_direct(const xpar_options * o) {
     }
   }
   if (filled) {
-    FATAL_UNLESS("The pipe exceeds GF(2^%u)'s %llu-slice data limit; "
+    FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64 "-slice data limit; "
                  "raise -s or use --spool.", slices < max_s, field,
-                 (unsigned long long) max_s);
+                 max_s);
     xpar_memset(data + filled, 0, (sz) (z - filled));
     create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
     slices++;
@@ -1398,11 +1398,11 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     if (o->memory && o->dedup != XPAR_DEDUP_NONE &&
         c.plan.mem_total + idx > budget)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "The plan needs %llu bytes and the deduplication index for "
-                 "%u entries another %llu, against -m %llu; raise -m or use "
-                 "--dedup=none.", (unsigned long long) c.plan.mem_total,
-                 c.m.count, (unsigned long long) idx,
-                 (unsigned long long) budget);
+                 "The plan needs %" PRIu64 " bytes and the deduplication index for "
+                 "%" PRIu32 " entries another %" PRIu64 ", against -m %" PRIu64 "; raise -m or use "
+                 "--dedup=none.", c.plan.mem_total,
+                 c.m.count, idx,
+                 budget);
   }
 
   if (o->verbose && !o->json)
@@ -1793,14 +1793,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   publish_chunk_cache(&c);
 
   if (!o->quiet && !o->json)
-    xpar_fprintf(xpar_stderr, "xpar: %s: %llu %s, %llu slice%s of %llu "
-                 "bytes, %llu recovery slice%s in %u volume%s\n", c.base,
-                 (unsigned long long) c.m.count,
+    xpar_fprintf(xpar_stderr, "xpar: %s: %" PRIu32 " %s, %" PRIu64 " slice%s of %" PRIu64 " "
+                 "bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " volume%s\n", c.base,
+                 c.m.count,
                  c.m.count == 1 ? "entry" : "entries",
-                 (unsigned long long) c.geom.slice_count,
+                 c.geom.slice_count,
                  PLURAL(c.geom.slice_count),
-                 (unsigned long long) c.geom.slice_size,
-                 (unsigned long long) c.recovery, PLURAL(c.recovery),
+                 c.geom.slice_size,
+                 c.recovery, PLURAL(c.recovery),
                  nvol, PLURAL(nvol));
   if (o->json) xpar_json_summary(&c.js, "ok", XPAR_EXIT_OK);
 
