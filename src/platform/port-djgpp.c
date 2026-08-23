@@ -435,10 +435,18 @@ i64 xpar_wall_ns(void) {
   return (i64) tv.tv_sec * 1000000000LL + (i64) tv.tv_usec * 1000LL;
 }
 
-/*  MS-DOS has no entropy source.  */
+/*  DOS lacks system entropy; callers use these bytes only for staging names.  */
 void xpar_random_bytes(void * buf, sz n) {
-  (void) buf;  (void) n;
-  FATAL("MS-DOS has no source of cryptographically strong random bytes.");
+  static u64 state;
+  static u64 calls;
+  u8 * p = (u8 *) buf;
+  sz i;
+  state ^= (u64) xpar_usec_now() + ((u64) xpar_wall_ns() << 16) + ++calls;
+  if (!state) state = 1;
+  for (i = 0; i < n; i++) {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    p[i] = (u8) (state >> 56);   /*  Use the high bits of the LCG.  */
+  }
 }
 
 int main(int argc, char ** argv) {

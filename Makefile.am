@@ -224,7 +224,9 @@ xpar_LDADD += libxpar_core.a
 EXTRA_DIST = \
   bootstrap README.md \
   contrib/inject-errors.c contrib/check-win95-pe.sh contrib/ci-check.sh \
-  contrib/dos/dosbox-x.conf contrib/gitlog-to-changelog
+  contrib/gitlog-to-changelog \
+  contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
+  contrib/dos/run-check.sh contrib/dos/run2.c
 
 VENDORED = src/yarg.h
 

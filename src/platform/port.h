@@ -39,10 +39,13 @@ typedef size_t   sz;   typedef double  f64;
 #define INT64_MIN (-INT64_MAX - 1)
 #endif
 
-/*  Printf attribute where the compiler has one, so that a wrong format
-    string is a build failure rather than a corrupt diagnostic.  */
+/*  Validate formats against xpar's C99 formatter, not Windows msvcrt.  */
 #if defined(__GNUC__)
+#if defined(_WIN32) || defined(__CYGWIN__)
+#define XPAR_PRINTF(fmt, args) __attribute__((format(gnu_printf, fmt, args)))
+#else
 #define XPAR_PRINTF(fmt, args) __attribute__((format(printf, fmt, args)))
+#endif
 #define XPAR_NORETURN          __attribute__((noreturn))
 #else
 #define XPAR_PRINTF(fmt, args)
@@ -208,9 +211,7 @@ u64          xpar_usec_now(void);
     timestamps.  */
 i64 xpar_wall_ns(void);
 
-/*  Cryptographically strong bytes, for --auth salts. Fatal if the host
-    cannot provide them: silently falling back to a weak source would give
-    a keyed tag that looks fine and is forgeable.  */
+/*  Random bytes for staging names; not for cryptographic keys.  */
 void xpar_random_bytes(void * buf, sz n);
 
 #endif

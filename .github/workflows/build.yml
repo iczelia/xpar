@@ -247,21 +247,37 @@ jobs:
       - name: CI check
         run: sh contrib/ci-check.sh ./xpar.exe compat
 
-  #  Win95-compatible i386 PE.
-  windows-win95:
-    name: Windows i386 (Win95 target)
+  #  Cross-build Windows binaries; the next job runs them.
+  windows-cross:
+    name: Windows cross ${{ matrix.target.name }}
     needs: [ dist ]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            host: x86_64-w64-mingw32
+            packages: gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+            extra: ""
+          - name: i686
+            host: i686-w64-mingw32
+            packages: gcc-mingw-w64-i686 binutils-mingw-w64-i686
+            extra: ""
+          - name: i686-win95
+            host: i686-w64-mingw32
+            packages: gcc-mingw-w64-i686 binutils-mingw-w64-i686
+            extra: "--with-windows-target=win95"
     steps:
       - name: Download source package artifact
         uses: actions/download-artifact@v5
         with:
           name: xpar-${{ github.sha }}
 
-      - name: Install the i686 mingw-w64 cross-toolchain
+      - name: Install the cross-toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686
+          sudo apt-get install -y ${{ matrix.target.packages }}
 
       - name: Extract source package
         run: |
@@ -271,17 +287,63 @@ jobs:
 
       - name: Configure
         run: |
-          ./configure --host=i686-w64-mingw32 --with-windows-target=win95 \
-                      CC=i686-w64-mingw32-gcc CFLAGS=-O2 LDFLAGS=-s
+          ./configure --host=${{ matrix.target.host }} \
+                      CC=${{ matrix.target.host }}-gcc \
+                      ${{ matrix.target.extra }} \
+                      CFLAGS=-O2 LDFLAGS=-static
 
       - name: Make
         run: make -j4 all
 
-      #  win95-check validates the PE header and imports.
+      #  Audit the Win95 PE headers and imports; `file` is diagnostic only.
       - name: Verify the PE image is a Win95-era binary
+        if: ${{ matrix.target.name == 'i686-win95' }}
         run: |
           file xpar.exe
           make win95-check
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-win-${{ matrix.target.name }}-${{ github.sha }}
+          path: xpar.exe
+
+  #  Run the cross-built binaries on Windows.
+  windows-cross-test:
+    name: Windows run ${{ matrix.name }}
+    needs: [ dist, windows-cross ]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ x86_64, i686, i686-win95 ]
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+      - name: Download the cross-built binary
+        uses: actions/download-artifact@v5
+        with:
+          name: xpar-win-${{ matrix.name }}-${{ github.sha }}
+          path: bin
+
+      #  Extract the test script; nothing is built here.
+      - name: Extract source package
+        run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+
+      - name: Smoke test
+        run: |
+          chmod +x bin/xpar.exe
+          sh contrib/ci-check.sh ./bin/xpar.exe compat
 
   #  Foreign architectures under qemu-user, including big-endian s390x.
   cross:
@@ -340,7 +402,8 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: CI check under qemu
+      #  Invoke qemu directly; do not depend on binfmt_misc.
+      - name: Smoke test under qemu
         run: |
           file xpar
           cat > run-xpar <<EOF
@@ -351,9 +414,9 @@ jobs:
           ./run-xpar --version
           sh contrib/ci-check.sh ./run-xpar compat
 
-  #  MS-DOS cross-build.
+  #  Run the DJGPP build under DOSBox-X and verify cross-host compatibility.
   dos:
-    name: MS-DOS i386 (DJGPP)
+    name: MS-DOS i386 (DJGPP, under DOSBox-X)
     needs: [ dist ]
     runs-on: ubuntu-latest
     env:
@@ -365,15 +428,20 @@ jobs:
         with:
           name: xpar-${{ github.sha }}
 
-      - name: Install the DJGPP cross-toolchain
+      - name: Install the DJGPP cross-toolchain, DOSBox-X and CWSDPMI
         run: |
-          #  Required by the prebuilt ar and ranlib.
+          #  The prebuilt ar and ranlib require the flex runtime.
           sudo apt-get update
-          sudo apt-get install -y libfl2
+          sudo apt-get install -y libfl2 dosbox-x unzip
           curl -fL -o /tmp/djgpp.tar.bz2 \
             "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
           tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
           echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+          #  DOSBox-X needs CWSDPMI to run a go32 image.
+          curl -fL -o /tmp/csdpmi.zip \
+            http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
+          unzip -j -o -d "$HOME/csdpmi" /tmp/csdpmi.zip 'bin/CWSDPMI.EXE'
+          echo "CWSDPMI=$HOME/csdpmi/CWSDPMI.EXE" >> $GITHUB_ENV
 
       - name: Extract source package
         run: |
@@ -381,22 +449,35 @@ jobs:
           sleep 1
           touch aclocal.m4 configure config.h.in Makefile.in
 
-      - name: Configure
+      #  The native build creates and verifies the cross-host corpus.
+      - name: Build for MS-DOS and for this host
         run: |
-          ./configure --host=i586-pc-msdosdjgpp --disable-simd \
-                      CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2
+          mkdir build-dos build-native
+          ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp --disable-simd \
+                                         CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 \
+              && make -j4 )
+          ( cd build-native && ../configure && make -j4 )
 
-      - name: Make
-        run: make -j4 all
-
-      #  objdump provides a stable BFD target name.
+      #  Use objdump's stable BFD target name for the assertion.
       - name: Verify the DOS binary format
         run: |
-          file xpar.exe
-          i586-pc-msdosdjgpp-objdump -f xpar.exe
-          i586-pc-msdosdjgpp-objdump -f xpar.exe | grep -q 'coff-go32-exe'
+          file build-dos/xpar.exe
+          i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
+          i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe | grep -q 'coff-go32-exe'
 
-  #  Format specification.
+      - name: Run the MS-DOS check under DOSBox-X
+        run: |
+          sh contrib/dos/run-check.sh build-dos/xpar.exe build-native/xpar \
+             "$CWSDPMI" "$RUNNER_TEMP/dos-check"
+
+      - name: Upload the DOS transcript
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: xpar-dos-transcript-${{ github.sha }}
+          path: ${{ runner.temp }}/dos-check/out
+          if-no-files-found: ignore
+
   docs:
     name: Format specification
     runs-on: ubuntu-latest
