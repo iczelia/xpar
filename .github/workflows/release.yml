@@ -164,7 +164,6 @@ jobs:
         if: ${{ matrix.target.name == 'i686-win95' }}
         run: |
           file xpar.exe
-          file xpar.exe | grep -q 'MS Windows 4\.00'
           make win95-check
 
       - name: Stage the binary
@@ -282,6 +281,9 @@ jobs:
 
       - name: Install the DJGPP cross-toolchain
         run: |
+          #  Required by the prebuilt ar and ranlib.
+          sudo apt-get update
+          sudo apt-get install -y libfl2
           curl -fL -o /tmp/djgpp.tar.bz2 \
             "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
           tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
@@ -302,10 +304,12 @@ jobs:
       - name: Make
         run: make -j4 all
 
+      #  objdump provides a stable BFD target name.
       - name: Verify the DOS binary format
         run: |
           file xpar.exe
-          file xpar.exe | grep -Eq 'MS-DOS executable|COFF'
+          i586-pc-msdosdjgpp-objdump -f xpar.exe
+          i586-pc-msdosdjgpp-objdump -f xpar.exe | grep -q 'coff-go32-exe'
 
       - name: Stage the binary
         run: make DESTDIR="$PWD/output" install-exec && ls -l output

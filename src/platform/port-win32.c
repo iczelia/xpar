@@ -332,8 +332,11 @@ static HANDLE win_open_nofollow(const wchar_t * path, DWORD access,
 }
 #endif
 
+/*  Allow concurrent handles; xpar_lock coordinates cooperating writers.  */
+#define XPAR_WIN_SHARE (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+
 xpar_file * xpar_open(const char * path, int flags) {
-  DWORD access = 0, share = FILE_SHARE_READ, creation;
+  DWORD access = 0, share = XPAR_WIN_SHARE, creation;
   DWORD attrs = FILE_ATTRIBUTE_NORMAL;
   int acc = flags & 3;
   HANDLE h;
@@ -661,12 +664,12 @@ xpar_mmap xpar_map(const char * path) {
   m.map = NULL;  m.size = 0;  m.valid = false;
 
 #if defined(XPAR_WIN_LEGACY)
-  fh = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+  fh = CreateFileA(path, GENERIC_READ, XPAR_WIN_SHARE, NULL, OPEN_EXISTING,
                    FILE_ATTRIBUTE_NORMAL, NULL);
 #else
   { wchar_t * wp = to_wide_path(path);
     if (!wp) return m;
-    fh = CreateFileW(wp, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+    fh = CreateFileW(wp, GENERIC_READ, XPAR_WIN_SHARE, NULL, OPEN_EXISTING,
                      FILE_ATTRIBUTE_NORMAL, NULL);
     HeapFree(GetProcessHeap(), 0, wp); }
 #endif
