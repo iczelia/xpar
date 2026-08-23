@@ -254,7 +254,8 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
       xpar_critset_add(&r->crit, &h, body);
   }
   if (r->verbose > 2)
-    rp_note(r, "xpar: scan: %" PRIu64 " packets, %" PRIu64 " bad tags, %" PRIu64 " need key.\n",
+    rp_note(r, "xpar: scan: %" PRIu64 " packets, %" PRIu64 " bad tags, %"
+            PRIu64 " need key.\n",
             sc.emitted,
             sc.skip_checksum,
             sc.skip_keyed);
@@ -713,7 +714,8 @@ static void rp_resync_entry(rp * r, u32 entry) {
     if (located[i] != UINT64_MAX)
       xpar_resync_map_add(&r->resync[entry], p[i].expected, located[i]);
   if (r->resync[entry].count)
-    rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64 " strong "
+    rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64
+            " strong "
                "confirmations.\n", r->path[entry], r->resync[entry].count,
             confirmations);
   xpar_free(located);
@@ -1402,7 +1404,8 @@ static void rp_journal(rp * r) {
   /*  Make the journal directory entry durable before data writes.  */
   xpar_fsync_dir(r->journal);
   if (r->verbose)
-    rp_note(r, "xpar: journalled %" PRIu32 " ranges (%" PRIu64 " bytes) to '%s'.\n",
+    rp_note(r, "xpar: journalled %" PRIu32 " ranges (%" PRIu64
+            " bytes) to '%s'.\n",
             r->wr_count,
             payload, r->journal);
 }
@@ -1441,14 +1444,16 @@ static void rp_apply(rp * r) {
       rp_write * w = &r->wr[j];
       if (w->trunc) {
         if (xpar_ftruncate(f, w->off) != 0)
-          FATAL_IO("Cannot remove the %" PRIu64 " bytes past the end of '%s': %s.",
+          FATAL_IO("Cannot remove the %" PRIu64
+                   " bytes past the end of '%s': %s.",
                    w->len, r->path[entry],
                    xpar_strerror(xpar_errno()));
         r->writes++;
         continue;
       }
       if (xpar_pwrite(f, w->data, (sz) w->len, w->off) != (sz) w->len)
-        FATAL_IO("Write to '%s' failed at offset %" PRIu64 ": %s. Undo journal: "
+        FATAL_IO("Write to '%s' failed at offset %" PRIu64
+                 ": %s. Undo journal: "
                  "'%s'.", r->path[entry],
                  w->off, xpar_strerror(xpar_errno()),
                  r->journal);
@@ -2026,7 +2031,8 @@ static void rp_report(rp * r, const char * status, int code) {
     if (!r->cell_count)
       rp_note(r, "xpar: no damage found.\n");
     else
-      rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %" PRIu64 " decoded; "
+      rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %"
+              PRIu64 " decoded; "
                  "%" PRIu64 " write%s, %" PRIu64 " bytes; %" PRIu64 " %s repaired"
                  " (%" PRIu64 " further %s a repaired inode).\n",
               r->cell_count, PLURAL(r->cell_count),
@@ -3364,7 +3370,8 @@ int xpar_op_repair(const xpar_options * o) {
 
   depth = xpar_erasures_max_depth(&r.er);
   if (depth > r.rec_avail) {
-    rp_note(&r, "xpar: the deepest column has %" PRIu64 " erasures against %" PRIu64 " "
+    rp_note(&r, "xpar: the deepest column has %" PRIu64 " erasures against %"
+            PRIu64 " "
                 "recovery slices; %" PRIu64 " short.\n",
             depth, r.rec_avail,
             (depth - r.rec_avail));
@@ -3434,7 +3441,8 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dry_run) {
     u64 total = 0;
     for (i = 0; i < r.wr_count; i++) if (!r.wr[i].trunc) total += r.wr[i].len;
-    rp_note(&r, "xpar: --dry-run: %" PRIu32 " writes totalling %" PRIu64 " bytes would "
+    rp_note(&r, "xpar: --dry-run: %" PRIu32 " writes totalling %" PRIu64
+            " bytes would "
                 "be made.\n", r.wr_count,
             total);
     rp_report(&r, "dry-run", XPAR_EXIT_OK);

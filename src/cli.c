@@ -162,7 +162,8 @@ static u64 need_u64(const char * nm, const char * v) {
 
 static u64 need_range(const char * nm, const char * v, u64 lo, u64 hi) {
   u64 n = need_u64(nm, v);
-  FATAL_UNLESS("Option %s expects a number between %" PRIu64 " and %" PRIu64 ".",
+  FATAL_UNLESS("Option %s expects a number between %" PRIu64 " and %" PRIu64
+               ".",
                n >= lo && n <= hi, nm, lo,
                hi);
   return n;

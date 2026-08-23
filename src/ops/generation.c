@@ -567,7 +567,8 @@ static void chain_link(xpar_chain * c) {
       continue;
     }
     if (st == XPAR_E_UNSUPPORTED)
-      xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " requires features this "
+      xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32
+                   " requires features this "
                    "build does not implement (0x%08" PRIx32 ").\n", g->sd.generation,
                    g->sd.required_features);
     xpar_memcpy(g->set_id, p->hdr.set_id, XPAR_SET_ID_LEN);
@@ -599,7 +600,8 @@ static void chain_link(xpar_chain * c) {
                                               c->gen[g->parent].set_id,
                                               &c->gen[g->parent].sd);
       if (st != XPAR_OK)
-        FATAL_FORMAT("Generation %" PRIu32 " does not follow generation %" PRIu32 ": %s.",
+        FATAL_FORMAT("Generation %" PRIu32 " does not follow generation %"
+                     PRIu32 ": %s.",
                      g->sd.generation, c->gen[g->parent].sd.generation,
                      xpar_status_str(st));
     }
@@ -744,7 +746,8 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
       found = i;  matches++;
     }
   if (matches > 1)
-    FATAL("Generation %" PRIu64 " is ambiguous across fork branches; select it "
+    FATAL("Generation %" PRIu64
+          " is ambiguous across fork branches; select it "
           "by set-id prefix.", g->number);
   if (matches == 1) return found;
   FATAL("This set has no generation %" PRIu64 ".", g->number);
@@ -799,17 +802,20 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     xpar_entry * e;
     xpar_status st;
     if (!p)
-      FATAL_FORMAT("Generation %" PRIu32 " names a manifest entry no generation "
+      FATAL_FORMAT("Generation %" PRIu32
+                   " names a manifest entry no generation "
                    "owns; the chain is incomplete.", sd->generation);
     e  = xpar_manifest_append(m);
     st = xpar_entry_read(p->body, (sz) p->body_len,
                          c->gen[h].sd.posix_record_count, e);
     if (st != XPAR_OK)
-      FATAL_FORMAT("A manifest entry of generation %" PRIu32 " is unreadable (%s).",
+      FATAL_FORMAT("A manifest entry of generation %" PRIu32
+                   " is unreadable (%s).",
                    c->gen[h].sd.generation, xpar_status_str(st));
     if (e->posix_index != XPAR_ABSENT_U32 &&
         e->posix_index >= c->gen[h].sd.posix_record_count)
-      FATAL_FORMAT("Manifest entry %" PRIu32 " names a POSX record outside generation "
+      FATAL_FORMAT("Manifest entry %" PRIu32
+                   " names a POSX record outside generation "
                    "%" PRIu32 "'s table.", i, c->gen[h].sd.generation);
     own[i] = h;
   }
@@ -854,7 +860,8 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
       FATAL_FORMAT("Manifest entry %" PRIu32 " is invalid: %s.", res.entry,
                    xpar_mf_reason(res.status));
     if (res.link_meta_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32 " hard-link aliases disagree with "
+      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32
+                   " hard-link aliases disagree with "
                    "their canonical metadata; canonical values will be "
                    "used.\n", res.link_meta_mismatch);
     xpar_free(anc);
@@ -892,7 +899,8 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
       own[i] = own[target];
     }
     if (posix_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32 " hard-link aliases disagree with "
+      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32
+                   " hard-link aliases disagree with "
                    "their canonical POSX metadata; canonical values will "
                    "be used.\n", posix_mismatch);
     for (i = 0; i < c->gen_count; i++)
@@ -907,7 +915,8 @@ u32 xpar_gchain_posix(const xpar_chain * c, u32 g, xpar_posix_rec ** out) {
   u32 count = c->gen[g].sd.posix_record_count;
   *out = NULL;
   if (xpar_posx_collect(&c->crit, c->gen[g].set_id, count, out) != XPAR_OK)
-    FATAL_FORMAT("Generation %" PRIu32 "'s POSX table has gaps, overlaps, or invalid "
+    FATAL_FORMAT("Generation %" PRIu32
+                 "'s POSX table has gaps, overlaps, or invalid "
                  "ranges.", c->gen[g].sd.generation);
   return count;
 }
@@ -3094,7 +3103,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
   axis = xpar_setd_recovery_limit(&c.gen[g].sd);
 
   if (!c.gen[g].sd.data_slice_count)
-    FATAL("Generation %" PRIu32 " is stream-empty, so it has nothing to protect.",
+    FATAL("Generation %" PRIu32
+          " is stream-empty, so it has nothing to protect.",
           c.gen[g].sd.generation);
   if (!c.gen[g].layt_body)
     FATAL_FORMAT("Generation %" PRIu32 " carries no volume layout.",
@@ -3109,7 +3119,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
     FATAL("addrecovery requires --recovery=SPEC (current total: %" PRIu64 ").",
           have);
   if (want <= have) {
-    xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " already has %" PRIu64 " "
+    xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " already has %"
+                 PRIu64 " "
                  "recovery slice%s; nothing to do.\n",
                  c.gen[g].sd.generation, have,
                  PLURAL(have));
@@ -3421,7 +3432,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
     xpar_buf_free(&out);
   }
 
-  FATAL_UNLESS("Generation %" PRIu32 " has no index volume to verify after writing.",
+  FATAL_UNLESS("Generation %" PRIu32
+               " has no index volume to verify after writing.",
                verify_path != NULL, c.gen[g].sd.generation);
   gen_addrec_publish(staged, staged_count);
   xpar_verify_written_set_at(o, verify_path, &verify_ref);
@@ -3477,7 +3489,8 @@ int xpar_op_add(const xpar_options * o) {
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
     if (c.gen[i].parent_missing) {
       xpar_hex(idbuf, c.gen[i].sd.parent_set_id, XPAR_SET_ID_LEN);
-      FATAL_FORMAT("Generation %" PRIu32 " names parent %s, which is not here; an "
+      FATAL_FORMAT("Generation %" PRIu32
+                   " names parent %s, which is not here; an "
                    "incomplete chain cannot be extended.",
                    c.gen[i].sd.generation, idbuf);
     }
@@ -4196,7 +4209,8 @@ int xpar_op_prune(const xpar_options * o) {
     FATAL("That would remove every generation, leaving nothing behind; "
           "delete the volumes yourself if that is what you want.");
   if (removed[head])
-    FATAL("Generation %" PRIu32 " is the newest one in the chain, and every other "
+    FATAL("Generation %" PRIu32
+          " is the newest one in the chain, and every other "
           "generation is an older snapshot of it; prune drops older "
           "generations and cannot drop the newest.",
           c.gen[head].sd.generation);
@@ -4333,7 +4347,8 @@ int xpar_op_prune(const xpar_options * o) {
       if (keep[i]) kept++;
     }
     if (!kept)
-      FATAL("Generation %" PRIu32 " would be left with no entries at all; that is a "
+      FATAL("Generation %" PRIu32
+            " would be left with no entries at all; that is a "
             "chain with nothing in it, so nothing was written.",
             c.gen[g].sd.generation);
 
@@ -4684,7 +4699,8 @@ int xpar_op_recover(const xpar_options * o) {
   gen_require_write_key(&c, "recover");
   g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   if (!c.gen[g].layt_body)
-    FATAL_FORMAT("Generation %" PRIu32 " carries no volume layout, so there is "
+    FATAL_FORMAT("Generation %" PRIu32
+                 " carries no volume layout, so there is "
                  "nothing to say what the lost volume held.",
                  c.gen[g].sd.generation);
   if (xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) != XPAR_OK)
@@ -4715,7 +4731,8 @@ int xpar_op_recover(const xpar_options * o) {
               !xpar_strcmp(other.vol[i].name, o->volume_name)) {
             u32 num = c.gen[h].sd.generation;
             xpar_layt_free(&other);
-            FATAL("'%s' belongs to generation %" PRIu32 ", not to generation %" PRIu32 "; "
+            FATAL("'%s' belongs to generation %" PRIu32 ", not to generation %"
+                  PRIu32 "; "
                   "pass --generation=%" PRIu32 ".", o->volume_name, num,
                   c.gen[g].sd.generation, num);
           }
@@ -4724,7 +4741,8 @@ int xpar_op_recover(const xpar_options * o) {
     if (o->volume_name)
       FATAL("Generation %" PRIu32 "'s layout names no volume '%s'.",
             c.gen[g].sd.generation, o->volume_name);
-    FATAL("Generation %" PRIu32 "'s layout has %" PRIu32 " volumes, so there is no volume "
+    FATAL("Generation %" PRIu32 "'s layout has %" PRIu32
+          " volumes, so there is no volume "
           "%" PRIu64 ".", c.gen[g].sd.generation, layt.count,
           o->volume_index);
   }
@@ -5036,7 +5054,8 @@ int xpar_op_undo(const xpar_options * o) {
       if (xpar_has_nul(rec + UNDO_REC, plen) ||
           !gen_undo_path_allowed(&chain, &manifest,
                                  (const char *) rec + UNDO_REC, plen))
-        FATAL_FORMAT("Journal record %" PRIu64 " names a path outside the selected "
+        FATAL_FORMAT("Journal record %" PRIu64
+                     " names a path outside the selected "
                      "set.", i);
       old = rec + UNDO_REC + plen;
       if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
@@ -5044,7 +5063,8 @@ int xpar_op_undo(const xpar_options * o) {
         FATAL_FORMAT("Journal record %" PRIu64 " does not verify.",
                      i);
       for (k = raw; k < step; k++)
-        if (rec[k]) FATAL_FORMAT("Journal record %" PRIu64 " has non-zero padding.",
+        if (rec[k]) FATAL_FORMAT("Journal record %" PRIu64
+                                 " has non-zero padding.",
                                  i);
       at += step;
     }
@@ -5574,7 +5594,8 @@ static u32 bm_check_crc32c(void) {
     }
 #endif
     if (name && got != want) {
-      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32 " at "
+      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32
+                   " at "
                    "%zu bytes, scalar gives %08" PRIX32 ".\n", name,
                    got, len[i],
                    want);
@@ -5875,14 +5896,16 @@ int xpar_op_benchmark(const xpar_options * o) {
                  xpar_crc32c_variant(), xpar_blake3_variant());
 
   if (bad) {
-    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32 " differences across %" PRIu32 " "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32
+                 " differences across %" PRIu32 " "
                  "tiers. This build's kernels do not agree on this "
                  "machine.\n", bad, tiers);
     gen_json_result(o, "benchmark", NULL, 0, "failed", XPAR_EXIT_INTERNAL);
     return XPAR_EXIT_INTERNAL;
   }
   if (!o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32 " tiers checked, every "
+    xpar_fprintf(xpar_stderr, "xpar: benchmark: %" PRIu32
+                 " tiers checked, every "
                  "kernel byte-identical to scalar.\n", tiers);
   gen_json_result(o, "benchmark", NULL, 0, "ok", XPAR_EXIT_OK);
   return XPAR_EXIT_OK;

@@ -665,7 +665,8 @@ static void report(const scrub * c, int rc) {
                      i, c->hist[i]);
   }
   if (c->regions_rewritten)
-    xpar_fprintf(xpar_stderr, "xpar: --rewrite: refreshed %" PRIu64 " regions\n",
+    xpar_fprintf(xpar_stderr, "xpar: --rewrite: refreshed %" PRIu64
+                 " regions\n",
                  c->regions_rewritten);
   if (c->rcvs_wrong)
     xpar_fprintf(xpar_stderr,
@@ -677,7 +678,8 @@ static void report(const scrub * c, int rc) {
                  "could not be compared\n",
                  c->rcvs_unchecked);
   if (c->link_drift)
-    xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " link-structure-drift reports\n",
+    xpar_fprintf(xpar_stderr, "xpar: %" PRIu64
+                 " link-structure-drift reports\n",
                  c->link_drift);
   xpar_fprintf(xpar_stderr, "xpar: scrub: exit %d\n", rc);
 }

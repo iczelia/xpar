@@ -1,3 +1,171 @@
+2026-08-23  Kamila Szewczyk  <k@iczelia.net>
+
+	format fixes, etc
+
+	ci fixes
+
+	misc. fixes
+
+	CI
+
+	ci check, style
+
+	redo error messages
+
+	make check currently does nothing
+
+	various renaming
+
+2026-08-22  Kamila Szewczyk  <k@iczelia.net>
+
+	further refactoring
+
+	refactoring
+
+	platform/ports: reorgainse some code
+
+	src/pathname: extract common helpers
+
+	extension
+
+	update messages
+
+	consistent comment headers
+
+	update make file
+
+	ports
+
+	ops/repair
+
+	ops/listinfo
+
+	ops/scrub
+
+	ops/create
+
+	ops/verify
+
+	ops/generation
+
+	ops/extract
+
+	ops/ops header
+
+	progress reporting
+
+	resynchronisation
+
+	ops: chain, vset
+
+	manifest construction/validation
+
+	finish gf kernels
+
+	platform-specific gf kernels
+
+	kernel/codec
+
+	3way crc32c kernel
+
+	kernel/blake3
+
+	kernel/armour
+
+	src/kernel: stubs
+
+	src/slice: stream/slice/cell geometry interface
+
+	src/plan: coding planner
+
+	src/xpar: `main`
+
+	container format
+
+	src/cli: yarg driver
+
+	src/chunk: content-defined chunking and chunk fingerprints
+
+	v1 detection
+
+	src/cli.h: command line interfaces
+
+	src/json: streaming json output
+
+	src/common.h: check in common macros
+
+	auth.c/auth.h: authentication over BLAKE3
+
+	check in yarg with verb support
+
+	inject-errors: allow insertions
+
+	check-win95-pe: verify legacy windows binaries
+
+	remove unused m4 macros
+
+	ignore .dirstamp
+
+	new readme/manual page
+
+	prompts
+
+	readme spacing
+
+	makefile: check in the v2.0 build tools
+
+	add automake test-driver to gitignore
+
+	update configure.ac for v2.0
+
+	finish the readme
+
+2026-08-21  Kamila Szewczyk  <k@iczelia.net>
+
+	put some work into documenting what's for v2
+
+2026-08-22  Kamila Szewczyk  <k@iczelia.net>
+
+	xpar-format: provenance and licensing
+
+2026-08-21  Kamila Szewczyk  <k@iczelia.net>
+
+	v1: remove.
+
+	deactivate gh actions
+
+	style
+
+2026-08-18  Kamila Szewczyk  <k@iczelia.net>
+
+	v2 spec: misc. changes
+
+	xpar format: rewriting, simplification, packet type docs
+
+2026-08-17  Kamila Szewczyk  <k@iczelia.net>
+
+	v2.0: integrity and authentication
+
+	setd: clarify meaning
+
+	v2.0 doc: ECC modalities
+
+	v2.0 doc: terms, conformance, arithmetic/byte representation
+
+	v2.0: scope and normative references
+
+	copy over macros for paragraph-based spec (WG14-like)
+
+	v2.0: xpar format TeX skeleton
+
+2026-08-16  Kamila Szewczyk  <k@iczelia.net>
+
+	v2.0: start the format doc dir
+
+2026-04-20  Kamila Szewczyk  <k@iczelia.net>
+
+	revert to the old header format, update news/changelog, bump to 1.1
+
 2026-04-18  Kamila Szewczyk  <27734421+iczelia@users.noreply.github.com>
 
 	sloppy gitignore

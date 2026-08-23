@@ -1124,7 +1124,8 @@ static int create_from_pipe_direct(const xpar_options * o) {
   q = (u64) 1 << field;
   FATAL_UNLESS("Recovery count exhausts GF(2^%" PRIu8 "); reduce -r or use "
                "--field=16.", r < q, field);
-  FATAL_UNLESS("A one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %" PRIu64 ".",
+  FATAL_UNLESS("A one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %"
+               PRIu64 ".",
                r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
                ((r + 1) * z),
                budget);
@@ -1157,7 +1158,8 @@ static int create_from_pipe_direct(const xpar_options * o) {
       filled += got;
     }
     if (filled == z) {
-      FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64 "-slice data limit; "
+      FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+                   "-slice data limit; "
                    "raise -s or use --spool.", slices < max_s, field,
                    max_s);
       create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
@@ -1169,7 +1171,8 @@ static int create_from_pipe_direct(const xpar_options * o) {
     }
   }
   if (filled) {
-    FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64 "-slice data limit; "
+    FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+                 "-slice data limit; "
                  "raise -s or use --spool.", slices < max_s, field,
                  max_s);
     xpar_memset(data + filled, 0, (sz) (z - filled));
@@ -1793,7 +1796,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   publish_chunk_cache(&c);
 
   if (!o->quiet && !o->json)
-    xpar_fprintf(xpar_stderr, "xpar: %s: %" PRIu32 " %s, %" PRIu64 " slice%s of %" PRIu64 " "
+    xpar_fprintf(xpar_stderr, "xpar: %s: %" PRIu32 " %s, %" PRIu64
+                 " slice%s of %" PRIu64 " "
                  "bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " volume%s\n", c.base,
                  c.m.count,
                  c.m.count == 1 ? "entry" : "entries",

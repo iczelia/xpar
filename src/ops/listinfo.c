@@ -88,7 +88,8 @@ static void li_time(char * buf, sz cap, i64 ns) {
   d   = doy - (153 * mp + 2) / 5 + 1;
   mo  = mp + (mp < 10 ? 3 : -9);
   if (mo <= 2) y++;
-  xpar_snprintf(buf, cap, "%04" PRId64 "-%02" PRId64 "-%02" PRId64 "T%02" PRId64 ":%02" PRId64 ":%02" PRId64 "Z",
+  xpar_snprintf(buf, cap, "%04" PRId64 "-%02" PRId64 "-%02" PRId64 "T%02"
+                PRId64 ":%02" PRId64 ":%02" PRId64 "Z",
                 y, mo, d,
                 (rem / 3600), ((rem / 60) % 60),
                 (rem % 60));
@@ -169,7 +170,8 @@ int xpar_op_list(const xpar_options * o) {
       xpar_json_u64(&js, "files", m.count);
       xpar_json_end(&js);
     } else {
-      xpar_fprintf(xpar_stdout, "generation %" PRIu32 "  set %s  %" PRIu32 " entries\n",
+      xpar_fprintf(xpar_stdout, "generation %" PRIu32 "  set %s  %" PRIu32
+                   " entries\n",
                    c.gen[g].sd.generation, idbuf, m.count);
       xpar_fprintf(xpar_stdout,
                    "  t %12s  gen  mode   %-20s  name\n", "size", "mtime");
@@ -202,7 +204,8 @@ int xpar_op_list(const xpar_options * o) {
         xpar_json_end(&js);
         continue;
       }
-      xpar_fprintf(xpar_stdout, "  %c %12" PRIu64 "  %3" PRIu32 "  %-5s  %-20s  %.*s",
+      xpar_fprintf(xpar_stdout, "  %c %12" PRIu64 "  %3" PRIu32
+                   "  %-5s  %-20s  %.*s",
                    li_type(e), e->length,
                    c.gen[owner[i]].sd.generation, mbuf, tbuf,
                    (int) e->name_len, e->name);
@@ -234,7 +237,8 @@ int xpar_op_list(const xpar_options * o) {
 
                            li_extent_refs(&m, &e->extents[k]));
           else
-            xpar_fprintf(xpar_stdout, "      extent %" PRIu64 " + %" PRIu64 "  in %s\n",
+            xpar_fprintf(xpar_stdout, "      extent %" PRIu64 " + %" PRIu64
+                         "  in %s\n",
                          e->extents[k].stream_offset,
                          e->extents[k].length, gb);
         }
@@ -564,7 +568,8 @@ int xpar_op_info(const xpar_options * o) {
     } else {
       u32 t = (ap.n - ap.k) / 2;
       xpar_fprintf(xpar_stdout,
-                   "  armour     : GF(2^%" PRIu8 ") RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32 ", D = %" PRIu64
+                   "  armour     : GF(2^%" PRIu32 ") RS(%" PRIu32 ", %" PRIu32 "), "
+                   "t = %" PRIu32 ", D = %" PRIu64
                    "\n               %s; frame %" PRIu64 " bytes on disk carrying "
                    "%" PRIu64 " of plaintext\n"
                    "               correctable burst %" PRIu64 " bytes anywhere in "

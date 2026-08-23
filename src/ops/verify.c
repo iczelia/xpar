@@ -202,7 +202,8 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
   u64 fp = xpar_armour_frame_plain(a), fd = xpar_armour_frame_disk(a);
   u64 frames = xpar_ceil_div(pr->plain_length, fp), f, at = 0;
   u8 * frame = NULL;
-  FATAL_UNLESS("The armoured frame needs %" PRIu64 " bytes but -m permits %" PRIu64 "; "
+  FATAL_UNLESS("The armoured frame needs %" PRIu64 " bytes but -m permits %"
+               PRIu64 "; "
                "raise -m to read this archive.",
                fd <= s->memory_budget && fd <= (u64) (sz) -1,
                fd,
@@ -571,7 +572,8 @@ static void build_manifest(xpar_vset * s) {
     const xpar_crit_pkt * p = find_file(s, s->setd.file_id[f], &owner);
     xpar_entry * e;
     if (!p)
-      FATAL_FORMAT("Manifest entry %" PRIu32 " of %" PRIu32 " is missing from the supplied "
+      FATAL_FORMAT("Manifest entry %" PRIu32 " of %" PRIu32
+                   " is missing from the supplied "
                    "volumes.", (f + 1),
                    s->setd.file_count);
     e = xpar_manifest_append(&s->mf);
@@ -632,7 +634,8 @@ static void validate_identities(xpar_vset * s) {
   for (i = 0; i < s->mf.count; i++) {
     xpar_file_id(&s->mf.entry[i], file_key, got);
     if (!xpar_ct_equal(got, s->mf.entry[i].file_id, sizeof got))
-      FATAL_FORMAT("Manifest entry %" PRIu32 " has a forged or inconsistent file_id.",
+      FATAL_FORMAT("Manifest entry %" PRIu32
+                   " has a forged or inconsistent file_id.",
                    i);
   }
   setp = xpar_critset_find(&s->crit, s->set_id, XPAR_T_SETD, 0);
@@ -1355,7 +1358,8 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
       xpar_posix_rec * tab = NULL;
       if (xpar_posx_collect(&s->crit, s->gen[g].id,
                             s->gen[g].posix_count, &tab) != XPAR_OK)
-        FATAL_FORMAT("Generation %" PRIu32 "'s POSX table has gaps, overlaps, or "
+        FATAL_FORMAT("Generation %" PRIu32
+                     "'s POSX table has gaps, overlaps, or "
                      "invalid ranges.", s->gen[g].generation);
       xpar_posix_records_free(tab, s->gen[g].posix_count);
       g = s->gen[g].parent;
@@ -2515,7 +2519,8 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                s->geom.slice_size,
                s->recovery, PLURAL(s->recovery));
   if (s->eg.cell_bytes)
-    xpar_fprintf(xpar_stderr, "cell of %" PRIu32 " bytes (%" PRIu32 " per slice)\n",
+    xpar_fprintf(xpar_stderr, "cell of %" PRIu32 " bytes (%" PRIu32
+                 " per slice)\n",
                  s->eg.cell_bytes,
                  s->eg.cells_per_slice);
   else
