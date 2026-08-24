@@ -13,20 +13,16 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-# Reproducible benchmark harness producing environment, command and raw data.
+# Benchmark create, verify and repair across codec parameters.
 
 set -e
 
-prog=`basename "$0"`
 here=`cd \`dirname "$0"\` && pwd`
 top=`cd "$here/.." && pwd`
-
-die() { echo "$prog: $*" >&2;  exit 1; }
-
-# Options.
+. "$here/lib.sh"
 
 out=bench-results
-size=268435456          # 256 MiB
+size=268435456
 reps=3
 seed=20260823
 jobs=
@@ -50,9 +46,6 @@ usage: run.sh [options]
   --full           the long matrix
   --keep           leave the corpus and the sets behind
   -h, --help       this message
-
-Sizes are bytes.  Every number the harness chooses is recorded in
-environment.json, so a run reproduces from that file alone.
 EOF
   exit 0
 }
@@ -74,208 +67,99 @@ while test $# -gt 0; do
   esac
 done
 
-# Tools.
+bench_find_tools
+bench_open_output
+bench_probe_cold
+bench_environment
+test -n "$keep" || trap 'rm -rf "$work"' EXIT HUP INT TERM
 
-if test -z "$xpar"; then
-  if   test -x "$top/xpar";     then xpar=$top/xpar
-  elif test -x "$top/xpar.exe"; then xpar=$top/xpar.exe
-  else die "no xpar binary; pass --xpar"
-  fi
-fi
-case $xpar in
-  /*) ;;
-  *)  xpar=`cd \`dirname "$xpar"\` && pwd`/`basename "$xpar"` ;;
-esac
-test -x "$xpar" || die "$xpar is not executable"
-
-mkdata=$top/tests/mkdata
-damage=$top/tests/damage
-timeit=$top/bench/timeit
-for t in "$mkdata" "$damage" "$timeit"; do
-  test -x "$t" || test -x "$t.exe" ||
-    die "$t is not built; run 'make bench-tools'"
-done
-test -x "$mkdata" || mkdata=$mkdata.exe
-test -x "$damage" || damage=$damage.exe
-test -x "$timeit" || timeit=$timeit.exe
-
-mkdir -p "$out"
-out=`cd "$out" && pwd`
-work=$out/work
-rm -rf "$work"
-mkdir -p "$work"
-if test -z "$keep"; then trap 'rm -rf "$work"' EXIT HUP INT TERM; fi
-
-csv=$out/results.csv
-jsonl=$out/results.json
-cmdlog=$out/commands.log
-: > "$csv";  : > "$jsonl";  : > "$cmdlog"
-
-# Environment facts; unavailable values are recorded as null.
-
-jstr() {
-  if test -z "$1"; then printf 'null'
-  else
-    printf '"%s"' \
-      "`printf '%s' "$1" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g; s/	/ /g'`"
-  fi
-}
-
-cpu_model=
-if test -r /proc/cpuinfo; then
-  cpu_model=`sed -n 's/^model name[ 	]*: *//p' /proc/cpuinfo | head -1`
-  test -n "$cpu_model" ||
-    cpu_model=`sed -n 's/^Model[ 	]*: *//p' /proc/cpuinfo | head -1`
-elif command -v sysctl > /dev/null 2>&1; then
-  cpu_model=`sysctl -n machdep.cpu.brand_string 2>/dev/null || true`
-fi
-
-cores=
-if command -v nproc > /dev/null 2>&1; then cores=`nproc`
-elif command -v getconf > /dev/null 2>&1; then
-  cores=`getconf _NPROCESSORS_ONLN 2>/dev/null || true`
-fi
-
-memkb=
-test -r /proc/meminfo &&
-  memkb=`sed -n 's/^MemTotal: *\([0-9]*\).*/\1/p' /proc/meminfo`
-
-governor=
-test -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor &&
-  governor=`cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor`
-
-turbo=
-test -r /sys/devices/system/cpu/intel_pstate/no_turbo &&
-  turbo=`cat /sys/devices/system/cpu/intel_pstate/no_turbo`
-
-cc=
-ccver=
-if test -r "$top/config.log"; then
-  cc=`sed -n 's/^ *CC='\''\(.*\)'\''$/\1/p' "$top/config.log" | head -1`
-fi
-test -n "$cc" || cc=${CC:-cc}
-ccver=`$cc --version 2>/dev/null | head -1 || true`
-
-configure_line=
-test -r "$top/config.log" &&
-  configure_line=`sed -n 's/^  \$ \(.*configure.*\)$/\1/p' \
-                    "$top/config.log" | head -1`
-
-commit=
-if test -d "$top/.git" && command -v git > /dev/null 2>&1; then
-  commit=`cd "$top" && git rev-parse HEAD 2>/dev/null || true`
-  dirty=`cd "$top" && git status --porcelain 2>/dev/null | head -1`
-  test -z "$dirty" || commit="$commit+dirty"
-fi
-
-version=`"$xpar" --version 2>&1 | head -1`
-fstype=
-command -v stat > /dev/null 2>&1 &&
-  fstype=`stat -f -c %T "$work" 2>/dev/null || true`
-started=`date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true`
-
-{
-  printf '{\n'
-  printf '  "schema": 1,\n'
-  printf '  "started_utc": %s,\n'     "`jstr "$started"`"
-  printf '  "xpar_version": %s,\n'    "`jstr "$version"`"
-  printf '  "xpar_path": %s,\n'       "`jstr "$xpar"`"
-  printf '  "git_commit": %s,\n'      "`jstr "$commit"`"
-  printf '  "configure": %s,\n'       "`jstr "$configure_line"`"
-  printf '  "cc": %s,\n'              "`jstr "$cc"`"
-  printf '  "cc_version": %s,\n'      "`jstr "$ccver"`"
-  printf '  "uname": %s,\n'           "`jstr "\`uname -a\`"`"
-  printf '  "cpu_model": %s,\n'       "`jstr "$cpu_model"`"
-  printf '  "cores": %s,\n'           "${cores:-null}"
-  printf '  "mem_total_kb": %s,\n'    "${memkb:-null}"
-  printf '  "scaling_governor": %s,\n' "`jstr "$governor"`"
-  printf '  "intel_pstate_no_turbo": %s,\n' "${turbo:-null}"
-  printf '  "filesystem": %s,\n'      "`jstr "$fstype"`"
-  printf '  "cache_mode": %s,\n'      "`jstr "$cold"`"
-  printf '  "corpus_seed": %s,\n'     "$seed"
-  printf '  "corpus_bytes": %s,\n'    "$size"
-  printf '  "repetitions": %s,\n'     "$reps"
-  printf '  "matrix": %s,\n'          "`jstr "$matrix"`"
-  printf '  "jobs": %s\n'             "`jstr "$jobs"`"
-  printf '}\n'
-} > "$out/environment.json"
-
-echo "$prog: writing to $out"
+say "writing to $out"
 sed 's/^/  /' "$out/environment.json"
 
-if test "$cold" = drop && test ! -w /proc/sys/vm/drop_caches; then
-  echo "$prog: WARNING: /proc/sys/vm/drop_caches is not writable;" >&2
-  echo "$prog:          the run will be warm and is recorded as such" >&2
-  cold=none
-  sed -i.bak 's/"cache_mode": "drop"/"cache_mode": "none"/' \
-      "$out/environment.json" 2>/dev/null || true
-  rm -f "$out/environment.json.bak"
-fi
+say "generating a $size byte corpus from seed $seed"
+echo "$mkdata $seed $size $work/corpus.bin --pattern=random" >> "$cmdlog"
+"$mkdata" "$seed" "$size" "$work/corpus.bin" --pattern=random
+pristine=$work/corpus.bin
 
-# Flush prior writes before every measurement.
-settle() {
-  sync 2>/dev/null || true
-  test "$cold" = drop || return 0
-  echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+say "kernel tiers"
+echo "$xpar benchmark --tiers --json --quiet" >> "$cmdlog"
+"$xpar" benchmark --tiers --json --quiet > "$out/kernels.json" 2>/dev/null ||
+  warn "benchmark --tiers failed"
+
+setup_create() { rm -f "$sdir"/set*.xpa; }
+
+check_create() {
+  if test ! -f "$sdir/set.xpa"; then sig=no-set;  return 1; fi
+  f_archive_bytes=`archive_bytes "$sdir/set"`
+  read_geometry "$sdir/set.xpa"
+  f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
+  f_recovery_slices=$g_r
+  sig="archive=$f_archive_bytes slices=$g_s recovery=$g_r"
 }
 
-# Run one measurement.
+check_verify() {
+  f_scan_bytes=`jnum0 "$work/out.json" bytes_read summary`
+  f_damaged_cells=`jnum0 "$work/out.json" cells_bad summary`
+  sig="read=$f_scan_bytes cells=$f_damaged_cells"
+}
 
-printf 'run_id,seed,op,codec,field,slice_size,recovery,layout,' >> "$csv"
-printf 'jobs,rep,input_bytes,elapsed_us,maxrss_kb,cold,status\n' >> "$csv"
+# Reapply identical corruption before each repetition.
+setup_repair() {
+  # Test hook: skip restores after the first repetition.
+  if test "${XPAR_BENCH_BREAK:-}" = repair && test "$1" -ne 1; then
+    return 0
+  fi
+  cp "$pristine" "$sdir/data.bin"
+  rm -f "$sdir"/set.g*.jrnl "$sdir"/*.journal 2>/dev/null || true
+  # shellcheck disable=SC2086
+  "$damage" "$sdir/data.bin" -Z "$g_z" -Y "$g_y" -n 96 seed=$seed \
+    $damage_ops || return 1
+  "$xpar" verify --json "$sdir/set.xpa" > "$work/pre.json" 2>/dev/null || true
+  f_damaged_cells=`jnum0 "$work/pre.json" cells_bad summary`
+  f_damaged_slices=`jnum0 "$work/pre.json" slices_bad summary`
+  f_column_depth=`jnum0 "$work/pre.json" column_depth summary`
+  f_column_groups=`jnum0 "$work/pre.json" column_groups summary`
+  f_scan_bytes=`jnum0 "$work/pre.json" bytes_read summary`
+  f_scan_bytes=$((f_scan_bytes + f_archive_bytes))
+  test "$f_damaged_cells" -gt 0 || return 1
+}
 
-run_id=0
+check_repair() {
+  if ! cmp -s "$sdir/data.bin" "$pristine"; then
+    sig=not-repaired;  return 1
+  fi
+  f_repaired_bytes=`jnum0 "$work/out.json" bytes_written repair`
+  sig="cells=$f_damaged_cells depth=$f_column_depth wrote=$f_repaired_bytes"
+}
 
-measure() {   # <op> <codec> <field> <slice> <recovery> <layout> <cmd...>
-  op=$1;  m_codec=$2;  m_field=$3;  m_slice=$4;  m_rec=$5;  m_layout=$6
-  shift 6
-  rep=1
-  while test "$rep" -le "$reps"; do
-    run_id=`expr $run_id + 1`
-    echo "# run $run_id  $op  rep $rep" >> "$cmdlog"
-    echo "$*" >> "$cmdlog"
-    settle
-    st=0
-    "$timeit" "$work/timing" "$@" > "$work/out.log" 2>&1 || st=$?
-    us=`sed -n 's/^elapsed_us=//p' "$work/timing"`
-    rss=`sed -n 's/^maxrss_kb=//p' "$work/timing"`
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-      "$run_id" "$seed" "$op" "$m_codec" "$m_field" "$m_slice" "$m_rec" \
-      "$m_layout" "${jobs:-auto}" "$rep" "$size" "$us" "$rss" "$cold" \
-      "$st" >> "$csv"
-    printf '{"run_id":%s,"seed":%s,"op":"%s","codec":"%s","field":%s,' \
-      "$run_id" "$seed" "$op" "$m_codec" "$m_field" >> "$jsonl"
-    printf '"slice_size":"%s","recovery":"%s","layout":"%s","jobs":"%s",' \
-      "$m_slice" "$m_rec" "$m_layout" "${jobs:-auto}" >> "$jsonl"
-    printf '"rep":%s,"input_bytes":%s,"elapsed_us":%s,"maxrss_kb":%s,' \
-      "$rep" "$size" "${us:-0}" "${rss:-0}" >> "$jsonl"
-    printf '"cold":"%s","status":%s}\n' "$cold" "$st" >> "$jsonl"
-    if test "$st" -ne 0; then
-      echo "$prog: WARNING: $op exited $st; see $cmdlog run $run_id" >&2
-      sed 's/^/  | /' "$work/out.log" >&2
-    else
-      echo "  $op  ${m_codec}/gf${m_field}  r=${m_rec}  rep $rep  ${us} us"
-    fi
-    rep=`expr $rep + 1`
+ops_whole_slices() {   # <count>
+  damage_ops=
+  _i=0
+  while test "$_i" -lt "$1"; do
+    _j=0
+    while test "$_j" -lt "$g_k"; do
+      damage_ops="$damage_ops cell=$_i,$_j"
+      _j=$((_j + 1))
+    done
+    _i=$((_i + 1))
   done
 }
 
-# Seeded corpus shared across hosts.
+# Spread cells across columns to keep column depth low.
+ops_scattered() {   # <cells>
+  damage_ops=
+  _n=0
+  _i=0
+  while test "$_n" -lt "$1" && test "$_i" -lt "$g_s"; do
+    _j=$((_i % g_k))
+    damage_ops="$damage_ops cell=$_i,$_j"
+    _n=$((_n + 1))
+    _i=$((_i + 1))
+  done
+}
 
-echo "$prog: generating a $size byte corpus from seed $seed"
-echo "$mkdata $seed $size $work/corpus.bin --pattern=random" >> "$cmdlog"
-"$mkdata" "$seed" "$size" "$work/corpus.bin" --pattern=random
+# Record unreachable parameter combinations without aborting the matrix.
 
-# Kernel microbenchmark.
-
-echo "$prog: kernel tiers"
-echo "$xpar benchmark --tiers --json --quiet" >> "$cmdlog"
-"$xpar" benchmark --tiers --json --quiet > "$out/kernels.json" 2>/dev/null ||
-  echo "$prog: WARNING: benchmark --tiers failed" >&2
-
-# Benchmark matrix.
-
-# Record unsupported combinations instead of aborting the matrix.
 case $matrix in
   quick)   codecs="matrix fft";  fields="16";     recs="10%";
            slices="0" ;;
@@ -292,72 +176,69 @@ for codec in $codecs; do
  for field in $fields; do
   for rec in $recs; do
    for slice in $slices; do
-    tag="$codec-gf$field-$rec-$slice"
-    sdir=$work/$tag
+    sdir=$work/$codec-gf$field-$rec-$slice
     rm -rf "$sdir";  mkdir -p "$sdir"
-    cp "$work/corpus.bin" "$sdir/data.bin"
+    cp "$pristine" "$sdir/data.bin"
     if test "$slice" = 0; then sflag=;  slabel=auto
     else sflag="-s $slice";  slabel=$slice; fi
 
     echo
-    echo "$prog: === $codec, GF(2^$field), recovery $rec, slice $slabel ==="
+    say "=== $codec, GF(2^$field), recovery $rec, slice $slabel ==="
 
+    reset_row
+    f_experiment=throughput;  f_op=create;  f_codec=$codec;  f_field=$field
+    f_recovery_spec=$rec;  f_layout=sidecar;  f_corpus=random
+    f_corpus_bytes=$size;  f_slice_size=$slice;  f_expect=0
     # shellcheck disable=SC2086
-    measure create "$codec" "$field" "$slabel" "$rec" sidecar \
+    bench_measure setup_create check_create \
       "$xpar" create --reproducible --dedup=none --align=none \
         --no-verify-after --codec="$codec" --field="$field" -r "$rec" \
-        $sflag $jflag -o "$sdir/set" "$sdir/data.bin"
+        $sflag $jflag --json -o "$sdir/set" "$sdir/data.bin"
 
     if test ! -f "$sdir/set.xpa"; then
-      echo "$prog: skipping the rest of $tag: no set was written" >&2
+      warn "skipping the rest of $sdir: no set was written"
+      rm -rf "$sdir"
       continue
     fi
+    read_geometry "$sdir/set.xpa"
+    archive=`archive_bytes "$sdir/set"`
 
-    # shellcheck disable=SC2086
-    measure verify "$codec" "$field" "$slabel" "$rec" sidecar \
-      "$xpar" verify $jflag "$sdir/set.xpa"
-
-    # shellcheck disable=SC2086
-    measure verify-strong "$codec" "$field" "$slabel" "$rec" sidecar \
-      "$xpar" verify --strong $jflag "$sdir/set.xpa"
-
-    # Damage the same leading slices in each comparable repair run.
-    "$xpar" info --json "$sdir/set.xpa" > "$sdir/geom.json" 2>/dev/null || true
-    Z=`sed -n 's/.*"slice_size":\([0-9]*\).*/\1/p' "$sdir/geom.json" | head -1`
-    Y=`sed -n 's/.*"cell_bytes":\([0-9]*\).*/\1/p' "$sdir/geom.json" | head -1`
-    R=`sed -n 's/.*"recovery":\([0-9]*\).*/\1/p' "$sdir/geom.json" | head -1`
-    if test -n "$Z" && test -n "$R" && test "$R" -gt 0; then
-      test -n "$Y" && test "$Y" -gt 0 || Y=$Z
-      K=`expr \( $Z + $Y - 1 \) / $Y`
-      lost=$R
-      test "$lost" -le 4 || lost=4
-      ops=
-      i=0
-      while test "$i" -lt "$lost"; do
-        j=0
-        while test "$j" -lt "$K"; do
-          ops="$ops cell=$i,$j"
-          j=`expr $j + 1`
-        done
-        i=`expr $i + 1`
-      done
-      echo "$damage $sdir/data.bin -Z $Z -Y $Y -n 96 $ops" >> "$cmdlog"
+    for vop in verify verify-strong; do
+      test "$vop" = verify && vflag= || vflag=--strong
+      reset_row
+      f_experiment=throughput;  f_op=$vop;  f_codec=$g_codec
+      f_field=$g_field;  f_recovery_spec=$rec;  f_recovery_slices=$g_r
+      f_layout=sidecar;  f_corpus=random;  f_corpus_bytes=$size
+      f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
+      f_archive_bytes=$archive;  f_expect=0
       # shellcheck disable=SC2086
-      "$damage" "$sdir/data.bin" -Z "$Z" -Y "$Y" -n 96 $ops
-      # shellcheck disable=SC2086
-      measure repair "$codec" "$field" "$slabel" "$rec" sidecar \
-        "$xpar" repair --in-place --no-journal $jflag "$sdir/set.xpa"
-    fi
+      bench_measure setup_none check_verify \
+        "$xpar" verify $vflag $jflag --json "$sdir/set.xpa"
+    done
 
-    #  An armoured archive is the layout with the most work per byte, so
-    #  it is measured separately rather than folded into the average.
-    if test "$matrix" = full; then
+    # Compare whole-slice damage with equal-count scattered cells.
+    lost=$g_r
+    test "$lost" -le 4 || lost=4
+    for dmg in slices scatter; do
+      if test "$dmg" = slices; then
+        ops_whole_slices "$lost"
+        cells=$((lost * g_k))
+      else
+        cells=$((lost * g_k))
+        test "$cells" -le "$g_s" || cells=$g_s
+        ops_scattered "$cells"
+      fi
+      test -n "$damage_ops" || continue
+      reset_row
+      f_experiment=throughput;  f_op=repair-$dmg;  f_codec=$g_codec
+      f_field=$g_field;  f_recovery_spec=$rec;  f_recovery_slices=$g_r
+      f_layout=sidecar;  f_corpus=random;  f_corpus_bytes=$size
+      f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
+      f_archive_bytes=$archive;  f_damage=$dmg;  f_expect=0
       # shellcheck disable=SC2086
-      measure create-armoured "$codec" "$field" "$slabel" "$rec" armoured \
-        "$xpar" create --reproducible --layout=armoured --dedup=none \
-          --no-verify-after --codec="$codec" --field="$field" -r "$rec" \
-          $sflag $jflag -o "$sdir/arm" "$work/corpus.bin"
-    fi
+      bench_measure setup_repair check_repair \
+        "$xpar" repair --in-place --no-journal $jflag --json "$sdir/set.xpa"
+    done
 
     rm -rf "$sdir"
    done
@@ -366,10 +247,4 @@ for codec in $codecs; do
 done
 
 echo
-echo "$prog: done"
-echo "$prog:   $csv"
-echo "$prog:   $jsonl"
-echo "$prog:   $out/environment.json"
-echo "$prog:   $out/kernels.json"
-echo "$prog:   $cmdlog"
-echo "$prog: plot with: python3 $here/plot.py $out"
+bench_finish

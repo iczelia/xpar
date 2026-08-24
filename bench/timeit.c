@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Standalone command timer reporting elapsed_us, status and maxrss_kb. */
+/* Standalone command timer: elapsed_us, status, maxrss_kb, block I/O. */
 
 /* Expose XSI process and resource APIs under strict C99. */
 #if !defined(_WIN32) && !defined(__MSDOS__) && !defined(_XOPEN_SOURCE)
@@ -35,11 +35,13 @@
 #endif
 
 static void emit(const char * path, unsigned long long usec, int status,
-                 unsigned long long maxrss_kb) {
+                 unsigned long long maxrss_kb, unsigned long long in_blocks,
+                 unsigned long long out_blocks) {
   FILE * f = path ? fopen(path, "w") : stderr;
   if (!f) { perror(path);  return; }
-  fprintf(f, "elapsed_us=%llu\nstatus=%d\nmaxrss_kb=%llu\n",
-          usec, status, maxrss_kb);
+  fprintf(f, "elapsed_us=%llu\nstatus=%d\nmaxrss_kb=%llu\n"
+             "in_blocks=%llu\nout_blocks=%llu\n",
+          usec, status, maxrss_kb, in_blocks, out_blocks);
   if (path) fclose(f);
 }
 
@@ -73,7 +75,7 @@ int main(int argc, char ** argv) {
     free(line);
     emit(out, (unsigned long long) ((double) (end - begin) * 1000000.0 /
                                     (double) CLOCKS_PER_SEC),
-         status, 0);
+         status, 0, 0, 0);
     return status ? 1 : 0;
   }
 #else
@@ -109,7 +111,10 @@ int main(int argc, char ** argv) {
     emit(out, (unsigned long long) elapsed,
          code,
          /* ru_maxrss units are platform-specific. */
-         (unsigned long long) ru.ru_maxrss);
+         (unsigned long long) ru.ru_maxrss,
+         /* Block-layer traffic in 512-byte units; near zero when warm. */
+         (unsigned long long) ru.ru_inblock,
+         (unsigned long long) ru.ru_oublock);
     return code;
   }
 #endif
