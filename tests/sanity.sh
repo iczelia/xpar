@@ -50,6 +50,6 @@ cd "$work" || exit 99
 
 # Use the cross-host fixture when available.
 if test -n "${XPAR_COMPAT:-}" && test -d "$XPAR_COMPAT"; then
-  exec "${SHELL:-/bin/sh}" "$script" "$XPAR" "$XPAR_COMPAT"
+  exec "${XPAR_SH:-/bin/sh}" "$script" "$XPAR" "$XPAR_COMPAT"
 fi
-exec "${SHELL:-/bin/sh}" "$script" "$XPAR"
+exec "${XPAR_SH:-/bin/sh}" "$script" "$XPAR"

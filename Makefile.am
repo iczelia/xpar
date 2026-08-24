@@ -230,7 +230,7 @@ check_PROGRAMS =
 TESTS =
 else
 check_PROGRAMS = tests/t_unit tests/t_codec tests/t_central \
-                 tests/mkdata tests/damage
+                 tests/mkdata tests/damage bench/timeit
 
 tests_t_unit_SOURCES    = tests/t_unit.c
 tests_t_unit_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
@@ -253,7 +253,8 @@ tests_damage_CPPFLAGS   =
 tests_damage_LDADD      =
 
 TESTS = tests/t_unit tests/t_codec tests/t_central \
-        tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh
+        tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
+        tests/bench.sh
 endif
 
 TEST_EXTENSIONS = .sh
@@ -267,11 +268,11 @@ AM_TESTS_ENVIRONMENT = \
   MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
   DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
-  XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED;
+  XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
+  XPAR_SH='$(SHELL)';                                 export XPAR_SH;
 
-## Benchmarks are opt-in because they take minutes.
+## Benchmarks are opt-in; tests/bench.sh still requires timeit.
 
-EXTRA_PROGRAMS   = bench/timeit
 bench_timeit_SOURCES  = bench/timeit.c
 bench_timeit_CPPFLAGS =
 bench_timeit_LDADD    =
@@ -284,7 +285,9 @@ EXTRA_DIST = \
   contrib/dos/run-check.sh contrib/dos/run2.c \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-  bench/run.sh bench/plot.py
+  tests/bench.sh \
+  bench/run.sh bench/lib.sh bench/plot.py bench/mktree.sh \
+  bench/competitors.sh bench/experiments.sh bench/remote.sh
 
 VENDORED = src/yarg.h
 

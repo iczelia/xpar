@@ -84,7 +84,7 @@ one_config() {
   # One column beyond its budget.
   if test "$R" -lt "$S"; then
     cp pristine.bin data.bin
-    victim=`rnd "$K"`
+    rnd "$K";  victim=$rnd
     others=
     for j in $columns; do
       test "$j" -eq "$victim" || others="$others $j"

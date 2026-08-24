@@ -23,6 +23,9 @@ phase="(starting up)"
 : "${abs_top_srcdir:=..}"
 : "${XPAR_TEST_LEVEL:=quick}"
 
+# Use the configured POSIX shell, not the login shell.
+: "${XPAR_SH:=/bin/sh}"
+
 # Override the printed seed to reproduce a failure.
 : "${XPAR_TEST_SEED:=20260823}"
 
@@ -191,12 +194,18 @@ read_geometry() {   # read_geometry <set>
 
 # Deterministic, portable randomness for reproducible corruption matrices.
 
-# Keep LCG intermediates within expr's guaranteed 31-bit range.
-rng_state=`expr $XPAR_TEST_SEED % 65536`
+# Park-Miller RNG with 31-bit-safe arithmetic.
+rng_state=`expr $XPAR_TEST_SEED % 2147483647`
+test "$rng_state" -gt 0 || rng_state=1
 
-rnd() {   # rnd <n> -> 0 .. n-1 on stdout
-  rng_state=`expr \( $rng_state \* 25173 + 13849 \) % 65536`
-  expr $rng_state % "$1"
+# Return through $rnd so state changes persist outside a subshell.
+rnd() {   # rnd <n> -> 0 .. n-1 in $rnd
+  _hi=`expr $rng_state / 127773`
+  _lo=`expr $rng_state % 127773`
+  rng_state=`expr 16807 \* $_lo - 2836 \* $_hi`
+  test "$rng_state" -gt 0 || rng_state=`expr $rng_state + 2147483647`
+  # Avoid correlated low bits for small n.
+  rnd=`expr \( $rng_state / 32768 \) % "$1"`
 }
 
 # Corpora.

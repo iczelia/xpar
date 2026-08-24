@@ -76,7 +76,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
     while test "$j" -lt "$K"; do
       #  Zero happens often on purpose: an undamaged column must not be
       #  charged to the budget.
-      want=`rnd \`expr $R + 2\``
+      rnd `expr $R + 2`;  want=$rnd
       test "$want" -le "$S" || want=$S
       profile="$profile $want"
       i=0
@@ -147,14 +147,17 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
     cp pristine.bin data.bin
     : > cells.txt
     ops=
-    bursts=`expr 1 + \` rnd 6\``
+    rnd 6;  bursts=`expr 1 + $rnd`
     b=0
     while test "$b" -lt "$bursts"; do
       #  Offsets are drawn in cell-sized steps plus a jitter, so a burst
       #  lands on a boundary far more often than uniform noise would.
-      off=`expr \` rnd $S\` \* $Z + \` rnd $K\` \* $Y`
-      off=`expr $off + \` rnd 3\` \* \( $Y - 8 \) / 2`
-      len=`expr 1 + \` rnd 200\``
+      rnd "$S";  _s=$rnd
+      rnd "$K";  _c=$rnd
+      rnd 3;     _jit=$rnd
+      rnd 200;   len=`expr 1 + $rnd`
+      off=`expr $_s \* $Z + $_c \* $Y`
+      off=`expr $off + $_jit \* \( $Y - 8 \) / 2`
       test "$off" -lt "$L" || off=`expr $L - 1`
       if test `expr $off + $len` -gt "$L"; then len=`expr $L - $off`; fi
       ops="$ops rand=$off,$len"

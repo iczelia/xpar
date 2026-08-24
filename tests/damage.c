@@ -15,9 +15,18 @@
 /* Deterministic fault injector with exact-cell and CRC-preserving damage.
    Its CRC implementation is independent of libxpar_core. */
 
+/* Use large-file POSIX offsets when available. */
+#if !defined(_WIN32) && !defined(__MSDOS__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(_WIN32) && !defined(__MSDOS__)
+#include <sys/types.h>
+#endif
 
 #define CRC32C_POLY 0x82F63B78u   /*  0x1EDC6F41 reflected.  */
 
@@ -55,11 +64,6 @@ static unsigned int crc_raw(unsigned int c, const unsigned char * p,
   return c;
 }
 
-static unsigned int crc32c(const unsigned char * p, unsigned long long n) {
-  crc_init();
-  return ~crc_raw(0xFFFFFFFFu, p, n);
-}
-
 /* Backpatch four bytes to advance CRC state s to f. */
 
 static void crc_backpatch(unsigned int s, unsigned int f,
@@ -93,43 +97,58 @@ static unsigned int rng_next(void) {
   return (unsigned int) (rng_state >> 32);
 }
 
-static unsigned char * img;
-static unsigned long long img_len, img_cap;
-static int img_dirty;
+/* Edit in place to support multi-gigabyte benchmark corpora. */
 
-#define IMG_MAX (1024ull * 1024ull * 1024ull)
+static const char * img_path;
+static FILE * img_f;
+static unsigned long long img_len;
 
-static void img_load(const char * path) {
-  FILE * f = fopen(path, "rb");
-  long long size;
-  if (!f) { perror(path);  exit(2); }
-  if (fseek(f, 0, SEEK_END)) { perror(path);  exit(2); }
-  size = ftell(f);
-  if (size < 0) { perror(path);  exit(2); }
-  if ((unsigned long long) size > IMG_MAX) {
-    fprintf(stderr, "damage: %s: larger than the %llu byte ceiling\n",
-            path, IMG_MAX);
-    exit(2);
+#define IO_CHUNK 65536
+
+/* Limit the only operation that buffers its entire range. */
+#define FORGE_MAX (256ull * 1024ull * 1024ull)
+
+static void io_seek(unsigned long long off) {
+#if defined(_WIN32)
+  if (_fseeki64(img_f, (long long) off, SEEK_SET)) {
+#else
+  if (fseeko(img_f, (off_t) off, SEEK_SET)) {
+#endif
+    perror(img_path);  exit(2);
   }
-  rewind(f);
-  img_len = img_cap = (unsigned long long) size;
-  img = (unsigned char *) malloc(img_cap ? (size_t) img_cap : 1);
-  if (!img) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
-  if (img_len && fread(img, 1, (size_t) img_len, f) != (size_t) img_len) {
-    perror(path);  exit(2);
-  }
-  fclose(f);
 }
 
-static void img_store(const char * path) {
-  FILE * f;
-  if (!img_dirty) return;
-  f = fopen(path, "wb");
-  if (!f) { perror(path);  exit(2); }
-  if (img_len && fwrite(img, 1, (size_t) img_len, f) != (size_t) img_len) {
-    perror(path);  exit(2);
-  }
-  if (fclose(f)) { perror(path);  exit(2); }
+static void io_read(unsigned long long off, unsigned char * p, size_t n) {
+  io_seek(off);
+  if (n && fread(p, 1, n, img_f) != n) { perror(img_path);  exit(2); }
+}
+
+static void io_write(unsigned long long off, const unsigned char * p,
+                     size_t n) {
+  io_seek(off);
+  if (n && fwrite(p, 1, n, img_f) != n) { perror(img_path);  exit(2); }
+  if (fflush(img_f)) { perror(img_path);  exit(2); }
+}
+
+static void img_open(const char * path) {
+  long long size;
+  img_path = path;
+  img_f = fopen(path, "r+b");
+  if (!img_f) { perror(path);  exit(2); }
+#if defined(_WIN32)
+  if (_fseeki64(img_f, 0, SEEK_END)) { perror(path);  exit(2); }
+  size = _ftelli64(img_f);
+#else
+  if (fseeko(img_f, 0, SEEK_END)) { perror(path);  exit(2); }
+  size = (long long) ftello(img_f);
+#endif
+  if (size < 0) { perror(path);  exit(2); }
+  img_len = (unsigned long long) size;
+}
+
+static void img_close(void) {
+  if (img_f && fclose(img_f)) { perror(img_path);  exit(2); }
+  img_f = NULL;
 }
 
 static void need_range(const char * what, unsigned long long off,
@@ -142,87 +161,140 @@ static void need_range(const char * what, unsigned long long off,
 }
 
 static void op_flip(unsigned long long off, unsigned long long len) {
-  unsigned long long i;
+  unsigned char buf[IO_CHUNK];
   need_range("flip", off, len);
-  for (i = 0; i < len; i++) {
-    unsigned char d = (unsigned char) rng_next();
-    img[off + i] ^= (unsigned char) (d ? d : 0xA5);
+  while (len) {
+    size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
+    io_read(off, buf, take);
+    for (i = 0; i < take; i++) {
+      unsigned char d = (unsigned char) rng_next();
+      buf[i] ^= (unsigned char) (d ? d : 0xA5);
+    }
+    io_write(off, buf, take);
+    off += take;  len -= take;
   }
-  img_dirty = 1;
 }
 
 static void op_rand(unsigned long long off, unsigned long long len) {
-  unsigned long long i;
+  unsigned char buf[IO_CHUNK];
   need_range("rand", off, len);
-  for (i = 0; i < len; i++) {
-    unsigned char v = (unsigned char) rng_next();
-    if (v == img[off + i]) v ^= 0x5Au;
-    img[off + i] = v;
+  while (len) {
+    size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
+    io_read(off, buf, take);
+    for (i = 0; i < take; i++) {
+      unsigned char v = (unsigned char) rng_next();
+      if (v == buf[i]) v ^= 0x5Au;
+      buf[i] = v;
+    }
+    io_write(off, buf, take);
+    off += take;  len -= take;
   }
-  img_dirty = 1;
 }
 
 static void op_zero(unsigned long long off, unsigned long long len) {
+  static const unsigned char zero[IO_CHUNK];
   need_range("zero", off, len);
-  memset(img + off, 0, (size_t) len);
-  img_dirty = 1;
+  while (len) {
+    size_t take = len > sizeof zero ? sizeof zero : (size_t) len;
+    io_write(off, zero, take);
+    off += take;  len -= take;
+  }
+}
+
+static unsigned int range_crc(unsigned long long off,
+                              unsigned long long len) {
+  unsigned char buf[IO_CHUNK];
+  unsigned int c = 0xFFFFFFFFu;
+  crc_init();
+  while (len) {
+    size_t take = len > sizeof buf ? sizeof buf : (size_t) len;
+    io_read(off, buf, take);
+    c = crc_raw(c, buf, take);
+    off += take;  len -= take;
+  }
+  return ~c;
 }
 
 static void op_forge(unsigned long long off, unsigned long long len) {
-  unsigned long long body, i;
+  unsigned char * body;
+  unsigned long long i, n;
   unsigned int want, state;
-  int changed = 0;
   need_range("forge", off, len);
   if (len < 8) {
     fprintf(stderr, "damage: forge needs at least 8 bytes, not %llu\n", len);
     exit(2);
   }
-  crc_init();
-  want  = crc32c(img + off, len);
-  body  = len - 4;
-  for (i = 0; i < body; i++) {
-    unsigned char v = (unsigned char) rng_next();
-    if (v == img[off + i]) v ^= 0x5Au;
-    img[off + i] = v;
-    changed = 1;
+  if (len > FORGE_MAX) {
+    fprintf(stderr, "damage: forge range too large: %llu bytes (max %llu)\n",
+            len, FORGE_MAX);
+    exit(2);
   }
-  state = crc_raw(0xFFFFFFFFu, img + off, body);
-  crc_backpatch(state, ~want, img + off + body);
-  if (crc32c(img + off, len) != want) {
+  crc_init();
+  want = range_crc(off, len);
+  n = len - 4;
+  body = (unsigned char *) malloc((size_t) len);
+  if (!body) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
+  io_read(off, body, (size_t) len);
+  for (i = 0; i < n; i++) {
+    unsigned char v = (unsigned char) rng_next();
+    if (v == body[i]) v ^= 0x5Au;
+    body[i] = v;
+  }
+  state = crc_raw(0xFFFFFFFFu, body, (size_t) n);
+  crc_backpatch(state, ~want, body + n);
+  io_write(off, body, (size_t) len);
+  free(body);
+  if (range_crc(off, len) != want) {
     fprintf(stderr, "damage: internal: forge did not preserve the CRC\n");
     exit(3);
   }
-  if (!changed) {
-    fprintf(stderr, "damage: internal: forge changed nothing\n");
-    exit(3);
-  }
-  img_dirty = 1;
 }
 
 static void op_crc(unsigned long long off, unsigned long long len) {
   need_range("crc", off, len);
-  printf("%08X\n", crc32c(img + off, len));
+  printf("%08X\n", range_crc(off, len));
 }
 
+/* Portable truncate via copy and rename. */
 static void op_truncate(unsigned long long len) {
+  unsigned char buf[IO_CHUNK];
+  unsigned long long off = 0, left;
+  char * tmp;
+  FILE * out;
   if (len > img_len) {
     fprintf(stderr, "damage: truncate: %llu is past the end\n", len);
     exit(2);
   }
-  img_len = len;
-  img_dirty = 1;
+  tmp = (char *) malloc(strlen(img_path) + 8);
+  if (!tmp) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
+  sprintf(tmp, "%s.trunc", img_path);
+  out = fopen(tmp, "wb");
+  if (!out) { perror(tmp);  exit(2); }
+  for (left = len; left; ) {
+    size_t take = left > sizeof buf ? sizeof buf : (size_t) left;
+    io_read(off, buf, take);
+    if (fwrite(buf, 1, take, out) != take) { perror(tmp);  exit(2); }
+    off += take;  left -= take;
+  }
+  if (fclose(out)) { perror(tmp);  exit(2); }
+  img_close();
+  if (rename(tmp, img_path)) { perror(img_path);  exit(2); }
+  free(tmp);
+  img_open(img_path);
 }
 
 static void op_extend(unsigned long long len) {
-  unsigned long long i;
-  unsigned char * p = (unsigned char *) realloc(img, (size_t) (img_len + len));
-  if (!p) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
-  img = p;
-  for (i = 0; i < len; i++) img[img_len + i] = (unsigned char) rng_next();
-  img_len += len;
-  img_cap  = img_len;
-  img_dirty = 1;
+  unsigned char buf[IO_CHUNK];
+  unsigned long long at = img_len;
+  while (len) {
+    size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
+    for (i = 0; i < take; i++) buf[i] = (unsigned char) rng_next();
+    io_write(at, buf, take);
+    at += take;  len -= take;
+  }
+  img_len = at;
 }
+
 
 static int split2(const char * s, unsigned long long * a,
                   unsigned long long * b) {
@@ -260,7 +332,7 @@ int main(int argc, char ** argv) {
 
   if (argc < 3) usage();
   path = argv[1];
-  img_load(path);
+  img_open(path);
 
   for (i = 2; i < argc; i++) {
     const char * s = argv[i];
@@ -300,7 +372,6 @@ int main(int argc, char ** argv) {
     else usage();
   }
 
-  img_store(path);
-  free(img);
+  img_close();
   return 0;
 }
