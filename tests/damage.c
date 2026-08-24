@@ -15,9 +15,14 @@
 /* Deterministic fault injector with exact-cell and CRC-preserving damage.
    Its CRC implementation is independent of libxpar_core. */
 
-/* Use large-file POSIX offsets when available. */
-#if !defined(_WIN32) && !defined(__MSDOS__) && !defined(_XOPEN_SOURCE)
+/* Use large-file POSIX offsets when available. Darwin needs the full BSD
+   set rather than a strict _XOPEN_SOURCE. */
+#if !defined(_WIN32) && !defined(__MSDOS__)
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#elif !defined(_XOPEN_SOURCE)
 #define _XOPEN_SOURCE 700
+#endif
 #endif
 
 #include <stdio.h>

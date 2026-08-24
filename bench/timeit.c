@@ -14,9 +14,15 @@
 
 /* Standalone command timer: elapsed_us, status, maxrss_kb, block I/O. */
 
-/* Expose XSI process and resource APIs under strict C99. */
-#if !defined(_WIN32) && !defined(__MSDOS__) && !defined(_XOPEN_SOURCE)
+/* Expose XSI process and resource APIs under strict C99. Darwin hides the
+   BSD rusage members behind a strict _XOPEN_SOURCE, so ask it for the full
+   set instead. */
+#if !defined(_WIN32) && !defined(__MSDOS__)
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#elif !defined(_XOPEN_SOURCE)
 #define _XOPEN_SOURCE 700
+#endif
 #endif
 
 #include <stdio.h>
