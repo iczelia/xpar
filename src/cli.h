@@ -123,6 +123,7 @@ typedef struct {
   u64  min_recovery;
   u64  slice_size;       /*  -s; excludes -b.  */
   u64  slices;           /*  -b; excludes -s.  */
+  u64  cell_bytes;       /* --cell; 0 selects automatic Y. */
   int  layout;           /*  XPAR_LAYOUT_*  */
   int  codec;            /*  XPAR_CODEC_* or XPAR_CLI_AUTO.  */
   int  field;            /*  8, 16 or XPAR_CLI_AUTO.  */

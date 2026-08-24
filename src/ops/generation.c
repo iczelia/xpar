@@ -1093,7 +1093,7 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
     rq.slice_size    = o->slice_size;
     rq.slice_count   = o->slices;
     rq.recovery      = r;
-    rq.cell_bytes    = 0;
+    rq.cell_bytes    = (u32) o->cell_bytes;
     rq.field_log2    = p->field_log2;
     st = xpar_geom_choose(&rq, &p->geom);
     if (st == XPAR_GEOM_FIELD && o->field == XPAR_CLI_AUTO &&

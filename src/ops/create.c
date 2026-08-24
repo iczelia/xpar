@@ -1356,7 +1356,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   pr.slice_size      = plan_z ? plan_z : o->slice_size;
   pr.slice_count     = plan_z ? 0 : o->slices;
   pr.recovery_slices = c.recovery;
-  pr.cell_bytes      = 0;
+  pr.cell_bytes      = (u32) o->cell_bytes;
   pr.column_chunk    = 0;
   pr.armour_frame    = o->layout == XPAR_LAYOUT_ARMOURED
                          ? (u32) (c.region_ap.depth * c.region_ap.n *

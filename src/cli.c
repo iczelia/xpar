@@ -17,6 +17,7 @@
 #include "cli.h"
 #include "manifest.h"
 #include "pathname.h"
+#include "slice.h"
 #include "v1detect.h"
 #include "volname.h"
 #include "port-cpu.h"
@@ -290,6 +291,7 @@ enum {
   O_JSON = 256, O_PROGRESS, O_NO_PROGRESS, O_COLOR, O_REPRODUCIBLE,
   O_SIMD,
   O_MIN_RECOVERY, O_MAX_RECOVERY, O_LAYOUT, O_CODEC, O_FIELD, O_ALIGN,
+  O_CELL,
   O_SLICE_TAG, O_ARMOUR, O_ARMOUR_FIELD, O_ARMOUR_T, O_ARMOUR_PCT,
   O_BURST, O_DEPTH, O_VOLUMES, O_DEDUP, O_DEDUP_CHUNK, O_DEDUP_MEMORY,
   O_DEDUP_MAX_REFS, O_PRESERVE, O_EXCLUDE, O_INCLUDE, O_FOLLOW, O_BASE,
@@ -328,6 +330,7 @@ static const yarg_options t_create[] = {
   { O_MAX_RECOVERY,    required_argument, "max-recovery"    },
   { 's',               required_argument, "slice-size"      },
   { 'b',               required_argument, "slices"          },
+  { O_CELL,            required_argument, "cell"            },
   { O_LAYOUT,          required_argument, "layout"          },
   { O_CODEC,           required_argument, "codec"           },
   { O_FIELD,           required_argument, "field"           },
@@ -583,6 +586,7 @@ static const char * const verb_opts[] = {
   "      --max-recovery=SPEC    Recovery-axis space held for top-ups\n"
   "  -s, --slice-size=SIZE      Slice size Z; excludes -b\n"
   "  -b, --slices=N             Slice count S; excludes -s\n"
+  "      --cell=SIZE            Cell size Y, the erasure unit\n"
   "      --layout=WHICH         sidecar (default), split, armoured\n"
   "      --codec=WHICH          auto (default), fft, matrix\n"
   "      --field=W              auto (default), 8, 16\n"
@@ -987,6 +991,15 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
               FATAL_UNLESS("Option -b expects a positive slice count.",
                            o->slices);
               break;
+    case O_CELL:
+      o->cell_bytes = need_size(nm, v);
+      /* Do not round an explicit cell size. */
+      FATAL_UNLESS("--cell must be a multiple of 64 and at least %d bytes.",
+                   o->cell_bytes >= XPAR_CELL_MIN &&
+                          o->cell_bytes % 64 == 0, XPAR_CELL_MIN);
+      FATAL_UNLESS("--cell cannot exceed %" PRIu64 " bytes.",
+                   o->cell_bytes <= XPAR_SLICE_REFUSE, XPAR_SLICE_REFUSE);
+      break;
     case O_LAYOUT:    o->layout = need_word(nm, v, w_layout);  break;
     case O_CODEC: {
       int i = need_word(nm, v, w_codec);

@@ -148,6 +148,7 @@ struct xpar_vset {
 
   xpar_erasures er;
   u64 bad_slices, bad_entries, alias_bad, opaque_bad, missing_entries;
+  u64 column_groups;          /* Distinct erasure patterns. */
   bool hash_sampled, hash_parallel;
   u8 * superseded;
   u8 * ignored_cell;
@@ -2492,6 +2493,14 @@ scanned:
   xpar_pool_destroy(pool);
 
   s->depth = xpar_erasures_max_depth(&s->er);
+  /* Repair uses one decode plan per column pattern. */
+  s->column_groups = 0;
+  if (s->er.bad_count) {
+    xpar_col_groups cg;
+    xpar_col_groups_build(&s->er, &cg);
+    s->column_groups = cg.group_count;
+    xpar_col_groups_free(&cg);
+  }
   rc = XPAR_EXIT_OK;
   if (s->er.bad_count || s->bad_entries) rc = XPAR_EXIT_REPAIRABLE;
   if (s->depth > s->recovery || s->opaque_bad) rc = XPAR_EXIT_UNREPAIRABLE;
@@ -2576,6 +2585,10 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                s->er.bad_count,
                PLURAL(s->er.bad_count),
                s->depth);
+  if (s->column_groups > 1)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: damage has %" PRIu64 " column patterns; repair needs "
+                 "that many decode plans\n", s->column_groups);
   if (s->alias_bad)
     xpar_fprintf(xpar_stderr,
                  "xpar: %" PRIu64 " %s damaged only at aliased occurrences; "
@@ -2636,6 +2649,7 @@ void xpar_vset_json_summary(const xpar_vset * s, xpar_json * js,
   xpar_json_u64(js, "slices_bad", s->bad_slices);
   xpar_json_u64(js, "cells_bad", s->er.bad_count);
   xpar_json_u64(js, "column_depth", s->depth);
+  xpar_json_u64(js, "column_groups", s->column_groups);
   xpar_json_u64(js, "recovery_available", s->recovery);
   xpar_json_u64(js, "recovery_needed", s->depth);
   xpar_json_u64(js, "entries_damaged", s->bad_entries);
