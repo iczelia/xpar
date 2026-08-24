@@ -179,6 +179,14 @@ Set slice size. Mutually exclusive with
 Plan for this many data slices. Mutually exclusive with
 .BR \-s .
 .TP
+.BI \-\-cell= SIZE
+Set the cell size Y, which is the erasure unit: a fault costs the cell
+that holds it rather than the whole slice, and the recovery budget is
+spent per column of cells, not per set. A multiple of 64 bytes, at least
+4096, and clamped to the slice size. Smaller cells localise damage more
+finely and cost more checksum metadata. The planner chooses 64 KiB when
+this is not given.
+.TP
 .BI \-\-layout= WHICH
 .IR sidecar " (default), " split ", or " armoured .
 .TP
