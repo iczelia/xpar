@@ -35,7 +35,7 @@ ci-check.*/
 xpar-*.tar.*
 xpar-*.zip
 compat/
-
+attic/
 tests/t_unit
 tests/t_codec
 tests/t_central
@@ -47,3 +47,4 @@ tests/*.trs
 test-suite.log
 tw-*/
 bench-results/
+__pycache__/
