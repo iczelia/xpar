@@ -1,8 +1,8 @@
-xpar-format.toc
-xpar-format.out
-xpar-format.aux
-xpar-format.fls
-xpar-format.fdb_latexmk
-xpar-format.log
-xpar-format.pdf
-xpar-format.synctex.gz
+*.toc
+*.out
+*.aux
+*.fls
+*.fdb_latexmk
+*.log
+*.pdf
+*.synctex.gz
