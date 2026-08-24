@@ -83,4 +83,29 @@ else
   sed 's/^/  | /' broken.log | tail -20 >&2
 fi
 
+step "an unexpected status fails the measurement"
+
+rc=0
+XPAR_BENCH_BREAK=status "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
+  --out status --size 16777216 --reps 2 --seed "$XPAR_TEST_SEED" \
+  > status.log 2>&1 || rc=$?
+
+if test "$rc" -ne 0; then ok
+else bad "the harness accepted unexpected status 9"; fi
+
+if test "`bad_rows status/results.csv 2>/dev/null || echo 0`" -gt 0; then
+  ok
+else bad "no failed measurement was recorded"; fi
+
+# Undeclared statuses must not be recorded as unsupported.
+posing=`awk -F, 'NR == 1 {
+    for (i = 1; i <= NF; i++) {
+      if ($i == "expected_unsupported") u = i
+      if ($i == "status") s = i
+    }
+    next }
+  u && $u != "" && $s == 9 { n++ }
+  END { print n + 0 }' status/results.csv 2>/dev/null || echo 0`
+equal "undeclared status recorded as unsupported" "$posing" 0
+
 summary

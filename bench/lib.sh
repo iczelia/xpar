@@ -62,16 +62,33 @@ archive_bytes() {
   echo "$_t"
 }
 
-# The protection archive splits into the volumes that carry recovery
-# symbols and the index that carries the manifest and the checksum
-# tables. Reporting only the total confuses the parity a format writes
-# with the bookkeeping it needs to place it, and those scale differently
-# with the erasure unit.
-split_archive() {   # split_archive <base> <index-file>
+# Treat R * Z as recovery payload; remaining archive bytes are overhead.
+nominal_payload() {   # nominal_payload <recovery-symbols> <symbol-bytes>
+  archive_nominal=$(( $1 * $2 ))
+}
+
+account_archive() {   # account_archive <base> <recovery> <symbol-bytes>
   archive_total=`archive_bytes "$1"`
-  meta_total=`file_bytes "$2"`
-  payload_total=$((archive_total - meta_total))
-  test "$payload_total" -ge 0 || payload_total=0
+  nominal_payload "$2" "$3"
+  archive_overhead=$((archive_total - archive_nominal))
+  test "$archive_overhead" -ge 0 || archive_overhead=0
+}
+
+# Count recovery symbols encoded as +COUNT in PAR volume names.
+par_recovery_blocks() {   # par_recovery_blocks <base> <ext>
+  _n=0
+  for _f in "$1".vol*."$2"; do
+    test -f "$_f" || continue
+    _c=${_f##*+}
+    _c=${_c%%.*}
+    case $_c in ''|*[!0-9]*) continue ;; esac
+    # Strip zero padding to avoid octal interpretation.
+    while :; do
+      case $_c in 0?*) _c=${_c#0} ;; *) break ;; esac
+    done
+    _n=$((_n + _c))
+  done
+  echo "$_n"
 }
 
 tree_bytes() {
@@ -166,10 +183,12 @@ bench_open_output() {
     printf 'recovery_slices,layout,jobs,damage,damaged_cells,' >> "$csv"
     printf 'damaged_slices,column_depth,column_groups,' >> "$csv"
     printf 'repaired_bytes,' >> "$csv"
-    printf 'archive_bytes,payload_bytes,meta_bytes,' >> "$csv"
+    printf 'archive_bytes,nominal_payload_bytes,' >> "$csv"
+    printf 'format_overhead_bytes,' >> "$csv"
     printf 'scan_bytes,elapsed_us,maxrss_kb,' >> "$csv"
     printf 'in_blocks,' >> "$csv"
-    printf 'out_blocks,cold,status,expect,work_ok,note\n' >> "$csv"
+    printf 'out_blocks,cold,status,expect,work_ok,' >> "$csv"
+    printf 'expected_unsupported,note\n' >> "$csv"
   }
   test -f "$jsonl" || : > "$jsonl"
   test -f "$cmdlog" || : > "$cmdlog"
@@ -184,8 +203,8 @@ reset_row() {
   f_recovery_spec=;  f_recovery_slices=0;  f_layout=;  f_damage=
   f_damaged_cells=0;  f_damaged_slices=0;  f_column_depth=0
   f_column_groups=0;  f_repaired_bytes=0;  f_archive_bytes=0
-  f_payload_bytes=0;  f_meta_bytes=0
-  f_scan_bytes=0;  f_expect=0;  f_note=
+  f_nominal_payload_bytes=0;  f_format_overhead_bytes=0
+  f_scan_bytes=0;  f_expect=0;  f_unsupported=;  f_note=;  f_refusals=
 }
 
 emit_row() {
@@ -195,11 +214,13 @@ emit_row() {
     "$f_cell_bytes" "$f_slices" "$f_recovery_spec" "$f_recovery_slices" \
     "$f_layout" "${jobs:-auto}" "$f_damage" "$f_damaged_cells" \
     "$f_damaged_slices" >> "$csv"
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$f_column_depth" "$f_column_groups" "$f_repaired_bytes" \
-    "$f_archive_bytes" "$f_payload_bytes" "$f_meta_bytes" \
+    "$f_archive_bytes" "$f_nominal_payload_bytes" \
+    "$f_format_overhead_bytes" \
     "$f_scan_bytes" "$m_us" "$m_rss" "$m_in" "$m_out" \
-    "$cold" "$m_status" "$f_expect" "$work_ok" "$f_note" >> "$csv"
+    "$cold" "$m_status" "$f_expect" "$work_ok" "$f_unsupported" \
+    "$f_note" >> "$csv"
 
   printf '{"run_id":%s,"experiment":"%s","tool":"%s","op":"%s","rep":%s,' \
     "$run_id" "$f_experiment" "$f_tool" "$f_op" "$rep" >> "$jsonl"
@@ -213,18 +234,21 @@ emit_row() {
     "${jobs:-auto}" "$f_damage" "$f_damaged_cells" >> "$jsonl"
   printf '"damaged_slices":%s,"column_depth":%s,"column_groups":%s,' \
     "$f_damaged_slices" "$f_column_depth" "$f_column_groups" >> "$jsonl"
-  printf '"repaired_bytes":%s,"archive_bytes":%s,"payload_bytes":%s,' \
-    "$f_repaired_bytes" "$f_archive_bytes" "$f_payload_bytes" >> "$jsonl"
-  printf '"meta_bytes":%s,"scan_bytes":%s,' \
-    "$f_meta_bytes" "$f_scan_bytes" >> "$jsonl"
+  printf '"repaired_bytes":%s,"archive_bytes":%s,' \
+    "$f_repaired_bytes" "$f_archive_bytes" >> "$jsonl"
+  printf '"nominal_payload_bytes":%s,"format_overhead_bytes":%s,' \
+    "$f_nominal_payload_bytes" "$f_format_overhead_bytes" >> "$jsonl"
+  printf '"scan_bytes":%s,' "$f_scan_bytes" >> "$jsonl"
   printf '"elapsed_us":%s,"maxrss_kb":%s,"in_blocks":%s,"out_blocks":%s,' \
     "$m_us" "$m_rss" "$m_in" "$m_out" >> "$jsonl"
-  printf '"cold":"%s","status":%s,"expect":%s,"work_ok":%s,"note":"%s"}\n' \
-    "$cold" "$m_status" "$f_expect" "$work_ok" "$f_note" >> "$jsonl"
+  printf '"cold":"%s","status":%s,"expect":%s,"work_ok":%s,' \
+    "$cold" "$m_status" "$f_expect" "$work_ok" >> "$jsonl"
+  printf '"expected_unsupported":"%s","note":"%s"}\n' \
+    "$f_unsupported" "$f_note" >> "$jsonl"
 }
 
-# Setup runs before timing; check sets sig afterward. Signature or expected
-# status mismatches invalidate the row. f_expect=-1 accepts any status.
+# Setup runs before timing; check sets sig afterward. f_expect=-1 accepts
+# any foreign-tool status. f_refusals lists unsupported configurations.
 
 setup_none() { :; }
 check_none() { sig=-; }
@@ -248,13 +272,19 @@ bench_measure() {   # <setup-fn> <check-fn> <command...>
     m_in=`sed -n 's/^in_blocks=//p' "$work/timing"`
     m_out=`sed -n 's/^out_blocks=//p' "$work/timing"`
     : "${m_us:=0}" "${m_rss:=0}" "${m_in:=0}" "${m_out:=0}"
+    # Force an unexpected status in the second repetition.
+    if test "${XPAR_BENCH_BREAK:-}" = status && test "$rep" -eq 2 &&
+       test "$f_expect" -eq 0; then
+      m_status=9
+    fi
 
     sig=?
     work_ok=1
     "$_check" "$rep" || work_ok=0
     if test "$f_expect" -ge 0 && test "$m_status" -ne "$f_expect"; then
       work_ok=0
-      warn "$f_experiment/$f_op repetition $rep: status $m_status (expected $f_expect)"
+      warn "$f_experiment/$f_op repetition $rep: status $m_status\
+ (expected $f_expect)"
       sed 's/^/  | /' "$work/out.log" >&2 | head -8
     fi
     if test "$rep" -eq 1; then _sig0=$sig
@@ -264,14 +294,25 @@ bench_measure() {   # <setup-fn> <check-fn> <command...>
       warn "  repetition 1: $_sig0"
       warn "  repetition $rep: $sig"
     fi
-    #  A tool that refused with a stated status is not a broken
-    #  measurement: a parameter sweep runs into corners the planner
-    #  cannot express, and those are a result. Only a repetition that
-    #  ran and did the wrong work fails the run.
+    # Only caller-declared statuses represent unsupported configurations.
+    _refusal=no
+    if test "$m_status" -ne 0; then
+      test "$f_expect" -eq -1 && _refusal=yes
+      for _s in $f_refusals; do
+        test "$m_status" -eq "$_s" && _refusal=yes
+      done
+    fi
     if test "$work_ok" -eq 1; then :
-    elif test "$m_status" -ne 0; then
+    elif test "$_refusal" = yes; then
+      # Preserve the refusal reason for result consumers.
+      if test -z "$f_unsupported"; then
+        f_unsupported=`head -1 "$work/out.log" 2>/dev/null |
+          sed 's/^xpar: //' | tr -d ',"' | cut -c1-90`
+        test -n "$f_unsupported" || f_unsupported="status $m_status"
+      fi
       refused_rows=$((refused_rows + 1))
     else
+      warn "$f_experiment/$f_op $f_tool repetition $rep: validation failed"
       bad_rows=$((bad_rows + 1))
     fi
     emit_row
@@ -411,6 +452,27 @@ bench_provenance() {
       test -r "$top/tests/$_f" || continue
       printf ',\n    "tests/%s": %s' "$_f" "`_sha \"$top/tests/$_f\"`"
     done
+    printf '\n  },\n'
+    printf '  "competitors": {\n'
+    _first=1
+    if test -n "${competitors:-}" && test -r "$competitors"; then
+      # Hash baseline binaries rather than trusting version strings.
+      _bins=`sed -n 's/.*"binary":"\([^"]*\)".*/\1/p' "$competitors"`
+      for _b in $_bins; do
+        case $_b in *.js) continue ;; esac
+        test -x "$_b" || continue
+        test "$_first" -eq 1 || printf ',\n'
+        _first=0
+        printf '    "%s": %s' "$_b" "`_sha \"$_b\"`"
+      done
+      for _b in `sed -n 's/.*"binary":"[^"]* \([^"]*\.js\)".*/\1/p' \
+                 "$competitors"`; do
+        test -r "$_b" || continue
+        test "$_first" -eq 1 || printf ',\n'
+        _first=0
+        printf '    "%s": %s' "$_b" "`_sha \"$_b\"`"
+      done
+    fi
     printf '\n  },\n'
     printf '  "tools": {\n'
     _first=1

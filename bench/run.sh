@@ -90,8 +90,11 @@ setup_create() { rm -f "$sdir"/set*.xpa; }
 
 check_create() {
   if test ! -f "$sdir/set.xpa"; then sig=no-set;  return 1; fi
-  f_archive_bytes=`archive_bytes "$sdir/set"`
   read_geometry "$sdir/set.xpa"
+  account_archive "$sdir/set" "$g_r" "$g_z"
+  f_archive_bytes=$archive_total
+  f_nominal_payload_bytes=$archive_nominal
+  f_format_overhead_bytes=$archive_overhead
   f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
   f_recovery_slices=$g_r
   sig="archive=$f_archive_bytes slices=$g_s recovery=$g_r"
@@ -189,6 +192,8 @@ for codec in $codecs; do
     f_experiment=throughput;  f_op=create;  f_codec=$codec;  f_field=$field
     f_recovery_spec=$rec;  f_layout=sidecar;  f_corpus=random
     f_corpus_bytes=$size;  f_slice_size=$slice;  f_expect=0
+    # Status 4 (usage) and 7 (no feasible plan) are valid sweep results.
+    f_refusals="4 7"
     # shellcheck disable=SC2086
     bench_measure setup_create check_create \
       "$xpar" create --reproducible --dedup=none --align=none \

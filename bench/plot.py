@@ -32,7 +32,8 @@ MIB = 1048576.0
 NUMERIC = ("rep", "seed", "corpus_bytes", "field", "slice_size",
            "cell_bytes", "slices", "recovery_slices", "damaged_cells",
            "damaged_slices", "column_depth", "column_groups",
-           "repaired_bytes", "archive_bytes", "scan_bytes", "elapsed_us",
+           "repaired_bytes", "archive_bytes", "nominal_payload_bytes",
+           "format_overhead_bytes", "scan_bytes", "elapsed_us",
            "maxrss_kb", "in_blocks", "out_blocks", "status", "expect",
            "work_ok")
 
@@ -132,7 +133,13 @@ def aggregate(rows):
                     damaged_slices=rs[0]["damaged_slices"],
                     column_depth=rs[0]["column_depth"],
                     column_groups=rs[0]["column_groups"],
-                    archive_bytes=rs[0]["archive_bytes"])
+                    archive_bytes=rs[0]["archive_bytes"],
+                    nominal_payload_bytes=rs[0]["nominal_payload_bytes"],
+                    format_overhead_bytes=(
+                        rs[0]["format_overhead_bytes"]),
+                    expected_unsupported=(
+                        rs[0].get("expected_unsupported") or
+                        rs[0].get("unsupported", "")))
         if not usable:
             base.update(median_us=0, min_us=0, max_us=0, spread_pct=0.0,
                         create_mib_s=0.0, scan_mib_s=0.0,
@@ -167,8 +174,10 @@ def aggregate(rows):
 SUMMARY_FIELDS = [
     "experiment", "tool", "op", "codec", "field", "slice_size", "cell_bytes",
     "recovery_spec", "layout", "damage", "note", "reps", "usable", "status",
-    "expect", "recovered", "corpus_bytes", "slices", "recovery_slices", "damaged_cells",
-    "damaged_slices", "column_depth", "column_groups", "archive_bytes",
+    "expect", "recovered", "expected_unsupported", "corpus_bytes",
+    "slices", "recovery_slices", "damaged_cells", "damaged_slices",
+    "column_depth", "column_groups", "archive_bytes",
+    "nominal_payload_bytes", "format_overhead_bytes",
     "scan_bytes", "repaired_bytes", "median_us", "min_us", "max_us",
     "spread_pct", "create_mib_s", "scan_mib_s", "repaired_mib_s",
     "read_amplification", "phys_read_mib", "phys_write_mib", "maxrss_kb"]

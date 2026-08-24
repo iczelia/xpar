@@ -158,10 +158,11 @@ setup_create() { rm -f "$sdir"/set*.xpa; }
 
 check_create() {
   test -f "$sdir/set.xpa" || { sig=no-set;  return 1; }
-  split_archive "$sdir/set" "$sdir/set.xpa"
-  f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-  f_meta_bytes=$meta_total
   read_geometry "$sdir/set.xpa"
+  account_archive "$sdir/set" "$g_r" "$g_z"
+  f_archive_bytes=$archive_total
+  f_nominal_payload_bytes=$archive_nominal
+  f_format_overhead_bytes=$archive_overhead
   f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
   f_recovery_slices=$g_r
   sig="archive=$f_archive_bytes slices=$g_s recovery=$g_r"
@@ -352,12 +353,15 @@ exp_scatter_par() {   # <kind> <label> <binary> <blocksize>
     rm -f "$pdir"/set.par2 "$pdir"/set.vol*.par2 "$pdir"/set*.par3
   }
   check_par_create() {
-    split_archive "$pdir/set" "$pdir/set.$_kind"
+    _rb=`par_recovery_blocks "$pdir/set" "$_kind"`
+    account_archive "$pdir/set" "$_rb" "$_bs"
     par_archive=$archive_total
-    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-    f_meta_bytes=$meta_total
+    f_archive_bytes=$archive_total
+    f_nominal_payload_bytes=$archive_nominal
+    f_format_overhead_bytes=$archive_overhead
+    f_recovery_slices=$_rb
     test "$par_archive" -gt 0 || { sig=no-set;  return 1; }
-    sig="archive=$par_archive payload=$payload_total"
+    sig="archive=$par_archive blocks=$_rb"
   }
   reset_row
   f_experiment=scatter;  f_op=create;  f_tool=$_lab;  f_layout=$_kind
@@ -444,6 +448,11 @@ exp_cellsize() {
       "$xpar" verify --json "$cdir/set.xpa"
 
     # Keep fault count fixed so repaired bytes scale with Y.
+    if test "$(( (64 + g_k - 1) / g_k ))" -gt "$g_r"; then
+      say "cellsize: 64 faults exceed the budget at Y=$g_y; skipping"
+      rm -rf "$cdir"
+      continue
+    fi
     ops_spread 64
     reset_row
     f_experiment=cellsize;  f_op=repair;  f_codec=$g_codec;  f_field=$g_field
@@ -467,6 +476,13 @@ exp_amplify() {
   say "geometry: Z=$g_z Y=$g_y K=$g_k S=$g_s R=$g_r"
   for n in 1 2 8 32 128 512; do
     test "$n" -le "$g_s" || break
+    #  ops_spread fills columns before it deepens them, so n faults
+    #  reach depth ceil(n/K). Past R the repair must refuse, which is
+    #  the envelope experiment's subject, not this one's.
+    if test "$(( (n + g_k - 1) / g_k ))" -gt "$g_r"; then
+      say "amplify: $n faults exceed the budget at this size; skipping"
+      continue
+    fi
     ops_spread "$n"
     test -n "$damage_ops" || continue
     reset_row
@@ -562,10 +578,11 @@ exp_tree() {
   }
   check_tree_create() {
     test -f "$tbase.xpa" || { sig=no-set;  return 1; }
-    split_archive "$tbase" "$tbase.xpa"
-    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-    f_meta_bytes=$meta_total
     read_geometry "$tbase.xpa"
+    account_archive "$tbase" "$g_r" "$g_z"
+    f_archive_bytes=$archive_total
+    f_nominal_payload_bytes=$archive_nominal
+    f_format_overhead_bytes=$archive_overhead
     f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
     f_recovery_slices=$g_r
     sig="archive=$archive_total slices=$g_s recovery=$g_r"
@@ -678,10 +695,13 @@ base_one_par2() {   # <label> <binary>
   setup_par2_create() { rm -f "$pdir"/set*.par2; }
   check_par2_create() {
     test -f "$pdir/set.par2" || { sig=no-set;  return 1; }
-    split_archive "$pdir/set" "$pdir/set.par2"
-    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-    f_meta_bytes=$meta_total
-    sig="archive=$archive_total payload=$payload_total"
+    _rb=`par_recovery_blocks "$pdir/set" par2`
+    account_archive "$pdir/set" "$_rb" 1048576
+    f_archive_bytes=$archive_total
+    f_nominal_payload_bytes=$archive_nominal
+    f_format_overhead_bytes=$archive_overhead
+    f_recovery_slices=$_rb
+    sig="archive=$archive_total blocks=$_rb"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=$_lab;  f_layout=par2
@@ -708,9 +728,13 @@ base_one_par2() {   # <label> <binary>
     # shellcheck disable=SC2086
     "$damage" "$pdir/data.bin" $par_ops || return 1
   }
+  # Judge foreign repairs by output bytes, not exit conventions.
   check_par2_repair() {
-    cmp -s "$pdir/data.bin" "$corpus" || { sig=not-repaired;  return 1; }
-    sig="par2 blocks=32"
+    if cmp -s "$pdir/data.bin" "$corpus"; then
+      f_note="blocks=32 recovered";  sig="recovered blocks=32"
+    else
+      f_note="blocks=32 lost";  sig="lost blocks=32"
+    fi
   }
   reset_row
   f_experiment=baseline;  f_op=repair;  f_tool=$_lab;  f_layout=par2
@@ -732,10 +756,13 @@ base_one_parpar() {
   setup_pp() { rm -f "$pdir"/set*.par2; }
   check_pp() {
     test -f "$pdir/set.par2" || { sig=no-set;  return 1; }
-    split_archive "$pdir/set" "$pdir/set.par2"
-    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-    f_meta_bytes=$meta_total
-    sig="archive=$archive_total payload=$payload_total"
+    _rb=`par_recovery_blocks "$pdir/set" par2`
+    account_archive "$pdir/set" "$_rb" 1048576
+    f_archive_bytes=$archive_total
+    f_nominal_payload_bytes=$archive_nominal
+    f_format_overhead_bytes=$archive_overhead
+    f_recovery_slices=$_rb
+    sig="archive=$archive_total blocks=$_rb"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=parpar;  f_layout=par2
@@ -755,10 +782,13 @@ base_one_par3() {
   setup_par3_create() { rm -f "$pdir"/set*.par3; }
   check_par3_create() {
     test -f "$pdir/set.par3" || { sig=no-set;  return 1; }
-    split_archive "$pdir/set" "$pdir/set.par3"
-    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
-    f_meta_bytes=$meta_total
-    sig="archive=$archive_total payload=$payload_total"
+    _rb=`par_recovery_blocks "$pdir/set" par3`
+    account_archive "$pdir/set" "$_rb" 1048576
+    f_archive_bytes=$archive_total
+    f_nominal_payload_bytes=$archive_nominal
+    f_format_overhead_bytes=$archive_overhead
+    f_recovery_slices=$_rb
+    sig="archive=$archive_total blocks=$_rb"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=par3cmdline;  f_layout=par3
@@ -784,9 +814,13 @@ base_one_par3() {
     # shellcheck disable=SC2086
     "$damage" "$pdir/data.bin" $par_ops || return 1
   }
+  # Judge foreign repairs by output bytes, not exit conventions.
   check_par3_repair() {
-    cmp -s "$pdir/data.bin" "$corpus" || { sig=not-repaired;  return 1; }
-    sig="par3 blocks=32"
+    if cmp -s "$pdir/data.bin" "$corpus"; then
+      f_note="blocks=32 recovered";  sig="recovered blocks=32"
+    else
+      f_note="blocks=32 lost";  sig="lost blocks=32"
+    fi
   }
   reset_row
   f_experiment=baseline;  f_op=repair;  f_tool=par3cmdline;  f_layout=par3
