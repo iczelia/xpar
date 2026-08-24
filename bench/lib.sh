@@ -62,6 +62,18 @@ archive_bytes() {
   echo "$_t"
 }
 
+# The protection archive splits into the volumes that carry recovery
+# symbols and the index that carries the manifest and the checksum
+# tables. Reporting only the total confuses the parity a format writes
+# with the bookkeeping it needs to place it, and those scale differently
+# with the erasure unit.
+split_archive() {   # split_archive <base> <index-file>
+  archive_total=`archive_bytes "$1"`
+  meta_total=`file_bytes "$2"`
+  payload_total=$((archive_total - meta_total))
+  test "$payload_total" -ge 0 || payload_total=0
+}
+
 tree_bytes() {
   find "$1" -type f -exec cat {} + 2>/dev/null | wc -c | tr -d ' '
 }
@@ -154,7 +166,9 @@ bench_open_output() {
     printf 'recovery_slices,layout,jobs,damage,damaged_cells,' >> "$csv"
     printf 'damaged_slices,column_depth,column_groups,' >> "$csv"
     printf 'repaired_bytes,' >> "$csv"
-    printf 'archive_bytes,scan_bytes,elapsed_us,maxrss_kb,in_blocks,' >> "$csv"
+    printf 'archive_bytes,payload_bytes,meta_bytes,' >> "$csv"
+    printf 'scan_bytes,elapsed_us,maxrss_kb,' >> "$csv"
+    printf 'in_blocks,' >> "$csv"
     printf 'out_blocks,cold,status,expect,work_ok,note\n' >> "$csv"
   }
   test -f "$jsonl" || : > "$jsonl"
@@ -170,6 +184,7 @@ reset_row() {
   f_recovery_spec=;  f_recovery_slices=0;  f_layout=;  f_damage=
   f_damaged_cells=0;  f_damaged_slices=0;  f_column_depth=0
   f_column_groups=0;  f_repaired_bytes=0;  f_archive_bytes=0
+  f_payload_bytes=0;  f_meta_bytes=0
   f_scan_bytes=0;  f_expect=0;  f_note=
 }
 
@@ -180,9 +195,10 @@ emit_row() {
     "$f_cell_bytes" "$f_slices" "$f_recovery_spec" "$f_recovery_slices" \
     "$f_layout" "${jobs:-auto}" "$f_damage" "$f_damaged_cells" \
     "$f_damaged_slices" >> "$csv"
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$f_column_depth" "$f_column_groups" "$f_repaired_bytes" \
-    "$f_archive_bytes" "$f_scan_bytes" "$m_us" "$m_rss" "$m_in" "$m_out" \
+    "$f_archive_bytes" "$f_payload_bytes" "$f_meta_bytes" \
+    "$f_scan_bytes" "$m_us" "$m_rss" "$m_in" "$m_out" \
     "$cold" "$m_status" "$f_expect" "$work_ok" "$f_note" >> "$csv"
 
   printf '{"run_id":%s,"experiment":"%s","tool":"%s","op":"%s","rep":%s,' \
@@ -197,8 +213,10 @@ emit_row() {
     "${jobs:-auto}" "$f_damage" "$f_damaged_cells" >> "$jsonl"
   printf '"damaged_slices":%s,"column_depth":%s,"column_groups":%s,' \
     "$f_damaged_slices" "$f_column_depth" "$f_column_groups" >> "$jsonl"
-  printf '"repaired_bytes":%s,"archive_bytes":%s,"scan_bytes":%s,' \
-    "$f_repaired_bytes" "$f_archive_bytes" "$f_scan_bytes" >> "$jsonl"
+  printf '"repaired_bytes":%s,"archive_bytes":%s,"payload_bytes":%s,' \
+    "$f_repaired_bytes" "$f_archive_bytes" "$f_payload_bytes" >> "$jsonl"
+  printf '"meta_bytes":%s,"scan_bytes":%s,' \
+    "$f_meta_bytes" "$f_scan_bytes" >> "$jsonl"
   printf '"elapsed_us":%s,"maxrss_kb":%s,"in_blocks":%s,"out_blocks":%s,' \
     "$m_us" "$m_rss" "$m_in" "$m_out" >> "$jsonl"
   printf '"cold":"%s","status":%s,"expect":%s,"work_ok":%s,"note":"%s"}\n' \
@@ -353,6 +371,56 @@ bench_environment() {
     printf '  "jobs": %s\n'                  "`jstr_of "$jobs"`"
     printf '}\n'
   } > "$out/environment.json"
+  bench_provenance
+}
+
+# Provenance. A result set that cannot be tied to an exact binary and an
+# exact harness is a set of numbers, not a measurement. The benchmark host
+# usually builds from a distribution tarball with no .git, so the commit
+# alone is not enough: hash what actually ran.
+
+_sha() {
+  test -r "$1" || { echo null;  return; }
+  _h=`sha256sum "$1" 2>/dev/null | cut -c1-64` ||
+    _h=`shasum -a 256 "$1" 2>/dev/null | cut -c1-64`
+  test -n "$_h" && echo "\"$_h\"" || echo null
+}
+
+bench_provenance() {
+  _out=$out/provenance.json
+  {
+    printf '{\n  "schema": 1,\n'
+    printf '  "recorded_utc": %s,\n' \
+      "`jstr_of \"\`date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null\`\"`"
+    _ver=`"$xpar" --version 2>&1 | head -1`
+    printf '  "xpar_version": %s,\n' "`jstr_of \"$_ver\"`"
+    printf '  "xpar_binary_sha256": %s,\n' "`_sha \"$xpar\"`"
+    printf '  "source_tarball": %s,\n' "`jstr_of \"${XPAR_SOURCE:-}\"`"
+    printf '  "source_tarball_sha256": %s,\n' \
+      "`test -n \"${XPAR_SOURCE:-}\" && _sha \"$XPAR_SOURCE\" || echo null`"
+    printf '  "harness": {\n'
+    _first=1
+    for _f in lib.sh run.sh experiments.sh competitors.sh mktree.sh \
+              plot.py timeit.c; do
+      test -r "$top/bench/$_f" || continue
+      test "$_first" -eq 1 || printf ',\n'
+      _first=0
+      printf '    "bench/%s": %s' "$_f" "`_sha \"$top/bench/$_f\"`"
+    done
+    for _f in mkdata.c damage.c; do
+      test -r "$top/tests/$_f" || continue
+      printf ',\n    "tests/%s": %s' "$_f" "`_sha \"$top/tests/$_f\"`"
+    done
+    printf '\n  },\n'
+    printf '  "tools": {\n'
+    _first=1
+    for _t in "$mkdata" "$damage" "$timeit"; do
+      test "$_first" -eq 1 || printf ',\n'
+      _first=0
+      printf '    "%s": %s' "`basename \"$_t\"`" "`_sha \"$_t\"`"
+    done
+    printf '\n  }\n}\n'
+  } > "$_out"
 }
 
 bench_finish() {

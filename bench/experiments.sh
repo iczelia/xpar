@@ -158,7 +158,9 @@ setup_create() { rm -f "$sdir"/set*.xpa; }
 
 check_create() {
   test -f "$sdir/set.xpa" || { sig=no-set;  return 1; }
-  f_archive_bytes=`archive_bytes "$sdir/set"`
+  split_archive "$sdir/set" "$sdir/set.xpa"
+  f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+  f_meta_bytes=$meta_total
   read_geometry "$sdir/set.xpa"
   f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
   f_recovery_slices=$g_r
@@ -262,16 +264,23 @@ par_repair_argv() {   # <kind> <bin> <dir>: prints the argv to time
 }
 
 # Sample powers of two up to scattered-fault capacity.
+# Powers of two to see the shape, plus the three points either side of R
+# and of R*K, because a claim about where a format stops needs the point
+# where it stopped and not the octave that contains it.
 scatter_points() {   # <slices> <recovery> <columns>
-  _cap=$(( $2 * $3 ))
-  test "$_cap" -le "$1" || _cap=$1
-  scatter_ns=
+  _s=$1;  _r=$2;  _k=$3
+  _cap=$(( _r * _k ))
+  test "$_cap" -le "$_s" || _cap=$_s
+  _pts=
   _n=1
   while test "$_n" -le "$_cap"; do
-    scatter_ns="$scatter_ns $_n"
+    _pts="$_pts $_n"
     _n=$((_n * 2))
   done
-  test "$_n" -gt "$_cap" && scatter_ns="$scatter_ns $_cap"
+  for _b in $((_r - 1)) $_r $((_r + 1)) $((_cap - 1)) $_cap; do
+    test "$_b" -ge 1 && test "$_b" -le "$_s" && _pts="$_pts $_b"
+  done
+  scatter_ns=`for _p in $_pts; do echo "$_p"; done | sort -n -u | tr '\n' ' '`
 }
 
 exp_scatter() {
@@ -343,10 +352,12 @@ exp_scatter_par() {   # <kind> <label> <binary> <blocksize>
     rm -f "$pdir"/set.par2 "$pdir"/set.vol*.par2 "$pdir"/set*.par3
   }
   check_par_create() {
-    par_archive=`archive_bytes "$pdir/set"`
-    f_archive_bytes=$par_archive
+    split_archive "$pdir/set" "$pdir/set.$_kind"
+    par_archive=$archive_total
+    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+    f_meta_bytes=$meta_total
     test "$par_archive" -gt 0 || { sig=no-set;  return 1; }
-    sig="archive=$par_archive"
+    sig="archive=$par_archive payload=$payload_total"
   }
   reset_row
   f_experiment=scatter;  f_op=create;  f_tool=$_lab;  f_layout=$_kind
@@ -551,8 +562,13 @@ exp_tree() {
   }
   check_tree_create() {
     test -f "$tbase.xpa" || { sig=no-set;  return 1; }
-    f_archive_bytes=`archive_bytes "$tbase"`
-    sig="archive=$f_archive_bytes"
+    split_archive "$tbase" "$tbase.xpa"
+    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+    f_meta_bytes=$meta_total
+    read_geometry "$tbase.xpa"
+    f_slice_size=$g_z;  f_cell_bytes=$g_y;  f_slices=$g_s
+    f_recovery_slices=$g_r
+    sig="archive=$archive_total slices=$g_s recovery=$g_r"
   }
   setup_tree_repair() {
     rm -rf "$tdir"
@@ -662,8 +678,10 @@ base_one_par2() {   # <label> <binary>
   setup_par2_create() { rm -f "$pdir"/set*.par2; }
   check_par2_create() {
     test -f "$pdir/set.par2" || { sig=no-set;  return 1; }
-    f_archive_bytes=`archive_bytes "$pdir/set"`
-    sig="archive=$f_archive_bytes"
+    split_archive "$pdir/set" "$pdir/set.par2"
+    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+    f_meta_bytes=$meta_total
+    sig="archive=$archive_total payload=$payload_total"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=$_lab;  f_layout=par2
@@ -714,8 +732,10 @@ base_one_parpar() {
   setup_pp() { rm -f "$pdir"/set*.par2; }
   check_pp() {
     test -f "$pdir/set.par2" || { sig=no-set;  return 1; }
-    f_archive_bytes=`archive_bytes "$pdir/set"`
-    sig="archive=$f_archive_bytes"
+    split_archive "$pdir/set" "$pdir/set.par2"
+    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+    f_meta_bytes=$meta_total
+    sig="archive=$archive_total payload=$payload_total"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=parpar;  f_layout=par2
@@ -735,8 +755,10 @@ base_one_par3() {
   setup_par3_create() { rm -f "$pdir"/set*.par3; }
   check_par3_create() {
     test -f "$pdir/set.par3" || { sig=no-set;  return 1; }
-    f_archive_bytes=`archive_bytes "$pdir/set"`
-    sig="archive=$f_archive_bytes"
+    split_archive "$pdir/set" "$pdir/set.par3"
+    f_archive_bytes=$archive_total;  f_payload_bytes=$payload_total
+    f_meta_bytes=$meta_total
+    sig="archive=$archive_total payload=$payload_total"
   }
   reset_row
   f_experiment=baseline;  f_op=create;  f_tool=par3cmdline;  f_layout=par3

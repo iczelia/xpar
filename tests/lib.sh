@@ -29,7 +29,14 @@ phase="(starting up)"
 # Override the printed seed to reproduce a failure.
 : "${XPAR_TEST_SEED:=20260823}"
 
-hard_error() { echo "$prog: $*" >&2;  exit 99; }
+hard_error() {
+  echo "$prog: $*" >&2
+  if test -n "${log:-}" && test -s "$log"; then
+    echo "$prog:   last command output:" >&2
+    sed 's/^/  | /' "$log" >&2
+  fi
+  exit 99
+}
 skip_all()   { echo "$prog: SKIP: $*" >&2;  exit 77; }
 
 if test -n "${XPAR:-}"; then

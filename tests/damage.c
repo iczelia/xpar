@@ -25,6 +25,7 @@
 #endif
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,7 +284,14 @@ static void op_truncate(unsigned long long len) {
   }
   if (fclose(out)) { perror(tmp);  exit(2); }
   img_close();
-  if (rename(tmp, img_path)) { perror(img_path);  exit(2); }
+  /* rename() refuses an existing destination on Windows, so clear it
+     first. The file is closed by now, which Windows also insists on. */
+  remove(img_path);
+  if (rename(tmp, img_path)) {
+    fprintf(stderr, "damage: truncate: cannot move %s over %s: %s\n",
+            tmp, img_path, strerror(errno));
+    exit(2);
+  }
   free(tmp);
   img_open(img_path);
 }
