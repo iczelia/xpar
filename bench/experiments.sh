@@ -396,7 +396,20 @@ exp_scatter_par() {   # <kind> <label> <binary> <blocksize>
     fi
   }
 
-  for n in $scatter_ns; do
+  #  A block code stops at its own recovery-block count, which is not
+  #  where xpar stops, so sample around it too. Without this the sweep
+  #  reports the last power of two that survived and the boundary stays
+  #  unbracketed, which is a weaker claim than the data can support.
+  _pts=$scatter_ns
+  : "${_rb:=0}"
+  for _b in $((_rb - 1)) $_rb $((_rb + 1)); do
+    test "$_b" -ge 1 && test "$_b" -le "$((scat_s * scat_k))" &&
+      _pts="$_pts $_b"
+  done
+  _pts=`for _p in $_pts; do echo "$_p"; done | sort -n -u | tr '\n' ' '`
+  say "$_lab: fault counts:$_pts"
+
+  for n in $_pts; do
     for shape in concentrated spread; do
       g_z=$scat_z;  g_y=$scat_y;  g_k=$scat_k;  g_s=$scat_s
       if test "$shape" = concentrated; then ops_concentrated "$n"
