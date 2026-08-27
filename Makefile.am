@@ -39,7 +39,7 @@ noinst_HEADERS = \
   src/container.h src/auth.h src/manifest.h src/chunk.h src/slice.h src/resync.h \
   src/plan.h src/json.h src/pathname.h src/volname.h \
   src/ops/ops.h src/ops/chain.h src/ops/vset.h src/ops/volimg.h \
-  src/ops/undo.h \
+  src/ops/undo.h src/platform/port-win-path.h \
   src/kernel/gf.h src/kernel/gf-impl.h src/kernel/gf-rvv-int.h \
   src/kernel/armour.h src/kernel/armour-impl.h \
   src/kernel/codec.h src/kernel/codec-int.h \
@@ -120,14 +120,6 @@ libxpar_sse42_a_SOURCES    = src/kernel/crc32c-sse42.c
 libxpar_sse42_a_CFLAGS     = $(AM_CFLAGS) $(SSE42_CFLAGS)
 libxpar_sse42_a_CPPFLAGS   = $(AM_CPPFLAGS)
 xpar_LDADD                += libxpar_sse42.a
-endif
-
-if HAVE_VPCLMUL
-noinst_LIBRARIES          += libxpar_vpclmul.a
-libxpar_vpclmul_a_SOURCES  = src/kernel/crc32c-vpclmul.c
-libxpar_vpclmul_a_CFLAGS    = $(AM_CFLAGS) $(VPCLMUL_CFLAGS)
-libxpar_vpclmul_a_CPPFLAGS  = $(AM_CPPFLAGS)
-xpar_LDADD                 += libxpar_vpclmul.a
 endif
 
 if HAVE_AVX2
@@ -275,6 +267,7 @@ AM_TESTS_ENVIRONMENT = \
   MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
   DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
   FORGE='$(abs_top_builddir)/tests/forge$(EXEEXT)';   export FORGE; \
+  TIMEIT='$(abs_top_builddir)/bench/timeit$(EXEEXT)'; export TIMEIT; \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
   XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
   XPAR_SH='$(SHELL)';                                 export XPAR_SH; \
