@@ -18,13 +18,15 @@
 
 #include <riscv_vector.h>
 
-/*  Vector halfword loads are host-endian; GF16 stream symbols are
-    little-endian.  */
+/*  GF16 symbols are little-endian; vector loads use host byte order.  */
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) &&               \
+    __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 static vuint16mf4_t rc_byteswap16(vuint16mf4_t v, sz vl) {
   return __riscv_vor_vv_u16mf4(
     __riscv_vsll_vx_u16mf4(v, 8, vl),
     __riscv_vsrl_vx_u16mf4(v, 8, vl), vl);
 }
+#endif
 
 static vuint16mf4_t rc_load16(const u16 * p, sz vl) {
   vuint16mf4_t v = __riscv_vle16_v_u16mf4(p, vl);
@@ -58,14 +60,16 @@ static vuint16mf4_t rc_mul16(vuint16mf4_t in, u16 c, sz vl) {
     __riscv_vnsrl_wx_u32mf2(fold, 0, vl), 0, vl);
 }
 
+/*  Cache the coefficient because destination writes may alias it.  */
 static void rc_mac16(u8 * db, const u8 * sb, sz n,
                      const xpar_gf16_coef * m) {
   u16 * d = (u16 *) (void *) db;
   const u16 * s = (const u16 *) (const void *) sb;
+  const u16 c = m->c;
   sz symbols = n / 2;
   while (symbols) {
     sz vl = __riscv_vsetvl_e16mf4(symbols);
-    vuint16mf4_t p = rc_mul16(rc_load16(s, vl), m->c, vl);
+    vuint16mf4_t p = rc_mul16(rc_load16(s, vl), c, vl);
     p = __riscv_vxor_vv_u16mf4(p, rc_load16(d, vl), vl);
     rc_store16(d, p, vl);
     d += vl;  s += vl;  symbols -= vl;
@@ -82,10 +86,11 @@ static void rc_mul16_region(u8 * db, const u8 * sb, sz n,
                             const xpar_gf16_coef * m) {
   u16 * d = (u16 *) (void *) db;
   const u16 * s = (const u16 *) (const void *) sb;
+  const u16 c = m->c;
   sz symbols = n / 2;
   while (symbols) {
     sz vl = __riscv_vsetvl_e16mf4(symbols);
-    vuint16mf4_t p = rc_mul16(rc_load16(s, vl), m->c, vl);
+    vuint16mf4_t p = rc_mul16(rc_load16(s, vl), c, vl);
     rc_store16(d, p, vl);
     d += vl;  s += vl;  symbols -= vl;
   }
@@ -94,6 +99,7 @@ static void rc_mul16_region(u8 * db, const u8 * sb, sz n,
 #define RC_FFT16(name, inverse)                                              \
 static void name(u8 * xb, u8 * yb, sz n, const xpar_gf16_coef * m) {        \
   u16 * x = (u16 *) (void *) xb, * y = (u16 *) (void *) yb;                 \
+  const u16 c = m->c;                                                       \
   sz symbols = n / 2;                                                       \
   while (symbols) {                                                         \
     sz vl = __riscv_vsetvl_e16mf4(symbols);                                 \
@@ -101,9 +107,9 @@ static void name(u8 * xb, u8 * yb, sz n, const xpar_gf16_coef * m) {        \
     vuint16mf4_t b = rc_load16(y, vl);                                      \
     if (inverse) {                                                          \
       b = __riscv_vxor_vv_u16mf4(b, a, vl);                                \
-      a = __riscv_vxor_vv_u16mf4(a, rc_mul16(b, m->c, vl), vl);             \
+      a = __riscv_vxor_vv_u16mf4(a, rc_mul16(b, c, vl), vl);                \
     } else {                                                                \
-      a = __riscv_vxor_vv_u16mf4(a, rc_mul16(b, m->c, vl), vl);             \
+      a = __riscv_vxor_vv_u16mf4(a, rc_mul16(b, c, vl), vl);                 \
       b = __riscv_vxor_vv_u16mf4(b, a, vl);                                \
     }                                                                       \
     rc_store16(x, a, vl);                                                   \

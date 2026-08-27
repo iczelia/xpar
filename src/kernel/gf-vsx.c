@@ -59,25 +59,26 @@ static void vx_mul16(vx_u8 v0, vx_u8 v1, u16 c,
   *o1 = vec_mergel(rl, rh);
 }
 
+/*  Cache the coefficient because destination writes may alias it.  */
 static void vx_mac8(u8 * d, const u8 * s, sz n,
                     const xpar_gf8_coef * m) {
+  const u8 c = m->c;
   sz i = 0;
   for (; i + 16 <= n; i += 16) {
     vx_u8 dv = vec_vsx_ld(0, d + i), sv = vec_vsx_ld(0, s + i);
-    vec_vsx_st(dv ^ vx_mul8(sv, m->c), 0, d + i);
+    vec_vsx_st(dv ^ vx_mul8(sv, c), 0, d + i);
   }
   xpar_gf8_mac_ref(d + i, s + i, n - i, m->c);
 }
 
 static void vx_mac8x2(u8 * const d[2], const u8 * s, sz n,
                       const xpar_gf8_coef m[2]) {
+  const u8 c0 = m[0].c, c1 = m[1].c;
   sz i = 0;
   for (; i + 16 <= n; i += 16) {
     vx_u8 v = vec_vsx_ld(0, s + i);
-    for (u32 j = 0; j < 2; j++) {
-      vx_u8 out = vec_vsx_ld(0, d[j] + i) ^ vx_mul8(v, m[j].c);
-      vec_vsx_st(out, 0, d[j] + i);
-    }
+    vec_vsx_st(vec_vsx_ld(0, d[0] + i) ^ vx_mul8(v, c0), 0, d[0] + i);
+    vec_vsx_st(vec_vsx_ld(0, d[1] + i) ^ vx_mul8(v, c1), 0, d[1] + i);
   }
   for (u32 j = 0; j < 2; j++)
     xpar_gf8_mac_ref(d[j] + i, s + i, n - i, m[j].c);
@@ -85,19 +86,21 @@ static void vx_mac8x2(u8 * const d[2], const u8 * s, sz n,
 
 static void vx_mul8_region(u8 * d, const u8 * s, sz n,
                            const xpar_gf8_coef * m) {
+  const u8 c = m->c;
   sz i = 0;
   for (; i + 16 <= n; i += 16)
-    vec_vsx_st(vx_mul8(vec_vsx_ld(0, s + i), m->c), 0, d + i);
+    vec_vsx_st(vx_mul8(vec_vsx_ld(0, s + i), c), 0, d + i);
   xpar_gf8_mul_ref(d + i, s + i, n - i, m->c);
 }
 
 static void vx_mac16(u8 * d, const u8 * s, sz n,
                      const xpar_gf16_coef * m) {
+  const u16 c = m->c;
   sz i = 0;
   for (; i + 32 <= n; i += 32) {
     vx_u8 a, b;
     vx_mul16(vec_vsx_ld(0, s + i), vec_vsx_ld(0, s + i + 16),
-             m->c, &a, &b);
+             c, &a, &b);
     vec_vsx_st(vec_vsx_ld(0, d + i) ^ a, 0, d + i);
     vec_vsx_st(vec_vsx_ld(0, d + i + 16) ^ b, 0, d + i + 16);
   }
@@ -112,11 +115,12 @@ static void vx_mac16x2(u8 * const d[2], const u8 * s, sz n,
 
 static void vx_mul16_region(u8 * d, const u8 * s, sz n,
                             const xpar_gf16_coef * m) {
+  const u16 c = m->c;
   sz i = 0;
   for (; i + 32 <= n; i += 32) {
     vx_u8 a, b;
     vx_mul16(vec_vsx_ld(0, s + i), vec_vsx_ld(0, s + i + 16),
-             m->c, &a, &b);
+             c, &a, &b);
     vec_vsx_st(a, 0, d + i);  vec_vsx_st(b, 0, d + i + 16);
   }
   xpar_gf16_mul_ref(d + i, s + i, n - i, m->c);
@@ -138,11 +142,12 @@ static void vx_xor3(u8 * d, const u8 * a, const u8 * b, sz n) {
 
 #define VX_FFT8(name, ref, inverse)                                          \
 static void name(u8 * x, u8 * y, sz n, const xpar_gf8_coef * m) {           \
+  const u8 c = m->c;                                                        \
   sz i = 0;                                                                 \
   for (; i + 16 <= n; i += 16) {                                            \
     vx_u8 a = vec_vsx_ld(0, x + i), b = vec_vsx_ld(0, y + i);               \
-    if (inverse) { b ^= a;  a ^= vx_mul8(b, m->c); }                         \
-    else { a ^= vx_mul8(b, m->c);  b ^= a; }                                \
+    if (inverse) { b ^= a;  a ^= vx_mul8(b, c); }                           \
+    else { a ^= vx_mul8(b, c);  b ^= a; }                                   \
     vec_vsx_st(a, 0, x + i);  vec_vsx_st(b, 0, y + i);                      \
   }                                                                         \
   ref(x + i, y + i, n - i, m->c);                                          \
@@ -150,16 +155,17 @@ static void name(u8 * x, u8 * y, sz n, const xpar_gf8_coef * m) {           \
 
 #define VX_FFT16(name, ref, inverse)                                         \
 static void name(u8 * x, u8 * y, sz n, const xpar_gf16_coef * m) {          \
+  const u16 c = m->c;                                                       \
   sz i = 0;                                                                 \
   for (; i + 32 <= n; i += 32) {                                            \
     vx_u8 x0 = vec_vsx_ld(0, x + i), x1 = vec_vsx_ld(0, x + i + 16);        \
     vx_u8 y0 = vec_vsx_ld(0, y + i), y1 = vec_vsx_ld(0, y + i + 16);        \
     vx_u8 a, b;                                                             \
     if (inverse) {                                                          \
-      y0 ^= x0;  y1 ^= x1;  vx_mul16(y0, y1, m->c, &a, &b);                 \
+      y0 ^= x0;  y1 ^= x1;  vx_mul16(y0, y1, c, &a, &b);                    \
       x0 ^= a;  x1 ^= b;                                                    \
     } else {                                                                \
-      vx_mul16(y0, y1, m->c, &a, &b);  x0 ^= a;  x1 ^= b;                   \
+      vx_mul16(y0, y1, c, &a, &b);  x0 ^= a;  x1 ^= b;                      \
       y0 ^= x0;  y1 ^= x1;                                                  \
     }                                                                       \
     vec_vsx_st(x0, 0, x + i);  vec_vsx_st(x1, 0, x + i + 16);              \

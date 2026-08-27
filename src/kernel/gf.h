@@ -51,9 +51,6 @@ static inline u8 xpar_gf8_mul(u8 a, u8 b) {
   return (a && b) ? xpar_gf8_exp[xpar_gf8_log[a] + xpar_gf8_log[b]] : 0;
 }
 static inline u8 xpar_gf8_inv(u8 a) { return xpar_gf8_inv_tab[a]; }
-static inline u8 xpar_gf8_div(u8 a, u8 b) {
-  return xpar_gf8_mul(a, xpar_gf8_inv_tab[b]);
-}
 static inline u8 xpar_gf8_alpha_pow(u32 e) { return xpar_gf8_exp[e % 255u]; }
 
 static inline u16 xpar_gf16_mul(u16 a, u16 b) {
@@ -62,9 +59,6 @@ static inline u16 xpar_gf16_mul(u16 a, u16 b) {
 }
 static inline u16 xpar_gf16_inv(u16 a) {
   return a ? xpar_gf16_exp[65535u - xpar_gf16_log[a]] : 0;
-}
-static inline u16 xpar_gf16_div(u16 a, u16 b) {
-  return xpar_gf16_mul(a, xpar_gf16_inv(b));
 }
 static inline u16 xpar_gf16_alpha_pow(u32 e) {
   return xpar_gf16_exp[e % 65535u];
@@ -134,12 +128,8 @@ const xpar_gf_kernels * xpar_gf_active(void);
 
 /*  Convenience wrappers.  */
 
-void xpar_gf8_mac        (u8 * dst, const u8 * src, sz n, u8  c);
-void xpar_gf16_mac       (u8 * dst, const u8 * src, sz n, u16 c);
 void xpar_gf8_mul_region (u8 * dst, const u8 * src, sz n, u8  c);
 void xpar_gf16_mul_region(u8 * dst, const u8 * src, sz n, u16 c);
-void xpar_xor_region     (u8 * dst, const u8 * src, sz n);
-void xpar_xor_region3    (u8 * dst, const u8 * a, const u8 * b, sz n);
 
 /*  Reference kernels.  */
 
@@ -196,8 +186,8 @@ extern const xpar_gf_kernels xpar_gf_kernels_neon;
 #ifdef HAVE_PMULL
 extern const xpar_gf_kernels xpar_gf_kernels_neon_clmul;
 #endif
-#ifdef HAVE_SVE2
-extern const xpar_gf_kernels xpar_gf_kernels_sve2;
+#ifdef HAVE_SVE
+extern const xpar_gf_kernels xpar_gf_kernels_sve;
 #endif
 #ifdef HAVE_VSX
 extern const xpar_gf_kernels xpar_gf_kernels_vsx;

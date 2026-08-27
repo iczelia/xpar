@@ -157,6 +157,8 @@ void xpar_gf8_prepare(xpar_gf8_coef * m, u8 c) {
     }
 }
 
+static bool gf_want_tab6 = false;
+
 void xpar_gf16_prepare(xpar_gf16_coef * m, u16 c) {
   u16 col[16], t[16];  int i, j, k;
   m->c = c;
@@ -180,15 +182,21 @@ void xpar_gf16_prepare(xpar_gf16_coef * m, u16 c) {
       m->tab[2 * k + 1][i] = (u8) (t[i] >> 8);
     }
   }
+  /*  Only VBMI uses tab6; tier selection precedes coefficient setup.  */
+  if (!gf_want_tab6) return;
   for (k = 0; k < 3; k++) {
     int bits = k == 2 ? 4 : 6;
-    t[0] = 0;
+    u16 w[64];
+    w[0] = 0;
+    /*  Extend each block with one basis column.  */
+    for (j = 0; j < bits; j++)
+      for (i = 0; i < (1 << j); i++)
+        w[(1 << j) + i] = (u16) (w[i] ^ col[6 * k + j]);
+    /*  Repeat the final four-bit table to fill 64 entries.  */
+    for (i = 1 << bits; i < 64; i++) w[i] = w[i & ((1 << bits) - 1)];
     for (i = 0; i < 64; i++) {
-      u16 v = 0;
-      for (j = 0; j < bits; j++)
-        if ((i >> j) & 1) v ^= col[6 * k + j];
-      m->tab6[2 * k][i] = (u8) v;
-      m->tab6[2 * k + 1][i] = (u8) (v >> 8);
+      m->tab6[2 * k][i] = (u8) w[i];
+      m->tab6[2 * k + 1][i] = (u8) (w[i] >> 8);
     }
   }
 }
@@ -321,8 +329,8 @@ static const gf_tier gf_tiers[] = {
 #ifdef HAVE_PMULL
   { &xpar_gf_kernels_neon_clmul, XPAR_CPU_NEON | XPAR_CPU_PMULL },
 #endif
-#ifdef HAVE_SVE2
-  { &xpar_gf_kernels_sve2, XPAR_CPU_SVE2 },
+#ifdef HAVE_SVE
+  { &xpar_gf_kernels_sve, XPAR_CPU_SVE },
 #endif
 #ifdef HAVE_NEON
   { &xpar_gf_kernels_neon,    XPAR_CPU_NEON                   },
@@ -365,6 +373,10 @@ const xpar_gf_kernels * xpar_gf_active(void) { return gf_k; }
 bool xpar_gf_use_tier(int tier) {
   if (!xpar_gf_tier_usable(tier)) return false;
   gf_cur = tier;  gf_k = gf_tiers[tier].k;
+  gf_want_tab6 = false;
+#ifdef HAVE_VBMI
+  if (gf_k == &xpar_gf_kernels_vbmi512) gf_want_tab6 = true;
+#endif
   return true;
 }
 
@@ -398,23 +410,6 @@ static void gf_check(const void * d, const void * s, sz n) {
   xpar_assert(a == b || a + n <= b || b + n <= a);
 }
 
-void xpar_gf8_mac(u8 * dst, const u8 * src, sz n, u8 c) {
-  if (!c || !n) return;
-  gf_check(dst, src, n);
-  if (c == 1) { gf_k->xor2(dst, src, n);  return; }
-  xpar_gf8_coef m;  xpar_gf8_prepare(&m, c);
-  gf_k->mac8(dst, src, n, &m);
-}
-
-void xpar_gf16_mac(u8 * dst, const u8 * src, sz n, u16 c) {
-  xpar_assert((n & 1) == 0);
-  if (!c || !n) return;
-  gf_check(dst, src, n);
-  if (c == 1) { gf_k->xor2(dst, src, n);  return; }
-  xpar_gf16_coef m;  xpar_gf16_prepare(&m, c);
-  gf_k->mac16(dst, src, n, &m);
-}
-
 void xpar_gf8_mul_region(u8 * dst, const u8 * src, sz n, u8 c) {
   if (!n) return;
   gf_check(dst, src, n);
@@ -432,16 +427,4 @@ void xpar_gf16_mul_region(u8 * dst, const u8 * src, sz n, u16 c) {
   if (c == 1) { if (dst != src) xpar_memcpy(dst, src, n);  return; }
   xpar_gf16_coef m;  xpar_gf16_prepare(&m, c);
   gf_k->mul16(dst, src, n, &m);
-}
-
-void xpar_xor_region(u8 * dst, const u8 * src, sz n) {
-  if (!n) return;
-  gf_check(dst, src, n);
-  gf_k->xor2(dst, src, n);
-}
-
-void xpar_xor_region3(u8 * dst, const u8 * a, const u8 * b, sz n) {
-  if (!n) return;
-  gf_check(dst, a, n);  gf_check(dst, b, n);
-  gf_k->xor3(dst, a, b, n);
 }
