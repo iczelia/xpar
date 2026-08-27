@@ -69,7 +69,7 @@ jobs:
             xpar-${{ env.XPAR_VERSION }}.zip
 
       - name: Upload the source package artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
           path: xpar-${{ env.XPAR_VERSION }}.tar.gz

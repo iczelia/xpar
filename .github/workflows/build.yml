@@ -24,7 +24,7 @@ jobs:
         run: make VERSION=${{ github.sha }} dist-gzip
 
       - name: Upload source package artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-${{ github.sha }}
           path: xpar-${{ github.sha }}.tar.gz
@@ -42,7 +42,7 @@ jobs:
           ../xpar create --layout=armoured -r 20% -o compat corpus.bin
 
       - name: Upload compatibility fixture
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -311,7 +311,7 @@ jobs:
           make win95-check
 
       - name: Upload the binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-win-${{ matrix.target.name }}-${{ github.sha }}
           path: xpar.exe
@@ -481,7 +481,7 @@ jobs:
 
       - name: Upload the DOS transcript
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-dos-transcript-${{ github.sha }}
           path: ${{ runner.temp }}/dos-check/out
@@ -508,7 +508,7 @@ jobs:
         run: make docs
 
       - name: Upload the specification
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: xpar-format-${{ github.sha }}
           path: doc/xpar-format.pdf
