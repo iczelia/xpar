@@ -480,4 +480,67 @@ run 0 "$XPAR" verify --chain s4.xpa
 note "unreachable names are refused before anything is written"
 cd ..
 
+# Repairs of missing, truncated, overlong, and damaged files must undo exactly.
+
+step "undo journals restore every file state exactly"
+
+mkdir shortread;  cd shortread || hard_error cd
+
+# Start each case with a fresh set.
+jrt() {
+  rm -rf "$1";  mkdir -p "$1/tree";  cd "$1" || hard_error cd
+  mkfile tree/a.bin 262144
+  mkfile tree/b.bin 65536 2222
+  cp -r tree keep
+  "$XPAR" create -r 300% -s 16K -o s -R tree > "$log" 2>&1 ||
+    hard_error "create failed"
+}
+
+# Undo removes a file created by repair.
+jrt gone
+rm -f tree/a.bin
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same tree/a.bin keep/a.bin
+run 0 "$XPAR" undo s.xpa
+if test -e tree/a.bin; then bad "undo kept a repair-created file"
+else ok; fi
+cd ..
+
+# Undo restores a truncated file's length.
+jrt cut
+head -c 120000 keep/a.bin > tree/a.bin
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same tree/a.bin keep/a.bin
+run 0 "$XPAR" undo s.xpa
+equal "undo restored the truncated length" "`wc -c < tree/a.bin`" "120000"
+cd ..
+
+# Undo restores an overlong tail.
+jrt long
+cat keep/a.bin keep/b.bin > tree/a.bin
+cp tree/a.bin long.keep
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same tree/a.bin keep/a.bin
+run 0 "$XPAR" undo s.xpa
+same tree/a.bin long.keep
+cd ..
+
+# Undo restores the damaged bytes.
+jrt plain
+"$DAMAGE" tree/a.bin "rand=4096,512" || hard_error "damage failed"
+cp tree/a.bin damaged.keep
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same tree/a.bin keep/a.bin
+run 0 "$XPAR" undo s.xpa
+same tree/a.bin damaged.keep
+cd ..
+
+# --no-journal still repairs missing files.
+jrt nojournal
+rm -f tree/a.bin
+run 0 "$XPAR" repair --in-place --no-journal s.xpa
+same tree/a.bin keep/a.bin
+cd ..
+cd ..
+
 summary

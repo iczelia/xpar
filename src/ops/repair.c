@@ -1421,12 +1421,22 @@ static void rp_journal(rp * r) {
             payload, r->journal);
 }
 
+/*  Refuse journals that would replace unread existing bytes with zeroes.  */
 static void rp_read_old(rp * r) {
   u32 i;
   for (i = 0; i < r->wr_count; i++) {
     rp_write * w = &r->wr[i];
+    u64 have;
     w->old = (u8 *) xpar_calloc((sz) w->len, 1);
-    rp_read_entry_raw(r, w->entry, w->off, w->len, w->old);
+    if (rp_read_entry_raw(r, w->entry, w->off, w->len, w->old)) continue;
+    if (r->o->no_journal || !(r->fstate[w->entry] & 1)) continue;
+    have = r->fsize[w->entry] > w->off
+             ? MIN(w->len, r->fsize[w->entry] - w->off) : 0;
+    if (have && !rp_read_entry_raw(r, w->entry, w->off, have, w->old))
+      FATAL_IO("Cannot journal '%.*s' at offset %" PRIu64
+               ": read failed. Use --no-journal to repair without undo.",
+               (int) r->mf.entry[w->entry].name_len,
+               r->mf.entry[w->entry].name, w->off);
   }
 }
 
