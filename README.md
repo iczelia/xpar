@@ -219,19 +219,26 @@ W=1; n=255; k=223; D=1; hdr=384
 Fd=$((D*k*W))          # plaintext bytes per frame = 223
 Fx=$((D*n*W))          # disk bytes per frame      = 255
 frames=28
-off=648                # stream_offset from the prologue
+off=648               # stream_offset from the prologue
 len=1008               # stream_length from the prologue
+
+# 1. drop the prologue in one read, so no later step needs to skip it
 dd if="$in" of=region.bin bs=$hdr skip=1 status=none
+
+# 2. take the first Fd bytes of every Fx-byte frame.
 f=0
 while [ $f -lt $frames ]; do
   dd if=region.bin bs=$Fx skip=$f count=1 status=none | head -c $Fd
   f=$((f+1))
 done > plain.bin
+
+# 3. the protected stream is len bytes at off inside that plaintext
 if [ $off -gt 0 ]; then
   dd if=plain.bin bs=$off skip=1 status=none | head -c $len > "$out"
 else
   head -c $len plain.bin > "$out"
 fi
+# end of recipe
 ```
 
 ## Comparison
