@@ -180,15 +180,6 @@ mode_of() {   # mode_of <path>
   echo "?"
 }
 
-# Test whether a directory supports POSIX modes.
-has_modes() {   # has_modes <dir>
-  ( : > "$1/.xpar-mode-probe" ) 2> /dev/null || return 1
-  chmod 600 "$1/.xpar-mode-probe" 2> /dev/null
-  _m=`mode_of "$1/.xpar-mode-probe"`
-  rm -f "$1/.xpar-mode-probe"
-  test "$_m" = 600
-}
-
 # Test whether a directory folds case.
 folds_case() {   # folds_case <dir>
   ( : > "$1/XparCaseProbe" ) 2> /dev/null || return 0

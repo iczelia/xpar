@@ -889,7 +889,10 @@ chmod 600 tree/secret.bin 2> /dev/null
 chmod 644 tree/public.bin 2> /dev/null
 run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
 run 0 "$XPAR" extract --to=out a.xpa
-if has_modes .; then
+#  Ask xpar whether it recorded the mode, not the shell. MSYS emulates
+#  chmod and stat, so the shell claims a mode the native binary under test
+#  never recorded and cannot restore.
+if "$XPAR" list a.xpa | grep -q '0600'; then
   equal "the private file kept its mode" "`mode_of out/tree/secret.bin`" "600"
   equal "the public file kept its mode"  "`mode_of out/tree/public.bin`" "644"
   note "modes are restricted before extraction writes data"
