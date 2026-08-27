@@ -51,6 +51,10 @@ const u16 xpar_gf16_cantor[16] = {
 static void gf8_tables(void) {
   u32 x = 1, i;
   for (i = 0; i < 255; i++) {
+    /*  Order exactly 255, not merely dividing it. Every nonzero element
+        satisfies a^255 = 1 under any irreducible modulus, so only an
+        early return to 1 distinguishes a non-primitive one.  */
+    xpar_assert(i == 0 || x != 1);
     xpar_gf8_exp[i] = (u8) x;  xpar_gf8_log[x] = (u8) i;
     x <<= 1;  if (x & 0x100u) x ^= XPAR_GF8_POLY;
   }
@@ -70,6 +74,7 @@ static void gf16_tables(void) {
   gf16_exp_store = (u16 *) xpar_alloc_raw(131070u * sizeof(u16));
   gf16_log_store = (u16 *) xpar_alloc_raw(65536u * sizeof(u16));
   for (i = 0; i < 65535u; i++) {
+    xpar_assert(i == 0 || x != 1);
     gf16_exp_store[i] = (u16) x;  gf16_log_store[x] = (u16) i;
     x <<= 1;  if (x & 0x10000u) x ^= XPAR_GF16_POLY;
   }

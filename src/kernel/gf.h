@@ -25,9 +25,9 @@
 
 /*  The two fields.
     alpha = 2, the class of x, generates the multiplicative group of both
-    fields. xpar_gf_init asserts that rather than trusting it: a modulus
-    that is irreducible but not primitive builds tables that look right
-    and encode wrong.  */
+    fields. xpar_gf_init asserts that alpha returns to 1 only after the
+    full group order: a modulus that is irreducible but not primitive
+    repeats early and leaves most of the field without a logarithm.  */
 
 #define XPAR_GF8_POLY   0x11DU     /*  x^8+x^4+x^3+x^2+1  */
 #define XPAR_GF16_POLY  0x1002DU   /*  x^16+x^5+x^3+x^2+1  */
