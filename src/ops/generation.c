@@ -1032,8 +1032,8 @@ static void gen_src_read(gen_src * s, u64 off, u64 len, u8 * out) {
   while (len) {
     xpar_occurrence occ;  u64 run = 0, take, at;
     if (off >= s->limit) {
-      /*  Past L: the zero padding of 4.1, which is never stored and is
-          regenerated here for the coder and the tags alike.  */
+      /*  Past L: the final data slice's zero padding, which is never
+          stored and is regenerated here for the coder and the tags.  */
       xpar_memset(out, 0, (sz) len);
       return;
     }
@@ -3054,6 +3054,10 @@ static void gen_emit_stored(xpar_buf * out, const xpar_chain * c, u32 g,
     if (!best) return;
     xpar_pkt_write(out, best->hdr.type, best->hdr.flags, set_id, best->body,
                    (sz) best->body_len, gen_chain_key(c));
+    /*  These keys come from unvalidated packet bodies. At the maximum the
+        increment wraps to zero, the same packet is chosen again and the
+        loop never ends, so stop instead of wrapping.  */
+    if (best_key == (u64) -1) return;
     want = best_key + 1;
   }
 }
@@ -3448,7 +3452,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
 
   /*  Now every existing volume of this generation learns the new layout.
       Its recovery slices are copied byte for byte, which is what makes
-      this cheap and what 9.7 promises.  */
+      this cheap.  */
   for (i = 0; i < c.vol_count; i++) {
     xpar_buf out;
     gen_rewrite rw;
@@ -5002,14 +5006,33 @@ int xpar_op_recover(const xpar_options * o) {
   {
     xpar_buf group;
     u64 payload = layt.vol[target].byte_length * p.geom.slice_size;
+    u64 crit_bytes;
+    u32 rec_count = 0, rec_index = 0, q;
     bool carry;
     xpar_buf_init(&group);
     gen_group_stored(&group, &c, g, &layt,
                      layt.vol[target].kind == XPAR_VOL_INDEX
                        ? XPAR_VOL_STANDALONE : target, c.gen[g].set_id);
+    /*  Decide exactly as the writer did, or the volume comes back without
+        the critical group the original carried. The writer thresholds on
+        the armoured size, and counts recovery volumes only: a split LAYT
+        also lists data volumes.  */
+    crit_bytes = group.len;
+    if (o->armour != XPAR_ARMOUR_NONE) {
+      xpar_buf a;
+      xpar_buf_init(&a);
+      gen_armour_pack(&a, o, group.data, group.len, c.gen[g].set_id,
+                      gen_chain_key(&c));
+      crit_bytes = a.len;
+      xpar_buf_free(&a);
+    }
+    for (q = 0; q < layt.count; q++) {
+      if (layt.vol[q].kind != XPAR_VOL_RECOVERY) continue;
+      if (q < target) rec_index++;
+      rec_count++;
+    }
     carry = layt.vol[target].kind == XPAR_VOL_INDEX ||
-            xpar_replicate_here(group.len, payload, target - 1,
-                                layt.count - 1);
+            xpar_replicate_here(crit_bytes, payload, rec_index, rec_count);
     if (carry) {
       if (o->armour != XPAR_ARMOUR_NONE)
         gen_armour_pack(&out, o, group.data, group.len, c.gen[g].set_id,
@@ -5756,40 +5779,48 @@ static u32 bm_check_armour(const char * tier, const xpar_armour_params * p,
   return bad;
 }
 
+static u32 bm_crc_one(const char * name, u32 got, u32 want, sz n) {
+  if (got == want) return 0;
+  xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32
+               " at %zu bytes, scalar gives %08" PRIX32 ".\n",
+               name, got, n, want);
+  return 1;
+}
+
 static u32 bm_check_crc32c(void) {
   static const sz len[] = { 1, 7, 8, 63, 64, 255, 256, 1024, 8192, 24577,
                             65536 };
   u32 bad = 0, i;
   u8 * buf;
   bm_rng r;
-#if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32)
+#if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32) || defined(HAVE_VPCLMUL)
   u32 feat = xpar_cpu_features();
 #endif
   r.s = 0xB5026F5AA96619Eull;
   buf = (u8 *) xpar_alloc_raw(65536);
   bm_fill(&r, buf, 65536);
+  /*  Every kernel that could be dispatched is compared, not just the
+      first one found: on x86 both sse42 and vpclmul can be present and
+      the dispatcher prefers the latter.  */
   for (i = 0; i < ARRAY_LEN(len); i++) {
     u32 want = xpar_crc32c_scalar(0x1234u, buf, len[i]);
-    u32 got  = want;
-    const char * name = NULL;
+    (void) want;
 #ifdef HAVE_SSE42
-    if (feat & XPAR_CPU_SSE42) {
-      got = xpar_crc32c_sse42(0x1234u, buf, len[i]);  name = "sse42";
-    }
+    if (feat & XPAR_CPU_SSE42)
+      bad += bm_crc_one("sse42", xpar_crc32c_sse42(0x1234u, buf, len[i]),
+                        want, len[i]);
+#endif
+#ifdef HAVE_VPCLMUL
+    if ((feat & (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL)) ==
+             (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL))
+      bad += bm_crc_one("vpclmul", xpar_crc32c_vpclmul(0x1234u, buf, len[i]),
+                        want, len[i]);
 #endif
 #ifdef HAVE_ARM_CRC32
-    if (feat & XPAR_CPU_ARMCRC) {
-      got = xpar_crc32c_arm(0x1234u, buf, len[i]);  name = "armcrc";
-    }
+    if (feat & XPAR_CPU_ARMCRC)
+      bad += bm_crc_one("armcrc", xpar_crc32c_arm(0x1234u, buf, len[i]),
+                        want, len[i]);
 #endif
-    if (name && got != want) {
-      xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32
-                   " at "
-                   "%zu bytes, scalar gives %08" PRIX32 ".\n", name,
-                   got, len[i],
-                   want);
-      bad++;
-    }
   }
   xpar_free(buf);
   return bad;
@@ -6056,9 +6087,12 @@ int xpar_op_benchmark(const xpar_options * o) {
 
   /*  A shortened GF(2^16) frame keeps the differential test bounded.  */
   xpar_armour_defaults(&p8, 8);
-  p8.k = p8.n - 32;  p8.depth = 8;
+  /*  Depth sets the lane width the kernels see: below one vector the
+      vector body is skipped entirely and every tier runs the scalar
+      reference. These depths cover a whole body plus a partial tail.  */
+  p8.k = p8.n - 32;  p8.depth = 40;
   xpar_armour_defaults(&p16, 16);
-  p16.n = 4096;  p16.k = 4096 - 16;  p16.depth = 3;
+  p16.n = 4096;  p16.k = 4096 - 16;  p16.depth = 33;
   r.s = 0xC0FFEE123456789ull;
   {
     xpar_armour * a = xpar_armour_new(&p8);
