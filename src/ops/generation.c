@@ -4969,28 +4969,49 @@ int xpar_op_recover(const xpar_options * o) {
 #define UNDO_FOOT  24u
 #define UNDO_CREATED 1u          /*  rflags bit 0: the file was created.  */
 
-static bool gen_undo_path_allowed(const xpar_chain * c,
-                                  const xpar_manifest * m,
-                                  const char * path, u32 plen) {
-  u32 i;
+/*  Compare directory identities for alternate path spellings.  */
+static bool gen_same_dir(const char * a, const xpar_stat_t * b) {
+  xpar_stat_t sa;
+  if (!b->is_dir || !(b->dev | b->ino)) return false;
+  if (xpar_lstat(a, &sa) != 0 || !sa.is_dir) return false;
+  if (!(sa.dev | sa.ino)) return false;
+  return sa.dev == b->dev && sa.ino == b->ino;
+}
+
+/*  Resolve a journal path to an entry in setdir, or return -1.  */
+static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
+                          const char * path, u32 plen,
+                          const xpar_stat_t * setdir) {
+  const char * dir = c->dir && *c->dir ? c->dir : ".";
+  i64 best = -1;
+  u32 bestlen = 0, i, cut;
+  char * head;
+  bool ok;
   for (i = 0; i < m->count; i++) {
     const xpar_entry * e = &m->entry[i];
-    const char * dir = c->dir && *c->dir ? c->dir : ".";
-    sz dn = xpar_strlen(dir);
-    bool sep = dn && dir[dn - 1] != '/' && dir[dn - 1] != '\\';
     char * allowed;
     bool same;
     if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
-    allowed = (char *) xpar_malloc(dn + sep + e->name_len + 1);
-    xpar_memcpy(allowed, dir, dn);
-    if (sep) allowed[dn++] = '/';
-    xpar_memcpy(allowed + dn, e->name, e->name_len);
-    allowed[dn + e->name_len] = '\0';
+    allowed = xpar_path_join_n(dir, e->name, e->name_len);
     same = xpar_strlen(allowed) == plen && !xpar_memcmp(allowed, path, plen);
     xpar_free(allowed);
-    if (same) return true;
+    if (same) return (i64) i;
+    /*  The longest matching tail wins, so 'a/x' beats 'x' for 'd/a/x'.  */
+    if (e->name_len <= bestlen || plen < e->name_len) continue;
+    if (plen > e->name_len && !xpar_path_sep(path[plen - e->name_len - 1]))
+      continue;
+    if (xpar_memcmp(path + plen - e->name_len, e->name, e->name_len)) continue;
+    best = (i64) i;  bestlen = e->name_len;
   }
-  return false;
+  if (best < 0) return -1;
+  cut = plen - bestlen;
+  while (cut && xpar_path_sep(path[cut - 1])) cut--;
+  /*  An empty absolute prefix means root.  */
+  head = cut ? xpar_strndup(path, cut)
+             : xpar_strdup(plen && xpar_path_sep(path[0]) ? "/" : ".");
+  ok = gen_same_dir(head, setdir);
+  xpar_free(head);
+  return ok ? best : -1;
 }
 
 int xpar_op_undo(const xpar_options * o) {
@@ -4999,6 +5020,7 @@ int xpar_op_undo(const xpar_options * o) {
   u32 applied = 0, skipped = 0, removed = 0;
   xpar_chain chain;
   xpar_manifest manifest;
+  xpar_stat_t setdir;
   u32 * owner = NULL;
   u32 generation;
 
@@ -5071,6 +5093,8 @@ int xpar_op_undo(const xpar_options * o) {
     FATAL_FORMAT("The journal '%s' belongs to a different set or generation.",
                  path);
   xpar_gchain_manifest(&chain, generation, &manifest, &owner);
+  { const char * d = chain.dir && *chain.dir ? chain.dir : ".";
+    if (xpar_lstat(d, &setdir) != 0) xpar_memset(&setdir, 0, sizeof setdir); }
 
   /*  Validate every record before replaying any of them. The whole-file CRC
       detects a torn write, but it does not make attacker-controlled lengths
@@ -5111,11 +5135,12 @@ int xpar_op_undo(const xpar_options * o) {
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
       if (xpar_has_nul(rec + UNDO_REC, plen) ||
-          !gen_undo_path_allowed(&chain, &manifest,
-                                 (const char *) rec + UNDO_REC, plen))
+          gen_undo_entry(&chain, &manifest, (const char *) rec + UNDO_REC,
+                         plen, &setdir) < 0)
         FATAL_FORMAT("Journal record %" PRIu64
-                     " names a path outside the selected "
-                     "set.", i);
+                     " names '%.*s' outside this set directory.",
+                     i, (int) plen,
+                     (const char *) rec + UNDO_REC);
       old = rec + UNDO_REC + plen;
       if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
           xpar_crc32c(0, old, (sz) len) != xpar_rd32(rec + 32))
@@ -5162,8 +5187,12 @@ int xpar_op_undo(const xpar_options * o) {
     }
     at += step;
 
-    full = (char *) xpar_malloc(plen + 1);
-    xpar_memcpy(full, rp, plen);  full[plen] = 0;
+    { i64 ix = gen_undo_entry(&chain, &manifest, rp, plen, &setdir);
+      const char * d = chain.dir && *chain.dir ? chain.dir : ".";
+      if (ix < 0) { skipped++;  continue; }
+      /*  Rebuild paths from the selected set directory.  */
+      full = xpar_path_join_n(d, manifest.entry[ix].name,
+                              manifest.entry[ix].name_len); }
     if (rflags & UNDO_CREATED) {
       /*  The file did not exist before the repair, so putting it back
           means removing it rather than truncating it to zero.  */

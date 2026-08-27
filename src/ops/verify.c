@@ -172,6 +172,7 @@ struct xpar_vset {
   xpar_armour_params archive_ap;
   u32         archive_img;
   bool        have_archive_img;
+  u8 *        armour_done;     /*  Decoded frames.  */
 
   /*  Cache the current entry during sequential stream reads.  */
   xpar_file * fh;
@@ -347,6 +348,50 @@ static bool correct_armoured_slice(xpar_vset * s, u64 slice) {
   }
   xpar_free(enc);  xpar_free(plain);  xpar_armour_free(a);
   return ok;
+}
+
+/*  Lazily decode frames backing [lo, hi), once each; report any change.  */
+bool xpar_vset_armour_correct(xpar_vset * s, u64 lo, u64 hi) {
+  xpar_armour * a;
+  xpar_vimg * image;
+  u64 fp, fd, frames, base, first, last, f;
+  bool changed = false;
+  u8 * enc, * plain;
+  if (!s->have_archive_img || !s->strm) return false;
+  image = &s->img[s->archive_img];
+  if (!image->plain_file || !image->plain) return false;
+  if (lo < s->geom.stream_base || hi < lo) return false;
+  a = xpar_armour_new(&s->archive_ap);
+  if (!a) return false;
+  fp = xpar_armour_frame_plain(a);
+  fd = xpar_armour_frame_disk(a);
+  frames = fp ? xpar_ceil_div(s->archive_plain_len, fp) : 0;
+  if (!frames) { xpar_armour_free(a);  return false; }
+  if (!s->armour_done)
+    s->armour_done = (u8 *) xpar_calloc((sz) frames, 1);
+  base  = (u64) (s->strm - image->plain);
+  first = (base + (lo - s->geom.stream_base)) / fp;
+  last  = (base + (hi - s->geom.stream_base) - (hi > lo ? 1 : 0)) / fp;
+  if (last >= frames) last = frames - 1;
+  enc   = (u8 *) xpar_alloc_raw((sz) fd ? (sz) fd : 1);
+  plain = (u8 *) xpar_alloc_raw((sz) fp ? (sz) fp : 1);
+  for (f = first; f <= last; f++) {
+    u64 po = f * fp, have = MIN(fp, s->archive_plain_len - po);
+    if (s->armour_done[f]) continue;
+    if (384 + f * fd > image->size || fd > image->size - (384 + f * fd)) break;
+    s->armour_done[f] = 1;
+    xpar_memcpy(enc, image->data + 384 + f * fd, (sz) fd);
+    syndromes++;
+    if (xpar_armour_decode_frame(a, enc, NULL) == XPAR_ARMOUR_FAILED) continue;
+    xpar_armour_extract(a, plain, have, enc);
+    if (!xpar_memcmp(plain, image->plain + po, (sz) have)) continue;
+    if (xpar_pwrite(image->plain_file, plain, (sz) have, po) != (sz) have)
+      break;
+    s->armg_corrected++;
+    changed = true;
+  }
+  xpar_free(enc);  xpar_free(plain);  xpar_armour_free(a);
+  return changed;
 }
 
 /*  Parse ARMG plaintext before inner decoding. Corrected bytes are accepted
@@ -1486,6 +1531,7 @@ void xpar_vset_close(xpar_vset * s) {
   xpar_free(s->plain);
   xpar_free(s->plain_len);
   xpar_free(s->plain_owned);
+  xpar_free(s->armour_done);
   For(u32, i, s->img_count, vimg_free(&s->img[i]))
   xpar_free(s->img);       xpar_free(s->ext_first);
   xpar_free(s->ext_alias); xpar_free(s->gen);

@@ -126,6 +126,7 @@ typedef struct {
   xpar_resync_map * resync;   /*  Strongly confirmed displaced slices.  */
 
   u64          unrecovered;   /*  Entries repair could not reproduce.  */
+  u64          overlong;      /*  Entries with bytes past the recorded end.  */
 
   xpar_erasures er;           /*  Cells with no intact occurrence.  */
   u8 *          susp;         /*  Cells damaged in at least one place.  */
@@ -1868,8 +1869,10 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
   u8 * buf = (u8 *) xpar_alloc_raw((sz) chunk);
   u8 * hit = (u8 *) xpar_calloc(r->mf.count ? r->mf.count : 1, 1);
   if (!backup) rp_tree_preflight(r->o, &r->mf, dir);
-  /*  --backup renames only entries in the damaged edit set.  */
+  /*  Back up damaged cells and overlong tails only.  */
   for (i = 0; i < r->edit_count; i++) hit[r->edit[i].entry] = 1;
+  for (i = 0; i < r->mf.count; i++)
+    if ((r->fstate[i] & 2) && !r->alias[i]) hit[i] = 1;
   for (i = 0; i < r->mf.count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
     xpar_path_status why;
@@ -2056,12 +2059,18 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "writes", r->writes);
     xpar_json_u64(&r->js, "bytes_written", r->bytes_written);
     xpar_json_u64(&r->js, "entries_repaired", r->entries_repaired);
+    xpar_json_u64(&r->js, "entries_overlong", r->overlong);
     xpar_json_u64(&r->js, "links_repaired", r->links_repaired);
     xpar_json_end(&r->js);
     xpar_json_summary(&r->js, status, code);
   } else if (!r->quiet) {
-    if (!r->cell_count)
+    if (!r->cell_count && !r->overlong)
       rp_note(r, "xpar: no damage found.\n");
+    else if (!r->cell_count)
+      rp_note(r, xpar_strcmp(status, "dry-run")
+                   ? "xpar: restored %" PRIu64 " overlong entr%s.\n"
+                   : "xpar: found %" PRIu64 " overlong entr%s.\n",
+              r->overlong, r->overlong == 1 ? "y" : "ies");
     else
       rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %"
               PRIu64 " decoded; "
@@ -3431,7 +3440,12 @@ int xpar_op_repair(const xpar_options * o) {
     return XPAR_EXIT_UNREPAIRABLE;
   }
   { bool over = false;
-    for (i = 0; i < r.mf.count; i++) if (r.fstate[i] & 2) over = true;
+    for (i = 0; i < r.mf.count; i++) {
+      if (!(r.fstate[i] & 2)) continue;
+      over = true;
+      /*  Aliases share the canonical file.  */
+      if (!r.alias[i]) r.overlong++;
+    }
     if (!r.cell_count && !over) {
       rp_report(&r, "clean", XPAR_EXIT_OK);
       rp_free(&r);

@@ -718,4 +718,128 @@ run 0 "$XPAR" extract --to=out a.xpa
 note "valid ownership records pass the count bound"
 cd ..
 
+# The inner code must reach the payload, which carries no packet checksum.
+
+step "a correctable armoured archive extracts without repair"
+
+mkdir inner;  cd inner || hard_error cd
+mkdir tree
+mkfile tree/f1.bin 70000
+mkfile tree/f2.bin 70000 2222
+mkfile tree/f3.bin 70000 3333
+cp -r tree keep
+run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o arc -R tree
+cp arc.xpa pristine.xpa
+
+#  Damage correctable payload regions at several offsets.
+for off in 20000 100000 300000; do
+  cp pristine.xpa arc.xpa
+  "$DAMAGE" arc.xpa "rand=$off,64" || hard_error "damage failed"
+  run 0 "$XPAR" verify arc.xpa
+  rm -rf out
+  run 0 "$XPAR" extract --to=out arc.xpa
+  for f in f1 f2 f3; do same "out/tree/$f.bin" "keep/$f.bin"; done
+  rm -rf rout
+  run 0 "$XPAR" repair --to=rout arc.xpa
+  for f in f1 f2 f3; do same "rout/tree/$f.bin" "keep/$f.bin"; done
+done
+note "verify, extract, and repair correct payload damage"
+
+#  Chains use the same correction through generation sets.
+mkfile tree/f4.bin 70000 4444
+cp tree/f4.bin keep/f4.bin
+cp pristine.xpa arc.xpa
+run 0 "$XPAR" add -r 300% -s 4K arc.xpa -R tree
+cp arc.xpa chain.xpa
+"$DAMAGE" arc.xpa "rand=20000,64" || hard_error "damage failed"
+run 0 "$XPAR" verify arc.xpa
+rm -rf out
+run 0 "$XPAR" extract --to=out arc.xpa
+for f in f1 f2 f3 f4; do same "out/tree/$f.bin" "keep/$f.bin"; done
+note "chained archives correct payload damage"
+#  Restore a single-generation set.
+rm -f arc.g001.xpa chain.xpa
+
+#  Uncorrectable damage must be refused.
+cp pristine.xpa arc.xpa
+"$DAMAGE" arc.xpa "rand=100000,4096" || hard_error "damage failed"
+rm -rf out
+run 1 "$XPAR" extract --to=out arc.xpa
+#  Withhold damaged entries but extract intact ones.
+kept=`find out -name 'f*.bin' | nlines`
+if test "$kept" -lt 3; then ok
+else bad "uncorrectable entry was written"; fi
+for f in `find out -name 'f*.bin'`; do
+  same "$f" "keep/`basename $f`"
+done
+cd ..
+
+# An overlong file is damage, whatever the destination.
+
+step "an overlong file is repaired by every destination"
+
+mkdir overlong;  cd overlong || hard_error cd
+mkfile data.bin 200000
+cp data.bin pristine.bin
+run 0 "$XPAR" create -r 300% -s 4K -o set data.bin
+
+for dest in --backup --in-place --to=out; do
+  rm -rf data.bin out;  cp pristine.bin data.bin;  rm -f data.bin.1
+  printf 'JUNKJUNKJUNKJUNK' >> data.bin
+  differs data.bin pristine.bin
+  run 1 "$XPAR" verify set.xpa
+  run 0 "$XPAR" repair $dest set.xpa
+  case $dest in
+    --to=*) same out/data.bin pristine.bin ;;
+    *)      same data.bin pristine.bin
+            #  Verify converges after repair.
+            run 0 "$XPAR" verify set.xpa ;;
+  esac
+  if test "$dest" = --backup; then
+    equal "--backup kept the overlong original" \
+          "`ls data.bin.1 | nlines`" "1"
+  fi
+done
+
+#  --dry-run changes nothing.
+rm -f data.bin;  cp pristine.bin data.bin
+printf 'JUNKJUNKJUNKJUNK' >> data.bin
+run 0 "$XPAR" repair --dry-run set.xpa
+equal "--dry-run preserved length" "`nbytes < data.bin`" "200016"
+
+rm -f data.bin;  cp pristine.bin data.bin
+"$XPAR" repair --in-place set.xpa > "$log" 2>&1
+equal "intact set reports no damage" \
+      "`grep -c 'no damage found' \"$log\"`" "1"
+cd ..
+
+# A journal names the set's files however the set was spelled.
+
+step "undo accepts the set under a different spelling"
+
+mkdir spell;  cd spell || hard_error cd
+mkfile data.bin 200000
+run 0 "$XPAR" create -r 300% -s 4K -o base data.bin
+"$DAMAGE" data.bin "rand=4096,64" || hard_error "damage failed"
+cp data.bin damaged.bin
+
+#  Absolute at repair time, relative at undo time.
+run 0 "$XPAR" repair --in-place --keep-journal "`pwd`/base.xpa"
+differs data.bin damaged.bin
+run 0 "$XPAR" undo base.xpa
+same data.bin damaged.bin
+
+#  Relative at repair time, absolute at undo time.
+run 0 "$XPAR" repair --in-place --keep-journal base.xpa
+run 0 "$XPAR" undo "`pwd`/base.xpa"
+same data.bin damaged.bin
+
+#  Reject journals outside their set directory.
+run 0 "$XPAR" repair --in-place --keep-journal base.xpa
+cd ..
+run 3 "$XPAR" undo spell/base.xpa
+cd spell || hard_error cd
+note "alternate spellings accepted; other directories refused"
+cd ..
+
 summary

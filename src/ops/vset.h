@@ -91,6 +91,9 @@ void xpar_verify_written_archive_at(const xpar_options *, const char * path,
 bool xpar_verify_written_volume(const char *, const xpar_key *, const u8 *,
                                 u32, u32, u64, u64, u64);
 bool xpar_verify_packets_ok(const u8 *, u64, const xpar_key *);
+
+/*  Lazily correct armour frames backing [lo, hi); report any change.  */
+bool xpar_vset_armour_correct(xpar_vset *, u64 lo, u64 hi);
 bool xpar_verify_next_armg(const u8 *, u64, const xpar_key *, u64 *,
                            const u8 **, u64 *);
 

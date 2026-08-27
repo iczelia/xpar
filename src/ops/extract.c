@@ -42,6 +42,17 @@ static const char * const ex_sk_name[EX_SK_COUNT] = {
   "atime", "ctime", "attrs", "symlink-unsafe", "materialised-as-copy"
 };
 
+/*  Armoured volume and its lazily corrected plaintext.  */
+typedef struct {
+  xpar_armour * a;
+  const u8 *    src;           /*  The armoured region, 384 bytes in.  */
+  u64           src_len;
+  u8 *          plain;
+  u64           plain_len;
+  u8 *          done;          /*  Decoded frames.  */
+  u64           frames;
+} ex_arm;
+
 typedef struct {
   const xpar_options * o;
   xpar_json  js;
@@ -85,6 +96,9 @@ typedef struct {
   /*  The set stream, either as data volumes or as one plaintext run.  */
   const u8 * strm;             /*  ARMOURED: the STRM payload.  */
   u64        strm_off, strm_len;
+
+  /*  Armoured volumes retained for lazy payload correction.  */
+  ex_arm * arm;  u32 arm_count, arm_cap;
 
   u64 skip[EX_SK_COUNT];
   u64 entries, bytes, links, copies, mismatches, io_failures;
@@ -228,6 +242,16 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   xpar_armour_extract(a, plain, plain_len, v->data + 384);
   ex_collect(x, plain, plain_len);
   ex_keep_plain(x, plain);
+  if (x->arm_count == x->arm_cap) {
+    x->arm_cap = x->arm_cap ? x->arm_cap * 2 : 2;
+    x->arm = (ex_arm *) xpar_realloc(x->arm, x->arm_cap * sizeof *x->arm);
+  }
+  { ex_arm * m = &x->arm[x->arm_count++];
+    u64 fp = xpar_armour_frame_plain(a);
+    m->a = a;  m->src = v->data + 384;  m->src_len = arm_len;
+    m->plain = plain;  m->plain_len = plain_len;
+    m->frames = fp ? xpar_ceil_div(plain_len, fp) : 0;
+    m->done = (u8 *) xpar_calloc((sz) (m->frames ? m->frames : 1), 1); }
   if (!ex_have_setd(x)) {
     u8 * region = (u8 *) xpar_alloc_raw((sz) arm_len ? (sz) arm_len : 1);
     u8 * fixed  = (u8 *) xpar_alloc_raw((sz) plain_len ? (sz) plain_len : 1);
@@ -240,7 +264,49 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
     ex_collect(x, fixed, plain_len);
     ex_keep_plain(x, fixed);
   }
-  xpar_armour_free(a);
+}
+
+/*  Lazily decode frames backing [lo, hi), once each; report any change.  */
+static bool ex_armour_apply(ex * x, u64 lo, u64 hi) {
+  bool changed = false;
+  u32 i;
+  /*  A chain reads its payload through per-generation sets instead.  */
+  for (i = 0; i < x->stream_count; i++)
+    if (x->stream_set[i] &&
+        xpar_vset_armour_correct(x->stream_set[i], lo, hi))
+      changed = true;
+  for (i = 0; i < x->arm_count; i++) {
+    ex_arm * m = &x->arm[i];
+    u64 fp = xpar_armour_frame_plain(m->a), fd = xpar_armour_frame_disk(m->a);
+    u64 base, first, last, f;
+    u8 * enc, * out;
+    /*  Correct only the active stream buffer.  */
+    if (!fp || !m->frames || !x->strm) continue;
+    if (x->strm < m->plain || x->strm >= m->plain + m->plain_len) continue;
+    base = (u64) (x->strm - m->plain);
+    if (lo < x->strm_off) continue;
+    first = (base + (lo - x->strm_off)) / fp;
+    last  = (base + (hi - x->strm_off) - (hi > lo ? 1 : 0)) / fp;
+    if (last >= m->frames) last = m->frames - 1;
+    enc = (u8 *) xpar_alloc_raw((sz) fd ? (sz) fd : 1);
+    out = (u8 *) xpar_alloc_raw((sz) fp);
+    for (f = first; f <= last; f++) {
+      u64 po = f * fp, have = MIN(fp, m->plain_len - po);
+      if (m->done[f]) continue;
+      if (f * fd > m->src_len || fd > m->src_len - f * fd) break;
+      m->done[f] = 1;
+      xpar_memcpy(enc, m->src + f * fd, (sz) fd);
+      if (xpar_armour_decode_frame(m->a, enc, NULL) == XPAR_ARMOUR_FAILED)
+        continue;
+      xpar_armour_extract(m->a, out, have, enc);
+      if (!xpar_memcmp(out, m->plain + po, (sz) have)) continue;
+      /*  Preserve collected pointers.  */
+      xpar_memcpy(m->plain + po, out, (sz) have);
+      changed = true;
+    }
+    xpar_free(enc);  xpar_free(out);
+  }
+  return changed;
 }
 
 /*  The set.  */
@@ -606,6 +672,21 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
   xpar_xclose(f);
   xpar_free(buf);
   xpar_blake3_final(&h, got, 32);
+  /*  Retry after lazy inner-code correction.  */
+  if (xpar_memcmp(got, e->content_hash, 32)) {
+    u64 lo = 0, hi = 0;
+    for (k = 0; k < e->extent_count; k++) {
+      u64 a = e->extents[k].stream_offset;
+      u64 b = a + e->extents[k].length;
+      if (!k || a < lo) lo = a;
+      if (!k || b > hi) hi = b;
+    }
+    if (e->extent_count && ex_armour_apply(x, lo, hi)) {
+      xpar_remove(stage);
+      xpar_free(stage);
+      return ex_write_entry(x, idx, path);
+    }
+  }
   x->entries++;  x->bytes += fo;
   if (xpar_memcmp(got, e->content_hash, 32)) {
     x->mismatches++;
@@ -670,6 +751,10 @@ static void ex_free(ex * x) {
     xpar_free(x->owner);
     xpar_gchain_free(&x->chain);
   }
+  for (i = 0; i < x->arm_count; i++) {
+    xpar_armour_free(x->arm[i].a);  xpar_free(x->arm[i].done);
+  }
+  xpar_free(x->arm);  x->arm = NULL;  x->arm_count = x->arm_cap = 0;
   for (i = 0; i < x->vol_count; i++) xpar_volimg_close(&x->vol[i]);
   xpar_free(x->vol);
   for (i = 0; i < x->plain_count; i++) xpar_free(x->plain[i]);
