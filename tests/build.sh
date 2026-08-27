@@ -53,8 +53,13 @@ probe() {
 
 step "host functions configure must not miss"
 
-case `uname -s 2> /dev/null` in
-  MINGW*|MSYS*|CYGWIN*|*DOS*) note "not a POSIX host; skipping flock" ;;
+#  Use configure's target triple during cross builds.
+target=`sed -n 's/^#define XPAR_HOST_TRIPLE "\(.*\)"$/\1/p' "$cfg"`
+test -n "$target" || target=`uname -m 2> /dev/null`
+
+case $target in
+  *mingw*|*cygwin*|*msys*|*windows*|*djgpp*|*msdos*)
+    note "$target is not a POSIX host; skipping flock" ;;
   *)
     #  flock and fcntl(F_SETLK) differ: an fcntl lock is dropped by any
     #  close of the file, so falling back to it silently is not benign.
@@ -64,6 +69,11 @@ int main(void) { return flock(0, LOCK_EX | LOCK_NB); }'
 esac
 
 step "SIMD probes carry their own flags"
+
+case $target in
+  x86_64*|amd64*) wide=yes ;;   # Wide x86 tiers require 64-bit.
+  *)              wide=no  ;;
+esac
 
 simd=no
 for m in HAVE_SSSE3 HAVE_SSE42 HAVE_AVX2 HAVE_GFNI HAVE_GFNI512 \
@@ -76,8 +86,8 @@ if defined XPAR_NO_SIMD; then
   if test "$simd" = no; then ok
   else bad "SIMD disabled but a vector tier is configured"; fi
 elif test "$simd" = no; then
-  case `uname -m 2> /dev/null` in
-    i?86|x86_64|amd64)
+  case $target in
+    i?86-*|x86_64-*|amd64-*|i?86|x86_64|amd64)
       bad "all SIMD probes failed unexpectedly on x86" ;;
     *) note "no SIMD tier configured on this architecture; skipping" ;;
   esac
@@ -85,6 +95,11 @@ else
   probe HAVE_SSSE3 "-mssse3" '#include <immintrin.h>
 int main(void) { __m128i a = _mm_set1_epi8(1);
                  return _mm_cvtsi128_si32(_mm_shuffle_epi8(a, a)); }'
+
+  #  Wide x86 tiers are intentionally absent on other targets.
+  if test "$wide" = no; then
+    note "wide x86 tiers unavailable on $target; skipping"
+  else
 
   probe HAVE_AVX2 "-mavx2" '#include <immintrin.h>
 int main(void) { __m256i a = _mm256_set1_epi8(1);
@@ -109,6 +124,7 @@ int main(void) { __m512i a = _mm512_set1_epi8(1);
 int main(void) { __m512i a = _mm512_set1_epi8(1);
                  return (int) _mm512_cvtsi512_si32(
                           _mm512_permutexvar_epi8(a, a)); }'
+  fi
 fi
 
 step "every configured tier was actually archived"

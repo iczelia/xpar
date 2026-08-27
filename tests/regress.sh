@@ -422,6 +422,147 @@ else
 fi
 cd .. || hard_error cd
 
+step "a volume added later agrees with the ones already there"
+
+#  Added volumes must reuse the set's replicated CRTR packet.
+mkdir -p a4 && cd a4 || hard_error "cd a4"
+mkfile p.bin 400000 83
+
+for later in "addrecovery --reproducible -r 12" "addrecovery -r 12"; do
+  rm -f set.* && cp p.bin d.bin
+  run 0 "$XPAR" create --reproducible -r 4 -s 32K -o set d.bin
+  run 0 "$XPAR" $later set.xpa
+  #  Exercise chain readers that detect replicated-packet conflicts.
+  run 0 "$XPAR" info set.xpa
+  run 0 "$XPAR" repair --in-place set.xpa
+  run 0 "$XPAR" verify set.xpa
+done
+
+rm -f set.* && cp p.bin d.bin
+run 0 "$XPAR" create --reproducible -r 8 -s 32K -o set d.bin
+v=`find . -maxdepth 1 -name 'set.v*' | head -1`
+test -n "$v" || hard_error "create wrote no recovery volume"
+rm -f "$v"
+run 0 "$XPAR" recover --volume="`basename $v`" set.xpa
+run 0 "$XPAR" info set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+cd .. || hard_error cd
+
+step "addrecovery tops up every layout and the result still repairs"
+
+#  Cover critical-group reuse across every layout.
+mkdir -p a3 && cd a3 || hard_error "cd a3"
+mkfile p.bin 400000 81
+for lay in "--layout=sidecar" "--layout=split" "--layout=armoured"; do
+  rm -f set.* && cp p.bin d.bin
+  run 0 "$XPAR" create --reproducible -r 4 -s 32K $lay -o set d.bin
+  before=`find . -maxdepth 1 -name 'set.v*' | wc -l | tr -d ' '`
+  run 0 "$XPAR" addrecovery --reproducible -r 12 set.xpa
+  run 0 "$XPAR" verify set.xpa
+  after=`find . -maxdepth 1 -name 'set.v*' | wc -l | tr -d ' '`
+  equal "$lay grew its recovery" "`test "$after" -ge "$before" &&
+                                   echo yes || echo no`" yes
+
+  #  Damage beyond the original redundancy; keep armoured hits codeword-sized.
+  case "$lay" in
+    *sidecar*) tgt=d.bin;                                       run_len=300 ;;
+    *split*)   tgt=`find . -maxdepth 1 -name 'set.d*' | head -1`; run_len=300 ;;
+    *)         tgt=set.xpa;                                     run_len=8 ;;
+  esac
+  test -n "$tgt" && test -f "$tgt" || hard_error "no damage target for $lay"
+  bytes=`wc -c < "$tgt" | tr -d ' '`
+  ops=""
+  for pct in 40 52 64 76 88; do
+    ops="$ops rand=`expr $bytes / 100 \* $pct`,$run_len"
+  done
+  "$DAMAGE" "$tgt" $ops > "$log" 2>&1 || hard_error "damage failed"
+  run 0 "$XPAR" repair --in-place set.xpa
+  run 0 "$XPAR" verify set.xpa
+  case "$lay" in *sidecar*) same d.bin p.bin ;; esac
+done
+cd .. || hard_error cd
+
+step "displaced data is found again rather than treated as damage"
+
+#  Cover the shared misplaced-data search in verify and repair.
+mkdir -p r2 && cd r2 || hard_error "cd r2"
+mkfile p.bin 900000 71
+cp p.bin pristine.bin
+run 0 "$XPAR" create --reproducible -r 8 -s 64K -o s p.bin
+
+#  Prepending produces one dominant displacement.
+shift_by() {   # shift_by <bytes>
+  cp pristine.bin p.bin
+  dd if=/dev/zero of=pad.bin bs=1 count=$1 status=none ||
+    hard_error "cannot build the pad"
+  cat pad.bin pristine.bin > t.bin && mv t.bin p.bin
+}
+
+for n in 1 4096 65536; do
+  shift_by $n
+  differs p.bin pristine.bin
+  run 0 "$XPAR" repair --in-place s.xpa
+  same p.bin pristine.bin
+done
+
+#  Disabling resync leaves the shifted file damaged.
+shift_by 4096
+run_any "1 2" "$XPAR" repair --in-place --resync=off s.xpa
+differs p.bin pristine.bin
+
+#  Two displacements must be reported as ambiguous.
+cp pristine.bin p.bin
+dd if=/dev/zero of=pad1.bin bs=1 count=3 status=none
+dd if=/dev/zero of=pad2.bin bs=1 count=9999 status=none
+dd if=pristine.bin of=head.bin bs=1 count=400000 status=none
+dd if=pristine.bin of=tail.bin bs=1 skip=400000 status=none
+cat pad1.bin head.bin pad2.bin tail.bin > p.bin
+"$XPAR" repair -v --in-place s.xpa > "$log" 2>&1
+if grep -q "no dominant displacement" "$log"; then ok
+else bad "ambiguous displacement was not reported"; fi
+cd .. || hard_error cd
+
+step "the inner code corrects exactly what its parameters promise"
+
+#  At depth 1, n corrupt bytes hit n symbols in one codeword; depth D spreads
+#  them over D codewords. The outer code does not protect critical groups.
+mkdir -p c1 && cd c1 || hard_error "cd c1"
+mkfile p.bin 200000 61
+
+# corrects <expected> <create options...>
+corrects() {
+  want=$1;  shift
+  rm -f s.* clean.bin
+  if ! attempt "$XPAR" create --reproducible -r 20% "$@" -o s p.bin; then
+    return
+  fi
+  if test "$status" -ne 0; then
+    bad "create $* exited $status"
+    return
+  fi
+  cp s.xpa clean.bin
+  got=0
+  n=1
+  while test "$n" -le `expr $want + 4`; do
+    cp clean.bin s.xpa
+    "$DAMAGE" s.xpa rand=600,$n > "$log" 2>&1 || hard_error "damage failed"
+    "$XPAR" verify s.xpa > "$log" 2>&1 || break
+    got=$n
+    n=`expr $n + 1`
+  done
+  equal "$* corrects $want bytes of one frame" "$got" "$want"
+}
+
+#  GF(2^8): one symbol is one byte, so t bytes.
+corrects 16 --armour-t=16
+corrects 32 --armour-t=32
+#  GF(2^16): one symbol is two bytes, so 2t bytes.
+corrects 32 --armour-field=16 --armour-t=16
+corrects 80 --armour-field=16 --armour-t=40
+#  Depth D interleaves, so a burst of t*D symbols lands one per codeword.
+corrects 64 --depth=4 --armour-t=16
+cd .. || hard_error cd
+
 step "prune: refuses a lossy removal, and performs a forced one"
 
 #  prune had no coverage at all, though it is destructive and its -f
