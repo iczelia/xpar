@@ -889,9 +889,8 @@ chmod 600 tree/secret.bin 2> /dev/null
 chmod 644 tree/public.bin 2> /dev/null
 run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
 run 0 "$XPAR" extract --to=out a.xpa
-#  Ask xpar whether it recorded the mode, not the shell. MSYS emulates
-#  chmod and stat, so the shell claims a mode the native binary under test
-#  never recorded and cannot restore.
+#  Gate on what xpar recorded, not on what the shell can set: only the
+#  former is what the next two checks are about.
 if "$XPAR" list a.xpa | grep -q '0600'; then
   equal "the private file kept its mode" "`mode_of out/tree/secret.bin`" "600"
   equal "the public file kept its mode"  "`mode_of out/tree/public.bin`" "644"
@@ -971,14 +970,26 @@ mkfile big.bin 4194304
 equal "past the bound is refused" "$?" "4"
 equal "the refusal names the cell bound" \
       "`grep -c '65536 cells' \"$log\"`" "1"
-#  Exactly at the bound the cell rule stays silent. Whether a 256 MiB slice
-#  also fits this host's memory ceiling is a different question, and not the
-#  one this step asks.
-"$XPAR" create -f -r 100% -s 268435456 --cell=4096 -o edge big.bin \
+#  At the bound, only host-dependent memory limits may refuse the plan.
+"$XPAR" create -f -r 100% -s 268435456 --cell=4096 -m 512M -o edge big.bin \
   > "$log" 2>&1
+rc=$?
 equal "at the bound the cell rule does not fire" \
       "`grep -c '65536 cells' \"$log\"`" "0"
+case $rc in 4) kind=usage ;; *) kind=other ;; esac
+equal "at the bound nothing is refused as usage" "$kind" "other"
 note "writers enforce K <= 65536"
+
+#  Advice must replace the mutually exclusive -s with -b.
+"$XPAR" create -f -r 100% -s 268435456 --cell=4096 -m 16M -o adv big.bin \
+  > "$log" 2>&1
+equal "a budget nothing can meet is refused" "$?" "7"
+equal "the advice says to replace -s with -b" \
+      "`grep -c 'replace -s with -b' \"$log\"`" "1"
+sug=`sed -n 's/.*replace -s with -b \([0-9]*\).*/\1/p' "$log"`
+"$XPAR" create -f -r 100% -b "$sug" --cell=4096 -m 16M -o adv2 big.bin \
+  > "$log" 2>&1
+equal "the advice can be followed exactly as given" "$?" "0"
 cd ..
 
 # explain reads a 384-byte prologue, not the whole archive.

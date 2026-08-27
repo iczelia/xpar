@@ -606,13 +606,19 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
     xpar_snprintf(buf, cap,
                   "no addressable -m fits; split the set. At -m %s, %s; "
                   "--codec=matrix %s",
-                  b, best_b ? "some -b does fit" : "no -b fits",
+                  b, !best_b ? "no -b fits"
+                    : req->slice_size ? "replacing -s with -b can fit"
+                                      : "some -b does fit",
                   mat ? "does fit" : "does not fit");
     return;
   }
   {
-    char fit[48];
-    if (best_b)
+    char fit[64];
+    /*  -s and -b are mutually exclusive.  */
+    if (best_b && req->slice_size)
+      xpar_snprintf(fit, sizeof fit,
+                    "replace -s with -b %" PRIu64, best_b);
+    else if (best_b)
       xpar_snprintf(fit, sizeof fit, "-b %" PRIu64 " fits this -m",
                     best_b);
     else
