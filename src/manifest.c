@@ -1254,7 +1254,7 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
   m->stream_length = H - o->stream_base;
   pack_links(m, &ix);
 
-  /*  8.4: the level written is the highest actually used, and a writer
+  /*  SETD.dedup_level is the highest level actually used, and a writer
       must not claim a level at which it shared nothing.  */
   m->dedup_level = m->alias_extents ? o->dedup : XPAR_DEDUP_NONE;
   for (i = 0; i < m->count; i++)
