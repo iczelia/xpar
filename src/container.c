@@ -77,10 +77,6 @@ void xpar_key_derive(xpar_key * out, const u8 * master) {
                          out->k_file);
 }
 
-void xpar_key_packet(xpar_key * out, const u8 * master) {
-  xpar_key_derive(out, master);
-}
-
 void xpar_key_check(u8 * out16, const u8 * master) {
   xpar_blake3_hash_keyed(master, "xpar2 key check v1", 18, out16, 16);
 }
@@ -550,59 +546,6 @@ void xpar_entry_write(xpar_buf * out, const xpar_entry * e,
   xpar_pkt_writev(out, XPAR_T_FILE, pkt_flags(XPAR_PF_CRITICAL, key), set_id,
                   part, 4, key);
   xpar_free(ex);
-}
-
-void xpar_extwalk_init(xpar_extwalk * w, const xpar_gen * gen, u32 count,
-                       u32 own) {
-  w->gen = gen;  w->gen_count = count;  w->own = own;
-  w->hwm = (count && own < count) ? gen[own].stream_base : 0;
-}
-
-xpar_status xpar_extwalk_entry(xpar_extwalk * w, const xpar_entry * e) {
-  u32 i, g;
-  if (!w->gen_count || w->own >= w->gen_count) return XPAR_E_MALFORMED;
-  for (i = 0; i < e->extent_count; i++) {
-    u64 off = e->extents[i].stream_offset;
-    u64 len = e->extents[i].length, end;
-    if (len == 0) return XPAR_E_MALFORMED;
-    if (!add64(off, len, &end)) return XPAR_E_MALFORMED;
-
-    for (g = 0; g < w->gen_count; g++) {
-      u64 lo = w->gen[g].stream_base, hi;
-      if (!add64(lo, w->gen[g].stream_length, &hi)) return XPAR_E_MALFORMED;
-      if (off >= lo && end <= hi && off < hi) break;
-    }
-    if (g == w->gen_count) return XPAR_E_MALFORMED;
-
-    /*  An extent into an ancestor is exempt from the walk entirely: the
-        ancestor's stream was defined in full before this generation
-        existed, so it has no relation to this generation's mark.  */
-    if (g != w->own) continue;
-
-    if (off == w->hwm) {
-      w->hwm = end;                       /*  Canonical: defines new bytes.  */
-    } else if (off < w->hwm && end <= w->hwm) {
-      /*  Aliased: names bytes an earlier extent already defined.  */
-    } else {
-      const xpar_gen * own = &w->gen[w->own];
-      u64 q = own->align == XPAR_ALIGN_SLICE ? own->slice_size
-            : own->align == XPAR_ALIGN_1K ? XPAR_BLAKE3_CHUNK_LEN : 0;
-      u64 used = w->hwm - own->stream_base;
-      u64 rem = q ? used % q : 0;
-      if (!rem || q - rem > UINT64_MAX - w->hwm ||
-          off != w->hwm + q - rem) return XPAR_E_MALFORMED;
-      w->hwm = end;
-    }
-  }
-  return XPAR_OK;
-}
-
-xpar_status xpar_extwalk_done(const xpar_extwalk * w) {
-  u64 end;
-  if (!w->gen_count || w->own >= w->gen_count) return XPAR_E_MALFORMED;
-  if (!add64(w->gen[w->own].stream_base, w->gen[w->own].stream_length, &end))
-    return XPAR_E_MALFORMED;
-  return w->hwm == end ? XPAR_OK : XPAR_E_MALFORMED;
 }
 
 static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
@@ -1394,16 +1337,6 @@ bool xpar_auth_key_ok(const xpar_auth * a, const u8 * master) {
   u8 want[16];
   xpar_key_check(want, master);
   return xpar_ct_equal(want, a->key_check, 16);
-}
-
-xpar_status xpar_text_read(const u8 * body, sz n, char ** out, sz * out_len) {
-  sz len = n;
-  *out = NULL;  *out_len = 0;
-  while (len && !body[len - 1]) len--;
-  if (len && xpar_has_nul(body, len)) return XPAR_E_MALFORMED;
-  *out = dup_str(body, len);
-  *out_len = len;
-  return XPAR_OK;
 }
 
 void xpar_text_write(xpar_buf * out, const char * type, const char * text,

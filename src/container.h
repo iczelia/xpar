@@ -41,7 +41,6 @@ typedef struct {
 } xpar_key;
 
 bool xpar_key_master(u8 * out, const void * key_file, sz n);
-void xpar_key_packet(xpar_key * out, const u8 * master);
 void xpar_key_derive(xpar_key * out, const u8 * master);
 void xpar_key_check(u8 * out16, const u8 * master);
 
@@ -131,24 +130,6 @@ xpar_status xpar_entry_read (const u8 * body, sz n, u32 posix_record_count,
 void        xpar_entry_write(xpar_buf *, const xpar_entry *,
                              const u8 * set_id, const xpar_key *,
                              const xpar_wropt *);
-
-typedef struct {
-  u64 stream_base, stream_length, slice_size;
-  u8 align;
-} xpar_gen;
-
-typedef struct {
-  const xpar_gen * gen;
-  u32 gen_count;
-  u32 own;
-  u64 hwm;
-} xpar_extwalk;
-
-void        xpar_extwalk_init (xpar_extwalk *, const xpar_gen *, u32 count,
-                               u32 own);
-xpar_status xpar_extwalk_entry(xpar_extwalk *, const xpar_entry *);
-
-xpar_status xpar_extwalk_done (const xpar_extwalk *);
 
 typedef struct {
   u32 first_record;
@@ -268,7 +249,6 @@ bool xpar_auth_key_ok(const xpar_auth *, const u8 * master);
 
 /*  Body text with its zero padding removed. `*out` is NUL terminated for
     convenience and `*out_len` carries the true length.  */
-xpar_status xpar_text_read(const u8 * body, sz n, char ** out, sz * out_len);
 void xpar_text_write(xpar_buf *, const char * type, const char * text,
                      const u8 * set_id, const xpar_key *);
 
