@@ -35,11 +35,16 @@ typedef struct {
   u8  trust;
 } xpar_chunk_slot;
 
-typedef struct xpar_chunk_index {
+#ifndef XPAR_CHUNK_INDEX_TYPEDEF
+#define XPAR_CHUNK_INDEX_TYPEDEF
+typedef struct xpar_chunk_index xpar_chunk_index;
+#endif
+
+struct xpar_chunk_index {
   xpar_chunk_slot * slot;
   u32 capacity, count;
   u64 max_bytes;
-} xpar_chunk_index;
+};
 
 bool xpar_chunk_index_init(xpar_chunk_index *, u64 max_bytes);
 void xpar_chunk_index_free(xpar_chunk_index *);
