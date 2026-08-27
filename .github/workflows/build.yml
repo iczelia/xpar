@@ -479,26 +479,23 @@ jobs:
         run: |
           file xpar
           mkdir qw
-          for t in xpar tests/mkdata tests/damage tests/forge; do
+          make -j4 check TESTS=
+          for t in xpar tests/mkdata tests/damage tests/forge bench/timeit; do
             n=`basename "$t"`
             printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$QEMU" "$PWD/$t" > "qw/$n"
             chmod +x "qw/$n"
           done
           ./qw/xpar --version
 
-      #  Exclude bench.sh: its timeit path bypasses the qemu launchers.
+      #  LOG_COMPILER wraps scripts; launchers wrap their helper binaries.
       - name: Test suite under qemu
         run: |
-          t='tests/t_unit tests/t_codec tests/t_central tests/central.sh'
-          t="$t tests/faults.sh tests/safety.sh tests/sanity.sh"
-          t="$t tests/regress.sh"
-          #  build.sh reads uname, so it misreads a tierless cross target.
-          test -z "${{ matrix.target.macros }}" || t="$t tests/build.sh"
           e="XPAR=$PWD/qw/xpar; export XPAR;"
           e="$e MKDATA=$PWD/qw/mkdata; export MKDATA;"
           e="$e DAMAGE=$PWD/qw/damage; export DAMAGE;"
           e="$e FORGE=$PWD/qw/forge; export FORGE;"
-          make -j4 check VERBOSE=1 TESTS="$t" LOG_COMPILER="$QEMU" \
+          e="$e TIMEIT=$PWD/qw/timeit; export TIMEIT;"
+          make -j4 check VERBOSE=1 LOG_COMPILER="$QEMU" \
                                    TESTS_ENVIRONMENT="$e"
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat

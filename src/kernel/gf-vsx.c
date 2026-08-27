@@ -22,19 +22,32 @@ typedef __vector unsigned char vx_u8;
 
 static vx_u8 vx_splat(u8 x) { return vec_splats((unsigned char) x); }
 
-static vx_u8 vx_mul8(vx_u8 v, u8 c) {
-  vx_u8 a = v, out = vx_splat(0), one = vx_splat(1);
-  vx_u8 sh1 = vx_splat(1), sh7 = vx_splat(7), poly = vx_splat(0x1D);
-  for (u32 bit = 0; bit < 8; bit++) {
-    vx_u8 carry;
-    if ((c >> bit) & 1) out ^= a;
-    carry = vec_sr(a, sh7) & one;
-    a = vec_sl(a, sh1) ^ (vec_sub(vx_splat(0), carry) & poly);
-  }
-  return out;
+/*  vec_perm implements the split-table lookup used by other shuffle tiers.  */
+typedef struct { vx_u8 lo, hi; } vx_c8;
+typedef struct { vx_u8 t[8]; } vx_c16;
+
+static vx_c8 vx_load8(const xpar_gf8_coef * m) {
+  vx_c8 c;
+  c.lo = vec_vsx_ld(0, m->tab);
+  c.hi = vec_vsx_ld(0, m->tab + 16);
+  return c;
 }
 
-static void vx_mul16(vx_u8 v0, vx_u8 v1, u16 c,
+static vx_c16 vx_load16(const xpar_gf16_coef * m) {
+  vx_c16 c;
+  u32 i;
+  for (i = 0; i < 8; i++) c.t[i] = vec_vsx_ld(0, m->tab[i]);
+  return c;
+}
+
+static vx_u8 vx_mul8(vx_u8 v, vx_c8 c) {
+  vx_u8 nl = vec_and(v, vx_splat(15));
+  vx_u8 nh = vec_sr(v, vx_splat(4));
+  return vec_perm(c.lo, c.lo, nl) ^ vec_perm(c.hi, c.hi, nh);
+}
+
+/*  Split little-endian GF16 symbols into byte planes, then rejoin them.  */
+static void vx_mul16(vx_u8 v0, vx_u8 v1, vx_c16 c,
                      vx_u8 * o0, vx_u8 * o1) {
   static const u8 even_bytes[16] = {
     0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30
@@ -44,17 +57,13 @@ static void vx_mul16(vx_u8 v0, vx_u8 v1, u16 c,
   };
   vx_u8 pe = vec_vsx_ld(0, even_bytes), po = vec_vsx_ld(0, odd_bytes);
   vx_u8 lo = vec_perm(v0, v1, pe), hi = vec_perm(v0, v1, po);
-  vx_u8 al = lo, ah = hi, rl = vx_splat(0), rh = vx_splat(0);
-  vx_u8 one = vx_splat(1), sh1 = vx_splat(1), sh7 = vx_splat(7);
-  vx_u8 poly = vx_splat(0x2D);
-  for (u32 bit = 0; bit < 16; bit++) {
-    vx_u8 carry, bridge;
-    if ((c >> bit) & 1) { rl ^= al;  rh ^= ah; }
-    carry = vec_sr(ah, sh7) & one;
-    bridge = vec_sr(al, sh7) & one;
-    ah = vec_sl(ah, sh1) | bridge;
-    al = vec_sl(al, sh1) ^ (vec_sub(vx_splat(0), carry) & poly);
-  }
+  vx_u8 m15 = vx_splat(15), sh4 = vx_splat(4);
+  vx_u8 n0 = vec_and(lo, m15), n1 = vec_sr(lo, sh4);
+  vx_u8 n2 = vec_and(hi, m15), n3 = vec_sr(hi, sh4);
+  vx_u8 rl = (vec_perm(c.t[0], c.t[0], n0) ^ vec_perm(c.t[2], c.t[2], n1)) ^
+             (vec_perm(c.t[4], c.t[4], n2) ^ vec_perm(c.t[6], c.t[6], n3));
+  vx_u8 rh = (vec_perm(c.t[1], c.t[1], n0) ^ vec_perm(c.t[3], c.t[3], n1)) ^
+             (vec_perm(c.t[5], c.t[5], n2) ^ vec_perm(c.t[7], c.t[7], n3));
   *o0 = vec_mergeh(rl, rh);
   *o1 = vec_mergel(rl, rh);
 }
@@ -62,7 +71,7 @@ static void vx_mul16(vx_u8 v0, vx_u8 v1, u16 c,
 /*  Cache the coefficient because destination writes may alias it.  */
 static void vx_mac8(u8 * d, const u8 * s, sz n,
                     const xpar_gf8_coef * m) {
-  const u8 c = m->c;
+  const vx_c8 c = vx_load8(m);
   sz i = 0;
   for (; i + 16 <= n; i += 16) {
     vx_u8 dv = vec_vsx_ld(0, d + i), sv = vec_vsx_ld(0, s + i);
@@ -73,7 +82,7 @@ static void vx_mac8(u8 * d, const u8 * s, sz n,
 
 static void vx_mac8x2(u8 * const d[2], const u8 * s, sz n,
                       const xpar_gf8_coef m[2]) {
-  const u8 c0 = m[0].c, c1 = m[1].c;
+  const vx_c8 c0 = vx_load8(&m[0]), c1 = vx_load8(&m[1]);
   sz i = 0;
   for (; i + 16 <= n; i += 16) {
     vx_u8 v = vec_vsx_ld(0, s + i);
@@ -86,7 +95,7 @@ static void vx_mac8x2(u8 * const d[2], const u8 * s, sz n,
 
 static void vx_mul8_region(u8 * d, const u8 * s, sz n,
                            const xpar_gf8_coef * m) {
-  const u8 c = m->c;
+  const vx_c8 c = vx_load8(m);
   sz i = 0;
   for (; i + 16 <= n; i += 16)
     vec_vsx_st(vx_mul8(vec_vsx_ld(0, s + i), c), 0, d + i);
@@ -95,7 +104,7 @@ static void vx_mul8_region(u8 * d, const u8 * s, sz n,
 
 static void vx_mac16(u8 * d, const u8 * s, sz n,
                      const xpar_gf16_coef * m) {
-  const u16 c = m->c;
+  const vx_c16 c = vx_load16(m);
   sz i = 0;
   for (; i + 32 <= n; i += 32) {
     vx_u8 a, b;
@@ -115,7 +124,7 @@ static void vx_mac16x2(u8 * const d[2], const u8 * s, sz n,
 
 static void vx_mul16_region(u8 * d, const u8 * s, sz n,
                             const xpar_gf16_coef * m) {
-  const u16 c = m->c;
+  const vx_c16 c = vx_load16(m);
   sz i = 0;
   for (; i + 32 <= n; i += 32) {
     vx_u8 a, b;
@@ -142,7 +151,7 @@ static void vx_xor3(u8 * d, const u8 * a, const u8 * b, sz n) {
 
 #define VX_FFT8(name, ref, inverse)                                          \
 static void name(u8 * x, u8 * y, sz n, const xpar_gf8_coef * m) {           \
-  const u8 c = m->c;                                                        \
+  const vx_c8 c = vx_load8(m);                                              \
   sz i = 0;                                                                 \
   for (; i + 16 <= n; i += 16) {                                            \
     vx_u8 a = vec_vsx_ld(0, x + i), b = vec_vsx_ld(0, y + i);               \
@@ -155,7 +164,7 @@ static void name(u8 * x, u8 * y, sz n, const xpar_gf8_coef * m) {           \
 
 #define VX_FFT16(name, ref, inverse)                                         \
 static void name(u8 * x, u8 * y, sz n, const xpar_gf16_coef * m) {          \
-  const u16 c = m->c;                                                       \
+  const vx_c16 c = vx_load16(m);                                            \
   sz i = 0;                                                                 \
   for (; i + 32 <= n; i += 32) {                                            \
     vx_u8 x0 = vec_vsx_ld(0, x + i), x1 = vec_vsx_ld(0, x + i + 16);        \
