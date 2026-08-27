@@ -11,7 +11,7 @@
 .\"
 .\"  You should have received a copy of the GNU General Public License
 .\"  along with this program. If not, see <http://www.gnu.org/licenses/>.
-.TH XPAR 1 "2026" "xpar 2.0" "User Commands"
+.TH XPAR 1 "2026-08-26" "xpar 2.0" "User Commands"
 .SH NAME
 xpar \- error and erasure correction for guarding data integrity
 .SH SYNOPSIS
@@ -293,19 +293,22 @@ Check tags without the algebraic pass.
 .BR "verify \-\-strong"
 Hash every entry as well as its slices.
 .TP
-.BI "verify \-\-resync=" WHICH
+.BI "verify \-\-resync=" WHICH ", " "repair \-\-resync=" WHICH
 .IR off ", " auto " (default), or " always .
 .TP
-.BI "verify \-\-resync\-step=" N
+.BI "verify \-\-resync\-step=" N ", " "repair \-\-resync\-step=" N
 Sample every
 .I Nth
 candidate offset.
 .TP
-.BI "verify \-\-resync\-window=" SIZE
+.BI "verify \-\-resync\-window=" SIZE ", " "repair \-\-resync\-window=" SIZE
 Search this far on either side of an expected offset.
 .TP
-.B "verify \-\-resync\-exhaustive"
-Confirm every misplaced-data candidate.
+.BR "verify \-\-resync\-exhaustive" ", " "repair \-\-resync\-exhaustive"
+Confirm every misplaced-data candidate. Deleted bytes rarely leave one
+dominant displacement, so recovering from a deletion generally needs
+.B \-\-resync=always
+together with this option; the diagnostic says so when it applies.
 .TP
 .BI "verify \-\-scan=" DIR
 Also search
@@ -563,8 +566,9 @@ trusted without its packet key.
 .SH VERSION 1 ARCHIVES
 Version 2.0 does not read version 1 archives and ships no version 1
 decoder. A version 1 file handed to any verb is detected and refused with
-a message naming the version. To migrate, decode with xpar 1.x and
-re-protect with this version.
+a message naming the kind of version 1 object it is, and its version where
+the format records one. To migrate, decode with xpar 1.x and re-protect
+with this version.
 .SH FILES
 .TP
 .IB base .xpa
