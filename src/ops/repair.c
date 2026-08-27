@@ -32,17 +32,7 @@
 #include "port-fs.h"
 #include "resync.h"
 #include "slice.h"
-
-/*  Undo journals store checked old-byte records. A valid footer marks a
-    journal safe to replay; RP_J_CREATED records newly created files.  */
-
-#define RP_J_MAGIC  "XPARUNDO"
-#define RP_J_END    "XPARUNDN"
-#define RP_J_VER    1u
-#define RP_J_HDR    64u
-#define RP_J_REC    40u
-#define RP_J_FOOT   24u
-#define RP_J_CREATED 1u          /*  rflags bit 0.  */
+#include "undo.h"
 
 /*  Small descriptor cache for sequential and column-strided reads.  */
 #define RP_FD_CACHE  8
@@ -816,6 +806,9 @@ static void rp_scan_stream(rp * r, xpar_progress_t * pg) {
   u64 s, z = r->geom.slice_size;
   u32 k = r->geom.cells_per_slice;
   u8 * buf = (u8 *) xpar_alloc_raw((sz) z);
+  /*  Reuse the CRC shift operator until the cell length changes.  */
+  u32 comb_op[XPAR_CRC32C_OP_WORDS];
+  u64 comb_len = 0;
   for (s = 0; s < r->geom.slice_count; s++) {
     u32 c;
     bool cells_ok = true;
@@ -854,7 +847,14 @@ static void rp_scan_stream(rp * r, xpar_progress_t * pg) {
       u64 sz_c = xpar_cell_size(&r->geom, c);
       u64 at   = (u64) c * (r->geom.cell_bytes ? r->geom.cell_bytes : z);
       u32 crc  = xpar_crc32c(0, buf + at, (sz) sz_c);
-      slice_crc = c ? xpar_crc32c_combine(slice_crc, crc, sz_c) : crc;
+      if (!c) slice_crc = crc;
+      else {
+        if (sz_c != comb_len) {
+          xpar_crc32c_shift_op(comb_op, sz_c);
+          comb_len = sz_c;
+        }
+        slice_crc = xpar_crc32c_combine_op(comb_op, slice_crc, crc);
+      }
       if (!(r->tag_have & XPAR_TAGS_CELL) || !r->tags.t.cell_crc) continue;
       if (crc != r->tags.t.cell_crc[s * k + c]) {
         xpar_cell_mark(&r->er, s, c);
@@ -1274,14 +1274,41 @@ static int rp_edit_cmp(const rp_edit * a, const rp_edit * b) {
   return 0;
 }
 
-static void rp_sort_edits(rp * r) {
-  u32 i, j;
-  for (i = 1; i < r->edit_count; i++) {
-    rp_edit t = r->edit[i];
-    for (j = i; j && rp_edit_cmp(&r->edit[j - 1], &t) > 0; j--)
-      r->edit[j] = r->edit[j - 1];
-    r->edit[j] = t;
+/*  Stable heap sort by (entry, file offset).  */
+
+static int rp_edit_key(const rp * r, u32 a, u32 b) {
+  int c = rp_edit_cmp(&r->edit[a], &r->edit[b]);
+  if (c) return c;
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+
+static void rp_edit_sift(const rp * r, u32 * a, u32 root, u32 n) {
+  while (1) {
+    u32 c = 2 * root + 1, big;
+    if (c >= n) return;
+    big = c;
+    if (c + 1 < n && rp_edit_key(r, a[c], a[c + 1]) < 0) big = c + 1;
+    if (rp_edit_key(r, a[root], a[big]) >= 0) return;
+    { u32 t = a[root];  a[root] = a[big];  a[big] = t; }
+    root = big;
   }
+}
+
+static void rp_sort_edits(rp * r) {
+  u32 n = r->edit_count, i, * ord;
+  rp_edit * out;
+  if (n < 2) return;
+  ord = (u32 *) xpar_alloc_raw((sz) n * sizeof(u32));
+  For(u32, q, n, ord[q] = q)
+  for (i = n / 2; i-- > 0;) rp_edit_sift(r, ord, i, n);
+  for (i = n; i-- > 1;) {
+    u32 t = ord[0];  ord[0] = ord[i];  ord[i] = t;
+    rp_edit_sift(r, ord, 0, i);
+  }
+  out = (rp_edit *) xpar_alloc_raw((sz) n * sizeof(rp_edit));
+  For(u32, q, n, out[q] = r->edit[ord[q]])
+  xpar_free(ord);  xpar_free(r->edit);
+  r->edit = out;  r->edit_cap = n;
 }
 
 /*  Emit one write per damaged inode, not per hard-link alias.  */
@@ -1381,14 +1408,14 @@ static void rp_build_writes(rp * r) {
 
 static void rp_journal(rp * r) {
   xpar_file * f;
-  u8 hdr[RP_J_HDR], rec[RP_J_REC], foot[RP_J_FOOT], pad[8];
+  u8 hdr[XPAR_UNDO_HDR], rec[XPAR_UNDO_REC], foot[XPAR_UNDO_FOOT], pad[8];
   u32 i, all = 0;
   u64 payload = 0;
   xpar_memset(pad, 0, sizeof pad);
   for (i = 0; i < r->wr_count; i++) payload += r->wr[i].len;
   xpar_memset(hdr, 0, sizeof hdr);
-  xpar_memcpy(hdr, RP_J_MAGIC, 8);
-  xpar_wr32(hdr + 8, RP_J_VER);
+  xpar_memcpy(hdr, XPAR_UNDO_MAGIC, 8);
+  xpar_wr32(hdr + 8, XPAR_UNDO_VER);
   xpar_memcpy(hdr + 16, r->set_id, XPAR_SET_ID_LEN);
   xpar_wr64(hdr + 32, r->wr_count);
   xpar_wr64(hdr + 40, payload);
@@ -1405,10 +1432,10 @@ static void rp_journal(rp * r) {
     rp_write * w = &r->wr[i];
     const char * path = r->path[w->entry];
     u32 plen = (u32) xpar_strlen(path);
-    u32 tail = (u32) ((8 - ((RP_J_REC + plen + w->len) & 7)) & 7);
+    u32 tail = (u32) ((8 - ((XPAR_UNDO_REC + plen + w->len) & 7)) & 7);
     xpar_memset(rec, 0, sizeof rec);
     xpar_wr32(rec, plen);
-    xpar_wr32(rec + 4, (r->fstate[w->entry] & 1) ? 0 : RP_J_CREATED);
+    xpar_wr32(rec + 4, (r->fstate[w->entry] & 1) ? 0 : XPAR_UNDO_CREATED);
     xpar_wr64(rec + 8, w->off);
     xpar_wr64(rec + 16, w->len);
     xpar_wr64(rec + 24, r->fsize[w->entry]);
@@ -1425,7 +1452,7 @@ static void rp_journal(rp * r) {
   }
   /*  The footer CRC makes incomplete journals non-replayable.  */
   xpar_memset(foot, 0, sizeof foot);
-  xpar_memcpy(foot, RP_J_END, 8);
+  xpar_memcpy(foot, XPAR_UNDO_END, 8);
   xpar_wr64(foot + 8, r->wr_count);
   xpar_wr32(foot + 16, all);
   xpar_xwrite(f, foot, sizeof foot);
@@ -1599,8 +1626,28 @@ static bool rp_paranoid(rp * r, u32 chunk) {
   return ok;
 }
 
+typedef struct { u64 dev, ino;  u32 entry; } rp_link;
+
+static int rp_link_cmp(const rp_link * a, const rp_link * b) {
+  if (a->dev != b->dev) return a->dev < b->dev ? -1 : 1;
+  if (a->ino != b->ino) return a->ino < b->ino ? -1 : 1;
+  return a->entry < b->entry ? -1 : (a->entry > b->entry);
+}
+
+static void rp_link_sift(rp_link * a, u32 root, u32 n) {
+  while (1) {
+    u32 c = 2 * root + 1, big;
+    if (c >= n) return;
+    big = c;
+    if (c + 1 < n && rp_link_cmp(&a[c], &a[c + 1]) < 0) big = c + 1;
+    if (rp_link_cmp(&a[root], &a[big]) >= 0) return;
+    { rp_link t = a[root];  a[root] = a[big];  a[big] = t; }
+    root = big;
+  }
+}
+
 static void rp_find_aliases(rp * r) {
-  u32 caps = xpar_fs_caps(r->dir), i, j;
+  u32 caps = xpar_fs_caps(r->dir), i;
   for (i = 0; i < r->mf.count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
     r->path[i] = xpar_path_join_n(r->dir, e->name, e->name_len);
@@ -1614,34 +1661,55 @@ static void rp_find_aliases(rp * r) {
     }
   }
   if (!(caps & XPAR_FS_LINKID)) return;
-  /*  Merge names sharing (dev, ino) only when their extent lists match;
-      otherwise the link structure has drifted.  */
-  for (i = 0; i < r->mf.count; i++) {
-    xpar_stat_t a;
-    if (r->alias[i] || r->mf.entry[i].entry_type != XPAR_ENTRY_REGULAR)
-      continue;
-    if (xpar_lstat(r->path[i], &a) != 0 || a.nlink < 2) continue;
-    for (j = 0; j < i; j++) {
-      xpar_stat_t b;
-      const xpar_entry * ea = &r->mf.entry[i], * eb = &r->mf.entry[j];
-      u32 k;
-      bool same = ea->extent_count == eb->extent_count;
-      if (r->alias[j] || eb->entry_type != XPAR_ENTRY_REGULAR) continue;
-      if (xpar_lstat(r->path[j], &b) != 0) continue;
-      if (b.dev != a.dev || b.ino != a.ino) continue;
-      for (k = 0; k < ea->extent_count && same; k++)
-        same = ea->extents[k].stream_offset == eb->extents[k].stream_offset &&
-               ea->extents[k].length == eb->extents[k].length;
-      if (!same) {
-        rp_note(r, "xpar: '%s' and '%s' are one inode but describe "
-                   "different content; treating them separately.\n",
-                r->path[i], r->path[j]);
+  /*  Group names by inode, then merge those with matching extents.  */
+  { rp_link * lk = (rp_link *) xpar_alloc_raw(
+                     (sz) MAX(r->mf.count, 1) * sizeof(rp_link));
+    u32 n = 0, g0;
+    for (i = 0; i < r->mf.count; i++) {
+      xpar_stat_t a;
+      if (r->alias[i] || r->mf.entry[i].entry_type != XPAR_ENTRY_REGULAR)
         continue;
-      }
-      r->alias[i] = 1;  r->canon[i] = j;
-      break;
+      if (xpar_lstat(r->path[i], &a) != 0 || a.nlink < 2) continue;
+      lk[n].dev = a.dev;  lk[n].ino = a.ino;  lk[n].entry = i;  n++;
     }
-  }
+    if (n > 1) {
+      for (i = n / 2; i-- > 0;) rp_link_sift(lk, i, n);
+      for (i = n; i-- > 1;) {
+        rp_link t = lk[0];  lk[0] = lk[i];  lk[i] = t;
+        rp_link_sift(lk, 0, i);
+      }
+    }
+    /*  Groups are contiguous and retain manifest order.  */
+    for (g0 = 0; g0 < n;) {
+      u32 g1 = g0 + 1, a, b;
+      while (g1 < n && lk[g1].dev == lk[g0].dev && lk[g1].ino == lk[g0].ino)
+        g1++;
+      for (a = g0 + 1; a < g1; a++) {
+        u32 ai = lk[a].entry;
+        if (r->alias[ai]) continue;
+        for (b = g0; b < a; b++) {
+          u32 bi = lk[b].entry;
+          const xpar_entry * ea = &r->mf.entry[ai], * eb = &r->mf.entry[bi];
+          u32 k;
+          bool same = ea->extent_count == eb->extent_count;
+          if (r->alias[bi]) continue;
+          for (k = 0; k < ea->extent_count && same; k++)
+            same = ea->extents[k].stream_offset ==
+                     eb->extents[k].stream_offset &&
+                   ea->extents[k].length == eb->extents[k].length;
+          if (!same) {
+            rp_note(r, "xpar: '%s' and '%s' share an inode but differ; "
+                       "kept separate.\n",
+                    r->path[ai], r->path[bi]);
+            continue;
+          }
+          r->alias[ai] = 1;  r->canon[ai] = bi;
+          break;
+        }
+      }
+      g0 = g1;
+    }
+    xpar_free(lk); }
 }
 
 static void rp_entry_state_alloc(rp * r) {
@@ -2352,38 +2420,6 @@ static void owned_scan_recovery(const xpar_vset * s, const owned_vol * v,
   }
 }
 
-static void owned_write_split(const xpar_vset * s, u64 off,
-                              const u8 * data, u64 len) {
-  const xpar_layt * l = xpar_vset_layt(s);
-  const char * dir = xpar_vset_dir(s);
-  while (len) {
-    const xpar_vol * v = NULL;
-    u32 i;
-    u64 take;
-    char * path;
-    xpar_file * f;
-    for (i = 0; i < l->count; i++)
-      if (l->vol[i].kind == XPAR_VOL_DATA &&
-          off >= l->vol[i].stream_offset &&
-          off - l->vol[i].stream_offset < l->vol[i].byte_length) {
-        v = &l->vol[i]; break;
-      }
-    FATAL_UNLESS("The split layout has no data volume for stream offset "
-                 "%" PRIu64 ".", v != NULL, off);
-    take = MIN(len, v->byte_length - (off - v->stream_offset));
-    path = xpar_path_join(dir, v->name);
-    f = xpar_open(path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
-    if (!f) FATAL_PERROR(path);
-    if (xpar_pwrite(f, data, (sz) take,
-                    off - v->stream_offset) != (sz) take ||
-        xpar_fsync(f) != 0)
-      FATAL_IO("Writing split data volume '%s' failed.", path);
-    xpar_xclose(f);
-    xpar_free(path);
-    off += take; data += take; len -= take;
-  }
-}
-
 bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
                             u64 memory, xpar_file * dst,
                             const char ** reason) {
@@ -2596,7 +2632,7 @@ static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
 }
 
 static void owned_write_tree(const xpar_options *, xpar_vset *,
-                             u8 * const *, xpar_file *, const u64 *);
+                             xpar_file *, const u64 *);
 
 /*  Owned-layout repair summary.  */
 typedef struct {
@@ -2789,7 +2825,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
         }
   }
   if (ok && o->dest == XPAR_DEST_TO) {
-    owned_write_tree(o, s, NULL, stage, slot);
+    owned_write_tree(o, s, stage, slot);
   } else if (ok && armoured) {
     xpar_garm_write_patched(arm_path, &ap, arm_plain, arm_len, strm_off,
                             g->stream_length, stage, slot,
@@ -2811,8 +2847,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
 /*  `repair --to` materialises the protected tree without publishing the
     reconstructed owned stream.  */
 static void owned_write_tree(const xpar_options * o, xpar_vset * s,
-                             u8 * const * data, xpar_file * staged,
-                             const u64 * slot) {
+                             xpar_file * staged, const u64 * slot) {
   const xpar_manifest * m = xpar_vset_manifest(s);
   const xpar_geom * g = xpar_vset_geom(s);
   xpar_chain ancestry;
@@ -2915,8 +2950,6 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
                                         &take),
                        (int) e->name_len, e->name);
           bytes = io;
-        } else if (data) {
-          bytes = data[slice] + in;
         } else if (slot && slot[slice] != UINT64_MAX) {
           if (xpar_pread(staged, io, (sz) take,
                          slot[slice] * g->slice_size + in) != (sz) take)
@@ -3019,29 +3052,15 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     }
     xpar_free(src); xpar_free(p);
   }
-  xpar_nameidx_free(&nix);
-
-  /*  Apply directory metadata deepest-first after creating children.  */
+  /*  Apply directory metadata deepest-first using reversed name order.  */
   {
-    u32 * order = (u32 *) xpar_alloc_raw((m->count ? m->count : 1) * 4);
     u32 caps = xpar_fs_caps(o->to_dir);
     rp meta;
     xpar_memset(&meta, 0, sizeof meta);
     meta.o = o;  meta.quiet = o->quiet;
-    for (i = 0; i < m->count; i++) order[i] = i;
-    for (i = 1; i < m->count; i++) {
-      u32 t = order[i], j = i;
-      while (j && -xpar_name_cmp(m->entry[order[j - 1]].name,
-                                  m->entry[order[j - 1]].name_len,
-                                  m->entry[t].name,
-                                  m->entry[t].name_len) > 0) {
-        order[j] = order[j - 1]; j--;
-      }
-      order[j] = t;
-    }
     for (i = 0; i < m->count; i++) {
-      const xpar_entry * e = &m->entry[order[i]];
-      u32 idx = order[i], owner = metadata_owner[idx];
+      u32 idx = nix.order[m->count - 1 - i], owner = metadata_owner[idx];
+      const xpar_entry * e = &m->entry[idx];
       const xpar_posix_rec * pr = NULL;
       xpar_path_status why;
       bool link = e->entry_type == XPAR_ENTRY_SYMLINK;
@@ -3060,8 +3079,8 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
       rp_apply_meta(&meta, e, pr, p, link, caps);
       xpar_free(p);
     }
-    xpar_free(order);
   }
+  xpar_nameidx_free(&nix);
   for (i = 0; i < metadata.gen_count; i++)
     xpar_gchain_posix_free(metadata_posix[i], metadata_posix_count[i]);
   xpar_free(metadata_posix);  xpar_free(metadata_posix_count);
@@ -3080,19 +3099,14 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
 static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
                         owned_acct * acct) {
   const xpar_setd * sd = xpar_vset_setd(s);
-  const xpar_geom * g = xpar_vset_geom(s);
   const xpar_erasures * er = xpar_vset_erasures(s);
-  const xpar_tags * tags = xpar_vset_tags(s);
   const xpar_layt * l = xpar_vset_layt(s);
-  u64 rtop = 0, i, col;
-  u32 k = g->cells_per_slice;
+  u64 rtop = 0, i;
   const u8 ** rec;
-  u8 ** data;
-  u8 * present, * rpresent, * touched;
+  u8 * rpresent;
   owned_vol * rv = NULL;
   u32 rv_count = 0;
-  xpar_codec * codec;
-  bool ok = true;
+  int out;
 
   if (xpar_vset_authenticated(s) && !xpar_vset_key(s))
     FATAL_CODE(XPAR_EXIT_AUTH,
@@ -3130,97 +3144,23 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
 
   rpresent = (u8 *) xpar_calloc(rtop ? (sz) rtop : 1, 1);
   for (i = 0; i < rtop; i++) rpresent[i] = rec[i] != NULL;
-  if (sd->layout == XPAR_LAYOUT_SPLIT ||
-      sd->layout == XPAR_LAYOUT_ARMOURED) {
-    int out = owned_repair_stream(o, s, checked, rec, rpresent, rtop, acct);
-    /*  Rewrite damaged named volumes from intact substitutes.  */
-    if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
-        o->dest != XPAR_DEST_TO) {
-      const char * why = NULL;
-      acct->volumes_rewritten = xpar_vset_volumes_to_rewrite(s);
-      if (!xpar_vset_rewrite_substituted(s, &why)) {
-        acct->volumes_rewritten = 0;
-        if (!o->quiet)
-          xpar_fprintf(xpar_stderr,
-                       "xpar: could not rewrite a data volume: %s\n",
-                       why ? why : "unknown error");
-        out = XPAR_EXIT_UNREPAIRABLE;
-      }
+  out = owned_repair_stream(o, s, checked, rec, rpresent, rtop, acct);
+  if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
+      o->dest != XPAR_DEST_TO) {
+    const char * why = NULL;
+    acct->volumes_rewritten = xpar_vset_volumes_to_rewrite(s);
+    if (!xpar_vset_rewrite_substituted(s, &why)) {
+      acct->volumes_rewritten = 0;
+      if (!o->quiet)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: could not rewrite a data volume: %s\n",
+                     why ? why : "unknown error");
+      out = XPAR_EXIT_UNREPAIRABLE;
     }
-    for (u32 q = 0; q < rv_count; q++) owned_close(&rv[q]);
-    xpar_free(rv); xpar_free(rpresent); xpar_free((void *) rec);
-    return out;
   }
-
-  data = (u8 **) xpar_calloc((sz) g->slice_count, sizeof(u8 *));
-  present = (u8 *) xpar_calloc((sz) g->slice_count, 1);
-  touched = (u8 *) xpar_calloc((sz) g->slice_count, 1);
-  for (i = 0; i < g->slice_count; i++) {
-    data[i] = (u8 *) xpar_alloc_raw((sz) g->slice_size);
-    xpar_vset_read(s, xpar_slice_begin(g, i), data[i], g->slice_size);
-  }
-  if (!xpar_codec_supports_axis(sd->codec, sd->field_log2, g->slice_count,
-                                rtop, sd->recovery_axis_log2))
-    FATAL_FORMAT("The recorded codec cannot express this recovery axis.");
-  codec = xpar_codec_new_axis(sd->codec, sd->field_log2, g->slice_count,
-                              rtop, sd->recovery_axis_log2);
-  for (col = 0; col < k && ok; col++) {
-    xpar_codec_plan * plan;
-    xpar_codec_status st;
-    u8 ** dp = (u8 **) xpar_calloc((sz) g->slice_count, sizeof(u8 *));
-    u8 ** rptr = (u8 **) xpar_calloc(rtop ? (sz) rtop : 1, sizeof(u8 *));
-    u64 y = xpar_cell_size(g, (u32) col);
-    u64 at = col * (g->cell_bytes ? g->cell_bytes : g->slice_size);
-    bool any = false;
-    for (i = 0; i < g->slice_count; i++) {
-      present[i] = !xpar_cell_bad(er, i, (u32) col);
-      dp[i] = data[i] + at;
-      if (!present[i]) { any = true; touched[i] = 1; }
-    }
-    for (i = 0; i < rtop; i++)
-      rptr[i] = rec[i] ? (u8 *) rec[i] + at : NULL;
-    if (any) {
-      plan = xpar_codec_plan_new(codec, present, rpresent, &st);
-      if (!plan || st != XPAR_CODEC_OK ||
-          xpar_codec_plan_apply(plan, dp, rptr, (sz) y) != XPAR_CODEC_OK)
-        ok = false;
-      xpar_codec_plan_free(plan);
-    }
-    xpar_free(dp); xpar_free(rptr);
-  }
-
-  for (i = 0; i < g->slice_count && ok; i++) if (touched[i]) {
-    if (tags->tag_len) {
-      u8 tag[32];
-      if (xpar_vset_key(s))
-        xpar_slice_tag_keyed(sd, i, data[i], xpar_vset_key(s)->k_slice,
-                             tag, tags->tag_len);
-      else xpar_slice_tag(sd, i, data[i], tag, tags->tag_len);
-      if (!xpar_blake3_tag_equal(tag, tags->slice_tag + i * tags->tag_len,
-                                 tags->tag_len)) ok = false;
-    } else if (xpar_crc32c(0, data[i], (sz) g->slice_size) !=
-               tags->slice_crc[i]) ok = false;
-  }
-  if (ok && o->dest == XPAR_DEST_BACKUP && l)
-    for (u32 q = 0; q < l->count; q++)
-      if (l->vol[q].kind == XPAR_VOL_DATA && l->vol[q].name) {
-        char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
-        owned_backup_path(path);
-        xpar_free(path);
-      }
-  if (ok && o->dest == XPAR_DEST_TO) {
-    owned_write_tree(o, s, data, NULL, NULL);
-  } else if (ok) for (i = 0; i < g->slice_count; i++) if (touched[i]) {
-    u64 have = xpar_slice_bytes(g, i);
-    owned_write_split(s, i * g->slice_size, data[i], have);
-  }
-
-  xpar_codec_free(codec);
-  for (i = 0; i < g->slice_count; i++) xpar_free(data[i]);
   for (u32 q = 0; q < rv_count; q++) owned_close(&rv[q]);
-  xpar_free(rv); xpar_free(data); xpar_free(present); xpar_free(rpresent);
-  xpar_free(touched); xpar_free((void *) rec);
-  return ok ? XPAR_EXIT_OK : XPAR_EXIT_UNREPAIRABLE;
+  xpar_free(rv); xpar_free(rpresent); xpar_free((void *) rec);
+  return out;
 }
 
 int xpar_op_repair(const xpar_options * o) {
@@ -3479,6 +3419,7 @@ int xpar_op_repair(const xpar_options * o) {
   rp_resync_tree(&r);
   xpar_progress_init(&pg, xpar_progress_wanted(o),
                      r.sd.stream_length, "Repairing");
+  if (o->json) xpar_progress_sink(&pg, xpar_json_progress_sink, &r.js);
   rp_scan_stream(&r, &pg);
   rp_scan_entries(&r, &pg);
   rp_classify(&r);
@@ -3595,7 +3536,7 @@ int xpar_op_repair(const xpar_options * o) {
   { xpar_stat_t st;
     if (!o->no_journal && !o->replace_journal &&
         xpar_lstat(r.journal, &st) == 0 &&
-        st.size >= RP_J_HDR + RP_J_FOOT)
+        st.size >= XPAR_UNDO_HDR + XPAR_UNDO_FOOT)
       FATAL("Undo journal '%s' exists; run xpar undo or pass "
             "--replace-journal.", r.journal);
   }
