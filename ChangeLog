@@ -1,4 +1,256 @@
+2026-08-27  Kamila Szewczyk  <k@iczelia.net>
+
+	README: update extraction script
+
+	readme: benchmarks
+
+	fix: clean warnings build.
+
+	t/regress, container: misc
+
+	further misc changes.
+
+	platform/win32: dry
+
+	x86 port: axe vpclmul
+
+	sr/cgeneration: DRY
+
+	listinfo: no O(n^2)
+
+	t/bench, build: misc
+
+	NEWS, README: axe vpclmul
+
+	crc32: axe vpclmul
+
+	makefile: axe vpclmul
+
+	configure: axe vpclmul
+
+	build, regress: more issues
+
+	repair, verify: DRY.
+
+	generation.c: DRY
+
+	blake3: more perf oriented refactoring
+
+	ci fix: build.sh reads uname
+
+	update the build script
+
+	t/regress: fix
+
+	ops/chain: update to reflect new state of source units
+
+	ops/extract: simplify
+
+	ops/generation: refactor
+
+	ops/ops,listinfo: simplify
+
+	ops/repair: refactor
+
+	ops/undo.h: new, shared constants
+
+	vset: deadcode
+
+	port: misc. refactors
+
+	progress: trigger sinks
+
+	slice: deadcode
+
+	t/build: don't fail on simdless confs.
+
+	t/forge: hostile body handling
+
+	t/regress: more tests
+
+	t/lib: register "forge"
+
+	t/unit: more checks
+
+	ops/scrub: link bsearch
+
+	ops/create: trigger json sink
+
+	kernel/gf: kernel hardening
+
+	crc32: remove deadcode, change the interface
+
+	codec-fft: remove deadcode
+
+	blake3: remove deadcode
+
+	armour: remove deadcode
+
+	json: progress sink
+
+	container: remove deadcode.
+
+	makefile: include src/ops/undo in dist tarball
+
+	common: progress sink (refactor)
+
+	README: sve2 -> sve
+
+	news: sve2 -> sve
+
+	makefile: rename sve2 -> sve
+
+	configure: simd probes.
+
+	ignore tests/forge.
+
+	kernel/gf-sve: rename
+
+	misc. fixes
+
+	t/regress: suite of uncovered issues
+
+	t/build: validate configure tiers
+
+	ops/generation: style, meaningful dispatch, bounds.
+
+	ops/extract: better validation
+
+	ops/listinfo: dd -> head
+
+	t/codec: simplify
+
+	tests/faults: fix silent drifts
+
+	ops/repair: better `touches' logic
+
+	ops/scrub: remove unused.
+
+	ops/verify: use relative offsets for LAYT
+
+	container: check invariants of the spec.
+
+	src/manifest: update stale reference
+
+	platform/win32: proper append and synchronise flag for file opening.
+
+	t/unit: gf tables, append open, reader bounds
+
+	man: document scrub --deep and --include better
+
+	kernel/gf: check for primitivity
+
+	kernel/gf-sve: document sve1 vs sve2
+
+	kernel/crc32: unused field
+
+	kernel/armour: update invariants
+
+	update readme to new messages
+
+	cli.c: consistency
+
+	automake: style, build/regression test
+
+	configure: test for flock(), build gfni intrinsics with -mavx512
+
+	v2.0 preparations
+
+	safety: 32-bit fix
+
+	mingw modes
+
+	bump download-action
+
+	fix: a handful of miscellaneous, low priority issues.
+
+	fix: miscellaneous
+
+	inject-errors: obsolete
+
+	fix various minor problems
+
+	straighten out the bullshit
+
+	--spool fixes
+
+	upgrade upload-artifact to v7
+
+	fix: --repair issues, windows paths, mac tests...
+
+	fix: undo journal overwrite
+
+	src/manifest.c: walk names a bare input by its basename
+
+	fix miscellaneous --repair breakage...
+
+	fix: split-layout verify reported clean on a corrupted data volume
+
+	fix: existing chains must inherit their layout
+
+	generic tweaks to scripts in bench/
+
+	README: migration from v1.x
+
+	chunk.h: gate away typedef xpar_chunk_index.
+
+	cli.c: new --resync.
+
+	blake3.h: gate away xpar_pool typedef.
+
+	manifest.h: gate away typedef xpar_chunk_index.
+
+	port-printf: correctly handle %o.
+
+	port-thread: gate away typedef xpar_pool
+
+	sanity.sh: run without exec
+
+	xpar.1: add the date, clarify v1 behaviours
+
+2026-08-25  Kamila Szewczyk  <k@iczelia.net>
+
+	experiments patch
+
+2026-08-24  Kamila Szewczyk  <k@iczelia.net>
+
+	fix a shell bug
+
+	windows `rename` is nonposixy
+
+	fix tests
+
+	various benchmark utility scripts
+
+	update tests
+
+	document --cell
+
+	add --cell
+
+	benchmark tweaks
+
+	update doc/ gitignore for LaTeX junk
+
+	update gitignore for attic/ (dev stash)
+
 2026-08-23  Kamila Szewczyk  <k@iczelia.net>
+
+	benchmark tools, timing
+
+	add xpar_occindex_next to stop alignment gaps from overwriting the stream
+
+	miscellaneous fixes
+
+	fix ci
+
+	crash handlers....
+
+	DOS checks
+
+	exit
+
+	update the changelog, adhere to max. line lengths
 
 	format fixes, etc
 
