@@ -24,7 +24,10 @@
 int xpar_cpu_count(void);
 int xpar_core_count(void);
 
+#ifndef XPAR_POOL_TYPEDEF
+#define XPAR_POOL_TYPEDEF
 typedef struct xpar_pool xpar_pool;
+#endif
 
 /*  Called once per index. `ctx` is shared across every call in the batch,
     so anything it points at that a callback writes must either be indexed
