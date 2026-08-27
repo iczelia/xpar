@@ -13,10 +13,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-#  A configure probe that is missing its own flags, or a function that was
-#  never added to AC_CHECK_FUNCS, fails silently: the feature is simply
-#  never compiled in and nothing says so. Every probe below asserts the
-#  other direction, that what the compiler accepts, configure found.
+# Ensure configure finds every feature accepted by its compiler probe.
 
 . "${srcdir:-.}/lib.sh"
 
@@ -38,9 +35,7 @@ EOF
 }
 
 # probe <MACRO> <flags> <code...>
-#   The compiler accepting the code obliges configure to have defined the
-#   macro. The converse is not asserted: configure may refuse a feature for
-#   reasons of its own, but it must never miss one it can build.
+# Require config.h to define features accepted by this probe.
 probe() {
   _macro=$1;  _flags=$2;  shift 2
   if compiles "$_flags" "$*"; then

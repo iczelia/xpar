@@ -71,14 +71,11 @@ int xpar_lstat(const char * path, xpar_stat_t * out) {
   int a;
   if (stat(path, &st) != 0) return -1;
   out->size  = (u64) st.st_size;
-  /*  No POSIX mode on FAT, and DJGPP's st_mode is derived from the
-      attribute byte rather than stored, so the honest answer is absent
-      and the read-only bit travels in attrs instead.  */
+  /* FAT stores attributes, not a POSIX mode. */
   out->mode  = XPAR_MODE_NONE;
   out->uid   = XPAR_ID_NONE;
   out->gid   = XPAR_ID_NONE;
-  /*  Reported as zero rather than as DJGPP's synthesised values, so that
-      nothing downstream can mistake them for an identity.  */
+  /* DJGPP synthesizes dev and inode, so report no identity. */
   out->dev   = 0;
   out->ino   = 0;
   out->nlink = 1;
@@ -232,9 +229,7 @@ int xpar_set_owner(const char * path, int nofollow, u32 uid, u32 gid,
 }
 
 int xpar_set_mode(const char * path, int nofollow, u32 mode) {
-  /*  DOS has no permission bits. The one thing `mode` could express here
-      is the read-only attribute, which arrives through attrs instead, so
-      applying mode as well would set the same bit from two places.  */
+  /* Read-only state is restored through attrs, not mode. */
   (void) path;  (void) nofollow;  (void) mode;
   errno = ENOTSUP;
   return -1;

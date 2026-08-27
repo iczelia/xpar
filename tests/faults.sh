@@ -234,9 +234,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   exists "$victim"
   run 0 "$XPAR" verify set.xpa
 
-  #  Damage the data to the full budget with a damaged recovery volume in
-  #  place: whatever the tool decides, a zero status has to mean the
-  #  bytes came back.
+  # A successful repair must restore data despite damaged recovery.
   cp pristine.bin data.bin
   ops=
   i=0

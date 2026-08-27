@@ -824,13 +824,12 @@ int xpar_op_explain(const xpar_options * o) {
   if (got && xpar_pread(f, head, got, 0) != got)
     FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
 
-  /*  xpar_garm_prologue reports the copy it used, or 3 for a candidate it
-      assembled by majority from all three.  */
+  /* Values 0-2 identify a copy; 3 means majority recovery. */
   static const char * const prologue_found[4] = {
     "Prologue copy 1 of 3 verifies.",
     "Prologue copy 2 of 3 verifies.",
     "Prologue copy 3 of 3 verifies.",
-    "Its prologue was recovered by a byte majority of the three copies."
+    "Prologue recovered by majority vote."
   };
   if (xpar_garm_prologue(head, len, &pr, &which)) {
     u64 w = pr.symbol_bits / 8;
@@ -839,11 +838,8 @@ int xpar_op_explain(const xpar_options * o) {
     if (!o->quiet && !o->json) {
       xpar_fprintf(xpar_stdout,
                    "%s is an armoured xpar archive. %s\n"
-                   "It carries every parameter needed to decode the "
-                   "region and to find\n"
-                   "the protected stream inside it, which is why the recipe "
-                   "below needs\n"
-                   "nothing but dd:\n\n"
+                   "The prologue contains all parameters needed by this "
+                   "dd recipe:\n\n"
                    "  symbol width W   %" PRIu64 " byte%s (GF(2^%" PRIu8 "))\n"
                    "  code             RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32 "\n"
                    "  interleave D     %" PRIu64 "\n"

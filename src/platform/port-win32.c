@@ -80,9 +80,7 @@ struct xpar_file {
 #endif
 };
 
-/*  Left to static zero-initialisation, which is the right starting state
-    for every field including the legacy critical section; the handles
-    themselves arrive in xpar_host_init.  */
+/* Handles are assigned during host initialization. */
 static struct xpar_file g_stdin;
 static struct xpar_file g_stdout;
 static struct xpar_file g_stderr;
@@ -501,8 +499,7 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
         how a read past the end reports itself in this form.  */
     if (!ok && GetLastError() == ERROR_HANDLE_EOF) break;
 #endif
-    /*  A short count is the whole answer here: the EOF flag describes the
-        sequential cursor, which a positional read has not moved.  */
+    /* Positional reads do not update the sequential EOF state. */
     if (!ok) { f->last_err = GetLastError();  break; }
     if (got == 0) break;
     total += got;

@@ -10,9 +10,9 @@ Project homepage: https://github.com/iczelia/xpar
 
 ## Synopsis
 
-xpar can be pointed at a file or a directory to create a recovery volume beside
-it.  They can be later used to restore files that fall victim to bad sectors,
-bit flips, truncated copies, media rot or transmission failure.
+xpar creates recovery volumes for files and directories. Use them to restore
+data damaged by bad sectors, bit flips, truncated copies, media rot, or
+transmission failures.
 
 ```
 % xpar create -r 10% -o backup movie.mkv     # 10% redundancy
@@ -20,23 +20,19 @@ bit flips, truncated copies, media rot or transmission failure.
 % xpar repair --in-place backup.xpa          # fix what broke
 ```
 
-xpar and its file format are competitors to PAR2, PAR2-turbo, ParPar, QuickPar,
-Par3, zfec, and numerous front-ends to ISA-L.  The tool's core operation presents
-a handful of key improvements: xpar corrects bit errors as well as lost/invalid
-blocks, i.e. it uses two layers of Reed-Solomon codes to operate, repairs are done
-in-place, and small (optionally transposed, for better burst error correction)
-blocks are used for the inner code.
+Alternatives include PAR2, PAR2-turbo, ParPar, QuickPar, Par3, zfec, and ISA-L
+front-ends. xpar uses two Reed-Solomon layers to correct both bit errors and
+lost or invalid blocks. Repairs are performed in place. The inner code uses
+small blocks that can be transposed for better burst-error correction.
 
-Its file format has been extensively documented by the formal specification
-in [doc/xpar-format.tex](doc/xpar-format.tex); `make docs` typesets it, and a
-ready-made `xpar-format-<version>.pdf` is attached to every release.  A manual
-page is also supplied.
+The format is specified in [doc/xpar-format.tex](doc/xpar-format.tex). Run
+`make docs` to typeset it; releases include `xpar-format-<version>.pdf`. A
+manual page is also included.
 
 ## Upgrading from xpar 1.x
 
-xpar 2.0 is a rewrite.  The container format is new and this version is unable
-to read xpar 1.x archives; no 1.x decoder is shipped.  1.x files are refused
-processing:
+xpar 2.0 uses a new container format and cannot read xpar 1.x archives. It
+rejects 1.x files with migration instructions:
 
 ```
 % xpar verify old.xpa
@@ -44,7 +40,7 @@ xpar: 'old.xpa' is an xpar 1.0 joint-mode archive.
 xpar: decode it with xpar 1.x, then re-protect it.
 ```
 
-To move, decode with an xpar 1.x binary and re-protect the result with 2.0.
+Decode with xpar 1.x, then protect the result with xpar 2.0.
 
 The command line also changed: operations are verbs rather than mode flags,
 so `-J`, `-W`, `-L`, `-s`, `-t`, `--interlacing`, `-H`/`--integrity` and
@@ -52,12 +48,10 @@ so `-J`, `-W`, `-L`, `-s`, `-t`, `--interlacing`, `-H`/`--integrity` and
 
 ## Installation
 
-If your software vendor packages xpar, it is the easiest to get it from there.
-Otherwise, consider downloading the fitting for your CPU architecture and
-operating system binary file from the Releases tab.
+Install your software vendor's xpar package when available. Otherwise,
+download the binary for your operating system and CPU from the Releases tab.
 
-In order to build from source code, download a distribution tarball from the
-releases tab and execute the following commands:
+To build from source, download a release tarball and run:
 
 ```
 % ./configure && make && sudo make install
@@ -127,7 +121,7 @@ xpar: status: repairable
  "syndromes":0,"bytes_read":10001216,"bytes_written":0}
 ```
 
-In order to repair broken archives, one may use the `repair` command:
+Repair a damaged archive with the `repair` command:
 
 ```
 % xpar repair --in-place backup.xpa
@@ -143,13 +137,10 @@ the stored BLAKE3 checksum, and then re-verifies the finished file.
 
 ## Why xpar?
 
-Mainly because erasure correction is not error correction.  Unlike PAR2,
-PAR2Turbo, PAR3 (Draft), ParPar, or zfec, xpar is also an error-correcting
-container.  It is thus the only tool that can use a partially correct
-information.  It is radically more common for files to contain the (mildly)
-wrong data rather than outright disappear.  Was it otherwise, why does every
-respectable tool under the sun include a checksum in its binary format?
-Firstly, erasures are correctible within a block.
+Erasure correction reconstructs missing blocks; error correction can also use
+the intact parts of damaged blocks. Unlike PAR2, PAR2Turbo, PAR3 (Draft),
+ParPar, and zfec, xpar supports both. Within a block, xpar uses checksums to
+identify intact cells and treats only damaged cells as erasures.
 
 ```
 % xpar verify b.xpa
@@ -165,9 +156,7 @@ xpar: 30 cells damaged, 0 copied, 30 decoded; 28 writes, 1966080 bytes; 1 entry 
 ok
 ```
 
-Secondly, errors can be optionally corrected within the erasure slices using
-an inner error-correcting code.  xpar can augment the slice data with additional
-redundancy to protect against spurious bit-flips.
+An optional inner code adds redundancy within slices to correct bit errors.
 
 ```
 % xpar verify arch.xpa
@@ -185,10 +174,7 @@ xpar:   ...
 xpar:   codewords corrected at 20 symbols: 2
 ```
 
-Such granular information is typically unachievable with other tools.
-
-Thirdly, errors are not necessarily corruption.  xpar handles insertions or
-deletions as well:
+xpar also handles inserted or deleted data:
 
 ```
 % xpar repair --in-place p.xpa
@@ -198,10 +184,8 @@ xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entry
 identical
 ```
 
-Finally, the xpar format has been designed in order to be easily extractable
-(without error correction, of course) via only standard and simple UNIX
-commands.  This provides long-term data security, in case this tool ever
-disappears off the face of the planet.
+The format can also be extracted without error correction using standard UNIX
+commands, so archives remain accessible without xpar.
 
 ```
 % xpar explain p.xpa
@@ -328,8 +312,7 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
                erasure budget is 5 per column, not 5 per set
   passes     : 1 sequential read totalling 100,000,000 bytes
 ```
-- `benchmark`: displays the performance metrics for low-level SIMD kernels used
-  by xpar.
+- `benchmark`: measures xpar's low-level SIMD kernels.
 ```
 % xpar benchmark --tiers
 xpar: benchmark: V-HASH, V-CRC and V-GEN KATs ok
@@ -347,7 +330,7 @@ xpar: benchmark: crc32c sse4.2, blake3 avx2
 xpar: benchmark: 9 tiers agree with scalar
 ```
 
-The following exit codes/ERRORLEVELs of all sub-commands are possible:
+All commands use these exit codes/ERRORLEVELs:
 - 0: No error.
 - 1: File damaged but repairable.
 - 2: File hopelessly damaged.
@@ -360,7 +343,7 @@ The following exit codes/ERRORLEVELs of all sub-commands are possible:
 
 ## Binary layouts
 
-Three options are offered:
+xpar supports three layouts:
 
 - `--layout=sidecar` (default): files are never touched and stay where they
   were. `base.xpa` and `base.v*.xpa` sit beside them. Extraction is never
@@ -376,12 +359,11 @@ Three options are offered:
 
 ## Performance
 
-Generally, xpar comes close in terms of performance to par2cmdline-turbo and
-ParPar in the single core mode.  Parallel workloads are not optimised as well
-yet.
+Single-core performance is comparable to par2cmdline-turbo and ParPar. Parallel
+workloads are less optimized.
 
-Further, xpar issues a mandatory readback (that can nonetheless be disabled
-with `--no-verify-after`) to ensure that the data has been written correctly.
+xpar reads output back by default to verify the write. Use `--no-verify-after`
+to disable this check.
 
 ## Portability
 
@@ -390,8 +372,8 @@ Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
 RISC-V vector (both shuffle and clmul paths).  The binary format is
 platform-agnostic.
 
-Windows specifically has two targets; the default `nt` target uses UTF-16,
-extended-length paths and a Vista+ API floor.  It is used like so:
+Windows has two targets. The default `nt` target uses UTF-16, extended-length
+paths, and Vista or later. Build it with:
 
 ```
 % CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \

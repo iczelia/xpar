@@ -740,9 +740,7 @@ static void test_posx_bound(void) {
   CHECK(rec == NULL, "no table returned");
 }
 
-/*  The generator has to reach every nonzero element. A modulus that is
-    irreducible but not primitive still satisfies a^order = 1, so the
-    property worth asserting is that the logarithm is a bijection.  */
+/* Every nonzero field element must have a unique logarithm. */
 static void test_gf_tables(void) {
   u8 * seen8;
   u8 * seen16;

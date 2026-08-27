@@ -279,11 +279,7 @@ int xpar_lock(xpar_file * f, bool exclusive) {
   }
   return 0;
 #else
-  /*  F_SETLK and never F_SETLKW: the waiting form is the one that hangs.
-      A whole-file lock is l_start 0 with l_len 0, which POSIX defines as
-      "to the end of the file however far it grows". Note that a read lock
-      needs the descriptor open for reading and a write lock open for
-      writing, or the call fails with EBADF rather than with a conflict.  */
+  /* Use nonblocking whole-file locks with matching descriptor access. */
   struct flock fl;
   fl.l_type   = exclusive ? F_WRLCK : F_RDLCK;
   fl.l_whence = SEEK_SET;
@@ -310,8 +306,7 @@ int xpar_unlock(xpar_file * f) {
 #endif
 }
 
-/*  Both paths are POSIX or older, so there is no host in this file that
-    cannot lock at all; the answer is constant rather than probed.  */
+/* Every supported POSIX backend provides locking. */
 bool xpar_lock_supported(void) { return true; }
 
 #if !defined(HAVE_PREAD) || !defined(HAVE_PWRITE)

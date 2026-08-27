@@ -1405,9 +1405,8 @@ static void rp_journal(rp * r) {
   xpar_wr64(hdr + 48, (u64) xpar_wall_ns());
   xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
   f = xpar_open(r->journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC);
-  if (!f) FATAL_IO("Cannot write the undo journal '%s': %s. Repair "
-                   "stops here rather than writing without one; "
-                   "--no-journal overrides.", r->journal,
+  if (!f) FATAL_IO("Cannot write undo journal '%s': %s; use --no-journal "
+                   "to continue without one.", r->journal,
                    xpar_strerror(xpar_errno()));
   xpar_xwrite(f, hdr, sizeof hdr);
   all = xpar_crc32c(0, hdr, sizeof hdr);

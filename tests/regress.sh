@@ -149,17 +149,14 @@ run 0 "$XPAR" create -r 16 -s 4K --volumes=8 --layout=split -o set -R tree
 vols=`find . -maxdepth 1 -name 'set.v*' | sort`
 test -n "$vols" || hard_error "no recovery volumes were written"
 
-#  Only worth asserting if the group really did exceed the threshold, which
-#  shows as some volumes carrying it and others not.
+# Require the group to cross the replication threshold.
 big=0;  small=0
 for n in $vols; do
   if test `wc -c < "$n"` -gt 1000000; then big=`expr $big + 1`
   else small=`expr $small + 1`; fi
 done
 if test "$big" -eq 0 || test "$small" -eq 0; then
-  bad "every volume replicated alike: the critical group no longer crosses
-       the replication threshold, so this case proves nothing. Enlarge the
-       manifest until some volumes carry the group and others do not."
+  bad "replication threshold not crossed; enlarge the manifest"
 else
   ok
 fi
@@ -378,8 +375,7 @@ for field in 8 16; do
 done
 if test "$big_frame" = yes; then ok
 else
-  bad "no frame exceeded a pipe buffer, so the short-read case that the
-       recipe used to hit was never exercised"
+  bad "no frame exceeded a pipe buffer; short-read path untested"
 fi
 
 step "--json --progress emits progress records, and --json alone does not"
@@ -676,7 +672,7 @@ run 0 "$XPAR" scrub --deep set.xpa
 rm -f p.bin
 "$XPAR" scrub --deep set.xpa > "$log" 2>&1
 if grep -q "do not recompute from the data" "$log"; then
-  bad "the parity was blamed for data that is simply not there"
+  bad "missing data was reported as bad parity"
 else ok; fi
 # Match the diagnostic prefix, not its wording.
 if grep -q "^xpar: --deep: " "$log"; then ok

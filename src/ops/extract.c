@@ -1074,9 +1074,8 @@ int xpar_op_extract(const xpar_options * o) {
   if (xpar_mkdir_p(x.dest, 0777) != 0 && xpar_lstat(x.dest, &st) != 0)
     FATAL_IO("Cannot create '%s': %s.", x.dest,
              xpar_strerror(xpar_errno()));
-  FATAL_UNLESS("The extraction directory '%s' is a symbolic link; "
-               "refusing to write through it. Name the directory it "
-               "points at if that is what you meant.",
+  FATAL_UNLESS("Extraction directory '%s' is a symbolic link; use its "
+               "target path.",
                xpar_lstat(x.dest, &st) == 0 && !st.is_symlink, x.dest);
   x.caps = xpar_fs_caps(x.dest);
   /*  Windows and DOS always interpret backslashes and reserved names.  */

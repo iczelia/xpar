@@ -3603,9 +3603,8 @@ int xpar_op_add(const xpar_options * caller) {
       manifest; only chunk deduplication needs the disk index.  */
   if (o->dedup == XPAR_DEDUP_NONE && o->verbose)
     xpar_fprintf(xpar_stderr,
-                 "xpar: --dedup=none: a renamed or chmod-ed file is "
-                 "re-appended and re-encoded rather than reusing the extents "
-                 "the chain already holds.\n");
+                 "xpar: --dedup=none: renamed or metadata-only changes "
+                 "append and re-encode file data.\n");
 
   xpar_gchain_manifest(&c, head, &inh, &owner);
   /*  Share one ancestor-content index across all lookups.  */
