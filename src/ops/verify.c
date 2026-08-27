@@ -1547,14 +1547,8 @@ const xpar_setd * xpar_vset_setd(const xpar_vset * s) {
 const xpar_geom * xpar_vset_geom(const xpar_vset * s) {
   return &s->geom;
 }
-const xpar_geom * xpar_vset_egeom(const xpar_vset * s) {
-  return &s->eg;
-}
 const xpar_manifest * xpar_vset_manifest(const xpar_vset * s) {
   return &s->mf;
-}
-const xpar_occindex * xpar_vset_occ(const xpar_vset * s) {
-  return &s->occ;
 }
 const xpar_tags * xpar_vset_tags(const xpar_vset * s) {
   return &s->tagset.t;
@@ -1816,9 +1810,6 @@ void xpar_verify_written_set_sources(const xpar_options * o,
                                      const xpar_manifest * sources) {
   verify_written_set_at(o, index_path, NULL, sources, false);
 }
-u64 xpar_vset_bad_cells(const xpar_vset * s) {
-  return s->er.bad_count;
-}
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset * s) {
   return s->subst_damaged;
 }
@@ -1826,17 +1817,6 @@ u64 xpar_vset_volumes_to_rewrite(const xpar_vset * s) {
     only about which file on disk holds it.  */
 bool xpar_vset_stream_intact(const xpar_vset * s, int rc) {
   return rc != XPAR_EXIT_UNREPAIRABLE && !s->er.bad_count && !s->bad_entries;
-}
-u64 xpar_vset_bad_slices(const xpar_vset * s) {
-  return s->bad_slices;
-}
-u64 xpar_vset_bad_entries(const xpar_vset * s) {
-  return s->bad_entries;
-}
-u64 xpar_vset_alias_bad(const xpar_vset * s) { return s->alias_bad; }
-u64 xpar_vset_max_depth(const xpar_vset * s) { return s->depth; }
-u64 xpar_vset_bytes_read(const xpar_vset * s) {
-  return s->bytes_read;
 }
 u64 xpar_vset_inner_corrected(const xpar_vset * s) {
   return s->armg_corrected;
@@ -2084,15 +2064,16 @@ static void flush_slice(stream_acc * a, u64 slice) {
     }
   }
   if (s->keyed) {
-    if (tag_bad) {
+    /*  Without a MAC verdict, retain live-cell suspicions in ignored slices.  */
+    if (tag_bad || ignored) {
       bool local = false;
       for (col = 0; col < s->eg.cells_per_slice; col++)
         if (a->cell_susp[col]) {
           xpar_cell_mark(&s->er, slice, col);
           local = true;
         }
-      if (!local) whole_bad = true;
-      a->slice_bad = true;
+      if (tag_bad && !local) whole_bad = true;
+      if (tag_bad || local) a->slice_bad = true;
     } else {
       /*  A valid MAC overrides CRC/SLCL filter mismatch.  */
       a->slice_bad = false;
@@ -2476,6 +2457,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   if (o->fast) total = s->geom.stream_length;
   else for (i = 0; i < s->mf.count; i++) total += s->mf.entry[i].length;
   xpar_progress_init(&pg, xpar_progress_wanted(o), total, "Verifying");
+  if (js) xpar_progress_sink(&pg, xpar_json_progress_sink, js);
   acc_init(&acc, s, o->strong, js);
 
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {

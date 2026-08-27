@@ -37,9 +37,7 @@ bool xpar_vset_bind_sources(xpar_vset *, const xpar_manifest *);
 
 const xpar_setd * xpar_vset_setd(const xpar_vset *);
 const xpar_geom * xpar_vset_geom(const xpar_vset *);
-const xpar_geom * xpar_vset_egeom(const xpar_vset *);
 const xpar_manifest * xpar_vset_manifest(const xpar_vset *);
-const xpar_occindex * xpar_vset_occ(const xpar_vset *);
 const xpar_tags * xpar_vset_tags(const xpar_vset *);
 const xpar_layt * xpar_vset_layt(const xpar_vset *);
 const xpar_erasures * xpar_vset_erasures(const xpar_vset *);
@@ -69,14 +67,8 @@ u32 xpar_vset_have_tables(const xpar_vset *);
 u32 xpar_vset_volumes(const xpar_vset *);
 u64 xpar_vset_recovery(const xpar_vset *);
 u64 xpar_vset_recovery_total(const xpar_vset *);
-u64 xpar_vset_bad_cells(const xpar_vset *);
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);
 bool xpar_vset_stream_intact(const xpar_vset *, int rc);
-u64 xpar_vset_bad_slices(const xpar_vset *);
-u64 xpar_vset_bad_entries(const xpar_vset *);
-u64 xpar_vset_alias_bad(const xpar_vset *);
-u64 xpar_vset_max_depth(const xpar_vset *);
-u64 xpar_vset_bytes_read(const xpar_vset *);
 u64 xpar_vset_inner_corrected(const xpar_vset *);
 
 u64 xpar_verify_syndromes(void);
