@@ -880,6 +880,9 @@ static bool rp_occ_raw_intact(const xpar_occurrence * o, rp_probe * pr) {
   if ((r->tag_have & XPAR_TAGS_CELL) && r->tags.t.cell_crc)
     return crc == r->tags.t.cell_crc[pr->slice * r->geom.cells_per_slice +
                                      pr->col];
+  /* Fall back to a slice CRC only for single-cell slices. */
+  if (r->geom.cells_per_slice > 1) return false;
+  if (!(r->tag_have & XPAR_TAGS_CRC) || !r->tags.t.slice_crc) return false;
   return crc == r->tags.t.slice_crc[pr->slice];
 }
 
@@ -905,6 +908,9 @@ static bool rp_occ_intact(const xpar_occurrence * o, void * user) {
   if ((r->tag_have & XPAR_TAGS_CELL) && r->tags.t.cell_crc)
     return crc == r->tags.t.cell_crc[pr->slice * r->geom.cells_per_slice +
                                      pr->col];
+  /* Fall back to a slice CRC only for single-cell slices. */
+  if (r->geom.cells_per_slice > 1) return false;
+  if (!(r->tag_have & XPAR_TAGS_CRC) || !r->tags.t.slice_crc) return false;
   return crc == r->tags.t.slice_crc[pr->slice];
 }
 
@@ -2033,7 +2039,7 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
     const xpar_entry * e = &r->mf.entry[i];
     i64 t;
     char * out;  char * src;
-    xpar_path_status why;
+    xpar_path_status why, src_why = XPAR_PATH_OK;
     if (backup) continue;
     if (e->entry_type == XPAR_ENTRY_SYMLINK) {
       out = xpar_path_resolve(dir, e->name, e->name_len, 0, &why);
@@ -2055,13 +2061,16 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
     if (e->entry_type != XPAR_ENTRY_HARDLINK) continue;
     t = xpar_link_target(&r->mf, &r->nix, i);
     if (t < 0) continue;
+    /* Keep output and target rejection reasons separate. */
     out = xpar_path_resolve(dir, e->name, e->name_len, 0, &why);
-    src = backup ? xpar_strdup(r->path[t])
-                 : xpar_path_resolve(dir, r->mf.entry[t].name,
-                                     r->mf.entry[t].name_len, 0, &why);
     FATAL_UNLESS("Refusing repair output '%.*s': %s.", out != NULL,
                  (int) e->name_len, e->name, xpar_path_reason(why));
-    FATAL_UNLESS("The canonical hard-link output is unsafe.", src != NULL);
+    src = backup ? xpar_strdup(r->path[t])
+                 : xpar_path_resolve(dir, r->mf.entry[t].name,
+                                     r->mf.entry[t].name_len, 0, &src_why);
+    FATAL_UNLESS("Unsafe hard-link target '%.*s': %s.",
+                 src != NULL, (int) r->mf.entry[t].name_len,
+                 r->mf.entry[t].name, xpar_path_reason(src_why));
     {
       char * link_stage = rp_backup_name(out);
       if (xpar_link(src, link_stage) == 0) {
@@ -2983,7 +2992,7 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
                                       XPAR_ENTRY_HARDLINK) {
     const xpar_entry * e = &m->entry[i];
     i64 t = xpar_link_target(m, &nix, i);
-    xpar_path_status why;
+    xpar_path_status why, src_why = XPAR_PATH_OK;
     char * p, * src;
     FATAL_UNLESS("Hard-link output '%.*s' has no canonical target.", t >= 0,
                  (int) e->name_len, e->name);
@@ -2991,8 +3000,10 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     FATAL_UNLESS("Refusing repair output '%.*s': %s.", p != NULL,
                  (int) e->name_len, e->name, xpar_path_reason(why));
     src = xpar_path_resolve(o->to_dir, m->entry[t].name,
-                            m->entry[t].name_len, 0, &why);
-    FATAL_UNLESS("The canonical hard-link output is missing.", src != NULL);
+                            m->entry[t].name_len, 0, &src_why);
+    FATAL_UNLESS("Unsafe hard-link target '%.*s': %s.",
+                 src != NULL, (int) m->entry[t].name_len, m->entry[t].name,
+                 xpar_path_reason(src_why));
     {
       char * link_stage = rp_backup_name(p);
       if (xpar_link(src, link_stage) == 0) {

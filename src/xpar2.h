@@ -141,6 +141,9 @@ enum {
 #define XPAR_ATTR_FSENCRYPT  (1u << 9)   /*  Advisory.  */
 #define XPAR_ATTR_SETID      (1u << 10)
 
+/* Bits 11-15 are reserved. */
+#define XPAR_ATTR_KNOWN      0x07FFu
+
 typedef struct {
   u64 stream_offset;
   u64 length;

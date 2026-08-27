@@ -446,6 +446,8 @@ void xpar_blake3_init_keyed(xpar_blake3_t * h, const u8 * key) {
   u32 k[8];
   Fi(8, k[i] = xpar_rd32(key + 4 * i))
   xpar_b3_hasher_init(h, k, XPAR_B3_KEYED_HASH);
+  /* Clear the caller's key copy. */
+  xpar_secure_zero(k, sizeof k);
 }
 
 void xpar_blake3_subtree_stream_init(xpar_blake3_t * h, const u8 * key,
@@ -469,6 +471,9 @@ void xpar_blake3_init_derive_key(xpar_blake3_t * h, const char * context) {
   xpar_blake3_final(&ctx, sub, sizeof(sub));
   Fi(8, k[i] = xpar_rd32(sub + 4 * i))
   xpar_b3_hasher_init(h, k, XPAR_B3_DERIVE_MAT);
+  xpar_secure_zero(&ctx, sizeof ctx);
+  xpar_secure_zero(sub, sizeof sub);
+  xpar_secure_zero(k, sizeof k);
 }
 
 /*  Shared serial and parallel update driver.  */

@@ -313,9 +313,7 @@ static const gf_tier gf_tiers[] = {
   { &xpar_gf_kernels_gfni256, XPAR_CPU_GFNI | XPAR_CPU_AVX2   },
 #endif
 #ifdef HAVE_GFNI512
-  /*  All three AVX-512 subsets, not just F: the kernel is compiled with
-      -mavx512bw and -mavx512vl and uses instructions from both, so gating
-      on F alone would dispatch to it on a Knights Landing part and fault.  */
+  /* Require every AVX-512 subset enabled at compile time. */
   { &xpar_gf_kernels_gfni512, XPAR_CPU_GFNI | XPAR_CPU_AVX512F |
                               XPAR_CPU_AVX512BW | XPAR_CPU_AVX512VL },
 #endif
@@ -326,8 +324,9 @@ static const gf_tier gf_tiers[] = {
 #ifdef HAVE_AVX2
   { &xpar_gf_kernels_avx2,    XPAR_CPU_AVX2                   },
 #endif
-#ifdef HAVE_PMULL
-  { &xpar_gf_kernels_neon_clmul, XPAR_CPU_NEON | XPAR_CPU_PMULL },
+#ifdef HAVE_NEON_CLMUL
+  /* vmull_p8 is baseline Advanced SIMD. */
+  { &xpar_gf_kernels_neon_clmul, XPAR_CPU_NEON },
 #endif
 #ifdef HAVE_SVE
   { &xpar_gf_kernels_sve, XPAR_CPU_SVE },

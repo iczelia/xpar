@@ -107,10 +107,7 @@ static void load_recovery(scrub * c) {
   c->rcvs = (scrub_rcvs *) xpar_calloc(c->rcvs_count ? (sz) c->rcvs_count
                                                      : 1,
                                        sizeof(scrub_rcvs));
-  /*  An armoured archive carries RCVS inside its decoded plaintext. The
-      on-disk bytes are an RS codeword stream, not a packet stream; scanning
-      them as packets produced false checksum failures and sometimes found
-      random packet-shaped parity.  */
+  /* Scan decoded plaintext, not armoured codewords, for RCVS packets. */
   if (sd->layout == XPAR_LAYOUT_ARMOURED) {
     for (i = 0; i < c->rcvs_count; i++) {
       u64 n = 0;
@@ -448,11 +445,17 @@ static void deep(scrub * c) {
                               sd->recovery_axis_log2);
 
   { u8 * wrong = (u8 *) xpar_calloc((sz) r_count, 1);
+    bool data_lost = false;
     for (off = 0; off < g->slice_size; off += chunk) {
       u64 take = MIN(chunk, g->slice_size - off);
       for (i = 0; i < s_count; i++)
-        xpar_vset_read(c->s, g->stream_base + i * g->slice_size + off,
-                       data[i], take);
+        if (!xpar_vset_read(c->s, g->stream_base + i * g->slice_size + off,
+                            data[i], take)) {
+          /* Missing data invalidates every parity comparison. */
+          xpar_memset(data[i], 0, (sz) take);
+          data_lost = true;
+        }
+      if (data_lost) break;
       xpar_codec_encode(codec, (const u8 * const *) din,
                         (u8 * const *) rec, (sz) take);
       for (j = 0; j < r_count; j++) {
@@ -467,6 +470,9 @@ static void deep(scrub * c) {
         }
       }
     }
+    if (data_lost && !c->o->quiet)
+      xpar_fprintf(xpar_stderr, "xpar: --deep: protected data is incomplete; "
+                   "repair it before checking recovery slices.\n");
     xpar_free(wrong); }
 
   xpar_codec_free(codec);

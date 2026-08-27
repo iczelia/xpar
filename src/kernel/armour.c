@@ -120,6 +120,13 @@ const char * xpar_armour_check(const xpar_armour_params * p) {
   pr = p->prim % order;
   if (pr == 0 || gcd_u32(pr, order) != 1)
     return "Armour prim must be invertible modulo 2^w - 1.";
+  /* Version 2.0 fixes the generator for each field. */
+  if (p->symbol_bits == 8) {
+    if (p->fcr != 212 || p->prim != 11)
+      return "Invalid GF(2^8) armour fcr/prim.";
+  } else if (p->fcr != 1 || p->prim != 1) {
+    return "Invalid GF(2^16) armour fcr/prim.";
+  }
   if (p->depth < 1 || p->depth > (1u << 24))
     return "Armour depth must be in [1, 2^24].";
   frame = p->depth * (u64) p->n * (u64) (p->symbol_bits / 8);

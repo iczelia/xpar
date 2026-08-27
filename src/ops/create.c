@@ -135,10 +135,8 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
   xpar_armour_defaults(p, sym);
   w = sym / 8;
 
+  /* Keep the field's full-width code when parity is disabled. */
   if (!o->armour_t && pct <= 0.0) {
-    if (!metadata) {
-      p->n = 65535;  p->k = 65535 - 128;
-    }
     p->depth = 1;
     return;
   }

@@ -952,7 +952,7 @@ int xpar_op_explain(const xpar_options * o) {
         xpar_json_u64(&js, "stream_length", ag.plain_length);
         xpar_json_end(&js);
       } else {
-        li_recipe(o->set, off + XPAR_PKT_HDR + 48, ag.symbol_bits / 8, ag.n,
+        li_recipe(path, off + XPAR_PKT_HDR + 48, ag.symbol_bits / 8, ag.n,
                   ag.k, ag.depth, frames, 0, ag.plain_length,
                   "this extracts the armoured critical metadata group");
       }
@@ -962,14 +962,14 @@ int xpar_op_explain(const xpar_options * o) {
     if (!found) {
       if (!packet)
         FATAL_FORMAT("'%s' contains no valid xpar 2.0 packet or armoured "
-                     "prologue.", o->set);
+                     "prologue.", path);
       if (o->json) {
         xpar_json_begin(&js, "set");
         xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
         xpar_json_str(&js, "layout", "packet-bearing");
         xpar_json_end(&js);
         xpar_json_begin(&js, "recipe");
-        xpar_json_str(&js, "source", o->set);
+        xpar_json_str(&js, "source", path);
         xpar_json_str(&js, "kind", "packet-walk");
         xpar_json_u64(&js, "packet_header_bytes", XPAR_PKT_HDR);
         xpar_json_u64(&js, "packet_alignment", XPAR_PKT_ALIGN);
@@ -991,7 +991,7 @@ int xpar_op_explain(const xpar_options * o) {
                    "The protected data is the original files themselves; "
                    "this volume holds\n"
                    "their checksums, their manifest and the recovery "
-                   "slices.\n", o->set);
+                   "slices.\n", path);
     }
     if (o->json) xpar_json_summary(&js, "ok", XPAR_EXIT_OK);
   }

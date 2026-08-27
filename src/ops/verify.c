@@ -81,7 +81,14 @@ static void vimg_load(xpar_vimg * v, const char * path) {
   FATAL_UNLESS("'%s' is too large to read without a mapping on this host.",
                v->size <= (u64) (sz) -1, path);
   v->data = (u8 *) xpar_alloc_raw(v->size ? (sz) v->size : 1);
-  if (v->size) xpar_xread(f, v->data, (sz) v->size);
+  if (v->size) {
+    /* Ignore bytes beyond a short read. */
+    sz got = xpar_xread(f, v->data, (sz) v->size);
+    if (got != (sz) v->size) {
+      xpar_memset(v->data + got, 0, (sz) v->size - got);
+      v->size = (u64) got;
+    }
+  }
   xpar_xclose(f);
 }
 

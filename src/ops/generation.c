@@ -425,7 +425,11 @@ static void chain_scan(xpar_chain * c, xpar_chain_vol * v, const u8 * buf,
       }
     }
     if (xpar_pkt_is(&hdr, XPAR_T_RCVS)) {
-      u64 e = blen >= 8 ? xpar_rd64(body) : 0;
+      xpar_rcvs rc;
+      u64 e;
+      /* Validate structure before advertising recovery. */
+      if (xpar_rcvs_read(body, (sz) blen, 0, &rc) != XPAR_OK) continue;
+      e = rc.exponent;
       if (!v->recovery_count || e < v->recovery_first) v->recovery_first = e;
       v->recovery_count++;
     }
@@ -642,10 +646,15 @@ static void chain_map_volumes(xpar_chain * c) {
   }
   for (i = 0; i < c->crit.count; i++) {
     const xpar_crit_pkt * p = &c->crit.pkt[i];
-    if (!xpar_pkt_is(&p->hdr, XPAR_T_RCVS) || p->body_len < 8) continue;
+    if (!xpar_pkt_is(&p->hdr, XPAR_T_RCVS)) continue;
     for (j = 0; j < c->gen_count; j++)
       if (!xpar_memcmp(p->hdr.set_id, c->gen[j].set_id, XPAR_SET_ID_LEN)) {
-        u64 e = xpar_rd64(p->body);
+        xpar_rcvs rc;
+        u64 e;
+        /* Validate against the generation's slice size. */
+        if (xpar_rcvs_read(p->body, (sz) p->body_len,
+                           c->gen[j].sd.slice_size, &rc) != XPAR_OK) break;
+        e = rc.exponent;
         c->gen[j].recovery_count++;
         if (e + 1 > c->gen[j].recovery_top) c->gen[j].recovery_top = e + 1;
         break;
@@ -800,7 +809,7 @@ void xpar_gchain_genref(const xpar_chain * c, u32 g, xpar_genref * ref,
     collector's eight-byte discriminator.  */
 static const xpar_crit_pkt * chain_file_pkt(const xpar_chain * c, u32 g,
                                             const u8 * file_id, u32 * owner) {
-  u32 h = g, i;
+  u32 h = g;
   for (;;) {
     const xpar_crit_pkt * p = xpar_critset_find_file(
                                 &c->crit, c->gen[h].set_id, file_id);
@@ -808,16 +817,7 @@ static const xpar_crit_pkt * chain_file_pkt(const xpar_chain * c, u32 g,
         !xpar_memcmp(p->body, file_id, XPAR_SET_ID_LEN)) {
       *owner = h;  return p;
     }
-    for (i = 0; i < c->crit.count; i++) {
-      const xpar_crit_pkt * q = &c->crit.pkt[i];
-      if (!xpar_pkt_is(&q->hdr, XPAR_T_FILE)) continue;
-      if (q->body_len < XPAR_SET_ID_LEN) continue;
-      if (xpar_memcmp(q->hdr.set_id, c->gen[h].set_id, XPAR_SET_ID_LEN))
-        continue;
-      if (!xpar_memcmp(q->body, file_id, XPAR_SET_ID_LEN)) {
-        *owner = h;  return q;
-      }
-    }
+    /* Every FILE packet is indexed, so a miss is definitive. */
     if (c->gen[h].parent == XPAR_GEN_NONE) return NULL;
     h = c->gen[h].parent;
   }

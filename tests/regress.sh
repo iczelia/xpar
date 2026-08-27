@@ -544,6 +544,74 @@ if grep -q "no dominant displacement" "$log"; then ok
 else bad "ambiguous displacement was not reported"; fi
 cd .. || hard_error cd
 
+step "explain names the file it was actually given"
+
+# Use the resolved split-volume name in recipes.
+mkdir -p i1 && cd i1 || hard_error "cd i1"
+mkfile p.bin 200000 90
+run 0 "$XPAR" create --reproducible -r 20% --layout=split -o photos p.bin
+"$XPAR" explain photos > r.txt 2> "$log"
+name=`sed -n 's/^in=//p' r.txt | head -1`
+equal "the recipe reads the resolved name" "$name" "photos.xpa"
+exists "$name"
+cd .. || hard_error cd
+
+step "--deep names the missing data rather than blaming the parity"
+
+# Missing data must not be reported as bad parity.
+mkdir -p h1 && cd h1 || hard_error "cd h1"
+mkfile p.bin 400000 89
+run 0 "$XPAR" create --reproducible -r 8 -s 32K -o set p.bin
+run 0 "$XPAR" scrub --deep set.xpa
+rm -f p.bin
+"$XPAR" scrub --deep set.xpa > "$log" 2>&1
+if grep -q "do not recompute from the data" "$log"; then
+  bad "the parity was blamed for data that is simply not there"
+else ok; fi
+if grep -q "not readable in full" "$log"; then ok
+else bad "--deep did not say why it could not check the parity"; fi
+cd .. || hard_error cd
+
+step "the reader rejects what the format says it must"
+
+# Reject reserved fields, reserved attribute bits and invalid generators.
+mkdir -p g1 && cd g1 || hard_error "cd g1"
+mkfile p.bin 200000 88
+run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set p.bin
+run 0 "$XPAR" info set.xpa
+
+# STRM with a nonzero reserved field.
+"$FORGE" set.xpa STRM 0000000000000000ffffffffffffffff ||
+  hard_error "forge failed"
+run 0 "$XPAR" info set.xpa
+note "a malformed STRM is skipped rather than parsed"
+
+# RCVS with a nonzero reserved field must not count as recovery.
+rm -f set.* && cp p.bin q.bin
+run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set q.bin
+before=`"$XPAR" info --json set.xpa 2> "$log" | tr ',' '\n' |
+          sed -n 's/.*"recovery":\([0-9][0-9]*\).*/\1/p' | head -1`
+"$FORGE" set.xpa RCVS 0000000000000063ffffffffffffffff || hard_error "forge"
+after=`"$XPAR" info --json set.xpa 2> "$log" | tr ',' '\n' |
+         sed -n 's/.*"recovery":\([0-9][0-9]*\).*/\1/p' | head -1`
+equal "a reserved RCVS field is not accepted" "$after" "$before"
+run 0 "$XPAR" verify set.xpa
+cd .. || hard_error cd
+
+step "every armour field works on every layout"
+
+# Cover every field/layout combination when parity uses defaults.
+mkdir -p f2 && cd f2 || hard_error "cd f2"
+mkfile p.bin 200000 87
+for lay in --layout=sidecar --layout=split --layout=armoured; do
+  for fld in "" --armour-field=8 --armour-field=16; do
+    rm -f set.* && cp p.bin d.bin
+    run 0 "$XPAR" create --reproducible -r 20% $lay $fld -o set d.bin
+    run 0 "$XPAR" verify set.xpa
+  done
+done
+cd .. || hard_error cd
+
 step "the inner code corrects exactly what its parameters promise"
 
 #  At depth 1, n corrupt bytes hit n symbols in one codeword; depth D spreads
