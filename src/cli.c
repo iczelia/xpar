@@ -934,8 +934,8 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
     else {
       xpar_free(a);
-      FATAL_FORMAT("No xpar set found for '%s'; if that was meant to be a "
-                   "verb, 'xpar --help' lists them.", arg);
+      FATAL_FORMAT("No xpar set found for '%s'; use 'xpar --help' to list "
+                   "verbs.", arg);
     }
   }
   if (out->base) gather_chain_siblings(out);

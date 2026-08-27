@@ -470,8 +470,8 @@ static void rp_read_tags(rp * r) {
     }
   }
   r->tag_have = xpar_tagset_complete(&r->tags);
-  FATAL_UNLESS("The slice integrity tables are incomplete; there is nothing "
-               "to locate damage against.",
+  FATAL_UNLESS("Slice integrity tables are incomplete; damage cannot be "
+               "located.",
                (r->tag_have & XPAR_TAGS_CRC) ||
                (r->keyed && (r->tag_have & XPAR_TAGS_TAG)) ||
                !r->geom.slice_count);

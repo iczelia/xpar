@@ -4330,15 +4330,12 @@ int xpar_op_prune(const xpar_options * o) {
                                                 &o->gens[i])] = true;
   for (g = 0; g < c.gen_count; g++) if (!removed[g]) survivors++;
   if (survivors == c.gen_count)
-    FATAL("prune needs --before=G or --generation=G to say what to remove.");
+    FATAL("Specify --before=G or --generation=G.");
   if (!survivors)
-    FATAL("That would remove every generation, leaving nothing behind; "
-          "delete the volumes yourself if that is what you want.");
+    FATAL("Cannot remove every generation; delete the volumes instead.");
   if (removed[head])
-    FATAL("Generation %" PRIu32
-          " is the newest one in the chain, and every other "
-          "generation is an older snapshot of it; prune drops older "
-          "generations and cannot drop the newest.",
+    FATAL("Cannot prune newest generation %" PRIu32
+          "; prune removes older snapshots.",
           c.gen[head].sd.generation);
 
   xpar_gchain_manifest(&c, head, &m, &owner);

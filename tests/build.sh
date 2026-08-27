@@ -122,10 +122,9 @@ int main(void) { __m512i a = _mm512_set1_epi8(1);
   fi
 fi
 
-step "every configured tier was actually archived"
+step "every configured tier is archived"
 
-#  A defined macro with no convenience library means the tier is compiled
-#  into nothing, which is how GFNI-512 went missing.
+# Each configured tier must have a convenience library.
 for pair in "HAVE_SSSE3 ssse3" "HAVE_SSE42 sse42" "HAVE_AVX2 avx2" \
             "HAVE_GFNI gfni" "HAVE_GFNI512 gfni512" "HAVE_VBMI vbmi" \
             "HAVE_NEON neon" "HAVE_NEON_CLMUL pmull" \
