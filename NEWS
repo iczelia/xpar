@@ -51,7 +51,7 @@ v2.0 (26-08-2026)
   Exit codes 0-8 distinguish clean, repairable, unrepairable, not found,
   usage, I/O, authentication, no-plan and internal errors.
 - SIMD support: SSSE3, SSE4.2, AVX2, GFNI, GFNI-512, VBMI and VPCLMULQDQ
-  on x86; NEON, PMULL and SVE2 on ARM; VSX on POWER; shuffle and clmul
+  on x86; NEON, PMULL and SVE on ARM; VSX on POWER; shuffle and clmul
   RISC-V vectors. Runtime selection can be fixed with '--simd'. Portable
   threading uses '-j'; Linux may use dependency-free io_uring batching.
 - Ports: POSIX, Windows NT, i486 Windows 95 and DJGPP/MS-DOS. The format
