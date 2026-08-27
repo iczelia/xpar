@@ -184,14 +184,14 @@ int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
         emit_int(&c, v, width, prec, flags);
         break;
       }
-      case 'u': case 'x': case 'X': {
+      case 'u': case 'o': case 'x': case 'X': {
         u64 v;
+        int base = spec == 'u' ? 10 : spec == 'o' ? 8 : 16;
         if      (longness == 2) v = va_arg(ap, unsigned long long);
         else if (longness == 1) v = va_arg(ap, unsigned long);
         else if (longness == 3) v = (u64) va_arg(ap, sz);
         else                    v = va_arg(ap, unsigned);
-        emit_uint(&c, v, spec == 'u' ? 10 : 16, spec == 'X',
-                  width, prec, flags);
+        emit_uint(&c, v, base, spec == 'X', width, prec, flags);
         break;
       }
       case 'p': {
