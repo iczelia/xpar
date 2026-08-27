@@ -142,6 +142,16 @@ u32 xpar_crc32c_combine(u32 a, u32 b, u64 len_b) {
   return xpar_crc32c_shift(a, len_b) ^ b;
 }
 
+void xpar_crc32c_shift_op(u32 op[XPAR_CRC32C_OP_WORDS], u64 n) {
+  xpar_crc32c_init();
+  xpar_crc_op_zeros(op, n);
+}
+
+u32 xpar_crc32c_combine_op(const u32 op[XPAR_CRC32C_OP_WORDS],
+                           u32 a, u32 b) {
+  return xpar_crc_apply(op, a) ^ b;
+}
+
 u32 xpar_crc32c_join3_long(u32 a, u32 b, u32 c) {
   return xpar_crc_apply(xpar_crc_op_long2, a) ^
          xpar_crc_apply(xpar_crc_op_long, b) ^ c;

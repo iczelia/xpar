@@ -30,6 +30,12 @@ u32 xpar_crc32c(u32 crc, const void * buf, sz n);
     length of A is not needed and does not enter the result.  */
 u32 xpar_crc32c_combine(u32 a, u32 b, u64 len_b);
 
+/*  Reusable shift operator for equal-length combines.  */
+#define XPAR_CRC32C_OP_WORDS 32
+void xpar_crc32c_shift_op(u32 op[XPAR_CRC32C_OP_WORDS], u64 n);
+u32  xpar_crc32c_combine_op(const u32 op[XPAR_CRC32C_OP_WORDS],
+                            u32 a, u32 b);
+
 /*  Builds the tables and the cached shift operators.  */
 void xpar_crc32c_init(void);
 
@@ -59,6 +65,12 @@ static inline u32 xpar_crc32c_roll_step(const xpar_crc32c_roll * r, u32 crc,
 /*  Bytes per chain in the three-way split.  */
 #define XPAR_CRC32C_LONG   8192
 #define XPAR_CRC32C_SHORT   256
+
+/*  Bit-reversed x^(8n-32) mod G constants for three-way recombination.  */
+#define XPAR_CRC_K_LONG2  0x0EE201E6u   /*  n = 2 * 8192  */
+#define XPAR_CRC_K_LONG   0x2A543193u   /*  n = 8192      */
+#define XPAR_CRC_K_SHORT2 0x6EBF1D86u   /*  n = 2 * 256   */
+#define XPAR_CRC_K_SHORT  0x5CF015C3u   /*  n = 256       */
 
 /*  Slice-by-eight tables, filled by xpar_crc32c_init.  */
 extern u32 xpar_crc32c_tab[8][256];

@@ -58,16 +58,6 @@ static inline u64 xpar_crc_load(const u8 * p) { return (u64) xpar_rd32(p); }
 #if defined(XPAR_CRC32C_VARIANT_SSE42) && defined(HAVE_PCLMUL) &&             \
     (defined(__x86_64__) || defined(_M_X64))
 
-/*  Register form of x^(8n-32) mod G, bit-reversed like the register it
-    multiplies, for the four distances the three-way split needs. Each is
-    x^(8*(n-4)) applied to the register form of the polynomial 1, which is
-    0x80000000; the extra x^32 comes back in the CRC32 instruction that
-    reduces the product.  */
-#define XPAR_CRC_K_LONG2  0x0EE201E6u   /*  n = 2 * 8192  */
-#define XPAR_CRC_K_LONG   0x2A543193u   /*  n = 8192      */
-#define XPAR_CRC_K_SHORT2 0x6EBF1D86u   /*  n = 2 * 256   */
-#define XPAR_CRC_K_SHORT  0x5CF015C3u   /*  n = 256       */
-
 /*  Multiply a bare register by x^(8n) mod G. The carry-less product of
     two reflected 32-bit values sits one bit low, because reflecting a
     63-bit product inside 64 bits loses the top position, so it is shifted

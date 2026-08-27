@@ -12,16 +12,11 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: SSE4.2 CRC chains with a VPCLMULQDQ two-lane recombine.  */
+/*  xpar: SSE4.2 CRC chains with VPCLMULQDQ recombination.  */
 
 #include "crc32c.h"
 
 #include <immintrin.h>
-
-#define VC_K_LONG2  0x0EE201E6u
-#define VC_K_LONG   0x2A543193u
-#define VC_K_SHORT2 0x6EBF1D86u
-#define VC_K_SHORT  0x5CF015C3u
 
 static u32 vc_join(u32 a, u32 b, u32 c, u32 ka, u32 kb) {
   __m128i av = _mm_cvtsi32_si128((int) a);
@@ -49,11 +44,12 @@ static u32 vc_run(u32 crc, const u8 * p, sz run, u32 ka, u32 kb) {
 
 u32 xpar_crc32c_vpclmul(u32 crc, const u8 * p, sz n) {
   while (n >= 3 * XPAR_CRC32C_LONG) {
-    crc = vc_run(crc, p, XPAR_CRC32C_LONG, VC_K_LONG2, VC_K_LONG);
+    crc = vc_run(crc, p, XPAR_CRC32C_LONG, XPAR_CRC_K_LONG2, XPAR_CRC_K_LONG);
     p += 3 * XPAR_CRC32C_LONG;  n -= 3 * XPAR_CRC32C_LONG;
   }
   while (n >= 3 * XPAR_CRC32C_SHORT) {
-    crc = vc_run(crc, p, XPAR_CRC32C_SHORT, VC_K_SHORT2, VC_K_SHORT);
+    crc = vc_run(crc, p, XPAR_CRC32C_SHORT,
+                 XPAR_CRC_K_SHORT2, XPAR_CRC_K_SHORT);
     p += 3 * XPAR_CRC32C_SHORT;  n -= 3 * XPAR_CRC32C_SHORT;
   }
   while (n >= 8) {
