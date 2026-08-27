@@ -667,6 +667,20 @@ static void emit_head(ctx * c, xpar_buf * out, const xpar_crit * cr,
 /*  Stream armour frames so the L-byte STRM body is never resident. The
     final frame is zero-padded, making encoded length deterministic.  */
 
+/*  Reject unreachable sidecar entries; piped input is published locally.  */
+static void check_reachable(ctx * c) {
+  char * dir;
+  const xpar_entry * lost;
+  if (c->o->layout != XPAR_LAYOUT_SIDECAR) return;
+  dir = xpar_path_dir(c->base);
+  lost = xpar_manifest_unreachable(&c->m, dir, c->o->stdin_name);
+  xpar_free(dir);
+  if (lost)
+    FATAL("Sidecar entry '%.*s' is unreachable; place the set beside its "
+          "data or use --base.",
+          (int) lost->name_len, lost->name);
+}
+
 /*  Rebuild and hash every entry through its extents, then reparse all
     written packet volumes. The first check catches invalid deduplication
     aliases that an archive could otherwise verify against itself.  */
@@ -1294,6 +1308,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     e->name = xpar_strdup(o->stdin_name);
     e->name_len = (u32) xpar_strlen(o->stdin_name);
   }
+  check_reachable(&c);
   if (o->align == XPAR_ALIGN_SLICE && !o->slice_size) {
     u64 sum = 0;
     xpar_memset(&gr, 0, sizeof gr);

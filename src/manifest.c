@@ -16,6 +16,8 @@
 
 #include "manifest.h"
 
+#include "pathname.h"
+
 #include "blake3.h"
 #include "chunk.h"
 #include "cli.h"
@@ -130,6 +132,24 @@ static xpar_path_status check_component(const char * c, u32 n, u32 flags) {
     if (is_win_device(c, n)) return XPAR_PATH_DEVICE;
   }
   return XPAR_PATH_OK;
+}
+
+/*  Return the first entry missing under dir, excluding exempt.  */
+const xpar_entry * xpar_manifest_unreachable(const xpar_manifest * m,
+                                             const char * dir,
+                                             const char * exempt) {
+  u32 i;
+  for (i = 0; i < m->count; i++) {
+    const xpar_entry * e = &m->entry[i];
+    xpar_stat_t st;
+    if (exempt && e->name_len == xpar_strlen(exempt) &&
+        !xpar_memcmp(e->name, exempt, e->name_len)) continue;
+    char * at = xpar_path_join_n(dir, e->name, e->name_len);
+    bool here = xpar_lstat(at, &st) == 0;
+    xpar_free(at);
+    if (!here) return e;
+  }
+  return NULL;
 }
 
 xpar_path_status xpar_path_check(const char * name, u32 len, u32 flags) {
@@ -849,6 +869,15 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
       if (rl > bl + 1 && !xpar_strncmp(root, o->base_dir, bl) &&
           root[bl] == '/') {
         base = root + bl + 1;  blen = (u32) (rl - bl - 1);
+      }
+    } else {
+      /*  Preserve legal relative roots so sidecar paths remain resolvable.  */
+      const char * rel = root;
+      sz rn = rl;
+      while (rn > 2 && rel[0] == '.' && rel[1] == '/') { rel += 2;  rn -= 2; }
+      if (rn && rn <= XPAR_NAME_MAX &&
+          xpar_path_check(rel, (u32) rn, 0) == XPAR_PATH_OK) {
+        base = rel;  blen = (u32) rn;
       }
     }
     w.caps = xpar_fs_caps(root) & o->caps_mask;

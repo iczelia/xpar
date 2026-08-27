@@ -438,4 +438,46 @@ run 0 "$XPAR" verify set.xpa
 cd ..
 cd ..
 
+# Sidecar entries must remain reachable from the set directory.
+
+step "a set can always find the data it just stored"
+
+mkdir reach;  cd reach || hard_error cd
+mkdir -p sub a/b/c away
+mkfile sub/data.bin 131072
+mkfile a/b/c/f.bin 65536 2222
+mkfile flat.bin 65536 3333
+
+# Preserve subdirectories for named files and recursive roots.
+run 0 "$XPAR" create -s 32K -r 4 -o s1 sub/data.bin
+run 0 "$XPAR" verify s1.xpa
+
+run 0 "$XPAR" create -s 32K -r 4 -o s2 -R a/b/c
+run 0 "$XPAR" verify s2.xpa
+
+run 0 "$XPAR" create -s 32K -r 4 -o s3 flat.bin
+run 0 "$XPAR" verify s3.xpa
+run 0 "$XPAR" create -s 32K -r 4 -o s4 -R sub
+run 0 "$XPAR" verify s4.xpa
+
+# Refuse sidecar output that cannot reach its data.
+run 4 "$XPAR" create -s 32K -r 4 -o away/s5 -R sub
+if test -e away/s5.xpa; then bad "a refused create left a set behind"
+else ok; fi
+
+# Owned layouts may be written elsewhere.
+run 0 "$XPAR" create -s 32K -r 4 --layout=armoured -o away/s6 -R sub
+run 0 "$XPAR" create -s 32K -r 4 --layout=split -o away/s7 -R sub
+
+# add refuses unreachable entries without changing the chain.
+mkfile sub/more.bin 32768 4444
+run 0 "$XPAR" add -r 4 s4.xpa -R sub
+run 0 "$XPAR" verify --chain s4.xpa
+# Parent paths are unreachable from the set directory.
+mkfile ../outside.bin 32768 5555
+run 4 "$XPAR" add -r 4 s4.xpa ../outside.bin
+run 0 "$XPAR" verify --chain s4.xpa
+note "unreachable names are refused before anything is written"
+cd ..
+
 summary

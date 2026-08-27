@@ -82,6 +82,10 @@ typedef struct xpar_manifest {
   u8  align;                /*  XPAR_ALIGN_*  */
   u64 slice_size;           /*  Z, under XPAR_ALIGN_SLICE only.  */
 } xpar_manifest;
+/*  First entry missing under dir, excluding exempt.  */
+const xpar_entry * xpar_manifest_unreachable(const xpar_manifest *,
+                                            const char * dir,
+                                            const char * exempt);
 
 /*  A zeroed entry with every absent-value sentinel already in place, so
     a caller that fills three fields does not silently record mode 0 and

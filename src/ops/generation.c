@@ -3786,6 +3786,17 @@ int xpar_op_add(const xpar_options * caller) {
   }
   for (i = 0; i < g.m.count; i++)
     if (!g.m.source[i]) g.m.source[i] = gen_entry_path(o, &g.m.entry[i]);
+  /*  Reject sidecar entries the chain cannot resolve.  */
+  if (o->layout == XPAR_LAYOUT_SIDECAR) {
+    char * dir = xpar_path_dir(c.base ? c.base : o->set);
+    const xpar_entry * lost =
+      xpar_manifest_unreachable(&g.m, dir, o->stdin_name);
+    xpar_free(dir);
+    if (lost)
+      FATAL("Sidecar entry '%.*s' is unreachable; name inputs relative to "
+            "the set directory or use --base.",
+            (int) lost->name_len, lost->name);
+  }
   if (c.base) xpar_asprintf(&input_cache, "%s.xparidx", c.base);
   gen_repack(&g, o, input_cache, c.gen[head].set_id,
              c.gen[head].sd.stream_base + c.gen[head].sd.stream_length,
