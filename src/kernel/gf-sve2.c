@@ -12,7 +12,10 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: scalable SVE2 Galois-field region kernels.  */
+/*  xpar: scalable SVE Galois-field region kernels.
+    The bodies use base SVE only. The tier is nonetheless gated on SVE2
+    and built for it, which is conservative: widening the gate to SVE
+    would reach SVE1-only parts, and wants testing on one first.  */
 
 #include "gf.h"
 
