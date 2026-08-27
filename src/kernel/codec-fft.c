@@ -306,12 +306,6 @@ bool xpar_fft_supports_axis(u8 kind, u8 field_log2, u64 s, u64 r,
   return (low ? r : s) + m <= ((u64) 1 << field_log2);
 }
 
-bool xpar_fft_supports(u8 kind, u8 field_log2, u64 s, u64 r) {
-  u64 m = fft_m(kind == XPAR_CODEC_FFT_LOW, s, r);
-  return xpar_fft_supports_axis(kind, field_log2, s, r,
-                                (u8) xpar_log2_floor(m));
-}
-
 void * xpar_fft_new_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                          u8 axis_log2) {
   xpar_gf_init();
@@ -337,12 +331,6 @@ void * xpar_fft_new_axis(u8 kind, u8 field_log2, u64 s, u64 r,
     Fi(256, xpar_gf8_prepare(&cd->prep8[i], (u8) i));
   }
   return cd;
-}
-
-void * xpar_fft_new(u8 kind, u8 field_log2, u64 s, u64 r) {
-  u64 m = fft_m(kind == XPAR_CODEC_FFT_LOW, s, r);
-  return xpar_fft_new_axis(kind, field_log2, s, r,
-                           (u8) xpar_log2_floor(m));
 }
 
 void xpar_fft_free(void * self) {
@@ -547,13 +535,6 @@ static u64 fft_tables(u8 field_log2, bool decode) {
   return t;
 }
 
-u64 xpar_fft_encode_footprint(u8 kind, u8 field_log2, u64 s, u64 r,
-                              sz bytes) {
-  u64 m = fft_m(kind == XPAR_CODEC_FFT_LOW, s, r);
-  return xpar_fft_encode_footprint_axis(
-           kind, field_log2, s, r, (u8) xpar_log2_floor(m), bytes);
-}
-
 u64 xpar_fft_encode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                                    u8 axis_log2, sz bytes) {
   bool low = kind == XPAR_CODEC_FFT_LOW;
@@ -563,13 +544,6 @@ u64 xpar_fft_encode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,
   return (s + r) * (u64) pool_stride(bytes) + scratch * stride
          + 2 * m * (u64) sizeof(u8 *)
          + fft_tables(field_log2, false) + 256;
-}
-
-u64 xpar_fft_decode_footprint(u8 kind, u8 field_log2, u64 s, u64 r,
-                              sz bytes) {
-  u64 m = fft_m(kind == XPAR_CODEC_FFT_LOW, s, r);
-  return xpar_fft_decode_footprint_axis(
-           kind, field_log2, s, r, (u8) xpar_log2_floor(m), bytes);
 }
 
 u64 xpar_fft_decode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,

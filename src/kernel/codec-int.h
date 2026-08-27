@@ -20,10 +20,8 @@
 
 #include "codec.h"
 
-bool  xpar_fft_supports(u8 kind, u8 field_log2, u64 s, u64 r);
 bool  xpar_fft_supports_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                              u8 axis_log2);
-void * xpar_fft_new    (u8 kind, u8 field_log2, u64 s, u64 r);
 void * xpar_fft_new_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                          u8 axis_log2);
 void  xpar_fft_free    (void * self);
@@ -38,10 +36,6 @@ void   xpar_fft_plan_free(void * self);
 xpar_codec_status xpar_fft_plan_apply(const void * self, u8 * const * data,
                                       u8 * const * rec, sz bytes);
 
-u64 xpar_fft_encode_footprint(u8 kind, u8 field_log2, u64 s, u64 r,
-                              sz bytes);
-u64 xpar_fft_decode_footprint(u8 kind, u8 field_log2, u64 s, u64 r,
-                              sz bytes);
 u64 xpar_fft_encode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                                    u8 axis_log2, sz bytes);
 u64 xpar_fft_decode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,
