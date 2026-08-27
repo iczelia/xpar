@@ -48,8 +48,11 @@ mkdir "$work" || { echo "$prog: cannot create $work" >&2;  exit 99; }
 trap 'cd /; rm -rf "$work"' EXIT HUP INT TERM
 cd "$work" || exit 99
 
-# Use the cross-host fixture when available.
+# Use the cross-host fixture when available.  Run rather than exec, so the
+# EXIT trap above still removes the work directory.
 if test -n "${XPAR_COMPAT:-}" && test -d "$XPAR_COMPAT"; then
-  exec "${XPAR_SH:-/bin/sh}" "$script" "$XPAR" "$XPAR_COMPAT"
+  "${XPAR_SH:-/bin/sh}" "$script" "$XPAR" "$XPAR_COMPAT"
+else
+  "${XPAR_SH:-/bin/sh}" "$script" "$XPAR"
 fi
-exec "${XPAR_SH:-/bin/sh}" "$script" "$XPAR"
+exit $?
