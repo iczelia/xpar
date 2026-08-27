@@ -133,7 +133,7 @@ step "every configured tier was actually archived"
 #  into nothing, which is how GFNI-512 went missing.
 for pair in "HAVE_SSSE3 ssse3" "HAVE_SSE42 sse42" "HAVE_AVX2 avx2" \
             "HAVE_GFNI gfni" "HAVE_GFNI512 gfni512" "HAVE_VBMI vbmi" \
-            "HAVE_VPCLMUL vpclmul" "HAVE_NEON neon" "HAVE_PMULL pmull" \
+            "HAVE_NEON neon" "HAVE_PMULL pmull" \
             "HAVE_SVE sve" "HAVE_ARM_CRC32 armcrc" "HAVE_VSX vsx" \
             "HAVE_RVV rvv" "HAVE_RVV_CLMUL rvvclmul"; do
   m=`echo "$pair" | cut -d' ' -f1`

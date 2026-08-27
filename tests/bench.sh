@@ -19,12 +19,14 @@
 
 run_sh=$abs_top_srcdir/bench/run.sh
 test -r "$run_sh" || skip_all "bench/run.sh is not in this tree"
-test -x "$abs_top_builddir/bench/timeit" ||
-  test -x "$abs_top_builddir/bench/timeit.exe" ||
-  skip_all "bench/timeit is not built; run 'make bench-tools'"
 
-TIMEIT=$abs_top_builddir/bench/timeit
-test -x "$TIMEIT" || TIMEIT=$TIMEIT.exe
+#  Allow cross builds to provide a launcher.
+if test -z "${TIMEIT:-}"; then
+  TIMEIT=$abs_top_builddir/bench/timeit
+  test -x "$TIMEIT" || TIMEIT=$TIMEIT.exe
+fi
+test -x "$TIMEIT" ||
+  skip_all "bench/timeit is not built; run 'make bench-tools'"
 export TIMEIT MKDATA DAMAGE
 
 bad_rows() {
