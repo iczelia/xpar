@@ -193,6 +193,10 @@ static inline void xpar_secure_zero(void * p, sz n) {
 
 /*  Progress reporting.  */
 
+/*  An optional sink replaces human progress output.  */
+typedef void (* xpar_progress_fn)(void * user, u64 done, u64 total,
+                                  u64 rate_bps);
+
 typedef struct {
   bool enabled;
   u64 total_bytes;     /*  0 when the total is unknown, e.g. a pipe.  */
@@ -202,10 +206,13 @@ typedef struct {
   u64 last_usec;
   u64 since_check;     /*  Bytes since the clock was last read.  */
   const char * op;     /*  "Creating", "Verifying", "Repairing", ...  */
+  xpar_progress_fn sink;
+  void * sink_user;
 } xpar_progress_t;
 
 void xpar_progress_init(xpar_progress_t *, bool on, u64 total,
                         const char * op);
+void xpar_progress_sink(xpar_progress_t *, xpar_progress_fn, void * user);
 void xpar_progress_tick(xpar_progress_t *, u64 bytes);
 void xpar_progress_end (xpar_progress_t *);
 
