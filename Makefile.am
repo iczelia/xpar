@@ -252,9 +252,10 @@ tests_damage_SOURCES    = tests/damage.c
 tests_damage_CPPFLAGS   =
 tests_damage_LDADD      =
 
+
 TESTS = tests/t_unit tests/t_codec tests/t_central \
         tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-        tests/bench.sh
+        tests/build.sh tests/regress.sh tests/bench.sh
 endif
 
 TEST_EXTENSIONS = .sh
@@ -269,7 +270,8 @@ AM_TESTS_ENVIRONMENT = \
   DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
   XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
-  XPAR_SH='$(SHELL)';                                 export XPAR_SH;
+  XPAR_SH='$(SHELL)';                                 export XPAR_SH; \
+  CC='$(CC)';                                         export CC;
 
 ## Benchmarks are opt-in; tests/bench.sh still requires timeit.
 
@@ -285,7 +287,7 @@ EXTRA_DIST = \
   contrib/dos/run-check.sh contrib/dos/run2.c \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-  tests/bench.sh \
+  tests/build.sh tests/regress.sh tests/bench.sh \
   bench/run.sh bench/lib.sh bench/plot.py bench/mktree.sh \
   bench/competitors.sh bench/experiments.sh bench/remote.sh
 
