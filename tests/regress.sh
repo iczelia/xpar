@@ -173,6 +173,169 @@ done
 run 0 "$XPAR" verify set.xpa
 cd .. || hard_error cd
 
+step "recover rebuilds a volume with the set's own inner code"
+
+#  recover must reuse the set's armour parameters, not CLI defaults.
+mkdir -p a1 && cd a1 || hard_error "cd a1"
+mkfile payload.bin 200000 91
+for opt in --armour=none --armour-t=48 --armour-field=16 --armour-pct=5; do
+  rm -f set.* orig.bin
+  run 0 "$XPAR" create -r 4 -s 8K --layout=sidecar $opt -o set payload.bin
+  v=`find . -maxdepth 1 -name 'set.v*' | head -1`
+  if test -z "$v"; then
+    bad "$opt: create wrote no recovery volume"
+    continue
+  fi
+  cp "$v" orig.bin
+  rm -f "$v"
+  run 0 "$XPAR" recover --volume="`basename $v`" set.xpa
+  same "$v" orig.bin
+  run 0 "$XPAR" verify set.xpa
+done
+cd .. || hard_error cd
+
+step "recover thresholds replication on the size as written"
+
+#  Replication thresholds use the armoured critical-group size.
+mkdir -p a2 && cd a2 || hard_error "cd a2"
+mkdir tree
+mkfile tree/payload.bin 400000 92
+pad=nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+i=0
+while test "$i" -lt 400; do
+  printf x > "tree/f$i.$pad.txt"
+  i=`expr $i + 1`
+done
+
+#  High armour overhead straddles the replication threshold.
+run 0 "$XPAR" create -r 16 -s 4K --volumes=8 --layout=split \
+                     --armour-t=120 -o set -R tree
+
+vols=`find . -maxdepth 1 -name 'set.v*' | sort`
+test -n "$vols" || hard_error "no recovery volumes were written"
+big=0;  small=0
+for n in $vols; do
+  if test `wc -c < "$n"` -gt 1000000; then big=`expr $big + 1`
+  else small=`expr $small + 1`; fi
+done
+if test "$big" -eq 0 || test "$small" -eq 0; then
+  bad "all volumes use the same replication; adjust --armour-t"
+else
+  ok
+fi
+
+for n in $vols; do cp "$n" "orig-`basename $n`"; done
+for n in $vols; do
+  rm -f "$n"
+  run 0 "$XPAR" recover --volume="`basename $n`" set.xpa
+  same "$n" "orig-`basename $n`"
+done
+run 0 "$XPAR" verify set.xpa
+cd .. || hard_error cd
+
+step "a superseded neighbour does not excuse damage in the same slice"
+
+#  A superseded cell must not suppress damage to live cells in its slice.
+mkdir -p s1 && cd s1 || hard_error "cd s1"
+mkfile key.bin 32 7
+mkdir tree
+i=0
+while test "$i" -lt 32; do
+  mkfile "tree/f$i.bin" 4096 `expr 300 + $i`
+  i=`expr $i + 1`
+done
+run 0 "$XPAR" create -R -s 64K --cell=4K -r 4 --auth-key=key.bin -o set tree
+#  Require a slice that can hold both superseded and live cells.
+"$XPAR" info --json --auth-key=key.bin set.xpa > g.json 2> "$log" ||
+  hard_error "info --json failed on the keyed set"
+zz=`tr ',' '\n' < g.json | sed -n 's/.*"slice_size":\([0-9][0-9]*\).*/\1/p' |
+      head -1`
+yy=`tr ',' '\n' < g.json | sed -n 's/.*"cell_bytes":\([0-9][0-9]*\).*/\1/p' |
+      head -1`
+equal "the slice holds several cells" "`test "${yy:-0}" -gt 0 &&
+                                        test "$zz" -gt "$yy" &&
+                                        echo yes || echo no`" yes
+
+#  Replacing f0 supersedes it while leaving adjacent f1 live.
+cp tree/f1.bin pristine.bin
+mkfile tree/f0.bin 4096 99
+run 0 "$XPAR" add -r 4 --auth-key=key.bin set.xpa -R tree
+run 0 "$XPAR" verify --chain --fast --auth-key=key.bin set.xpa
+
+"$DAMAGE" tree/f1.bin rand=100,64 || hard_error "damage failed"
+differs tree/f1.bin pristine.bin
+run_any "1 2" "$XPAR" verify --chain --fast --auth-key=key.bin set.xpa
+
+#  Generation 0 owns and must report the damaged bytes.
+"$XPAR" verify --chain --auth-key=key.bin --json set.xpa > v.json 2> "$log"
+g0=`tr '{' '\n' < v.json |
+      sed -n 's/.*"generation_result".*"generation":0,.*"status":"\([a-z]*\)".*/\1/p' |
+      head -1`
+equal "generation 0 placed the damage" "$g0" repairable
+run 0 "$XPAR" repair --chain --in-place --auth-key=key.bin set.xpa
+same tree/f1.bin pristine.bin
+cd .. || hard_error cd
+
+step "a truncated file is still scanned for the cells it damaged"
+
+#  Missing or truncated aliases must mark cells even when dedup leaves the
+#  canonical stream intact.
+mkdir -p t1 && cd t1 || hard_error "cd t1"
+mkdir tree
+mkfile tree/a.bin 120000 21
+cp tree/a.bin tree/b.bin
+mkfile tree/c.bin 120000 22
+run 0 "$XPAR" create -R -s 32K --cell=8K -r 8 --dedup=file -o set tree
+cp tree/b.bin pristine.bin
+
+dd if=pristine.bin of=tree/b.bin bs=1 count=60000 status=none ||
+  hard_error "truncate failed"
+differs tree/b.bin pristine.bin
+
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+same tree/b.bin pristine.bin
+run 0 "$XPAR" verify set.xpa
+
+#  A missing file takes the same branch.
+rm -f tree/b.bin
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+same tree/b.bin pristine.bin
+run 0 "$XPAR" verify set.xpa
+cd .. || hard_error cd
+
+step "a crafted packet key does not run the critical-group rebuild away"
+
+#  A UINT64_MAX packet key must not wrap the rebuild cursor into a loop.
+mkdir -p f1 && cd f1 || hard_error "cd f1"
+mkfile payload.bin 200000 31
+run 0 "$XPAR" create -r 4 -s 8K --layout=sidecar -o set payload.bin
+v=`find . -maxdepth 1 -name 'set.v*' | head -1`
+test -n "$v" || hard_error "create wrote no recovery volume"
+cp "$v" orig.bin
+
+#  Forge the only AUTH packet with an invalid short body.
+for t in set.xpa `find . -maxdepth 1 -name 'set.v*'`; do
+  "$FORGE" "$t" AUTH ffffffffffffffff || hard_error "forge failed on $t"
+done
+rm -f "$v"
+
+#  Cap address space so a regression fails without exhausting the host.
+if ( ulimit -v 2000000 ) 2> /dev/null; then
+  status=0
+  ( ulimit -v 2000000; "$XPAR" recover --volume="`basename $v`" set.xpa ) \
+    > "$log" 2>&1 || status=$?
+  equal "recover survived the crafted key" "$status" 0
+  #  The forged packet changes the volume, but rebuilding stays bounded.
+  grew=`expr \`wc -c < "$v"\` - \`wc -c < orig.bin\`` 2> /dev/null
+  equal "the rebuilt group stayed bounded" "`test "${grew:-999999}" -lt 65536 &&
+                                             echo yes || echo no`" yes
+else
+  note "no address-space cap; skipping runaway test"
+fi
+cd .. || hard_error cd
+
 step "the hand-recovery recipe explain prints actually recovers the data"
 
 #  The recipe is the promise that the format survives the loss of this
@@ -209,6 +372,46 @@ else
   bad "no frame exceeded a pipe buffer, so the short-read case that the
        recipe used to hit was never exercised"
 fi
+
+step "--json --progress emits progress records, and --json alone does not"
+
+#  --json --progress previously had no progress caller.
+mkdir -p j1 && cd j1 || hard_error "cd j1"
+#  Use enough data to pass progress throttling.
+mkfile data.bin 40000000 51
+run 0 "$XPAR" create -r 4 -s 1M --json --progress -o set data.bin
+"$XPAR" verify --json --progress set.xpa > p.json 2> "$log"
+n=`grep -c '"type":"progress"' p.json`
+equal "verify --json --progress reported" "`test "${n:-0}" -gt 0 &&
+                                            echo yes || echo no`" yes
+equal "the record carries done and rate" \
+      "`grep -c '"type":"progress".*"done":[0-9].*"rate_bps":[0-9]' p.json |
+          { read c; test "$c" -gt 0 && echo yes || echo no; }`" yes
+
+"$XPAR" verify --json set.xpa > q.json 2> "$log"
+equal "--json alone stays silent" "`grep -c '"type":"progress"' q.json`" 0
+
+"$XPAR" verify --progress set.xpa > /dev/null 2> h.txt
+equal "--progress alone stays human" "`grep -c '"type":"progress"' h.txt`" 0
+cd .. || hard_error cd
+
+step "an unwritable destination exits with the I/O status"
+
+#  Exercise the distinct I/O exit status (5).
+mkdir -p w1 && cd w1 || hard_error "cd w1"
+if perms_bite .; then
+  mkfile data.bin 100000 41
+  run 0 "$XPAR" create -r 20% --layout=armoured -o p data.bin
+  mkdir ro && chmod 555 ro
+  run 5 "$XPAR" extract --to=ro p.xpa
+  run 5 "$XPAR" create -r 20% --layout=armoured -o ro/q data.bin
+  chmod 755 ro
+  run 0 "$XPAR" extract --to=ro p.xpa
+  same ro/data.bin data.bin
+else
+  note "mode 555 is writable; skipping I/O test"
+fi
+cd .. || hard_error cd
 
 step "prune: refuses a lossy removal, and performs a forced one"
 
