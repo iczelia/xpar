@@ -280,7 +280,7 @@ static void mat_plan_free(void * self) {
     one plan may be applied concurrently.  */
 static xpar_codec_status mat_plan_apply(const void * self,
                                         u8 * const * data,
-                                        u8 * const * rec, sz bytes) {
+                                        const u8 * const * rec, sz bytes) {
   const mat_plan * pl = (const mat_plan *) self;
   const mat_codec * cd = pl->cd;
   u32 e = pl->e;
@@ -438,7 +438,8 @@ void xpar_codec_plan_free(xpar_codec_plan * p) {
 
 xpar_codec_status xpar_codec_plan_apply(const xpar_codec_plan * p,
                                         u8 * const * data,
-                                        u8 * const * recovery, sz bytes) {
+                                        const u8 * const * recovery,
+                                        sz bytes) {
   return codec_is_fft(p->kind)
            ? xpar_fft_plan_apply(p->impl, data, recovery, bytes)
            : mat_plan_apply(p->impl, data, recovery, bytes);

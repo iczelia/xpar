@@ -408,8 +408,9 @@ bool xpar_verify_packets_ok(const u8 * p, u64 n, const xpar_key * key) {
   return true;
 }
 
-static bool armg_check(void * ctx, const u8 * plain, u64 len) {
-  return xpar_verify_packets_ok(plain, len, ((armg_ctx *) ctx)->key);
+static bool armg_check(const void * ctx, const u8 * plain, u64 len) {
+  return xpar_verify_packets_ok(plain, len,
+                                ((const armg_ctx *) ctx)->key);
 }
 
 /*  Return owned ARMG plaintext, or NULL beyond correction capacity.  */
@@ -1668,6 +1669,7 @@ static void verify_written_set_at(const xpar_options * o,
                                   const xpar_manifest * sources,
                                   bool exact_file) {
   xpar_options ro = *o;
+  xpar_genref gref;
   xpar_vset * s;
   xpar_json js;
   const xpar_layt * layt;
@@ -1678,9 +1680,11 @@ static void verify_written_set_at(const xpar_options * o,
   bool wrote_ok;
   xpar_memset(&ro.set_ref, 0, sizeof ro.set_ref);
   ro.verb = XPAR_VERB_VERIFY;
-  ro.set = (char *) index_path;
+  /* The synthetic options object owns its set path. */
+  ro.set = xpar_strdup(index_path);
   ro.chain = false;
-  ro.gens = (xpar_genref *) generation;
+  if (generation) { gref = *generation;  ro.gens = &gref; }
+  else ro.gens = NULL;
   ro.gen_count = generation != NULL;
   ro.json = false;  ro.quiet = true;
   ro.fast = false;
@@ -1758,6 +1762,7 @@ static void verify_written_set_at(const xpar_options * o,
   }
   for (u32 i = 0; i < check_count; i++) xpar_free(check[i].path);
   xpar_free(check);
+  xpar_free(ro.set);
   xpar_vset_close(s);
   xpar_setref_free(&ro.set_ref);
   if (!wrote_ok)

@@ -690,7 +690,8 @@ xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
 xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       u8 * region, u64 region_length,
                                       u8 * plain, u64 plain_length,
-                                      xpar_armour_check_fn check, void * ctx,
+                                      xpar_armour_check_fn check,
+                                      const void * ctx,
                                       xpar_armour_stat * st) {
   u64 fx = xpar_armour_frame_disk(a), f;
   u64 frames = xpar_ceil_div(plain_length, xpar_armour_frame_plain(a));

@@ -488,7 +488,7 @@ static void rp_read_tags(rp * r) {
 
 static void rp_open_recovery(rp * r) {
   u32 i;
-  u32 limit = xpar_setd_recovery_limit(&r->sd);
+  u64 limit = xpar_setd_recovery_limit(&r->sd);
   u64 e;
   const xpar_crit_pkt * p = NULL;
   for (i = 0; i < r->crit.count && !p; i++)
@@ -504,7 +504,7 @@ static void rp_open_recovery(rp * r) {
       bool seen = false;
       if (v->kind == XPAR_VOL_RECOVERY) {
         u64 first = v->recovery_first, count = v->byte_length;
-        if (!count || first >= limit || count > (u64) limit - first)
+        if (!count || first >= limit || count > limit - first)
           FATAL_FORMAT("Recovery volume range exceeds the declared axis.");
         if (first + count > r->rec_total) r->rec_total = first + count;
       }
@@ -1167,7 +1167,8 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
           if (!r->rec_present[i]) { xpar_memset(rptr[i], 0, (sz) n); continue; }
           xpar_memcpy(rptr[i], r->rec[i] + base + at, (sz) n);
         }
-        if (xpar_codec_plan_apply(pl, dptr, rptr, (sz) n) != XPAR_CODEC_OK) {
+        if (xpar_codec_plan_apply(pl, dptr, (const u8 * const *) rptr,
+                                  (sz) n) != XPAR_CODEC_OK) {
           ok = false;  break;
         }
         for (i = 0; i < s; i++) {
@@ -2491,7 +2492,8 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
       if (rpresent[i]) xpar_memcpy(rptr[i], rec[i] + at, (sz) n);
       else xpar_memset(rptr[i], 0, (sz) n);
     }
-    if (xpar_codec_plan_apply(plan, data, rptr, (sz) n) != XPAR_CODEC_OK) {
+    if (xpar_codec_plan_apply(plan, data, (const u8 * const *) rptr,
+                              (sz) n) != XPAR_CODEC_OK) {
       if (reason) *reason = "the codec rejected the decode";
       ok = false; break;
     }
@@ -2628,7 +2630,9 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
   const xpar_tags * tags = xpar_vset_tags(s);
   const xpar_layt * l = xpar_vset_layt(s);
   u64 * slot, touched = 0, i, col, sub;
-  u8 * present, * storage, ** data, ** rptr, * io;
+  u8 * present, * storage, ** data, * io;
+  /* Read-only views into mapped recovery volumes. */
+  const u8 ** rptr;
   xpar_codec * codec;
   xpar_file * stage;
   char * stage_path = NULL;
@@ -2696,7 +2700,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
   pool_bytes = g->slice_count * chunk;
   storage = (u8 *) xpar_alloc_aligned((sz) pool_bytes, 64);
   data = (u8 **) xpar_alloc_raw((sz) g->slice_count * sizeof(u8 *));
-  rptr = (u8 **) xpar_alloc_raw((sz) MAX(rtop, 1) * sizeof(u8 *));
+  rptr = (const u8 **) xpar_alloc_raw((sz) MAX(rtop, 1) * sizeof(u8 *));
   present = (u8 *) xpar_calloc((sz) g->slice_count, 1);
   io = (u8 *) xpar_alloc_raw((sz) chunk);
   for (i = 0; i < g->slice_count; i++) data[i] = storage + i * chunk;
@@ -2737,7 +2741,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
       }
       if (!ok) break;
       for (i = 0; i < rtop; i++)
-        rptr[i] = rpresent[i] ? (u8 *) rec[i] + at + sub : NULL;
+        rptr[i] = rpresent[i] ? rec[i] + at + sub : NULL;
       if (xpar_codec_plan_apply(plan, data, rptr, (sz) n) != XPAR_CODEC_OK) {
         ok = false; break;
       }

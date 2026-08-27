@@ -138,7 +138,8 @@ typedef struct {
 } xpar_posx;
 
 xpar_status xpar_posx_read (const u8 * body, sz n, xpar_posx * out);
-void        xpar_posx_write(xpar_buf *, const xpar_posx *, const u8 * set_id,
+void        xpar_posx_write(xpar_buf *, u32 first_record, u32 count,
+                            const xpar_posix_rec *, const u8 * set_id,
                             const xpar_key *);
 void        xpar_posx_free (xpar_posx *);
 
@@ -165,11 +166,16 @@ void        xpar_slcr_free (xpar_slcr *);
 void        xpar_sltg_free (xpar_sltg *);
 void        xpar_slcl_free (xpar_slcl *);
 
-void xpar_slcr_write(xpar_buf *, const xpar_slcr *, const u8 * set_id,
+/* Writers accept const table data without reader-struct casts. */
+void xpar_slcr_write(xpar_buf *, u64 first_slice, u64 count,
+                     const u32 * crc, const u8 * set_id,
                      const xpar_key *);
-void xpar_sltg_write(xpar_buf *, const xpar_sltg *, const u8 * set_id,
+void xpar_sltg_write(xpar_buf *, u64 first_slice, u64 count, u8 tag_len,
+                     const u8 * tag, const u8 * set_id,
                      const xpar_key *);
-void xpar_slcl_write(xpar_buf *, const xpar_slcl *, const u8 * set_id,
+void xpar_slcl_write(xpar_buf *, u64 first_slice, u64 count,
+                     u32 cell_bytes, u32 cells_per_slice, const u32 * crc,
+                     const u8 * set_id,
                      const xpar_key *);
 
 void xpar_slcr_write_all(xpar_buf *, const u32 * crc, u64 slices,

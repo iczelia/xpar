@@ -611,6 +611,7 @@ void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
         xpar_xwrite(f, part[at].data, part[at].length);
       return;
     }
+    /* writev declares iov_base as non-const. */
     vec[used].iov_base = (void *) part[at].data;
     vec[used].iov_len = part[at].length;
     used++;
@@ -1005,7 +1006,9 @@ void xpar_crash_install(void) {
   sz i;
   xpar_memset(&sa, 0, sizeof sa);
   sa.sa_sigaction = crash_handler;
-  sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
+  /* Preserve SA_RESETHAND's sign-bit pattern when narrowing. */
+  sa.sa_flags = (int) (unsigned) (SA_SIGINFO | SA_NODEFER |
+                                  SA_RESETHAND);
   sigemptyset(&sa.sa_mask);
   for (i = 0; i < sizeof sigs / sizeof *sigs; i++)
     (void) sigaction(sigs[i], &sa, NULL);

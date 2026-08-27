@@ -40,25 +40,26 @@ typedef struct {
   char * error;
 } yarg_result;
 
-static const char yarg_oom[] = "Out of memory";
+/* Mutable sentinel distinguished from allocated errors by address. */
+static char yarg_oom[] = "Out of memory";
 
 static int yarg_asprintf(char ** strp, const char * fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   int len = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
-  if (len < 0) { *strp = (char *) yarg_oom;  return -1; }
-  *strp = (char *) malloc(len + 1);
-  if (!*strp) { *strp = (char *) yarg_oom;  return -1; }
+  if (len < 0) { *strp = yarg_oom;  return -1; }
+  *strp = (char *) malloc((size_t) len + 1);
+  if (!*strp) { *strp = yarg_oom;  return -1; }
   va_start(ap, fmt);
-  len = vsnprintf(*strp, len + 1, fmt, ap);
+  len = vsnprintf(*strp, (size_t) len + 1, fmt, ap);
   va_end(ap);
   return len;
 }
 
 /*  Exact matches win; reject prefixes shared by distinct option codes.  */
 static yarg_options * yarg_find_long(yarg_options * opt, const char * name,
-                                     int len, int * ambiguous) {
+                                     size_t len, int * ambiguous) {
   yarg_options * o = NULL;
   *ambiguous = 0;
   if (!len) return NULL;
@@ -80,14 +81,15 @@ static char * yarg_strdup(const char * str) {
 
 static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
                            yarg_result * res, bool dash_dash) {
-  int no_args = 0, no_pos_args = 0;
+  size_t no_args = 0, no_pos_args = 0;
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == '-' && argv[i][1]) {   /*  A lone '-' is positional.  */
       if (argv[i][1] == '-') {
         if (dash_dash && argv[i][2] == '\0')
-          { no_pos_args += argc - i - 1; break; }
+          { no_pos_args += (size_t) (argc - i - 1);  break; }
         char * long_opt = argv[i] + 2;
-        int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
+        size_t len = 0;
+    while (long_opt[len] && long_opt[len] != '=') len++;
         int amb = 0;
         yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
@@ -120,7 +122,8 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         no_args++;
       } else {
         for (int j = 1; argv[i][j]; j++) {
-          unsigned char c = argv[i][j]; yarg_options * o = NULL;
+          unsigned char c = (unsigned char) argv[i][j];
+          yarg_options * o = NULL;
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
@@ -151,18 +154,19 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
   res->args = (yarg_option *) calloc(no_args + 1, sizeof(yarg_option));
   res->pos_args = (char **) calloc(no_pos_args + 1, sizeof(char *));
   if(!res->args || !res->pos_args)
-    { res->error = (char *) yarg_oom;  return 0; }
+    { res->error = yarg_oom;  return 0; }
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == '-' && argv[i][1]) {   /*  A lone '-' is positional.  */
       if (argv[i][1] == '-') {
         if (dash_dash && argv[i][2] == '\0') {
           for (int j = i + 1; j < argc; j++)
             if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j])))
-              { res->error = (char *) yarg_oom;  return 0; }
+              { res->error = yarg_oom;  return 0; }
           break;
         }
         char * long_opt = argv[i] + 2;
-        int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
+        size_t len = 0;
+    while (long_opt[len] && long_opt[len] != '=') len++;
         int amb = 0;
         yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
@@ -179,16 +183,17 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         if (o->type == required_argument || o->type == optional_argument) {
           if (long_opt[len] == '=') {
             if(!(res->args[res->argc].arg = yarg_strdup(long_opt + len + 1)))
-              { res->error = (char *) yarg_oom;  return 0; }
+              { res->error = yarg_oom;  return 0; }
           } else if (i + 1 < argc && argv[i + 1][0] != '-') {
             if(!(res->args[res->argc].arg = yarg_strdup(argv[++i])))
-              { res->error = (char *) yarg_oom;  return 0; }
+              { res->error = yarg_oom;  return 0; }
           }
         }
         res->argc++;
       } else {
         for (int j = 1; argv[i][j]; j++) {
-          unsigned char c = argv[i][j]; yarg_options * o = NULL;
+          unsigned char c = (unsigned char) argv[i][j];
+          yarg_options * o = NULL;
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
@@ -201,11 +206,11 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
           if (o->type == required_argument || o->type == optional_argument) {
             if (argv[i][j + 1]) {
               if(!(res->args[res->argc++].arg = yarg_strdup(argv[i] + j + 1))) 
-                { res->error = (char *) yarg_oom;  return 0; }
+                { res->error = yarg_oom;  return 0; }
               break;
             } else if (i + 1 < argc && argv[i + 1][0] != '-') {
               if(!(res->args[res->argc++].arg = yarg_strdup(argv[++i])))
-                { res->error = (char *) yarg_oom;  return 0; }
+                { res->error = yarg_oom;  return 0; }
               break;
             }
           }
@@ -213,20 +218,21 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         }
       }
     } else if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i])))
-      { res->error = (char *) yarg_oom;  return 0; }
+      { res->error = yarg_oom;  return 0; }
   }
   return 1;
 }
 
 static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
                                  yarg_result * res, bool dash_dash, char opt_char) {
-  int no_args = 0, no_pos_args = 0;
+  size_t no_args = 0, no_pos_args = 0;
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == opt_char && (argv[i][1] || dash_dash)) {
       if (dash_dash && argv[i][1] == '\0')
-        { no_pos_args += argc - i - 1;  break; }
+        { no_pos_args += (size_t) (argc - i - 1);  break; }
       char * long_opt = argv[i] + 1;
-      int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
+      size_t len = 0;
+    while (long_opt[len] && long_opt[len] != '=') len++;
       int amb = 0;
       yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
@@ -260,17 +266,18 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
   res->args = (yarg_option *) calloc(no_args + 1, sizeof(yarg_option));
   res->pos_args = (char **) calloc(no_pos_args + 1, sizeof(char *));
   if (!res->args || !res->pos_args)
-    { res->error = (char *) yarg_oom;  return 0; }
+    { res->error = yarg_oom;  return 0; }
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == opt_char && (argv[i][1] || dash_dash)) {
       if (dash_dash && argv[i][1] == '\0') {
         for (int j = i + 1; j < argc; j++)
           if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[j])))
-            { res->error = (char *) yarg_oom;  return 0; }
+            { res->error = yarg_oom;  return 0; }
         break;
       }
       char * long_opt = argv[i] + 1;
-      int len = 0; while (long_opt[len] && long_opt[len] != '=') len++;
+      size_t len = 0;
+    while (long_opt[len] && long_opt[len] != '=') len++;
       int amb = 0;
       yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
@@ -287,15 +294,15 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       if (o->type == required_argument || o->type == optional_argument) {
         if (long_opt[len] == '=') {
           if(!(res->args[res->argc].arg = yarg_strdup(long_opt + len + 1)))
-            { res->error = (char *) yarg_oom;  return 0; }
+            { res->error = yarg_oom;  return 0; }
         } else if (i + 1 < argc && argv[i + 1][0] != opt_char) {
           if(!(res->args[res->argc].arg = yarg_strdup(argv[++i])))
-            { res->error = (char *) yarg_oom;  return 0; }
+            { res->error = yarg_oom;  return 0; }
         }
       }
       res->argc++;
     } else if(!(res->pos_args[res->pos_argc++] = yarg_strdup(argv[i])))
-      { res->error = (char *) yarg_oom;  return 0; }
+      { res->error = yarg_oom;  return 0; }
   }
 
   return 1;
@@ -378,19 +385,20 @@ static yarg_verb_status yarg_find_verb(const yarg_verb * v, const char * name,
   return YARG_VERB_AMBIGUOUS;
 }
 
-static int yarg_opt_len(const yarg_options * o) {
-  int n = 0;  while (o && o[n].opt) n++;  return n;
+static size_t yarg_opt_len(const yarg_options * o) {
+  size_t n = 0;  while (o && o[n].opt) n++;  return n;
 }
 
 static yarg_options * yarg_merge_opts(const yarg_options * a,
                                       const yarg_options * b,
                                       const yarg_options * c) {
-  int na = yarg_opt_len(a), nb = yarg_opt_len(b), nc = yarg_opt_len(c), k = 0;
+  size_t na = yarg_opt_len(a), nb = yarg_opt_len(b), nc = yarg_opt_len(c);
+  size_t k = 0;
   yarg_options * m = (yarg_options *) calloc(na + nb + nc + 1, sizeof *m);
   if (!m) return NULL;
-  for (int i = 0; i < na; i++) m[k++] = a[i];
-  for (int i = 0; i < nb; i++) m[k++] = b[i];
-  for (int i = 0; i < nc; i++) m[k++] = c[i];
+  for (size_t i = 0; i < na; i++) m[k++] = a[i];
+  for (size_t i = 0; i < nb; i++) m[k++] = b[i];
+  for (size_t i = 0; i < nc; i++) m[k++] = c[i];
   return m;
 }
 

@@ -122,7 +122,8 @@ static void ct_repair(ct * c, const xpar_erasures * e, const u8 * rpres,
       /* Do not let decoding depend on erased bytes. */
       for (i = 0; i < c->g.slice_count; i++)
         if (xpar_cell_bad(e, i, j)) xpar_memset(c->data[i], 0, bytes);
-      if (xpar_codec_plan_apply(pl, c->data, c->rec, bytes) !=
+      if (xpar_codec_plan_apply(pl, c->data, (const u8 * const *) c->rec,
+                                bytes) !=
           XPAR_CODEC_OK) {
         out->refused++;
         continue;

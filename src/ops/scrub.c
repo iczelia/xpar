@@ -544,7 +544,6 @@ static void rebuild_cells(scrub * c) {
     u64 first = 0;
     xpar_buf_init(&out);
     while (first < g->slice_count) {
-      xpar_slcl p;
       u64 run = 0, cap = k ? XPAR_TABLE_SPLIT / k : XPAR_TABLE_SPLIT;
       while (first < g->slice_count && xpar_vset_cell_covered(c->s, first))
         first++;
@@ -552,12 +551,8 @@ static void rebuild_cells(scrub * c) {
       if (!cap) cap = 1;
       while (first + run < g->slice_count && run < cap &&
              !xpar_vset_cell_covered(c->s, first + run)) run++;
-      p.first_slice     = first;
-      p.count           = run;
-      p.cell_bytes      = sd->cell_bytes;
-      p.cells_per_slice = k;
-      p.crc             = crc + first * k;
-      xpar_slcl_write(&out, &p, xpar_vset_id(c->s), xpar_vset_key(c->s));
+      xpar_slcl_write(&out, first, run, sd->cell_bytes, k, crc + first * k,
+                      xpar_vset_id(c->s), xpar_vset_key(c->s));
       first += run;
     }
     { u32 v, wrote = 0;

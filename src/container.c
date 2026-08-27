@@ -686,14 +686,15 @@ static void posx_rec_put(xpar_buf * b, const xpar_posix_rec * r) {
                          (b->len - at)));
 }
 
-void xpar_posx_write(xpar_buf * out, const xpar_posx * t, const u8 * set_id,
+void xpar_posx_write(xpar_buf * out, u32 first_record, u32 count,
+                     const xpar_posix_rec * rec, const u8 * set_id,
                      const xpar_key * key) {
   xpar_buf body;  u8 * h;  u32 i;
   xpar_buf_init(&body);
   h = xpar_buf_grow(&body, 8);
-  xpar_wr32(h,     t->first_record);
-  xpar_wr32(h + 4, t->count);
-  for (i = 0; i < t->count; i++) posx_rec_put(&body, &t->rec[i]);
+  xpar_wr32(h,     first_record);
+  xpar_wr32(h + 4, count);
+  for (i = 0; i < count; i++) posx_rec_put(&body, &rec[i]);
   xpar_pkt_write(out, XPAR_T_POSX, pkt_flags(XPAR_PF_CRITICAL, key), set_id,
                  body.data, body.len, key);
   xpar_buf_free(&body);
@@ -703,15 +704,13 @@ void xpar_posx_write_all(xpar_buf * out, const xpar_posix_rec * rec,
                          u32 count, const u8 * set_id, const xpar_key * key) {
   u32 i = 0;
   while (i < count) {
-    xpar_posx t;  u64 bytes = 8;  u32 j = i;
+    u64 bytes = 8;  u32 j = i;
     while (j < count) {
       u64 rs = posx_rec_size(&rec[j]);
       if (j > i && bytes + rs > XPAR_POSX_SPLIT) break;
       bytes += rs;  j++;
     }
-    t.first_record = i;  t.count = j - i;
-    t.rec = (xpar_posix_rec *) (void *) (const void *) &rec[i];
-    xpar_posx_write(out, &t, set_id, key);
+    xpar_posx_write(out, i, j - i, &rec[i], set_id, key);
     i = j;
   }
 }
@@ -821,44 +820,47 @@ void xpar_slcl_free(xpar_slcl * t) {
   xpar_free(t->crc);  xpar_memset(t, 0, sizeof *t);
 }
 
-void xpar_slcr_write(xpar_buf * out, const xpar_slcr * t, const u8 * set_id,
+void xpar_slcr_write(xpar_buf * out, u64 first_slice, u64 count,
+                     const u32 * crc, const u8 * set_id,
                      const xpar_key * key) {
   xpar_buf body;  u8 * h;  u64 i;
   xpar_buf_init(&body);
   h = xpar_buf_grow(&body, 16);
-  xpar_wr64(h,     t->first_slice);
-  xpar_wr64(h + 8, t->count);
-  h = xpar_buf_grow(&body, (sz) (t->count * 4));
-  for (i = 0; i < t->count; i++) xpar_wr32(h + (sz) (i * 4), t->crc[i]);
+  xpar_wr64(h,     first_slice);
+  xpar_wr64(h + 8, count);
+  h = xpar_buf_grow(&body, (sz) (count * 4));
+  for (i = 0; i < count; i++) xpar_wr32(h + (sz) (i * 4), crc[i]);
   xpar_pkt_write(out, XPAR_T_SLCR, pkt_flags(XPAR_PF_CRITICAL, key), set_id,
                  body.data, body.len, key);
   xpar_buf_free(&body);
 }
 
-void xpar_sltg_write(xpar_buf * out, const xpar_sltg * t, const u8 * set_id,
+void xpar_sltg_write(xpar_buf * out, u64 first_slice, u64 count,
+                     u8 tag_len, const u8 * tag, const u8 * set_id,
                      const xpar_key * key) {
   xpar_buf body;  u8 * h;
   xpar_buf_init(&body);
   h = xpar_buf_grow(&body, 24);
-  xpar_wr64(h,     t->first_slice);
-  xpar_wr64(h + 8, t->count);
-  h[16] = t->tag_len;
-  xpar_buf_put(&body, t->tag, (sz) (t->count * t->tag_len));
+  xpar_wr64(h,     first_slice);
+  xpar_wr64(h + 8, count);
+  h[16] = tag_len;
+  xpar_buf_put(&body, tag, (sz) (count * tag_len));
   xpar_pkt_write(out, XPAR_T_SLTG, pkt_flags(0, key), set_id, body.data,
                  body.len, key);
   xpar_buf_free(&body);
 }
 
-void xpar_slcl_write(xpar_buf * out, const xpar_slcl * t, const u8 * set_id,
-                     const xpar_key * key) {
-  xpar_buf body;  u8 * h;  u64 i, cells = t->count * t->cells_per_slice;
+void xpar_slcl_write(xpar_buf * out, u64 first_slice, u64 count,
+                     u32 cell_bytes, u32 cells_per_slice, const u32 * crc,
+                     const u8 * set_id, const xpar_key * key) {
+  xpar_buf body;  u8 * h;  u64 i, cells = count * cells_per_slice;
   xpar_buf_init(&body);
   h = xpar_buf_grow(&body, 24);
-  xpar_wr64(h,      t->first_slice);
-  xpar_wr64(h + 8,  t->count);
-  xpar_wr32(h + 16, t->cell_bytes);
+  xpar_wr64(h,      first_slice);
+  xpar_wr64(h + 8,  count);
+  xpar_wr32(h + 16, cell_bytes);
   h = xpar_buf_grow(&body, (sz) (cells * 4));
-  for (i = 0; i < cells; i++) xpar_wr32(h + (sz) (i * 4), t->crc[i]);
+  for (i = 0; i < cells; i++) xpar_wr32(h + (sz) (i * 4), crc[i]);
   xpar_pkt_write(out, XPAR_T_SLCL, pkt_flags(0, key), set_id, body.data,
                  body.len, key);
   xpar_buf_free(&body);
@@ -868,11 +870,8 @@ void xpar_slcr_write_all(xpar_buf * out, const u32 * crc, u64 slices,
                          const u8 * set_id, const xpar_key * key) {
   u64 i;
   for (i = 0; i < slices; i += XPAR_TABLE_SPLIT) {
-    xpar_slcr t;
-    t.first_slice = i;
-    t.count = MIN(slices - i, (u64) XPAR_TABLE_SPLIT);
-    t.crc = (u32 *) (void *) (const void *) (crc + i);
-    xpar_slcr_write(out, &t, set_id, key);
+    xpar_slcr_write(out, i, MIN(slices - i, (u64) XPAR_TABLE_SPLIT),
+                    crc + i, set_id, key);
   }
 }
 
@@ -881,12 +880,8 @@ void xpar_sltg_write_all(xpar_buf * out, const u8 * tag, u64 slices,
                          const xpar_key * key) {
   u64 i;
   for (i = 0; i < slices; i += XPAR_TABLE_SPLIT) {
-    xpar_sltg t;
-    t.first_slice = i;
-    t.count = MIN(slices - i, (u64) XPAR_TABLE_SPLIT);
-    t.tag_len = tag_len;
-    t.tag = (u8 *) (void *) (const void *) (tag + i * tag_len);
-    xpar_sltg_write(out, &t, set_id, key);
+    xpar_sltg_write(out, i, MIN(slices - i, (u64) XPAR_TABLE_SPLIT),
+                    tag_len, tag + i * tag_len, set_id, key);
   }
 }
 
@@ -896,13 +891,9 @@ void xpar_slcl_write_all(xpar_buf * out, const u32 * crc, u64 slices,
   u64 per = XPAR_TABLE_SPLIT / (cells_per_slice ? cells_per_slice : 1), i;
   if (!per) per = 1;
   for (i = 0; i < slices; i += per) {
-    xpar_slcl t;
-    t.first_slice = i;
-    t.count = MIN(slices - i, per);
-    t.cell_bytes = cell_bytes;
-    t.cells_per_slice = cells_per_slice;
-    t.crc = (u32 *) (void *) (const void *) (crc + i * cells_per_slice);
-    xpar_slcl_write(out, &t, set_id, key);
+    xpar_slcl_write(out, i, MIN(slices - i, per), cell_bytes,
+                    cells_per_slice, crc + i * cells_per_slice,
+                    set_id, key);
   }
 }
 

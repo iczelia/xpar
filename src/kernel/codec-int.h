@@ -34,7 +34,7 @@ void * xpar_fft_plan_new (void * self, const u8 * dpres, const u8 * rpres,
 void   xpar_fft_plan_free(void * self);
 
 xpar_codec_status xpar_fft_plan_apply(const void * self, u8 * const * data,
-                                      u8 * const * rec, sz bytes);
+                                      const u8 * const * rec, sz bytes);
 
 u64 xpar_fft_encode_footprint_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                                    u8 axis_log2, sz bytes);

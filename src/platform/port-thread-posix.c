@@ -34,7 +34,7 @@ static bool affinity_get(cpu_set_t * set) {
 
 static int affinity_count(const cpu_set_t * set) {
   int n = 0;
-  for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+  for (size_t cpu = 0; cpu < (size_t) CPU_SETSIZE; cpu++)
     if (CPU_ISSET(cpu, set)) n++;
   return n;
 }
@@ -88,7 +88,8 @@ int xpar_core_count(void) {
   pair = (int *) xpar_alloc_raw((sz) configured * 2 * sizeof(int));
   for (int cpu = 0; cpu < configured; cpu++) {
 #if defined(HAVE_SCHED_GETAFFINITY)
-    if (have_set && (cpu >= CPU_SETSIZE || !CPU_ISSET(cpu, &set))) continue;
+    if (have_set &&
+        (cpu >= CPU_SETSIZE || !CPU_ISSET((size_t) cpu, &set))) continue;
 #endif
     int package = topology_id("physical_package_id", cpu);
     int core = topology_id("core_id", cpu);

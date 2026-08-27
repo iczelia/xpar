@@ -102,12 +102,14 @@ xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
                                             xpar_armour_stat * st);
 
 /*  Return true when recovered plaintext passes its integrity check.  */
-typedef bool (* xpar_armour_check_fn)(void * ctx, const u8 * plain, u64 len);
+typedef bool (* xpar_armour_check_fn)(const void * ctx, const u8 * plain,
+                                      u64 len);
 
 xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       u8 * region, u64 region_length,
                                       u8 * plain, u64 plain_length,
-                                      xpar_armour_check_fn check, void * ctx,
+                                      xpar_armour_check_fn check,
+                                      const void * ctx,
                                       xpar_armour_stat * st);
 
 /*  Region kernels over D*W bytes.  The encoder uses a rotating parity

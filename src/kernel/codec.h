@@ -73,7 +73,8 @@ void xpar_codec_plan_free(xpar_codec_plan *);
 /*  Reconstruct erased data slices in place. Recovery slices are inputs only.  */
 xpar_codec_status xpar_codec_plan_apply(const xpar_codec_plan *,
                                         u8 * const * data,
-                                        u8 * const * recovery, sz bytes);
+                                        const u8 * const * recovery,
+                                        sz bytes);
 
 /*  Working-set size in bytes for encoding or decoding `bytes` per slice, so
     that plan.c can choose a column width that fits `-m` before committing

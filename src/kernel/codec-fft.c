@@ -457,7 +457,7 @@ void xpar_fft_plan_free(void * self) {
 }
 
 xpar_codec_status xpar_fft_plan_apply(const void * self, u8 * const * data,
-                                      u8 * const * rec, sz bytes) {
+                                      const u8 * const * rec, sz bytes) {
   const fft_plan * pl = (const fft_plan *) self;
   const fft_codec * cd = pl->cd;
   const xpar_gf_kernels * gk = xpar_gf_active();

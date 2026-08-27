@@ -240,7 +240,8 @@ static void decode_once(cc * c, const u8 * dpres, const u8 * rpres, u64 e,
     xpar_codec_free(k);
     return;
   }
-  st = xpar_codec_plan_apply(pl, c->data, c->rec, c->bytes);
+  st = xpar_codec_plan_apply(pl, c->data, (const u8 * const *) c->rec,
+                             c->bytes);
   CHECK(st == XPAR_CODEC_OK, "%s: plan_apply returned %d",
         codec_name(c->kind), (int) st);
   for (i = 0; i < c->s; i++) {

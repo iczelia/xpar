@@ -247,8 +247,9 @@ static bool arm_prologue_valid(const u8 * p, sz len,
   arm_prologue_decode(p, out);
   arm_params_of(out, &ap);
   if (xpar_armour_check(&ap)) return false;
+  /* Validation limits symbol_bits to 8 or 16. */
   if (out->armoured_length != xpar_armg_length(
-                                  ap.symbol_bits, ap.n, ap.k,
+                                  (u8) ap.symbol_bits, ap.n, ap.k,
                                   ap.depth, out->plain_length))
     return false;
   if (out->armoured_length > (u64) len - ARM_HDR_LEN ||
@@ -346,7 +347,7 @@ static void arm_params_of(const xpar_arm_prologue * pr,
   p->depth       = pr->depth;
 }
 
-static bool chain_arm_check(void * key, const u8 * plain, u64 len) {
+static bool chain_arm_check(const void * key, const u8 * plain, u64 len) {
   return xpar_verify_packets_ok(plain, len, (const xpar_key *) key);
 }
 
@@ -371,7 +372,7 @@ static u8 * arm_extract(const xpar_armour_params * p, const u8 * region,
     xpar_armour_status st;
     xpar_memcpy(copy, region, (sz) encoded);
     st = xpar_armour_decode(a, copy, encoded, plain, plain_len,
-                            chain_arm_check, (void *) key, NULL);
+                            chain_arm_check, key, NULL);
     xpar_free(copy);
     if (st == XPAR_ARMOUR_FAILED) {
       xpar_free(plain);  xpar_armour_free(a);
@@ -1401,7 +1402,7 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
     xpar_free(rptr);
     if (pool) xpar_free_aligned(pool);
   } else {
-    const u8 ** dptr;
+    u8 ** dptr;
     u8 ** rptr;
     u8 * pool;
     chunk = Z;
@@ -1417,7 +1418,7 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
     xpar_free(data);  data = NULL;
     pool = (u8 *) xpar_alloc_aligned(
              (sz) ((S + (t->rec ? 0 : R)) * chunk), 64);
-    dptr = (const u8 **) xpar_alloc_raw((sz) S * sizeof(u8 *));
+    dptr = (u8 **) xpar_alloc_raw((sz) S * sizeof(u8 *));
     rptr = (u8 **) xpar_alloc_raw((sz) R * sizeof(u8 *));
     for (i = 0; i < S; i++) dptr[i] = pool + i * chunk;
     if (!t->rec)
@@ -1427,10 +1428,11 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
     for (c = 0; c < Z; c += chunk) {
       u64 len = MIN(chunk, Z - c);
       for (i = 0; i < S; i++)
-        gen_src_read(&src, m->stream_base + i * Z + c, len, (u8 *) dptr[i]);
+        gen_src_read(&src, m->stream_base + i * Z + c, len, dptr[i]);
       if (t->rec)
         for (j = 0; j < R; j++) rptr[j] = t->rec + j * Z + c;
-      if (xpar_codec_encode(codec, dptr, rptr, (sz) len) != XPAR_CODEC_OK)
+      if (xpar_codec_encode(codec, (const u8 * const *) dptr, rptr,
+                            (sz) len) != XPAR_CODEC_OK)
         FATAL_CODE(XPAR_EXIT_INTERNAL, "internal: FFT encode refused a "
                    "supported geometry.");
       if (!t->rec)
@@ -5886,6 +5888,7 @@ static u32 bm_check_kats(void) {
   u8 data[20000], setd_body[96], file_body[160];
   u8 content[32], prefix[16], file_id[16], set_id[16], master[32], check[16];
   xpar_entry entry;
+  char name[] = "tree/fixed.bin";
   xpar_set_id_ctx set_hash;
   xpar_crc32c_roll roll;
   xpar_armour_params ap;
@@ -5906,8 +5909,8 @@ static u32 bm_check_kats(void) {
   bad += bm_kat_hex("V-HASH prefix_hash", prefix, sizeof prefix,
                     "a24032354ddaf4559e32caf4f14ba510");
   xpar_memset(&entry, 0, sizeof entry);
-  entry.name = (char *) "tree/fixed.bin";
-  entry.name_len = 14;
+  entry.name = name;
+  entry.name_len = (u32) (sizeof name - 1);
   entry.length = sizeof data;
   xpar_memcpy(entry.prefix_hash, prefix, sizeof prefix);
   xpar_file_id(&entry, NULL, file_id);

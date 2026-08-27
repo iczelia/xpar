@@ -1577,13 +1577,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   layt.vol = (xpar_vol *) xpar_calloc(layt.count, sizeof(xpar_vol));
   layt.vol[0].kind   = XPAR_VOL_INDEX;
   layt.vol[0].vflags = c.arm != NULL;
-  layt.vol[0].name   = (char *) xpar_path_base(names[0]);
+  layt.vol[0].name   = xpar_strdup(xpar_path_base(names[0]));
   for (i = 0; i < nvol && o->layout != XPAR_LAYOUT_ARMOURED; i++) {
     layt.vol[i + 1].kind           = XPAR_VOL_RECOVERY;
     layt.vol[i + 1].vflags         = c.arm != NULL;
     layt.vol[i + 1].recovery_first = (u32) span[i].first;
     layt.vol[i + 1].byte_length    = span[i].count;
-    layt.vol[i + 1].name           = (char *) xpar_path_base(names[i + 1]);
+    layt.vol[i + 1].name           =
+      xpar_strdup(xpar_path_base(names[i + 1]));
   }
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     /*  Spread the remainder across the leading volumes.  */
@@ -1600,7 +1601,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       layt.vol[li].stream_offset = off;
       layt.vol[li].byte_length   = len;
       layt.vol[li].vol_tag       = create_stream_tag(&c, off, len);
-      layt.vol[li].name = (char *) xpar_path_base(names[nvol + 1 + i]);
+      layt.vol[li].name = xpar_strdup(xpar_path_base(names[nvol + 1 + i]));
       slice += count;
     }
   }
@@ -1845,7 +1846,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   xpar_free(span);
   for (i = 0; i < name_count; i++) xpar_free(names[i]);
   xpar_free(names);
-  xpar_free(layt.vol);
+  /* The layout owns its names. */
+  xpar_layt_free(&layt);
   xpar_free(c.sd.file_id);
   xpar_free(c.slice_crc);
   xpar_free(c.slice_tag);
