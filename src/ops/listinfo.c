@@ -144,16 +144,51 @@ static const char * li_layout(u8 l) {
   return "sidecar";
 }
 
-static u64 li_extent_refs(const xpar_manifest * m, const xpar_extent * want) {
-  u64 refs = 0;
+/*  Count extent references with one manifest-wide hash table.  */
+
+typedef struct { u64 off, len, refs; } li_ref;
+typedef struct { li_ref * slot; u32 mask; bool live; } li_refs;
+
+static u64 li_ref_hash(u64 off, u64 len) {
+  return (off ^ (len * 0x9E3779B97F4A7C15ull)) * 0xBF58476D1CE4E5B9ull;
+}
+
+static void li_refs_build(li_refs * t, const xpar_manifest * m) {
+  u64 total = 0, cap = 16;
   u32 i, k;
+  xpar_memset(t, 0, sizeof *t);
+  for (i = 0; i < m->count; i++) total += m->entry[i].extent_count;
+  while (cap < total * 2 && cap < ((u64) 1 << 31)) cap <<= 1;
+  t->mask = (u32) (cap - 1);
+  t->slot = (li_ref *) xpar_calloc((sz) cap, sizeof(li_ref));
+  t->live = true;
   for (i = 0; i < m->count; i++)
     for (k = 0; k < m->entry[i].extent_count; k++) {
       const xpar_extent * e = &m->entry[i].extents[k];
-      if (e->stream_offset == want->stream_offset &&
-          e->length == want->length) refs++;
+      u32 j = (u32) (li_ref_hash(e->stream_offset, e->length) & t->mask);
+      while (t->slot[j].refs &&
+             (t->slot[j].off != e->stream_offset ||
+              t->slot[j].len != e->length)) j = (j + 1) & t->mask;
+      t->slot[j].off = e->stream_offset;
+      t->slot[j].len = e->length;
+      t->slot[j].refs++;
     }
-  return refs;
+}
+
+static void li_refs_free(li_refs * t) {
+  xpar_free(t->slot);  xpar_memset(t, 0, sizeof *t);
+}
+
+static u64 li_extent_refs(const li_refs * t, const xpar_extent * want) {
+  u32 j;
+  if (!t->live) return 0;
+  j = (u32) (li_ref_hash(want->stream_offset, want->length) & t->mask);
+  while (t->slot[j].refs) {
+    if (t->slot[j].off == want->stream_offset &&
+        t->slot[j].len == want->length) return t->slot[j].refs;
+    j = (j + 1) & t->mask;
+  }
+  return 0;
 }
 
 int xpar_op_list(const xpar_options * o) {
@@ -182,9 +217,34 @@ int xpar_op_list(const xpar_options * o) {
     u32 * owner = NULL;
     xpar_posix_rec * posix = NULL;
     u32 pcount = 0;
+    li_refs refs;
+    i64 * link_head = NULL, * link_next = NULL;
+    xpar_memset(&refs, 0, sizeof refs);
     if (!member[g]) continue;
     xpar_gchain_manifest(&c, g, &m, &owner);
     if (o->verbose) pcount = xpar_gchain_posix(&c, g, &posix);
+
+    /*  Build requested indexes once per manifest.  */
+    if (o->list_dedup) li_refs_build(&refs, &m);
+    if (o->list_links && !o->json) {
+      xpar_nameidx nix;
+      u32 q;
+      link_head = (i64 *) xpar_alloc_raw((sz) MAX(m.count, 1) * sizeof(i64));
+      link_next = (i64 *) xpar_alloc_raw((sz) MAX(m.count, 1) * sizeof(i64));
+      for (q = 0; q < m.count; q++) link_head[q] = link_next[q] = -1;
+      xpar_nameidx_build(&m, &nix);
+      /*  Descending, so each target's list comes out in manifest order.  */
+      for (q = m.count; q-- > 0;) {
+        i64 t;
+        if (m.entry[q].entry_type != XPAR_ENTRY_HARDLINK) continue;
+        t = xpar_nameidx_find(&m, &nix, (const char *) m.entry[q].extra,
+                              m.entry[q].extra_len);
+        if (t < 0 || (u32) t == q) continue;
+        link_next[q] = link_head[t];
+        link_head[t] = (i64) q;
+      }
+      xpar_nameidx_free(&nix);
+    }
 
     xpar_hex(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
     if (o->json) {
@@ -261,7 +321,7 @@ int xpar_op_list(const xpar_options * o) {
                          e->extents[k].stream_offset,
                          e->extents[k].length, gb,
 
-                           li_extent_refs(&m, &e->extents[k]));
+                           li_extent_refs(&refs, &e->extents[k]));
           else
             xpar_fprintf(xpar_stdout, "      extent %" PRIu64 " + %" PRIu64
                          "  in %s\n",
@@ -280,18 +340,16 @@ int xpar_op_list(const xpar_options * o) {
         }
       }
       if (o->list_links && e->entry_type != XPAR_ENTRY_HARDLINK) {
-        u32 a;
-        for (a = 0; a < m.count; a++) {
-          const xpar_entry * al = &m.entry[a];
-          if (al->entry_type != XPAR_ENTRY_HARDLINK ||
-              al->extra_len != e->name_len ||
-              xpar_memcmp(al->extra, e->name, e->name_len)) continue;
+        i64 a;
+        /*  Follow this target's aliases in manifest order.  */
+        for (a = link_head[i]; a >= 0; a = link_next[a])
           xpar_fprintf(xpar_stdout, "      hard-link %.*s -> %.*s\n",
-                       (int) al->name_len, al->name,
+                       (int) m.entry[a].name_len, m.entry[a].name,
                        (int) e->name_len, e->name);
-        }
       }
     }
+    li_refs_free(&refs);
+    xpar_free(link_head);  xpar_free(link_next);
     if (posix) xpar_gchain_posix_free(posix, pcount);
     xpar_free(owner);
     xpar_manifest_free(&m);
