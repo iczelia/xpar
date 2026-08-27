@@ -27,6 +27,13 @@ static void progress_emit(const xpar_progress_t * p) {
   /*  Avoid division by zero on the first update.  */
   if (elapsed == 0) elapsed = 1;
   rate = p->bytes_done / elapsed;
+  if (p->sink) {
+    /*  Compute exact bytes/s without overflowing on large totals.  */
+    u64 bps = rate * 1000000u +
+              (p->bytes_done % elapsed) * 1000000u / elapsed;
+    p->sink(p->sink_user, p->bytes_done, p->total_bytes, bps);
+    return;
+  }
   if (p->total_bytes) {
     unsigned pct = (unsigned) (p->bytes_done * 100 / p->total_bytes);
     /*  The caller may overshoot its estimate.  */
@@ -54,8 +61,15 @@ void xpar_progress_init(xpar_progress_t * p, bool on, u64 total,
   p->bytes_at_emit = 0;
   p->since_check   = 0;
   p->op            = op;
+  p->sink       = NULL;
+  p->sink_user  = NULL;
   p->start_usec = on ? xpar_usec_now() : 0;
   p->last_usec  = p->start_usec;
+}
+
+void xpar_progress_sink(xpar_progress_t * p, xpar_progress_fn fn,
+                        void * user) {
+  p->sink = fn;  p->sink_user = user;
 }
 
 void xpar_progress_tick(xpar_progress_t * p, u64 bytes) {
