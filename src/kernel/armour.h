@@ -143,8 +143,8 @@ typedef struct {
 } xpar_armour_kernels;
 
 /*  The scalar tier, and the tail of every vector kernel, so a tail that
-    disagrees with a body is not expressible. T-TIERS compares against
-    these.  */
+    disagrees with a body is not expressible. `xpar benchmark --tiers`
+    compares every vector tier against these.  */
 
 void xpar_armour_taps8_ref   (u8 * restrict par, sz stride, u32 t2, u32 head,
                               const xpar_gf8_coef  * gen,

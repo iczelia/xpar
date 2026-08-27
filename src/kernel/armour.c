@@ -62,8 +62,9 @@ static u32 f_div(const xpar_armour * a, u32 x, u32 y) {
 static u32 f_alpha(const xpar_armour * a, u32 e) {
   return a->wb == 1 ? xpar_gf8_alpha_pow(e) : xpar_gf16_alpha_pow(e);
 }
-/*  alpha^(x*y) with the product reduced before it can overflow: both
-    factors reach 65535 in GF(2^16) and their product does not fit u32.  */
+/*  alpha^(x*y) with the product reduced modulo the group order. The
+    multiplication is widened defensively; at GF(2^16) the largest
+    product is 65534^2, which does still fit in u32.  */
 static u32 f_alpha_mul(const xpar_armour * a, u32 x, u32 y) {
   return f_alpha(a, (u32) (((u64) x * (u64) y) % a->order));
 }
@@ -77,8 +78,9 @@ static void sym_wr(const xpar_armour * a, u8 * p, u32 v) {
 
 /*  Parameters.  */
 
-/*  GF(2^8) at fcr = 212, prim = 11 is Phil Karn's CCSDS RS(255,223)
-    parameterisation; GF(2^16) takes the plain fcr = prim = 1.
+/*  GF(2^8) takes prim = 11 after the CCSDS convention, but neither the
+    field nor fcr = 212 is the CCSDS RS(255,223) choice; the format pins
+    all three. GF(2^16) takes the plain fcr = prim = 1.
 
     The polynomial is the one gf.h builds its tables and its region
     kernels around, x^8+x^4+x^3+x^2+1 and x^16+x^5+x^3+x^2+1.  */
