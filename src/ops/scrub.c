@@ -481,6 +481,23 @@ static void deep(scrub * c) {
   xpar_free(data);  xpar_free(rec);  xpar_free((void *) din);
 }
 
+/* Buffer one SLCL packet's cell checksums. */
+
+typedef struct {
+  xpar_buf out;
+  u32 *    crc;
+  u64      cap, first, run;
+} cellrun;
+
+static void cellrun_flush(cellrun * cr, scrub * c) {
+  const xpar_setd * sd = xpar_vset_setd(c->s);
+  if (!cr->run) return;
+  xpar_slcl_write(&cr->out, cr->first, cr->run, sd->cell_bytes,
+                  xpar_vset_geom(c->s)->cells_per_slice, cr->crc,
+                  xpar_vset_id(c->s), xpar_vset_key(c->s));
+  cr->run = 0;
+}
+
 static void rebuild_cells(scrub * c) {
   const xpar_setd * sd = xpar_vset_setd(c->s);
   const xpar_geom * g  = xpar_vset_geom(c->s);
@@ -488,7 +505,7 @@ static void rebuild_cells(scrub * c) {
   u32 k = g->cells_per_slice;
   u64 i, need = 0;
   u8 * slice;
-  u32 * crc;
+  cellrun cr;
 
   if (!sd->cell_bytes) {
     xpar_fputs("xpar: --rebuild-cells: this set has no cell table\n",
@@ -503,13 +520,20 @@ static void rebuild_cells(scrub * c) {
     return;
   }
 
+  cr.cap   = k ? XPAR_TABLE_SPLIT / k : XPAR_TABLE_SPLIT;
+  if (!cr.cap) cr.cap = 1;
+  cr.first = cr.run = 0;
+  cr.crc   = (u32 *) xpar_calloc((sz) (cr.cap * k), 4);
+  xpar_buf_init(&cr.out);
   slice = (u8 *) xpar_alloc_raw((sz) g->slice_size);
-  crc   = (u32 *) xpar_calloc((sz) (g->slice_count * k), 4);
 
+  /* Flush at coverage gaps, unverified slices and packet limits. */
   for (i = 0; i < g->slice_count; i++) {
     bool ok;
     u32 col;
-    if (xpar_vset_cell_covered(c->s, i)) continue;
+    if (xpar_vset_cell_covered(c->s, i)) { cellrun_flush(&cr, c);  continue; }
+    if (cr.run == cr.cap) cellrun_flush(&cr, c);
+    if (!cr.run) cr.first = i;
     xpar_vset_read(c->s, g->stream_base + i * g->slice_size, slice,
                    g->slice_size);
     if (t->tag_len && (xpar_vset_have_tables(c->s) & XPAR_TAGS_TAG)) {
@@ -532,35 +556,23 @@ static void rebuild_cells(scrub * c) {
                      "xpar: --rebuild-cells: slice %" PRIu64 " does not verify "
                      "and cannot seed a cell table\n",
                      i);
+      cellrun_flush(&cr, c);
       continue;
     }
     for (col = 0; col < k; col++)
-      crc[i * k + col] = xpar_crc32c(0, slice +
-                                        (u64) col * sd->cell_bytes,
-                                     (sz) xpar_cell_size(g, col));
+      cr.crc[cr.run * k + col] = xpar_crc32c(0, slice +
+                                                (u64) col * sd->cell_bytes,
+                                             (sz) xpar_cell_size(g, col));
+    cr.run++;
     c->cells_rebuilt += k;
   }
+  cellrun_flush(&cr, c);
 
   if (c->cells_unseeded) {
     xpar_fprintf(xpar_stderr,
                  "xpar: --rebuild-cells: %" PRIu64 " slices could not be seeded\n",
                  c->cells_unseeded);
   } else {
-    xpar_buf out;
-    u64 first = 0;
-    xpar_buf_init(&out);
-    while (first < g->slice_count) {
-      u64 run = 0, cap = k ? XPAR_TABLE_SPLIT / k : XPAR_TABLE_SPLIT;
-      while (first < g->slice_count && xpar_vset_cell_covered(c->s, first))
-        first++;
-      if (first >= g->slice_count) break;
-      if (!cap) cap = 1;
-      while (first + run < g->slice_count && run < cap &&
-             !xpar_vset_cell_covered(c->s, first + run)) run++;
-      xpar_slcl_write(&out, first, run, sd->cell_bytes, k, crc + first * k,
-                      xpar_vset_id(c->s), xpar_vset_key(c->s));
-      first += run;
-    }
     { u32 v, wrote = 0;
       if (sd->layout == XPAR_LAYOUT_ARMOURED) {
         const u8 * plain;
@@ -573,7 +585,7 @@ static void rebuild_cells(scrub * c) {
         u64 off;
         if (!xpar_vset_armoured(c->s, &plain, &plain_len, &stream_at,
                                 &ap, &path) ||
-            out.len > UINT64_MAX - plain_len) {
+            cr.out.len > UINT64_MAX - plain_len) {
           c->write_failed = true;
         } else {
           insert = plain_len;
@@ -583,7 +595,7 @@ static void rebuild_cells(scrub * c) {
             if (xpar_pkt_is(&h, XPAR_T_RCVS) ||
                 xpar_pkt_is(&h, XPAR_T_CRTR)) { insert = off; break; }
           xpar_garm_write_inserted(path, &ap, plain, plain_len, insert,
-                                   out.data, out.len, stream_at,
+                                   cr.out.data, cr.out.len, stream_at,
                                    g->stream_length);
           wrote = 1;
           xpar_fprintf(xpar_stderr,
@@ -607,7 +619,7 @@ static void rebuild_cells(scrub * c) {
         if (is_data) continue;
         f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
         if (!f) continue;
-        if (xpar_write(f, out.data, out.len) != out.len ||
+        if (xpar_write(f, cr.out.data, cr.out.len) != cr.out.len ||
             xpar_fsync(f) != 0) {
           c->write_failed = true;
           xpar_close(f);
@@ -624,9 +636,9 @@ static void rebuild_cells(scrub * c) {
         xpar_fputs("xpar: --rebuild-cells: no index volume could be "
                    "opened for writing\n", xpar_stderr);
       } }
-    xpar_buf_free(&out);
   }
-  xpar_free(slice);  xpar_free(crc);
+  xpar_buf_free(&cr.out);
+  xpar_free(slice);  xpar_free(cr.crc);
 }
 
 /*  Reporting.  */

@@ -544,6 +544,116 @@ if grep -q "no dominant displacement" "$log"; then ok
 else bad "ambiguous displacement was not reported"; fi
 cd .. || hard_error cd
 
+step "asking for no recovery means the same thing to create and to add"
+
+# Zero requests no parity; positive fractions still round up to one.
+mkdir -p j2 && cd j2 || hard_error "cd j2"
+mkfile p.bin 200000 91
+cp p.bin pristine.bin
+
+for spec in 0 0% 0x; do
+  rm -f set.*
+  run 0 "$XPAR" create --reproducible -r $spec -s 32K -o set p.bin
+  n=`"$XPAR" info --json set.xpa 2> "$log" | tr ',' '\n' |
+       sed -n 's/.*"recovery":\([0-9][0-9]*\).*/\1/p' | head -1`
+  equal "-r $spec asks for none and gets none" "${n:-x}" 0
+  run 0 "$XPAR" verify set.xpa
+done
+
+#  It still detects damage; it simply cannot mend it.
+"$DAMAGE" p.bin rand=1000,64 || hard_error "damage failed"
+run 2 "$XPAR" verify set.xpa
+run 2 "$XPAR" repair --in-place set.xpa
+
+#  A fraction too small to name a slice is still a request for some.
+cp pristine.bin p.bin
+rm -f set.*
+run 0 "$XPAR" create --reproducible -r 0.0001% -s 32K -o set p.bin
+n=`"$XPAR" info --json set.xpa 2> "$log" | tr ',' '\n' |
+     sed -n 's/.*"recovery":\([0-9][0-9]*\).*/\1/p' | head -1`
+equal "a vanishing percentage rounds up to one" "${n:-x}" 1
+
+# Add follows the same rule.
+cp pristine.bin p.bin
+rm -f set.*
+run 0 "$XPAR" create --reproducible -r 4 -s 32K -o set p.bin
+mkfile extra.bin 5000 92
+run 0 "$XPAR" add --reproducible -r 0 set.xpa p.bin extra.bin
+run 0 "$XPAR" verify --chain set.xpa
+cd .. || hard_error cd
+
+step "a lost cell table can be rebuilt from the slices that survive"
+
+# Rebuild missing cell tables without scaling memory to the archive.
+mkdir -p k1 && cd k1 || hard_error "cd k1"
+mkfile p.bin 300000 93
+cp p.bin pristine.bin
+run 0 "$XPAR" create --armour=none --reproducible -s 16K --cell=4K -r 6 \
+    -o set p.bin
+
+#  Losing every copy of the table drops erasures back to whole slices.
+for v in set.xpa set.v*.xpa; do
+  test -f "$v" && "$DAMAGE" "$v" unpacket=SLCL > /dev/null
+done
+"$XPAR" scrub set.xpa > /dev/null 2> "$log" || :
+if grep -q "no complete cell table survives" "$log"; then ok
+else bad "a set with no SLCL packets did not report the fallback"; fi
+
+run 0 "$XPAR" scrub --rebuild-cells set.xpa
+if grep -q "rebuild-cells: wrote" "$log"; then ok
+else bad "--rebuild-cells wrote nothing"; fi
+
+"$XPAR" scrub set.xpa > /dev/null 2> "$log" || :
+if grep -q "no complete cell table survives" "$log"; then
+  bad "the rebuilt table did not take"
+else ok; fi
+
+# The rebuilt table restores cell-level repair.
+"$DAMAGE" p.bin -Z 16384 -Y 4096 cell=3,1 || hard_error "damage failed"
+run 1 "$XPAR" verify set.xpa
+if grep -q "1 slice, 1 cell" "$log"; then ok
+else bad "the rebuilt table did not narrow the damage to one cell"; fi
+run 0 "$XPAR" repair --in-place set.xpa
+same p.bin pristine.bin
+
+# Unverified slices cannot seed a cell table.
+cp pristine.bin p.bin
+rm -f set.*
+run 0 "$XPAR" create --armour=none --reproducible -s 16K --cell=4K -r 6 \
+    -o set p.bin
+for v in set.xpa set.v*.xpa; do
+  test -f "$v" && "$DAMAGE" "$v" unpacket=SLCL > /dev/null
+done
+"$DAMAGE" p.bin rand=40000,64 || hard_error "damage failed"
+"$XPAR" scrub --rebuild-cells set.xpa > /dev/null 2> "$log" || :
+if grep -q "cannot seed a cell table" "$log"; then ok
+else bad "--rebuild-cells seeded a table from a slice that does not verify"; fi
+if grep -q "rebuild-cells: wrote" "$log"; then
+  bad "--rebuild-cells wrote a table it could not seed"
+else ok; fi
+cd .. || hard_error cd
+
+step "a verb written after its options is named as the mistake"
+
+# Diagnose verbs placed after options.
+mkdir -p k2 && cd k2 || hard_error "cd k2"
+mkfile verify 60000 94
+run 0 "$XPAR" create --reproducible -r 2 -s 16K -o s verify
+
+run 4 "$XPAR" --json verify s.xpa
+if grep -q "'verify' must come first" "$log"; then ok
+else bad "a global option before the verb did not name the verb"; fi
+
+# Diagnose misplaced verbs after verb-specific options too.
+run 4 "$XPAR" -f create -o out verify
+if grep -q "'create' must come first" "$log"; then ok
+else bad "a verb option before the verb did not name the verb"; fi
+
+# Correct ordering and -- still work.
+run 0 "$XPAR" verify --json s.xpa
+run 0 "$XPAR" --json -- s.xpa
+cd .. || hard_error cd
+
 step "explain names the file it was actually given"
 
 # Use the resolved split-volume name in recipes.
@@ -568,7 +678,8 @@ rm -f p.bin
 if grep -q "do not recompute from the data" "$log"; then
   bad "the parity was blamed for data that is simply not there"
 else ok; fi
-if grep -q "not readable in full" "$log"; then ok
+# Match the diagnostic prefix, not its wording.
+if grep -q "^xpar: --deep: " "$log"; then ok
 else bad "--deep did not say why it could not check the parity"; fi
 cd .. || hard_error cd
 

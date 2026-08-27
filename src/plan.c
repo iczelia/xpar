@@ -365,14 +365,14 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   if (gs != XPAR_GEOM_OK) return XPAR_PLAN_BAD_GEOMETRY;
   out->recovery_slices = r;
 
-  if (!out->geom.slice_count) {
+  /* Empty streams and parity-free sets need no codec. */
+  if (!out->geom.slice_count || !r) {
     out->field_log2 = probe;
     out->codec      = XPAR_CODEC_MATRIX;
     out->mem_stage  = stage_bytes(budget, out->geom.slice_size, threads);
     out->mem_total  = out->mem_stage;
     return out->mem_total <= budget ? XPAR_PLAN_OK : XPAR_PLAN_NO_FIT;
   }
-  if (!r) return XPAR_PLAN_BAD_GEOMETRY;
 
   if (xpar_codec_supports(XPAR_CODEC_MATRIX, 8, out->geom.slice_count, r)) {
     list[n].codec = XPAR_CODEC_MATRIX;  list[n++].field = 8;

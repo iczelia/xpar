@@ -261,18 +261,39 @@ static bool arm_prologue_valid(const u8 * p, sz len,
   return true;
 }
 
+/*  The format's prologue procedure, in its three stages: the stored
+    copies, then the corrected ones, then a byte majority. Copies that pass
+    the checksum must agree with each other; a stage that has an agreed
+    representation is the answer, valid or not, and never falls through to
+    the next.  `which` names the copy, or 3 for a majority candidate.  */
+
+static bool arm_agreed(const u8 * const * copy, int n, int * first) {
+  int j;
+  *first = -1;
+  for (j = 0; j < n; j++) {
+    if (!arm_checksum_ok(copy[j])) continue;
+    if (*first < 0) *first = j;
+    else if (xpar_memcmp(copy[*first], copy[j], ARM_PLAIN_LEN) != 0)
+      return false;
+  }
+  return true;
+}
+
 bool xpar_garm_prologue(const u8 * file, sz len, xpar_arm_prologue * out,
                         int * which) {
   u8 corrected[3][ARM_PLAIN_LEN], vote[ARM_PLAIN_LEN];
-  int j;
+  const u8 * stored[3], * fixed[3];
+  int j, first;
+
   if (len < ARM_HDR_LEN) return false;
-  for (j = 0; j < 3; j++)
-    if (arm_checksum_ok(file + (sz) j * ARM_COPY_LEN)) {
-      if (arm_prologue_valid(file + (sz) j * ARM_COPY_LEN, len, out)) {
-        if (which) *which = j;
-        return true;
-      }
-    }
+  for (j = 0; j < 3; j++) stored[j] = file + (sz) j * ARM_COPY_LEN;
+
+  if (!arm_agreed(stored, 3, &first)) return false;
+  if (first >= 0) {
+    if (!arm_prologue_valid(stored[first], len, out)) return false;
+    if (which) *which = first;
+    return true;
+  }
 
   /*  Reinsert the implicit zero data symbols before RS(255,223) decoding;
       attempt this only after checksum failure.  */
@@ -287,28 +308,31 @@ bool xpar_garm_prologue(const u8 * file, sz len, xpar_arm_prologue * out,
     for (j = 0; j < 3; j++) {
       u8 frame[255];
       xpar_memset(frame, 0, sizeof frame);
-      xpar_memcpy(frame, file + (sz) j * ARM_COPY_LEN, ARM_PLAIN_LEN);
-      xpar_memcpy(frame + ap.k,
-                  file + (sz) j * ARM_COPY_LEN + ARM_PLAIN_LEN, 32);
+      xpar_memcpy(frame, stored[j], ARM_PLAIN_LEN);
+      xpar_memcpy(frame + ap.k, stored[j] + ARM_PLAIN_LEN, 32);
       if (xpar_armour_decode_frame(a, frame, NULL) != XPAR_ARMOUR_FAILED)
         xpar_memcpy(corrected[j], frame, ARM_PLAIN_LEN);
       else
-        xpar_memcpy(corrected[j], file + (sz) j * ARM_COPY_LEN,
-                    ARM_PLAIN_LEN);
-      if (arm_checksum_ok(corrected[j])) {
-        if (arm_prologue_valid(corrected[j], len, out)) {
-          if (which) *which = j;
-          xpar_armour_free(a);
-          return true;
-        }
-      }
+        xpar_memcpy(corrected[j], stored[j], ARM_PLAIN_LEN);
+      fixed[j] = corrected[j];
     }
     xpar_armour_free(a);
   }
 
+  if (!arm_agreed(fixed, 3, &first)) return false;
+  if (first >= 0) {
+    if (!arm_prologue_valid(fixed[first], len, out)) return false;
+    if (which) *which = first;
+    return true;
+  }
+
+  /*  A position where all three differ has no majority, and the format
+      says the procedure fails there rather than picking one.  */
   for (j = 0; j < ARM_PLAIN_LEN; j++) {
     u8 a = corrected[0][j], b = corrected[1][j], c = corrected[2][j];
-    vote[j] = a == b ? a : (a == c ? a : (b == c ? b : a));
+    if (a == b || a == c)   vote[j] = a;
+    else if (b == c)        vote[j] = b;
+    else                    return false;
   }
   if (arm_checksum_ok(vote) && arm_prologue_valid(vote, len, out)) {
     if (which) *which = 3;

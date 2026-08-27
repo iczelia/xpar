@@ -309,6 +309,31 @@ static void op_extend(unsigned long long len) {
 }
 
 
+static void usage(void);
+
+/* Clear every matching packet's magic. */
+static void op_unpacket(const char * type) {
+  static const char magic[8] = { 'X','P','A','R','2','P','K','T' };
+  unsigned char hdr[48];
+  unsigned long long off = 0, len;
+  unsigned int n = 0, i;
+  if (strlen(type) != 4) usage();
+  while (off + 48 <= img_len) {
+    io_read(off, hdr, 48);
+    if (memcmp(hdr, magic, 8) != 0) { off += 8;  continue; }
+    for (len = 0, i = 8; i-- > 0; ) len = (len << 8) | hdr[8 + i];
+    if (len < 48 || (len & 7) != 0 || len > img_len - off) { off += 8;
+                                                             continue; }
+    if (!memcmp(hdr + 32, type, 4)) {
+      memset(hdr, 0, 8);
+      io_write(off, hdr, 8);
+      n++;
+    }
+    off += len;
+  }
+  printf("%u\n", n);
+}
+
 static int split2(const char * s, unsigned long long * a,
                   unsigned long long * b) {
   char * end;
@@ -327,6 +352,7 @@ static void usage(void) {
     "  zero=OFF,LEN       replace a range with zeroes\n"
     "  forge=OFF,LEN      rewrite a range, keeping its CRC-32C\n"
     "  crc=OFF,LEN        print a range's CRC-32C; changes nothing\n"
+    "  unpacket=TYPE      clear each TYPE packet's magic; print the count\n"
     "  truncate=LEN       cut the file down to LEN bytes\n"
     "  extend=LEN         append LEN pseudorandom bytes\n"
     "  cell=S,J           with -Z and -Y, damage one cell of one slice\n"
@@ -367,6 +393,7 @@ int main(int argc, char ** argv) {
                                        continue; }
     if (!strncmp(s, "extend=", 7))   { op_extend(strtoull(s + 7, NULL, 0));
                                        continue; }
+    if (!strncmp(s, "unpacket=", 9)) { op_unpacket(s + 9);  continue; }
     if (!strncmp(s, "cell=", 5)) {
       unsigned long long off;
       if (!split2(s + 5, &a, &b) || !z || !y) usage();

@@ -813,15 +813,17 @@ static u64 resolve_recovery(const xpar_rspec * rs, u64 s, u64 z, u64 floor) {
     case XPAR_R_PERCENT:
       v = (f64) s * rs->factor / 100.0 + 0.5;
       r = v >= (f64) UINT64_MAX ? UINT64_MAX : (u64) v;
+      /* Positive fractions round up; explicit zero stays zero. */
+      if (!r && rs->factor > 0.0) r = 1;
       break;
     case XPAR_R_BYTES:   r = xpar_ceil_div(rs->count, z);  break;
     case XPAR_R_TIMES:
       v = (f64) s * rs->factor + 0.5;
       r = v >= (f64) UINT64_MAX ? UINT64_MAX : (u64) v;
+      if (!r && rs->factor > 0.0) r = 1;
       break;
   }
   if (r < floor) r = floor;
-  if (!r) r = 1;
   return r;
 }
 
@@ -860,7 +862,7 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   char ** to = (char **) xpar_calloc(total, sizeof(char *));
   char ** backup = (char **) xpar_calloc(total, sizeof(char *));
   bool * had = (bool *) xpar_calloc(total, sizeof(bool));
-  bool collision = false;
+  bool collision = false, irregular = false;
   xpar_stat_t st;
   if (extra) {
     from[at] = xpar_strdup(extra_from);
@@ -879,14 +881,13 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   for (i = 0; i < total; i++) {
     xpar_asprintf(&backup[i], "%s/.backup-%" PRIu32, stage_dir, i);
     if (xpar_lstat(to[i], &st) != 0) continue;
-    if (!st.is_regular)
-      FATAL("Refusing to replace non-regular output '%s'.", to[i]);
+    if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) { collision = true;  goto rollback_old; }
   }
+  /* Recheck shared outputs and preserve rollback on refusal. */
   for (i = 0; i < total; i++) {
     if (xpar_lstat(to[i], &st) != 0) continue;
-    if (!st.is_regular)
-      FATAL("Refusing to replace non-regular output '%s'.", to[i]);
+    if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) { collision = true;  goto rollback_old; }
     if (xpar_rename(to[i], backup[i]) != 0) goto rollback_old;
     had[i] = true;
@@ -915,10 +916,14 @@ rollback_new:
 rollback_old:
   for (u32 j = total; j > 0; j--)
     if (had[j - 1]) (void) xpar_rename(backup[j - 1], to[j - 1]);
-  if (collision) FATAL("'%s' appeared while the set was being written.",
-                       to[i]);
-  FATAL_IO("Cannot publish '%s': %s.", to[i < total ? i : total - 1],
-           xpar_strerror(xpar_errno()));
+  if (irregular)
+    FATAL("Refusing non-regular output '%s'; set remains in '%s'.",
+          to[i], stage_dir);
+  if (collision)
+    FATAL("Output '%s' appeared; set remains in '%s'.", to[i], stage_dir);
+  FATAL_IO("Cannot publish '%s': %s; set remains in '%s'.",
+           to[i < total ? i : total - 1], xpar_strerror(xpar_errno()),
+           stage_dir);
 }
 
 static bool create_copy_file(const char * from, const char * to) {
@@ -1462,9 +1467,10 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     else
       c.sd.recovery_axis_log2 =
         (u8) xpar_log2_floor(xpar_next_pow2(axis));
-    /*  Reject recovery axes unsupported by the codec and field.  */
+    /* No recovery needs no codec axis. */
     FATAL_UNLESS("--max-recovery requires unsupported recovery axis 2^%"
                  PRIu32 "; lower it or raise --field.",
+                 !c.recovery ||
                  xpar_codec_supports_axis(c.plan.codec, c.plan.field_log2,
                                           c.geom.slice_count, c.recovery,
                                           c.sd.recovery_axis_log2),

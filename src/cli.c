@@ -146,7 +146,8 @@ int xpar_cli_parse_recovery(const char * s, xpar_rspec * out) {
     if (size_mult(end, &mult) || xpar_cli_parse_size(s, &r.count)) return -1;
     r.kind = XPAR_R_BYTES;
   }
-  if ((r.kind == XPAR_R_PERCENT || r.kind == XPAR_R_TIMES) && r.factor <= 0.0)
+  /* Zero requests no recovery; positive fractions round up later. */
+  if ((r.kind == XPAR_R_PERCENT || r.kind == XPAR_R_TIMES) && r.factor < 0.0)
     return -1;
   if ((r.kind == XPAR_R_PERCENT && r.factor > 6553600.0) ||
       (r.kind == XPAR_R_TIMES && r.factor > 65536.0)) return -1;
@@ -543,7 +544,7 @@ void xpar_cli_version(void) {
 }
 
 static const char help_global[] =
-  "Global options:\n"
+  "Global options (after the verb):\n"
   "  -v, --verbose        Repeatable; -vv reports per-slice detail\n"
   "  -q, --quiet          Diagnostics only\n"
   "  -f, --force          Overwrite, and permit the guarded operations\n"
@@ -1293,6 +1294,19 @@ static void validate(xpar_options * o, u32 pres_lit) {
                  xpar_verb_name(o->verb));
 }
 
+/* Diagnose verbs placed after options. */
+static const char * misplaced_verb(int argc, char ** argv) {
+  int i;
+  sz v;
+  for (i = 1; i < argc; i++) {
+    if (!xpar_strcmp(argv[i], "--")) break;
+    for (v = 0; v < sizeof verbs / sizeof *verbs; v++)
+      if (verbs[v].name && !xpar_strcmp(argv[i], verbs[v].name))
+        return i > 1 ? verbs[v].name : NULL;
+  }
+  return NULL;
+}
+
 void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   yarg_settings st;
   yarg_verb_result * r;
@@ -1318,6 +1332,10 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     xpar_exit(XPAR_EXIT_USAGE);
   }
   FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", r->res != NULL);
+  if (!r->verb) {
+    const char * v = misplaced_verb(argc, argv);
+    if (v) FATAL("'%s' must come first.", v);
+  }
   if (r->res->error) {
     xpar_fprintf(xpar_stderr, "xpar: %s", r->res->error);
     xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes.\n",

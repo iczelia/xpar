@@ -824,14 +824,21 @@ int xpar_op_explain(const xpar_options * o) {
   if (got && xpar_pread(f, head, got, 0) != got)
     FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
 
+  /*  xpar_garm_prologue reports the copy it used, or 3 for a candidate it
+      assembled by majority from all three.  */
+  static const char * const prologue_found[4] = {
+    "Prologue copy 1 of 3 verifies.",
+    "Prologue copy 2 of 3 verifies.",
+    "Prologue copy 3 of 3 verifies.",
+    "Its prologue was recovered by a byte majority of the three copies."
+  };
   if (xpar_garm_prologue(head, len, &pr, &which)) {
     u64 w = pr.symbol_bits / 8;
     u64 fx = pr.depth * pr.n * w;
     u64 frames = fx ? xpar_ceil_div(pr.armoured_length, fx) : 0;
     if (!o->quiet && !o->json) {
       xpar_fprintf(xpar_stdout,
-                   "%s is an armoured xpar archive. Prologue copy %d of 3 "
-                   "verifies.\n"
+                   "%s is an armoured xpar archive. %s\n"
                    "It carries every parameter needed to decode the "
                    "region and to find\n"
                    "the protected stream inside it, which is why the recipe "
@@ -845,7 +852,7 @@ int xpar_op_explain(const xpar_options * o) {
                    "  plaintext        %" PRIu64 " bytes\n"
                    "  armoured region  %" PRIu64 " bytes at offset %d\n"
                    "  protected stream %" PRIu64 " bytes at plaintext offset %" PRIu64 "\n\n",
-                   path, which + 1, w,
+                   path, prologue_found[which & 3], w,
                    w == 1 ? "" : "s", pr.symbol_bits,
                    pr.n, pr.k,
                    ((pr.n - pr.k) / 2),

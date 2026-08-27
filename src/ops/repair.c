@@ -1139,6 +1139,9 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
                r->rec_total, r->sd.field_log2);
   cd = xpar_codec_new_axis(r->sd.codec, r->sd.field_log2, s, r->rec_total,
                            r->sd.recovery_axis_log2);
+  /* Guard the size_t allocation on 32-bit hosts. */
+  FATAL_UNLESS("Repair column allocation is too large for this host.",
+               !chunk || s + r->rec_total <= (u64) (sz) -1 / chunk);
   pool = (u8 *) xpar_alloc_raw((sz) ((s + r->rec_total) * chunk));
   dptr = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
   rptr = (u8 **) xpar_alloc_raw((sz) (r->rec_total ? r->rec_total : 1) *
@@ -1571,6 +1574,9 @@ static bool rp_paranoid(rp * r, u32 chunk) {
     return true;
   cd = xpar_codec_new_axis(r->sd.codec, r->sd.field_log2, s, r->rec_total,
                            r->sd.recovery_axis_log2);
+  /* Guard the size_t allocation on 32-bit hosts. */
+  FATAL_UNLESS("Repair column allocation is too large for this host.",
+               !chunk || s + r->rec_total <= (u64) (sz) -1 / chunk);
   pool = (u8 *) xpar_alloc_raw((sz) ((s + r->rec_total) * chunk));
   dptr = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
   rptr = (u8 **) xpar_alloc_raw((sz) (r->rec_total ? r->rec_total : 1) *
@@ -2481,6 +2487,8 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
   chunk = MIN(g->slice_size, budget / rows);
   chunk -= chunk % 64;
   if (!chunk) chunk = 64;
+  FATAL_UNLESS("Repair column allocation is too large for this host.",
+               !chunk || rows <= (u64) (sz) -1 / chunk);
   storage = (u8 *) xpar_alloc_raw((sz) (rows * chunk));
   data = (u8 **) xpar_alloc_raw((sz) g->slice_count * sizeof(u8 *));
   rptr = (u8 **) xpar_alloc_raw((sz) rtop * sizeof(u8 *));
