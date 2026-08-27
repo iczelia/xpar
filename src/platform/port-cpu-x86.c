@@ -117,7 +117,6 @@ u32 xpar_cpu_probe(void) {
 #define XPAR_T_GFNI512 (XPAR_T_AVX512 | XPAR_CPU_GFNI)
 #define XPAR_T_VBMI    (XPAR_T_AVX2 | XPAR_CPU_AVX512F |                    \
                         XPAR_CPU_AVX512BW | XPAR_CPU_VBMI)
-#define XPAR_T_VPCLMUL (XPAR_T_AVX2 | XPAR_CPU_VPCLMUL)
 
 const xpar_cpu_tier xpar_cpu_tier_table[] = {
   { "scalar",  0              },
@@ -138,9 +137,6 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 #endif
 #if defined(HAVE_VBMI)
   { "vbmi512", XPAR_T_VBMI    },
-#endif
-#if defined(HAVE_VPCLMUL)
-  { "vpclmul", XPAR_T_VPCLMUL },
 #endif
   { NULL,      0              }
 };
