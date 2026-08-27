@@ -51,10 +51,13 @@ fi
 
 : "${MKDATA:=$abs_top_builddir/tests/mkdata}"
 : "${DAMAGE:=$abs_top_builddir/tests/damage}"
+: "${FORGE:=$abs_top_builddir/tests/forge}"
 test -x "$MKDATA" || test -x "$MKDATA.exe" || hard_error "$MKDATA not built"
 test -x "$DAMAGE" || test -x "$DAMAGE.exe" || hard_error "$DAMAGE not built"
+test -x "$FORGE"  || test -x "$FORGE.exe"  || hard_error "$FORGE not built"
 test -x "$MKDATA" || MKDATA=$MKDATA.exe
 test -x "$DAMAGE" || DAMAGE=$DAMAGE.exe
+test -x "$FORGE"  || FORGE=$FORGE.exe
 
 work=`pwd`/tw-$prog.$$
 rm -rf "$work"
@@ -178,6 +181,17 @@ mode_of() {   # mode_of <path>
   stat -c '%a' "$1" 2> /dev/null && return 0
   stat -f '%Lp' "$1" 2> /dev/null && return 0
   echo "?"
+}
+
+# Whether mode 555 prevents this user from creating files.
+perms_bite() {   # perms_bite <scratch dir>
+  _d=$1/perm-probe
+  rm -rf "$_d";  mkdir -p "$_d" || return 1
+  chmod 555 "$_d" 2> /dev/null || { rm -rf "$_d";  return 1; }
+  if ( : > "$_d/x" ) 2> /dev/null; then
+    chmod 755 "$_d";  rm -rf "$_d";  return 1
+  fi
+  chmod 755 "$_d";  rm -rf "$_d";  return 0
 }
 
 # Test whether a directory folds case.
