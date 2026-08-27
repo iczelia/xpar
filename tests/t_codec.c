@@ -113,7 +113,7 @@ static void cc_encode(cc * c) {
 static void cc_extract(cc * c) {
   xpar_codec * k = xpar_codec_new(c->kind, c->field, c->s, c->r);
   u64 i, j;
-  sz unit = c->f16 ? 64 : 64;
+  sz unit = 64;   /*  One aligned block, wide enough for either field.  */
   u8 ** d   = (u8 **) xpar_alloc_raw((sz) c->s * sizeof(u8 *));
   const u8 ** cd = (const u8 **) xpar_alloc_raw((sz) c->s * sizeof(u8 *));
   u8 ** rec = (u8 **) xpar_alloc_raw((sz) c->r * sizeof(u8 *));
