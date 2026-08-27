@@ -255,7 +255,7 @@ fi
 | Deduplication | yes (file / chunk) | no | no | no | no |
 | Published format spec | yes | yes | yes | yes | yes |
 | GFNI / AVX-512 | yes | no | yes | yes | no |
-| SVE2, RISC-V V | yes | no | yes | yes | no |
+| SVE, RISC-V V | yes | no | yes | yes | no |
 | GPU (OpenCL) | no | no | no | yes | no |
 | Legacy targets | yes | no | no | no | no |
 
@@ -373,7 +373,7 @@ with `--no-verify-after`) to ensure that the data has been written correctly.
 ## Portability
 
 Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
-/ GFNI-512 / VBMI / VPCLMULQDQ, ARM NEON / PMULL / SVE2, PowerPC VSX, and
+/ GFNI-512 / VBMI / VPCLMULQDQ, ARM NEON / PMULL / SVE, PowerPC VSX, and
 RISC-V vector (both shuffle and clmul paths).  The binary format is
 platform-agnostic.
 
