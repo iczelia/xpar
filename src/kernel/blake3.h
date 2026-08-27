@@ -34,7 +34,11 @@
     array; blake3.c asserts the dispatched degree against it.  */
 #define XPAR_BLAKE3_MAX_DEGREE 8
 
+/*  C99 forbids repeating a typedef, so every declarer shares a guard.  */
+#ifndef XPAR_POOL_TYPEDEF
+#define XPAR_POOL_TYPEDEF
 typedef struct xpar_pool xpar_pool;
+#endif
 
 typedef struct {
   u32 cv[8];
