@@ -965,13 +965,19 @@ step "the spec's cell bound is enforced"
 
 mkdir cells;  cd cells || hard_error cd
 mkfile big.bin 4194304
-#  The 65536-cell boundary is valid.
-run 0 "$XPAR" create -r 100% -s 268435456 --cell=4096 -o edge big.bin
-#  Reject the first value past it.
+#  One cell past the bound is refused by name, and the cell rule is decided
+#  before any memory plan, so this holds at any -m.
 "$XPAR" create -f -r 100% -s 512MB --cell=4096 -o bad big.bin > "$log" 2>&1
 equal "past the bound is refused" "$?" "4"
 equal "the refusal names the cell bound" \
       "`grep -c '65536 cells' \"$log\"`" "1"
+#  Exactly at the bound the cell rule stays silent. Whether a 256 MiB slice
+#  also fits this host's memory ceiling is a different question, and not the
+#  one this step asks.
+"$XPAR" create -f -r 100% -s 268435456 --cell=4096 -o edge big.bin \
+  > "$log" 2>&1
+equal "at the bound the cell rule does not fire" \
+      "`grep -c '65536 cells' \"$log\"`" "0"
 note "writers enforce K <= 65536"
 cd ..
 
