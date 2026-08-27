@@ -71,11 +71,14 @@ for m in HAVE_SSSE3 HAVE_SSE42 HAVE_AVX2 HAVE_GFNI HAVE_GFNI512 \
   if defined "$m"; then simd=yes;  break; fi
 done
 
-if test "$simd" = no; then
+if defined XPAR_NO_SIMD; then
+  note "SIMD disabled; skipping vector probes"
+  if test "$simd" = no; then ok
+  else bad "SIMD disabled but a vector tier is configured"; fi
+elif test "$simd" = no; then
   case `uname -m 2> /dev/null` in
     i?86|x86_64|amd64)
-      bad "no SIMD tier is configured at all on an x86 host; every probe
-           silently found nothing" ;;
+      bad "all SIMD probes failed unexpectedly on x86" ;;
     *) note "no SIMD tier configured on this architecture; skipping" ;;
   esac
 else
@@ -115,7 +118,7 @@ step "every configured tier was actually archived"
 for pair in "HAVE_SSSE3 ssse3" "HAVE_SSE42 sse42" "HAVE_AVX2 avx2" \
             "HAVE_GFNI gfni" "HAVE_GFNI512 gfni512" "HAVE_VBMI vbmi" \
             "HAVE_VPCLMUL vpclmul" "HAVE_NEON neon" "HAVE_PMULL pmull" \
-            "HAVE_SVE2 sve2" "HAVE_ARM_CRC32 armcrc" "HAVE_VSX vsx" \
+            "HAVE_SVE sve" "HAVE_ARM_CRC32 armcrc" "HAVE_VSX vsx" \
             "HAVE_RVV rvv" "HAVE_RVV_CLMUL rvvclmul"; do
   m=`echo "$pair" | cut -d' ' -f1`
   a=`echo "$pair" | cut -d' ' -f2`
