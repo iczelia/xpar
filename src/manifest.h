@@ -24,7 +24,11 @@
 #include "blake3.h"
 #include "xpar2.h"
 
+/*  C99 forbids repeating a typedef, so every declarer shares a guard.  */
+#ifndef XPAR_CHUNK_INDEX_TYPEDEF
+#define XPAR_CHUNK_INDEX_TYPEDEF
 typedef struct xpar_chunk_index xpar_chunk_index;
+#endif
 
 #define XPAR_PATH_WIN    (1u << 0)  /*  Also the Windows-target rules.  */
 #define XPAR_PATH_NOCASE (1u << 1)  /*  Target folds case; duplicates.  */
