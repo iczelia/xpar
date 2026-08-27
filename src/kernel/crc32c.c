@@ -158,7 +158,6 @@ void xpar_crc32c_roll_init(xpar_crc32c_roll * r, sz window) {
   u32 op[32];
   xpar_crc32c_init();
   xpar_assert(window >= 1);
-  r->window = window;
   xpar_crc_op_zeros(op, (u64) window - 1);
   Fi(256, r->enter[i] = xpar_crc32c_tab[0][i];
           r->leave[i] = xpar_crc_apply(op, xpar_crc32c_tab[0][i]))

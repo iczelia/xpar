@@ -42,7 +42,6 @@ typedef struct {
   u32 enter[256];
   u32 leave[256];
   u32 fold;
-  sz  window;
 } xpar_crc32c_roll;
 
 void xpar_crc32c_roll_init(xpar_crc32c_roll *, sz window);
