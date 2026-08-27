@@ -308,7 +308,6 @@ static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
   u32 i;
   *whole_file = false;
   for (i = 0; i < c->vol_count; i++) {
-    xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
     xpar_arm_prologue pr;
     if (c->vol[i].gen != g) continue;
     if (c->vol[i].armoured_file &&
@@ -319,19 +318,8 @@ static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
       *whole_file = true;
       return true;
     }
-    xpar_scan_init(&sc, c->vol[i].data, c->vol[i].len, NULL, false);
-    while (xpar_scan_next(&sc, &hdr, &body, &off)) {
-      xpar_armg ag;
-      if (!xpar_pkt_is(&hdr, XPAR_T_ARMG)) continue;
-      if (xpar_armg_read(body, (sz) (hdr.length - XPAR_PKT_HDR), &ag) !=
-          XPAR_OK) continue;
-      p->symbol_bits = ag.symbol_bits;  p->poly = ag.poly;
-      p->n = ag.n;  p->k = ag.k;  p->fcr = ag.fcr;  p->prim = ag.prim;
-      p->depth = ag.depth;
-      return true;
-    }
   }
-  return false;
+  return xpar_gchain_crit_armour(c, g, p);
 }
 
 static void li_chain_table(const xpar_chain * c, u32 sel) {

@@ -18,11 +18,12 @@
 #include "common.h"
 #include "cli.h"
 
-/*  Apply progress policy consistently across verbs.  */
+/*  Apply progress policy consistently across human and JSON output.  */
 static inline bool xpar_progress_wanted(const xpar_options * o) {
-  if (o->quiet || o->json) return false;
-  if (o->progress == XPAR_PROGRESS_ON) return true;
+  if (o->quiet) return false;
   if (o->progress == XPAR_PROGRESS_OFF) return false;
+  if (o->progress == XPAR_PROGRESS_ON) return true;
+  if (o->json) return false;
   return xpar_is_tty(xpar_stderr);
 }
 
