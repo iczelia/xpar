@@ -33,6 +33,9 @@
 #define XPAR_PF_CRITICAL       (1u << 0)
 #define XPAR_PF_KEYED          (1u << 1)
 #define XPAR_PF_BODY_UNCHECKED (1u << 2)  /*  Legal only on STRM.  */
+/*  Bits 3..31 are reserved and shall be zero; a reader rejects them.  */
+#define XPAR_PF_KNOWN          (XPAR_PF_CRITICAL | XPAR_PF_KEYED |            \
+                                XPAR_PF_BODY_UNCHECKED)
 
 /*  Packet type tags. Four ASCII characters, compared as four bytes rather
     than as a string so that a type never needs a terminator on disk.  */

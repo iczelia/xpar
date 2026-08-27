@@ -44,13 +44,6 @@ u64 xpar_verify_syndromes(void) { return syndromes; }
 /*  Feed padding and alignment gaps through the ordinary accumulator.  */
 static const u8 zeros[4096];
 
-static bool progress_on(const xpar_options * o) {
-  if (o->quiet || o->json) return false;
-  if (o->progress == XPAR_PROGRESS_ON) return true;
-  if (o->progress == XPAR_PROGRESS_OFF) return false;
-  return xpar_is_tty(xpar_stderr);
-}
-
 static bool color_on(const xpar_options * o) {
   return !o->json && (o->color == XPAR_COLOR_ALWAYS ||
          (o->color == XPAR_COLOR_AUTO && xpar_is_tty(xpar_stderr)));
@@ -2479,7 +2472,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   xpar_nameidx_build(&s->mf, &nix);
   if (o->fast) total = s->geom.stream_length;
   else for (i = 0; i < s->mf.count; i++) total += s->mf.entry[i].length;
-  xpar_progress_init(&pg, progress_on(o), total, "Verifying");
+  xpar_progress_init(&pg, xpar_progress_wanted(o), total, "Verifying");
   acc_init(&acc, s, o->strong, js);
 
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {

@@ -416,8 +416,16 @@ static void rp_read_manifest(rp * r) {
       r->mf.stream_base = selected.stream_base;
       r->mf.stream_length = selected.stream_length;
       r->scan_entry_count = head.count;
-      xpar_free(head.entry);  head.entry = NULL;  head.count = 0;
-      xpar_free(selected.entry);  selected.entry = NULL;
+      /*  Free source arrays after moving their entries.  */
+      { u32 q;
+        for (q = 0; head.source && q < head.count; q++)
+          xpar_free(head.source[q]);
+        for (q = 0; selected.source && q < selected.count; q++)
+          xpar_free(selected.source[q]); }
+      xpar_free(head.entry);   xpar_free(head.source);
+      head.entry = NULL;  head.source = NULL;  head.count = 0;
+      xpar_free(selected.entry);  xpar_free(selected.source);
+      selected.entry = NULL;  selected.source = NULL;
       selected.count = 0;
       xpar_free(r->owner);  r->owner = NULL;
       xpar_free(head_owner);
@@ -1083,6 +1091,9 @@ static bool rp_cell_verify(rp * r, rp_cell * c) {
   if ((r->tag_have & XPAR_TAGS_CELL) && r->tags.t.cell_crc)
     return crc == r->tags.t.cell_crc[c->slice * r->geom.cells_per_slice +
                                      c->col];
+  /*  Slice CRCs verify cells only when a slice contains one cell.  */
+  if (r->geom.cells_per_slice > 1) return true;
+  if (!(r->tag_have & XPAR_TAGS_CRC) || !r->tags.t.slice_crc) return true;
   return crc == r->tags.t.slice_crc[c->slice];
 }
 
@@ -1768,6 +1779,22 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
                "no no-follow metadata calls.\n", (int) e->name_len, e->name);
     return;
   }
+  /*  Set ownership before mode because chown clears set-ID bits.  */
+  if (pr && (pr->uid != XPAR_ID_NONE || pr->gid != XPAR_ID_NONE ||
+             pr->owner || pr->group)) {
+    if (!(r->o->preserve & XPAR_PRES_OWNER))
+      rp_meta_skip(r->o, e, "owner", "--preserve=owner was not given");
+    else if (xpar_set_owner(
+               path, 1, pr->uid, pr->gid,
+               r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->owner : NULL,
+               r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->group : NULL)
+             != 0) {
+      rp_meta_skip(r->o, e, "owner", xpar_strerror(xpar_errno()));
+      rp_note(r, "xpar: %.*s: owner restoration skipped: %s.\n",
+              (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
+    }
+  }
+
   if ((r->o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32) {
     u32 mode = e->mode & XPAR_MODE_PERM;
     if (!(r->o->preserve & XPAR_PRES_SETID)) {
@@ -1817,20 +1844,6 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
     rp_meta_skip(r->o, e, "attrs", xpar_strerror(xpar_errno()));
     rp_note(r, "xpar: %.*s: attribute restoration skipped: %s.\n",
             (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
-  }
-  if (pr && (pr->uid != XPAR_ID_NONE || pr->gid != XPAR_ID_NONE ||
-             pr->owner || pr->group)) {
-    if (!(r->o->preserve & XPAR_PRES_OWNER))
-      rp_meta_skip(r->o, e, "owner", "--preserve=owner was not given");
-    else if (xpar_set_owner(
-               path, 1, pr->uid, pr->gid,
-               r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->owner : NULL,
-               r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->group : NULL)
-             != 0) {
-      rp_meta_skip(r->o, e, "owner", xpar_strerror(xpar_errno()));
-      rp_note(r, "xpar: %.*s: owner restoration skipped: %s.\n",
-              (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
-    }
   }
   if (pr && pr->xattr_count && !(r->o->preserve & XPAR_PRES_XATTR))
     rp_meta_skip(r->o, e, "xattr", "--preserve=xattr was not given");
@@ -3459,9 +3472,7 @@ int xpar_op_repair(const xpar_options * o) {
                                        r.geom.cells_per_slice, 1), 1);
 
   rp_resync_tree(&r);
-  xpar_progress_init(&pg, o->progress == XPAR_PROGRESS_ON ||
-                          (o->progress == XPAR_PROGRESS_AUTO && !o->quiet &&
-                           !o->json && xpar_is_tty(xpar_stderr)),
+  xpar_progress_init(&pg, xpar_progress_wanted(o),
                      r.sd.stream_length, "Repairing");
   rp_scan_stream(&r, &pg);
   rp_scan_entries(&r, &pg);

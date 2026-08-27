@@ -125,6 +125,8 @@ bool xpar_geom_from_setd(const xpar_setd * sd, xpar_geom * out) {
   xpar_memset(out, 0, sizeof(*out));
   if (sd->slice_size % 64 || sd->slice_size < XPAR_SLICE_MIN ||
       sd->slice_size > XPAR_SLICE_MAX) return false;
+  /*  Reject slice sizes beyond the host address space.  */
+  if (sd->slice_size > (u64) (sz) -1) return false;
   if (sd->data_slice_count == 0) {
     if (sd->stream_length != 0) return false;
   } else {

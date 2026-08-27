@@ -98,6 +98,13 @@ static void pkt_tag(const u8 * p, u64 len, bool body, const xpar_key * key,
   xpar_blake3_final(&h, out8, 8);
 }
 
+/*  Require at most seven zero padding bytes.  */
+static bool pad_ok(const u8 * body, u64 used, u64 n) {
+  if (used > n || n - used >= XPAR_PKT_ALIGN) return false;
+  for (; used < n; used++) if (body[used]) return false;
+  return true;
+}
+
 xpar_status xpar_pkt_read(const u8 * p, u64 avail, const xpar_key * key,
                           xpar_pkt * out) {
   u64 len;  u8 want[8];  bool body = true;
@@ -121,6 +128,8 @@ xpar_status xpar_pkt_read(const u8 * p, u64 avail, const xpar_key * key,
   out->flags = xpar_rd32(p + 36);
   xpar_memcpy(out->checksum, p + 40, 8);
 
+  /*  Reject reserved flag bits.  */
+  if (out->flags & ~(u32) XPAR_PF_KNOWN)       return XPAR_E_MALFORMED;
   if (out->flags & XPAR_PF_BODY_UNCHECKED) {
     if (!xpar_pkt_is(out, XPAR_T_STRM))        return XPAR_E_MALFORMED;
     body = false;
@@ -247,6 +256,8 @@ xpar_status xpar_volh_read(const u8 * body, sz n, xpar_volh * out) {
   out->version_major = xpar_rd32(body + 8);
   out->version_minor = xpar_rd32(body + 12);
   if (out->version_major != XPAR_FORMAT_MAJOR) return XPAR_E_UNSUPPORTED;
+  /*  Reserved field must be zero.  */
+  if (xpar_rd64(body + 16))                    return XPAR_E_MALFORMED;
   return XPAR_OK;
 }
 
@@ -299,6 +310,8 @@ static xpar_status setd_body(const u8 * body, sz n, xpar_setd * out) {
   if (out->layout > XPAR_LAYOUT_ARMOURED)            return XPAR_E_MALFORMED;
   if (out->slice_tag_len != 0 && out->slice_tag_len != 8 &&
       out->slice_tag_len != 16)                      return XPAR_E_MALFORMED;
+  /*  Reserved field must be zero.  */
+  if (body[35])                                      return XPAR_E_MALFORMED;
   if (out->align > XPAR_ALIGN_1K)                    return XPAR_E_MALFORMED;
   if (out->slice_size % 64)                          return XPAR_E_MALFORMED;
   if (out->recovery_axis_log2 > out->field_log2)     return XPAR_E_MALFORMED;
@@ -425,7 +438,7 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
   need = (u64) 128 + (u64) ec * 16 + nl + xl;
   if (need > (u64) n) return XPAR_E_MALFORMED;
   /*  At most seven bytes of packet padding may follow the last field.  */
-  if ((u64) n - need >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
 
   xpar_memcpy(out->file_id, body, XPAR_SET_ID_LEN);
   out->length     = xpar_rd64(body + 16);
@@ -599,6 +612,8 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
   gl = xpar_rd16(b + 10);
   xc = xpar_rd16(b + 12);
   if (ol > 255 || gl > 255) return XPAR_E_MALFORMED;
+  /*  Reserved field must be zero.  */
+  if (xpar_rd16(b + 14)) return XPAR_E_MALFORMED;
 
   if (ol > avail - p) return XPAR_E_MALFORMED;
   if (ol) {
@@ -664,7 +679,7 @@ static xpar_status posx_body(const u8 * body, sz n, xpar_posx * out) {
     if (st != XPAR_OK) return st;
     p += used;
   }
-  if ((u64) n - p >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, p, n)) return XPAR_E_MALFORMED;
   return XPAR_OK;
 }
 
@@ -762,7 +777,7 @@ static xpar_status slcr_body(const u8 * body, sz n, xpar_slcr * out) {
   if (out->count > ((u64) n - 16) / 4) return XPAR_E_MALFORMED;
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   need = 16 + out->count * 4;
-  if ((u64) n - need >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
   { u64 i;
     out->crc = (u32 *) xpar_calloc((sz) out->count, 4);
     for (i = 0; i < out->count; i++)
@@ -790,10 +805,12 @@ static xpar_status sltg_body(const u8 * body, sz n, xpar_sltg * out) {
   out->tag_len     = body[16];
   if (out->count < 1) return XPAR_E_MALFORMED;
   if (out->tag_len != 8 && out->tag_len != 16) return XPAR_E_MALFORMED;
+  /*  Bytes 17..23 are reserved and shall be zero.  */
+  { sz q;  for (q = 17; q < 24; q++) if (body[q]) return XPAR_E_MALFORMED; }
   if (out->count > ((u64) n - 24) / out->tag_len) return XPAR_E_MALFORMED;
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   need = 24 + out->count * out->tag_len;
-  if ((u64) n - need >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
   out->tag = (u8 *) xpar_calloc((sz) out->count, out->tag_len);
   xpar_memcpy(out->tag, body + 24, (sz) (out->count * out->tag_len));
   return XPAR_OK;
@@ -820,6 +837,8 @@ static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
   out->count       = xpar_rd64(body + 8);
   out->cell_bytes  = xpar_rd32(body + 16);
   if (out->count < 1) return XPAR_E_MALFORMED;
+  /*  Bytes 20..23 are reserved and shall be zero.  */
+  if (xpar_rd32(body + 20)) return XPAR_E_MALFORMED;
   if (!out->cell_bytes || (u64) out->cell_bytes > slice_size)
     return XPAR_E_MALFORMED;
   k = xpar_ceil_div(slice_size, out->cell_bytes);
@@ -829,7 +848,7 @@ static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   if (!mul64(out->count, k, &cells)) return XPAR_E_MALFORMED;
   need = 24 + cells * 4;
-  if ((u64) n - need >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
   { u64 i;
     out->crc = (u32 *) xpar_calloc((sz) cells, 4);
     for (i = 0; i < cells; i++)
@@ -1422,7 +1441,7 @@ xpar_status xpar_armg_read(const u8 * body, sz n, xpar_armg * out) {
   if (out->plain_length > out->armoured_length) return XPAR_E_MALFORMED;
   if (!add64(48, out->armoured_length, &need)) return XPAR_E_MALFORMED;
   if (need > (u64) n) return XPAR_E_MALFORMED;
-  if ((u64) n - need >= XPAR_PKT_ALIGN) return XPAR_E_MALFORMED;
+  if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
   out->data = body + 48;
   return XPAR_OK;
 }

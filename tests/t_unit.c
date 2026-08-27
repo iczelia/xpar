@@ -666,6 +666,29 @@ static void test_packets(void) {
     b.len = full;
   }
 
+  /*  Reject reserved packet flags before further parsing.  */
+  {
+    xpar_pkt h2;
+    u32 flags;
+    xpar_buf_free(&b);
+    xpar_buf_init(&b);
+    xpar_pkt_write(&b, "SETD", 0, set_id, payload, 64, NULL);
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_OK,
+          "packet reads before tampering");
+    flags = xpar_rd32(b.data + 36);
+    CHECK_U64(flags & ~(u32) XPAR_PF_KNOWN, 0,
+              "writer clears reserved flags");
+    xpar_wr32(b.data + 36, flags | (1u << 7));
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_MALFORMED,
+          "reserved flag rejected");
+    xpar_wr32(b.data + 36, flags | (1u << 31));
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_MALFORMED,
+          "top reserved flag rejected");
+    xpar_wr32(b.data + 36, flags);
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_OK,
+          "untouched packet still reads");
+  }
+
   xpar_buf_free(&b);
 }
 

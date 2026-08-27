@@ -22,7 +22,14 @@
 #define STAGE_TRIES  32
 #define STAGE_RANDOM 8
 
-bool xpar_path_sep(char c) { return c == '/' || c == '\\'; }
+/*  Backslashes are separators only on Windows and DOS.  */
+bool xpar_path_sep(char c) {
+#if defined(_WIN32) || defined(__CYGWIN__) || defined(__MSDOS__)
+  return c == '/' || c == '\\';
+#else
+  return c == '/';
+#endif
+}
 
 const char * xpar_path_base(const char * path) {
   const char * last = path;

@@ -73,7 +73,7 @@ static char * base_name(const xpar_options * o) {
   sz n;
   if (o->output && o->output[0]) return xpar_strdup(o->output);
   n = xpar_strlen(o->paths[0]);
-  while (n > 1 && (o->paths[0][n - 1] == '/' || o->paths[0][n - 1] == '\\'))
+  while (n > 1 && xpar_path_sep(o->paths[0][n - 1]))
     n--;
   b = xpar_strndup(o->paths[0], n);
   return b;
@@ -1269,8 +1269,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   }
 
   xpar_json_init(&c.js, o->json ? xpar_stdout : xpar_stderr, o->json);
-  xpar_progress_init(&c.prog, o->progress != XPAR_PROGRESS_OFF && !o->quiet &&
-                     !o->json, 0, "Creating");
+  xpar_progress_init(&c.prog, xpar_progress_wanted(o), 0, "Creating");
 
   c.wr.reproducible = o->reproducible;
   {
@@ -1464,6 +1463,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     else
       c.sd.recovery_axis_log2 =
         (u8) xpar_log2_floor(xpar_next_pow2(axis));
+    /*  Reject recovery axes unsupported by the codec and field.  */
+    FATAL_UNLESS("--max-recovery requires unsupported recovery axis 2^%"
+                 PRIu32 "; lower it or raise --field.",
+                 xpar_codec_supports_axis(c.plan.codec, c.plan.field_log2,
+                                          c.geom.slice_count, c.recovery,
+                                          c.sd.recovery_axis_log2),
+                 (u32) c.sd.recovery_axis_log2);
   }
   c.sd.layout           = (u8) o->layout;
   c.sd.align            = (u8) o->align;
@@ -1484,8 +1490,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   compute_set_id(&c);
   stage_chunk_cache(&c, &w);
 
-  xpar_progress_init(&c.prog, o->progress != XPAR_PROGRESS_OFF && !o->quiet &&
-                     !o->json,
+  xpar_progress_init(&c.prog, xpar_progress_wanted(o),
                      c.geom.stream_length * (c.recovery ? 2 : 1), "Creating");
   emit_json_set(&c);
   emit_json_files(&c);

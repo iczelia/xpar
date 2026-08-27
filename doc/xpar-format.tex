@@ -122,31 +122,38 @@ separate destination.
 \specp The option \verb|-f| authorises otherwise restricted metadata and
 replacement operations. \option{json} requests the stated event records,
 \option{resync} enables byte-granular salvage scanning, and
-\option{require=links} makes hard-link fallback an error. \option{auth} selects
-authenticated output, \option{reproducible} selects the deterministic writer
+\option{require=links} makes hard-link fallback an error. \option{auth-key} names
+the key file that selects authenticated output and \option{auth-only} withholds
+the unkeyed verification hashes, \option{reproducible} selects the deterministic writer
 profile, and \option{dedup=none}, \option{dedup=file} and \option{dedup=chunk}
 select deduplication levels 0, 1 and 2 respectively.
 
 \specp The \option{preserve=} options name the following metadata classes:
 \option{preserve=mtime}, \option{preserve=atime}, \option{preserve=ctime},
-\option{preserve=btime}, \option{preserve=owner}, \option{preserve=xattr},
-\option{preserve=xattr-all} and \option{preserve=setid}. The
-\option{preserve=xattr} option selects the \verb|user.| namespace, while
-\option{preserve=xattr-all} selects every recorded namespace, subject to the
-permission requirements in Clause~\ref{metadata-restoration-rules}.
+\option{preserve=btime}, \option{preserve=mode}, \option{preserve=setid},
+\option{preserve=attrs}, \option{preserve=owner}, \option{preserve=xattr},
+\option{preserve=xattr-all} and \option{preserve=links}. The aggregate
+\option{preserve=times} names the four timestamp classes, and
+\option{preserve=all} and \option{preserve=none} name every class and no class
+respectively. The \option{preserve=xattr} option selects the \verb|user.|
+namespace, while \option{preserve=xattr-all} selects every recorded namespace,
+subject to the permission requirements in
+Clause~\ref{metadata-restoration-rules}.
 
 \specp For \verb|create| and \verb|add|, an explicitly named class shall be
-recorded when the host supplies it. Unless \option{reproducible} is specified,
-the default recording classes are \option{preserve=mtime},
-\option{preserve=btime}, \option{preserve=owner} and \option{preserve=xattr}.
-The writer shall represent an unrecorded or unavailable class by its defined
-absent value or by omitting its POSX data. The \verb|mode| and \verb|attrs|
-fields are always recorded when available; otherwise \verb|mode| shall be
-\verb|0xFFFFFFFF| and \verb|attrs| shall be zero.
+recorded when the host supplies it. The default recording classes are
+\option{preserve=mtime}, \option{preserve=mode}, \option{preserve=attrs} and
+\option{preserve=links}. Under \option{reproducible} the host-dependent
+classes, the timestamps and ownership and extended attributes, are dropped from
+that set unless the command line named them outright. The writer shall
+represent an unrecorded or unavailable class by its defined absent value or by
+omitting its POSX data: an unrecorded \verb|mode| shall be \verb|0xFFFFFFFF|
+and unrecorded \verb|attrs| shall be zero.
 
 \specp For \verb|extract| and \verb|repair| \option{to}, the default
-restoration classes are \option{preserve=mtime}, \option{preserve=btime} and
-\option{preserve=xattr}. Ownership and the set-id bits are excluded by default,
+restoration classes are the same four: \option{preserve=mtime},
+\option{preserve=mode}, \option{preserve=attrs} and \option{preserve=links}.
+Ownership, extended attributes and the set-id bits are excluded by default,
 since applying either requires a privilege that the extracting process usually
 does not hold, and a partial failure halfway through a tree is worse than a
 reported omission. The exceptions and the additional permission checks are
@@ -534,7 +541,7 @@ reserved field unless its definition expressly permits another value \\
 Text & UTF-8, with no BOM or NUL byte unless a field definition states
 otherwise \\
 Hash & BLAKE3, unkeyed by default and keyed as specified in
-Clause~\ref{integrity} when \option{auth} is used. $\mathrm{BLAKE3}\text{-}n$
+Clause~\ref{integrity} when \option{auth-key} is used. $\mathrm{BLAKE3}\text{-}n$
 means the first $n$ bits of the standard 256-bit output \\
 CRC & CRC-32C (CRC-32/ISCSI): polynomial \verb|0x1EDC6F41|, reflected
 polynomial \verb|0x82F63B78|, initial value \verb|0xFFFFFFFF|, reflected
@@ -624,7 +631,7 @@ first, at offset 0 &
 \ref{posx-the-ownership-and-attribute-table} \\
 \verb|SLCR| & yes & critical group; subject to the integrity-table rules &
 \ref{slcr-sltg-and-slcl-slice-tables} \\
-\verb|AUTH| & yes & critical group, when \option{auth} &
+\verb|AUTH| & yes & critical group, when \option{auth-key} &
 \ref{auth-crtr-cmnt} \\
 \verb|LAYT| & yes & critical group & \ref{layt-volume-layout} \\
 \verb|ARMG| & no & contains the armoured critical group &
@@ -2005,7 +2012,7 @@ following list identifies common cases; it is not exhaustive.
 
 \specp If \option{reproducible} is specified, a writer shall produce the same
 bytes for the same set of path names, file contents, hard-link identities,
-selected metadata, format parameters, command options and, when \option{auth}
+selected metadata, format parameters, command options and, when \option{auth-key}
 is specified, key-file contents. Setting \verb|SOURCE_DATE_EPOCH| shall imply
 \option{reproducible}. The following requirements apply:
 

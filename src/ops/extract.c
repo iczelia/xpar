@@ -489,6 +489,22 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
     return;
   }
 
+  /*  Set ownership before mode because chown clears set-ID bits.  */
+  if (pr && (pr->uid != XPAR_ID_NONE || pr->gid != XPAR_ID_NONE ||
+             pr->owner || pr->group)) {
+    if (!(o->preserve & XPAR_PRES_OWNER))
+      ex_skip(x, e, EX_SK_OWNER, "--preserve=owner was not given");
+    else {
+      bool by_name = o->owner_map == XPAR_OWNERMAP_NAME;
+      if (xpar_set_owner(path, 1, pr->uid, pr->gid,
+                         by_name ? pr->owner : NULL,
+                         by_name ? pr->group : NULL) != 0) {
+        ex_skip(x, e, EX_SK_OWNER, xpar_strerror(xpar_errno()));
+        x->owner_failed = true;
+      }
+    }
+  }
+
   if ((o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32) {
     u32 m = e->mode & XPAR_MODE_PERM;
     u32 id = m & (XPAR_MODE_SETUID | XPAR_MODE_SETGID | XPAR_MODE_STICKY);
@@ -522,21 +538,6 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
     u16 a = (u16) (e->attrs & XPAR_ATTR_SETTABLE);
     if (a && xpar_set_attrs(path, 1, a) != 0)
       ex_skip(x, e, EX_SK_ATTRS, xpar_strerror(xpar_errno()));
-  }
-
-  if (pr && (pr->uid != XPAR_ID_NONE || pr->gid != XPAR_ID_NONE ||
-             pr->owner || pr->group)) {
-    if (!(o->preserve & XPAR_PRES_OWNER))
-      ex_skip(x, e, EX_SK_OWNER, "--preserve=owner was not given");
-    else {
-      bool by_name = o->owner_map == XPAR_OWNERMAP_NAME;
-      if (xpar_set_owner(path, 1, pr->uid, pr->gid,
-                         by_name ? pr->owner : NULL,
-                         by_name ? pr->group : NULL) != 0) {
-        ex_skip(x, e, EX_SK_OWNER, xpar_strerror(xpar_errno()));
-        x->owner_failed = true;
-      }
-    }
   }
 
   if (pr && pr->xattr_count) {

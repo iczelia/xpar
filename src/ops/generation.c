@@ -2277,7 +2277,7 @@ static void gen_write_set(gen_write_req * rq) {
               label_name[i]);
     }
 
-  xpar_progress_init(&prog, o->progress != XPAR_PROGRESS_OFF && !o->quiet,
+  xpar_progress_init(&prog, xpar_progress_wanted(o),
                      rq->plan.geom.slice_count * rq->plan.geom.slice_size,
                      "Encoding");
   gen_encode(m, &rq->plan, tag_len, o->memory, rq->base, kp, NULL, NULL,
@@ -3627,7 +3627,7 @@ int xpar_op_add(const xpar_options * caller) {
         }
       }
     }
-    xpar_progress_init(&prog, o->progress != XPAR_PROGRESS_OFF && !o->quiet,
+    xpar_progress_init(&prog, xpar_progress_wanted(o),
                        0, "Hashing");
     xpar_manifest_pack(&fresh, &wo, &prog);
     xpar_progress_end(&prog);
@@ -4543,6 +4543,65 @@ int xpar_op_prune(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
+/*  Remove only staged manifest paths, deepest-first, then their directory.  */
+static void gen_unstage_owned(const xpar_manifest * m, const char * dir) {
+  u32 * order, i, j;
+  if (!dir) return;
+  order = (u32 *) xpar_alloc_raw((m->count ? m->count : 1) * sizeof(u32));
+  for (i = 0; i < m->count; i++) order[i] = i;
+  /*  Reverse name order puts a child before the parent it lives in.  */
+  for (i = 1; i < m->count; i++) {
+    u32 t = order[i];
+    j = i;
+    while (j && xpar_name_cmp(m->entry[order[j - 1]].name,
+                              m->entry[order[j - 1]].name_len,
+                              m->entry[t].name, m->entry[t].name_len) < 0) {
+      order[j] = order[j - 1];  j--;
+    }
+    order[j] = t;
+  }
+  for (i = 0; i < m->count; i++) {
+    const xpar_entry * e = &m->entry[order[i]];
+    xpar_path_status why;
+    char * path = xpar_path_resolve(dir, e->name, e->name_len,
+                                    XPAR_PATH_LEAF_LINK, &why);
+    if (!path) continue;
+    if (e->entry_type == XPAR_ENTRY_DIR) (void) xpar_rmdir(path);
+    else                                 (void) xpar_remove(path);
+    xpar_free(path);
+  }
+  xpar_free(order);
+  (void) xpar_rmdir(dir);
+}
+
+/*  Extract owned data to a temporary tree for consolidation.  */
+static char * gen_stage_owned(const xpar_options * o, const char * base,
+                              const xpar_manifest * m) {
+  xpar_options ex = *o;
+  char * parent = xpar_path_dir(base);
+  char * stem = xpar_path_join(parent, ".xpar-consolidate-");
+  char * dir = xpar_stage_dir(stem);
+  xpar_free(parent);  xpar_free(stem);
+  if (!dir)
+    FATAL_IO("Cannot create a staging directory beside '%s'.", base);
+  ex.verb        = XPAR_VERB_EXTRACT;
+  ex.to_dir      = dir;
+  ex.force       = true;
+  ex.dry_run     = false;
+  ex.replace     = false;
+  ex.json        = false;
+  ex.chain       = false;
+  ex.exit_on_change = false;
+  if (xpar_op_extract(&ex) != XPAR_EXIT_OK) {
+    /*  Remove partial staging.  */
+    gen_unstage_owned(m, dir);
+    xpar_free(dir);
+    FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+               "Cannot stage this archive for consolidation; repair it first.");
+  }
+  return dir;
+}
+
 int xpar_op_consolidate(const xpar_options * caller) {
   xpar_options eff = *caller;
   const xpar_options * o = &eff;
@@ -4555,6 +4614,7 @@ int xpar_op_consolidate(const xpar_options * caller) {
   bool * owned;
   u32 head, i, caps, bad = 0, unreadable = 0;
   bool owned_layout;
+  char * stage_tree = NULL;
   u64 live = 0, total = 0;
   bool warn_posix = false;
   const char * base;
@@ -4588,6 +4648,15 @@ int xpar_op_consolidate(const xpar_options * caller) {
     u32 k;
     for (k = 0; k < m.entry[i].extent_count; k++)
       live += m.entry[i].extents[k].length;
+  }
+
+  /*  Stage owned data for the refresh pass.  */
+  if (owned_layout) {
+    if (!o->quiet)
+      xpar_fprintf(xpar_stderr, "xpar: staging %" PRIu64
+                   " self-contained bytes for consolidation.\n", live);
+    stage_tree = gen_stage_owned(caller, base, &m);
+    eff.base_dir = stage_tree;
   }
 
   caps = xpar_fs_caps(o->base_dir ? o->base_dir : ".");
@@ -4634,14 +4703,12 @@ int xpar_op_consolidate(const xpar_options * caller) {
                  live);
     goto done;
   }
-  /*  Owned layouts cannot consolidate from a missing source tree.  */
+  /*  Missing staged entries indicate unrecoverable archive damage.  */
   if (owned_layout && unreadable)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "Cannot consolidate this self-contained chain: %" PRIu32
-               " of %" PRIu32 " source entries are missing. Extract it, "
-               "then create a new %s set from that tree.", unreadable,
-               m.count,
-               gen_layout_name(c.gen[head].sd.layout));
+               "%" PRIu32 " of %" PRIu32 " entries could not be extracted "
+               "from this self-contained chain; repair it first.",
+               unreadable, m.count);
   if (bad && !o->force)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
                "%" PRIu32 " entries do not match the chain; consolidating would "
@@ -4727,6 +4794,7 @@ done:
   for (i = 0; i < c.gen_count; i++)
     if (tab[i]) xpar_gchain_posix_free(tab[i], tabn[i]);
   xpar_free(tab);  xpar_free(tabn);  xpar_free(owned);  xpar_free(owner);
+  if (stage_tree) { gen_unstage_owned(&m, stage_tree);  xpar_free(stage_tree); }
   xpar_free(stage_base);  xpar_free(cache_path);  xpar_free(stage_cache);
   xpar_free(rq.index_path);
   xpar_chunk_index_free(&chunk_cache);
@@ -4786,6 +4854,17 @@ int xpar_op_recover(const xpar_options * o) {
   if (xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) != XPAR_OK)
     FATAL_FORMAT("Generation %" PRIu32 "'s volume layout is malformed.",
                  c.gen[g].sd.generation);
+
+  /*  Reject recovery ranges outside the generation's axis.  */
+  { u64 axis = xpar_setd_recovery_limit(&c.gen[g].sd);
+    for (i = 0; i < layt.count; i++) {
+      const xpar_vol * v = &layt.vol[i];
+      if (v->kind != XPAR_VOL_RECOVERY) continue;
+      if (!v->byte_length || v->byte_length > axis ||
+          v->recovery_first > axis - v->byte_length)
+        FATAL_FORMAT("Generation %" PRIu32 "'s recovery range exceeds its "
+                     "axis.", c.gen[g].sd.generation);
+    } }
 
   for (i = 0; i < layt.count; i++) {
     if (layt.vol[i].kind == XPAR_VOL_RECOVERY)

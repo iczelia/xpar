@@ -33,6 +33,24 @@
 /*  The packet volumes in xpar_chain are found by their set identity. Bare
     split volumes have no packet to scan, so report them by the content
     identity LAYT gives them, including a renamed match on the same shelf.  */
+/*  Escape control bytes in archive-derived text.  */
+static void li_safe(const char * s, u32 n) {
+  u32 i, run = 0;
+  for (i = 0; i < n; i++) {
+    u8 b = (u8) s[i];
+    if (b >= 0x20 && b != 0x7F) { run++;  continue; }
+    if (run) xpar_fprintf(xpar_stdout, "%.*s", (int) run, s + i - run);
+    run = 0;
+    xpar_fprintf(xpar_stdout, "\\x%02X", (unsigned) b);
+  }
+  if (run) xpar_fprintf(xpar_stdout, "%.*s", (int) run, s + n - run);
+}
+
+static void li_safe_z(const char * s) {
+  if (!s) { xpar_fputs("-", xpar_stdout);  return; }
+  li_safe(s, (u32) xpar_strlen(s));
+}
+
 static char * li_data_present(const xpar_chain * c, const xpar_vol * v,
                               bool * named_here) {
   /*  A bare set path searches the current directory.  */
@@ -217,9 +235,10 @@ int xpar_op_list(const xpar_options * o) {
                    c.gen[owner[i]].sd.generation, mbuf, tbuf,
                    (int) e->name_len, e->name);
       if (e->extra_len && (e->entry_type == XPAR_ENTRY_HARDLINK ||
-                           e->entry_type == XPAR_ENTRY_SYMLINK))
-        xpar_fprintf(xpar_stdout, " -> %.*s", (int) e->extra_len,
-                     (const char *) e->extra);
+                           e->entry_type == XPAR_ENTRY_SYMLINK)) {
+        xpar_fputs(" -> ", xpar_stdout);
+        li_safe((const char *) e->extra, e->extra_len);
+      }
       xpar_fputs("\n", xpar_stdout);
       if (o->verbose || o->list_dedup) {
         u32 k;
@@ -251,11 +270,13 @@ int xpar_op_list(const xpar_options * o) {
         }
         if (e->posix_index != XPAR_ABSENT_U32 && e->posix_index < pcount) {
           const xpar_posix_rec * r = &posix[e->posix_index];
+          xpar_fputs("      owner ", xpar_stdout);
+          li_safe_z(r->owner);
+          xpar_fputs(":", xpar_stdout);
+          li_safe_z(r->group);
           xpar_fprintf(xpar_stdout,
-                       "      owner %s:%s (%" PRIu32 ":%" PRIu32 "), %" PRIu32 " xattrs\n",
-                       r->owner ? r->owner : "-", r->group ? r->group : "-",
-                       r->uid, r->gid,
-                       r->xattr_count);
+                       " (%" PRIu32 ":%" PRIu32 "), %" PRIu32 " xattrs\n",
+                       r->uid, r->gid, r->xattr_count);
         }
       }
       if (o->list_links && e->entry_type != XPAR_ENTRY_HARDLINK) {
@@ -567,8 +588,9 @@ int xpar_op_info(const xpar_options * o) {
                (sd->dedup_level == XPAR_DEDUP_FILE ? "whole entry" : "none"));
 
   if (have_armour) {
-    xpar_armour * a = xpar_armour_new(&ap);
+    /*  Validate armour parameters before constructing the decoder.  */
     const char * why = xpar_armour_check(&ap);
+    xpar_armour * a = why ? NULL : xpar_armour_new(&ap);
     if (why || !a) {
       xpar_fprintf(xpar_stdout, "  armour     : unusable parameters (%s)\n",
                    why ? why : "?");

@@ -735,8 +735,10 @@ static void v1_flag_refuse(int argc, char ** argv) {
   static const struct { const char * flag;  const char * v2; } tab[] = {
     { "-Jse", "create --layout=sidecar"              },
     { "-Jsd", "repair"                               },
+    { "-Jst", "verify"                               },
     { "-Je",  "create --layout=armoured"             },
     { "-Jd",  "extract"                              },
+    { "-Jt",  "verify"                               },
     { "-We",  "create --layout=split --codec=matrix" },
     { "-Wd",  "repair"                               },
     { "-Wt",  "verify"                               },
@@ -753,6 +755,14 @@ static void v1_flag_refuse(int argc, char ** argv) {
     for (int k = 2; k < argc; k++)
       xpar_fprintf(xpar_stderr, " %s", argv[k]);
     xpar_fputs("\n", xpar_stderr);
+    xpar_exit(XPAR_EXIT_USAGE);
+  }
+  /*  Recognize bare v1 mode flags without suggesting one verb.  */
+  if (!argv[1][2]) {
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x mode flag; "
+                 "version 2.0 requires a verb.\n", argv[1]);
+    xpar_fputs("xpar: use create, verify, repair, or extract; xpar help "
+               "lists all verbs.\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE);
   }
 }
@@ -779,7 +789,7 @@ static char * cat_str(const char * a, const char * b) {
 static char * join_path(const char * dir, const char * name) {
   sz n = xpar_strlen(dir);
   if (!n) return dup_str(name);
-  if (dir[n - 1] == '/' || dir[n - 1] == '\\') return cat_str(dir, name);
+  if (xpar_path_sep(dir[n - 1])) return cat_str(dir, name);
   { char * mid = cat_str(dir, "/");
     char * out = cat_str(mid, name);
     xpar_free(mid);
@@ -817,7 +827,7 @@ static char * swap_ext(const char * p) {
   sz n = xpar_strlen(p), i = n;
   while (i) {
     i--;
-    if (p[i] == '/' || p[i] == '\\') return NULL;
+    if (xpar_path_sep(p[i])) return NULL;
     if (p[i] == '.') {
       char * head = xpar_strndup(p, i);
       char * out;
@@ -859,7 +869,7 @@ static void gather_chain_siblings(xpar_setref * s) {
   const xpar_dirent * e;
   sz i;
   for (i = 0; s->base[i]; i++)
-    if (s->base[i] == '/' || s->base[i] == '\\') {
+    if (xpar_path_sep(s->base[i])) {
       dlen = i + 1;
       leaf = s->base + dlen;
     }
@@ -1207,8 +1217,10 @@ static void validate(xpar_options * o, u32 pres_lit) {
                "other.", !(o->keep_journal && o->no_journal));
   FATAL_UNLESS("Options --before and --generation are mutually exclusive.",
                !(o->have_before && o->gen_count));
-  FATAL_UNLESS("--dedup-chunk cannot exceed 1 GiB.",
-               o->dedup_chunk <= ((u64) 1 << 30));
+  /*  Tiny chunk averages exceed extent and index limits.  */
+  FATAL_UNLESS("--dedup-chunk must be between 4 KiB and 1 GiB.",
+               !o->dedup_chunk ||
+               (o->dedup_chunk >= 4096 && o->dedup_chunk <= ((u64) 1 << 30)));
   FATAL_UNLESS("--auth-only needs --auth-key=FILE.",
                !o->auth_only || o->auth_key);
   /*  Sidecar verification uses lstat, so followed links cannot match.  */

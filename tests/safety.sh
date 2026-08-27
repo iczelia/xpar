@@ -963,31 +963,6 @@ equal "the refusal names the cell bound" \
 note "writers enforce K <= 65536"
 cd ..
 
-# An absent tree is not damage when the data is inside the archive.
-
-step "consolidating a self-contained chain says what is really wrong"
-
-mkdir owned;  cd owned || hard_error cd
-mkdir tree
-mkfile tree/a.bin 150000
-run 0 "$XPAR" create -r 50% -s 4K --layout=armoured -o s -R tree
-mkfile tree/b.bin 100000 2222
-run 0 "$XPAR" add -r 50% s.xpa -R tree
-run 0 "$XPAR" consolidate --output=copy s.xpa
-rm -rf tree
-run 0 "$XPAR" extract --to=pre s.xpa
-"$XPAR" consolidate --replace s.xpa > "$log" 2>&1
-equal "it refuses" "$?" "2"
-equal "and does not call the missing tree damage" \
-      "`grep -c 'record the damage as the new truth' \"$log\"`" "0"
-equal "and names the layout as the reason" \
-      "`grep -c 'self-contained' \"$log\"`" "1"
-#  --force cannot replace missing input.
-"$XPAR" consolidate --replace --force s.xpa > "$log" 2>&1
-equal "--force does not pretend to help" "$?" "2"
-exists s.xpa
-cd ..
-
 # explain reads a 384-byte prologue, not the whole archive.
 
 step "explain reads only what it needs"
@@ -1008,6 +983,137 @@ equal "a base name resolves to its volume" \
 "$XPAR" explain s.xpa > side.txt 2> "$log" || hard_error "explain failed"
 equal "a sidecar volume is explained too" \
       "`grep -c 'packet-bearing xpar volume' side.txt`" "1"
+cd ..
+
+# An untrusted archive must not be able to drive the terminal.
+
+step "list shows control bytes rather than obeying them"
+
+mkdir ansi;  cd ansi || hard_error cd
+mkdir tree
+mkfile tree/a.bin 4096
+esc=`printf '\033'`
+if ln -s "${esc}[41;97m PWNED ${esc}[0m" tree/evil 2> /dev/null; then
+  run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
+  "$XPAR" list a.xpa > out.txt 2> "$log" || hard_error "list failed"
+  equal "no raw escape reached the output" \
+        "`grep -c \"$esc\" out.txt`" "0"
+  equal "the target is still shown, escaped" \
+        "`grep -c 'x1B' out.txt`" "1"
+  #  JSON remains escaped.
+  "$XPAR" list --json a.xpa > out.json 2> "$log" || hard_error "list failed"
+  equal "json escapes it too" "`grep -c 'u001b' out.json`" "1"
+else
+  note "control-byte symlink unsupported; skipped"
+fi
+cd ..
+
+# A cell checksum and a slice checksum are not the same checksum.
+
+step "a damaged cell table does not make a set unrepairable"
+
+mkdir celltab;  cd celltab || hard_error cd
+mkdir tree
+mkfile tree/a.bin 400000
+mkfile tree/b.bin 400000 2222
+cp -r tree keep
+run 0 "$XPAR" create -r 300% -s 64K --cell=4096 -o s -R tree
+"$DAMAGE" s.xpa "rand=0,0" > /dev/null 2>&1 || true
+#  Corrupt SLCL so the reader drops the cell table.
+"$XPAR_SH" -c '
+  f="$1"
+  python3 - "$f" <<'"'"'EOF'"'"' 2>/dev/null || exit 77
+import sys
+d=bytearray(open(sys.argv[1],"rb").read())
+at=0
+while True:
+    i=d.find(b"XPAR2PKT",at)
+    if i<0: break
+    if bytes(d[i+32:i+36])==b"SLCL": d[i+48]^=0xFF
+    at=i+8
+open(sys.argv[1],"wb").write(d)
+EOF' sh s.xpa || skip_note=1
+if test -z "${skip_note:-}"; then
+  "$DAMAGE" tree/a.bin "rand=4096,64" || hard_error "damage failed"
+  run 0 "$XPAR" repair --in-place s.xpa
+  same tree/a.bin keep/a.bin
+  note "slice fallback repaired without cell checksums"
+else
+  note "no python3 to damage the cell table; skipped"
+fi
+cd ..
+
+step "option bounds are enforced at both ends"
+
+mkdir bounds;  cd bounds || hard_error cd
+mkdir tree
+mkfile tree/a.bin 100000
+run 4 "$XPAR" create -r 20% -s 4K --dedup=chunk --dedup-chunk=1 -o d -R tree
+run 4 "$XPAR" create -f -r 20% -s 4K --dedup=chunk --dedup-chunk=4095 -o d -R tree
+run 0 "$XPAR" create -f -r 20% -s 4K --dedup=chunk --dedup-chunk=4096 -o d -R tree
+equal "the refused run staged nothing" \
+      "`find . -name '*.xpar-cache-*' | nlines`" "0"
+#  Invalid recovery axes are usage errors.
+run 4 "$XPAR" create -f -s 4K --codec=fft -r 24 --max-recovery=5000 -o m tree/a.bin
+"$XPAR" create -f -s 4K --codec=fft -r 24 --max-recovery=5000 -o m tree/a.bin \
+  > "$log" 2>&1
+equal "and it says which knob to turn" \
+      "`grep -c 'max-recovery' \"$log\"`" "1"
+run 0 "$XPAR" create -f -s 4K --codec=fft -r 24 -o m tree/a.bin
+cd ..
+
+# A backslash is a separator only where the host says so.
+
+step "a backslash in a name invents no directory"
+
+mkdir bslash;  cd bslash || hard_error cd
+mkdir tree
+if can_hold 'tree/a\b.bin'; then
+  printf 'x' > 'tree/a\b.bin'
+  mkfile tree/plain.bin 4096
+  run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
+  run 0 "$XPAR" extract --to=out a.xpa
+  equal "no parent directory was invented" \
+        "`find out -type d -name a | nlines`" "0"
+  exists 'out/tree/a\b.bin'
+else
+  note "backslashes are native separators here; skipped"
+fi
+cd ..
+
+# All v1 mode flags receive migration guidance.
+
+step "every 1.x mode flag is recognised"
+
+mkdir v1flags;  cd v1flags || hard_error cd
+for f in -Jse -Jsd -Jst -Jt -Je -Jd -We -Wd -Wt -Le -Ld -Lt -J -W -L; do
+  "$XPAR" "$f" x.bin > out.txt 2>&1
+  if grep -q '1.x mode flag' out.txt; then ok
+  else bad "$f lacked migration guidance"; fi
+done
+note "bare and test-mode flags are recognized"
+cd ..
+
+# A self-contained chain carries its own data, so it can collapse alone.
+
+step "a self-contained chain consolidates without its originals"
+
+mkdir selfc;  cd selfc || hard_error cd
+mkdir tree
+mkfile tree/a.bin 150000
+mkfile tree/b.bin 90000 2222
+run 0 "$XPAR" create -r 50% -s 4K --layout=armoured -o s -R tree
+mkfile tree/c.bin 100000 3333
+run 0 "$XPAR" add -r 50% s.xpa -R tree
+cp -r tree keep
+rm -rf tree
+run 0 "$XPAR" consolidate --replace s.xpa
+equal "the chain collapsed to one generation" "`ls s*.xpa | nlines`" "1"
+equal "nothing was left staged" \
+      "`find . -maxdepth 1 -name '.xpar-consolidate-*' | nlines`" "0"
+run 0 "$XPAR" extract --to=out s.xpa
+for f in a b c; do same "out/tree/$f.bin" "keep/$f.bin"; done
+note "the archive served as its own source"
 cd ..
 
 summary
