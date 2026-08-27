@@ -64,11 +64,11 @@ jobs:
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -118,11 +118,11 @@ jobs:
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -174,11 +174,11 @@ jobs:
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -230,11 +230,11 @@ jobs:
             host: i686-w64-mingw32
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -294,7 +294,7 @@ jobs:
             extra: "--with-windows-target=win95"
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
 
@@ -346,16 +346,16 @@ jobs:
         name: [ x86_64, i686, i686-win95 ]
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
       - name: Download the cross-built binary
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-win-${{ matrix.name }}-${{ github.sha }}
           path: bin
@@ -397,11 +397,11 @@ jobs:
             libc: armhf
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
       - name: Download compatibility fixture
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
@@ -449,7 +449,7 @@ jobs:
       DJGPP_GCC: "1220"
     steps:
       - name: Download source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
 

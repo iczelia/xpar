@@ -863,13 +863,18 @@ step "case-folded duplicates are found wherever they sort"
 
 mkdir fold;  cd fold || hard_error cd
 mkdir tree
-#  Bytewise these are not neighbours: R, R, Z sort before r.
-for n in README Readme.md Zebra.txt readme; do mkfile "tree/$n" 2048; done
-run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
-run 0 "$XPAR" extract --to=plain a.xpa
-run 3 "$XPAR" extract --strict-names --to=folded a.xpa
-equal "nothing was written from a colliding pair" \
-      "`find folded -type f 2>/dev/null | nlines`" "0"
+if folds_case tree; then
+  #  Colliding names cannot coexist here.
+  note "case-folding filesystem; skipped"
+else
+  #  Bytewise these are not neighbours: R, R, Z sort before r.
+  for n in README Readme.md Zebra.txt readme; do mkfile "tree/$n" 2048; done
+  run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
+  run 0 "$XPAR" extract --to=plain a.xpa
+  run 3 "$XPAR" extract --strict-names --to=folded a.xpa
+  equal "nothing was written from a colliding pair" \
+        "`find folded -type f 2>/dev/null | nlines`" "0"
+fi
 cd ..
 
 # A private file must never be briefly readable while it is written.
@@ -884,9 +889,13 @@ chmod 600 tree/secret.bin 2> /dev/null
 chmod 644 tree/public.bin 2> /dev/null
 run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
 run 0 "$XPAR" extract --to=out a.xpa
-equal "the private file kept its mode" "`mode_of out/tree/secret.bin`" "600"
-equal "the public file kept its mode"  "`mode_of out/tree/public.bin`" "644"
-note "modes are restricted before extraction writes data"
+if has_modes .; then
+  equal "the private file kept its mode" "`mode_of out/tree/secret.bin`" "600"
+  equal "the public file kept its mode"  "`mode_of out/tree/public.bin`" "644"
+  note "modes are restricted before extraction writes data"
+else
+  note "file modes unsupported; permission checks skipped"
+fi
 cd ..
 
 # Replacing a journal requires --replace-journal, not -f.
@@ -1018,28 +1027,16 @@ mkfile tree/a.bin 400000
 mkfile tree/b.bin 400000 2222
 cp -r tree keep
 run 0 "$XPAR" create -r 300% -s 64K --cell=4096 -o s -R tree
-"$DAMAGE" s.xpa "rand=0,0" > /dev/null 2>&1 || true
-#  Corrupt SLCL so the reader drops the cell table.
-"$XPAR_SH" -c '
-  f="$1"
-  python3 - "$f" <<'"'"'EOF'"'"' 2>/dev/null || exit 77
-import sys
-d=bytearray(open(sys.argv[1],"rb").read())
-at=0
-while True:
-    i=d.find(b"XPAR2PKT",at)
-    if i<0: break
-    if bytes(d[i+32:i+36])==b"SLCL": d[i+48]^=0xFF
-    at=i+8
-open(sys.argv[1],"wb").write(d)
-EOF' sh s.xpa || skip_note=1
-if test -z "${skip_note:-}"; then
+#  Corrupt the SLCL body so the reader drops the cell table.
+slcl=`packet_body_at s.xpa SLCL`
+if test -n "$slcl"; then
+  "$DAMAGE" s.xpa "flip=$slcl,1" || hard_error "damage failed"
   "$DAMAGE" tree/a.bin "rand=4096,64" || hard_error "damage failed"
   run 0 "$XPAR" repair --in-place s.xpa
   same tree/a.bin keep/a.bin
   note "slice fallback repaired without cell checksums"
 else
-  note "no python3 to damage the cell table; skipped"
+  note "no SLCL packet found to damage; skipped"
 fi
 cd ..
 

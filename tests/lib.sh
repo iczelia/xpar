@@ -180,6 +180,33 @@ mode_of() {   # mode_of <path>
   echo "?"
 }
 
+# Test whether a directory supports POSIX modes.
+has_modes() {   # has_modes <dir>
+  ( : > "$1/.xpar-mode-probe" ) 2> /dev/null || return 1
+  chmod 600 "$1/.xpar-mode-probe" 2> /dev/null
+  _m=`mode_of "$1/.xpar-mode-probe"`
+  rm -f "$1/.xpar-mode-probe"
+  test "$_m" = 600
+}
+
+# Test whether a directory folds case.
+folds_case() {   # folds_case <dir>
+  ( : > "$1/XparCaseProbe" ) 2> /dev/null || return 0
+  if test -e "$1/xparcaseprobe"; then
+    rm -f "$1/XparCaseProbe";  return 0
+  fi
+  rm -f "$1/XparCaseProbe" "$1/xparcaseprobe"
+  return 1
+}
+
+# Return the first packet-body offset for TYPE.
+packet_body_at() {   # packet_body_at <file> <TYPE>
+  grep -abo 'XPAR2PKT' "$1" 2> /dev/null | cut -d: -f1 | while read _o; do
+    _t=`dd if="$1" bs=1 skip=\`expr $_o + 32\` count=4 2> /dev/null`
+    if test "$_t" = "$2"; then expr $_o + 48;  break; fi
+  done
+}
+
 # Test whether shell and native helpers can create a path.
 can_hold() {   # can_hold <path>
   ( : > "$1" ) 2> /dev/null || return 1

@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download the source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
@@ -134,7 +134,7 @@ jobs:
             extra: "--with-windows-target=win95"
     steps:
       - name: Download the source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
@@ -190,7 +190,7 @@ jobs:
             runner: ubuntu-22.04-arm
     steps:
       - name: Download the source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
@@ -235,7 +235,7 @@ jobs:
             runner: macos-26-intel
     steps:
       - name: Download the source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
@@ -275,7 +275,7 @@ jobs:
       DJGPP_GCC: "1220"
     steps:
       - name: Download the source package artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
