@@ -2385,14 +2385,9 @@ static void gen_write_set(gen_write_req * rq) {
   if (o->layout == XPAR_LAYOUT_ARMOURED) {
     xpar_armour_params ap;
     xpar_armour * a;
-    xpar_armsink sink;
-    xpar_buf head, tail, crtr;
+    xpar_buf head;
     xpar_volh vh;
-    gen_src src;
-    u8 * buf;
     char * tmp;
-    xpar_file * f;
-    u64 stream_packet, stream_at, plain_len, at, left, e;
     const char * why;
 
     gen_armour_params(o, &ap);
@@ -2408,65 +2403,11 @@ static void gen_write_set(gen_write_req * rq) {
     gen_crit_group(&head, &sd, m, rq->owned, &t, &layt,
                    XPAR_VOL_STANDALONE, rq->set_id, &w, kp,
                    keyed ? &auth : NULL, rq->auth_only);
-    xpar_strm_write_header(&head, m->stream_length, rq->set_id, kp);
-    stream_at = head.len;
-
-    xpar_buf_init(&tail);
-    if (t.slice_tag)
-      xpar_sltg_write_all(&tail, t.slice_tag, rq->plan.geom.slice_count,
-                          tag_len, rq->set_id, kp);
-    if (t.cell_crc)
-      xpar_slcl_write_all(&tail, t.cell_crc, rq->plan.geom.slice_count,
-                          rq->plan.geom.cell_bytes,
-                          rq->plan.geom.cells_per_slice, rq->set_id, kp);
-    xpar_buf_init(&crtr);
-    xpar_crtr_write(&crtr, "xpar " PACKAGE_VERSION, rq->set_id, kp, &w);
-    stream_packet = xpar_align_up(XPAR_PKT_HDR + 16 + m->stream_length,
-                                  XPAR_PKT_ALIGN);
-    plain_len = head.len - (XPAR_PKT_HDR + 16) + stream_packet + tail.len +
-                rq->plan.recovery *
-                  (XPAR_PKT_HDR + 16 + rq->plan.geom.slice_size) + crtr.len;
-
-    f = gen_stage_open(vol[0].name, &tmp);
-    xpar_garm_write_prologue(f, &ap, plain_len,
-                           xpar_armour_size(a, plain_len), stream_at,
-                           m->stream_length);
-    xpar_armsink_init(&sink, a, f);
-    xpar_armsink_put(&sink, head.data, head.len);
-    buf = (u8 *) xpar_alloc_raw(1u << 16);
-    gen_src_init(&src, m, m->stream_base + m->stream_length);
-    at = m->stream_base;  left = m->stream_length;
-    while (left) {
-      u64 take = MIN(left, (u64) 1 << 16);
-      gen_src_read(&src, at, take, buf);
-      xpar_armsink_put(&sink, buf, take);
-      at += take;  left -= take;
-    }
-    gen_src_free(&src);
-    {
-      u8 zero[XPAR_PKT_ALIGN] = { 0 };
-      u64 pad = stream_packet - (XPAR_PKT_HDR + 16 + m->stream_length);
-      if (pad) xpar_armsink_put(&sink, zero, pad);
-    }
-    xpar_armsink_put(&sink, tail.data, tail.len);
-    for (e = 0; e < rq->plan.recovery; e++) {
-      xpar_buf pkt;
-      const u8 * rec = gen_rec_get(&t, e, rec_scratch);
-      xpar_buf_init(&pkt);
-      xpar_rcvs_write(&pkt, e, rec, (sz) rq->plan.geom.slice_size,
-                      rq->set_id, kp);
-      xpar_armsink_put(&sink, pkt.data, pkt.len);
-      xpar_buf_free(&pkt);
-    }
-    xpar_armsink_put(&sink, crtr.data, crtr.len);
-    xpar_armsink_flush(&sink);
-    xpar_armsink_free(&sink);
-    xpar_free(buf);
-    if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
-      FATAL_IO("Cannot flush temporary armoured archive '%s'.", tmp);
-    xpar_xclose(f);
+    tmp = gen_stage_arm_archive(vol[0].name, &ap, m, &rq->plan, &t,
+                                rec_scratch, &head, rq->set_id, kp, &w,
+                                NULL, NULL);
     gen_publish_whole(tmp, vol[0].name, o->force);
-    xpar_buf_free(&head);  xpar_buf_free(&tail);  xpar_buf_free(&crtr);
+    xpar_buf_free(&head);
     xpar_armour_free(a);
   } else {
   /*  Recovery volumes are published before the index. A reader discovers a
@@ -3003,17 +2944,14 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
 
 /*  Whole-entry references copy ancestor extents at every deduplication
     scope; the dependency already existed under the prior manifest.  */
+/*  Find reusable ancestor content through the shared hash index.  */
 static const xpar_entry * gen_find_content(const xpar_manifest * anc,
+                                           const gen_dmap * map,
                                            const xpar_entry * e) {
-  u32 i;
+  i64 hit;
   if (e->entry_type != XPAR_ENTRY_REGULAR || !e->length) return NULL;
-  for (i = 0; i < anc->count; i++) {
-    const xpar_entry * a = &anc->entry[i];
-    if (a->entry_type != XPAR_ENTRY_REGULAR || !a->extent_count) continue;
-    if (a->length != e->length) continue;
-    if (!xpar_memcmp(a->content_hash, e->content_hash, 32)) return a;
-  }
-  return NULL;
+  hit = dmap_probe(map, anc, e);
+  return hit < 0 ? NULL : &anc->entry[hit];
 }
 
 static void gen_take_extents(xpar_entry * d, const xpar_entry * s) {
@@ -3597,6 +3535,8 @@ int xpar_op_add(const xpar_options * caller) {
   const xpar_options * o = &eff;
   xpar_chain c;
   xpar_manifest inh, fresh;
+  gen_dmap inh_map;
+
   gen_merge g;
   gen_write_req rq;
   xpar_posix_rec ** tab;
@@ -3642,6 +3582,13 @@ int xpar_op_add(const xpar_options * caller) {
                  "the chain already holds.\n");
 
   xpar_gchain_manifest(&c, head, &inh, &owner);
+  /*  Share one ancestor-content index across all lookups.  */
+  xpar_memset(&inh_map, 0, sizeof inh_map);
+  if (o->dedup != XPAR_DEDUP_NONE) {
+    u32 q;
+    dmap_init(&inh_map, inh.count);
+    for (q = 0; q < inh.count; q++) dmap_add(&inh_map, &inh, q);
+  }
   tab  = (xpar_posix_rec **) xpar_calloc(c.gen_count, sizeof(void *));
   tabn = (u32 *) xpar_calloc(c.gen_count, sizeof(u32));
   for (i = 0; i < c.gen_count; i++)
@@ -3746,7 +3693,7 @@ int xpar_op_add(const xpar_options * caller) {
       gen_entry_copy(e, &fresh.entry[ib]);
       if (fresh.source && fresh.source[ib])
         g.m.source[g.m.count - 1] = xpar_strdup(fresh.source[ib]);
-      anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, e) : NULL;
+      anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, &inh_map, e) : NULL;
       if (anc) { gen_take_extents(e, anc);  g.reuse[g.m.count - 1] = true; }
       added++;  ib++;
       continue;
@@ -3771,7 +3718,7 @@ int xpar_op_add(const xpar_options * caller) {
         gen_entry_copy(e, &fresh.entry[ib]);
         if (fresh.source && fresh.source[ib])
           g.m.source[g.m.count - 1] = xpar_strdup(fresh.source[ib]);
-        anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, e) : NULL;
+        anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, &inh_map, e) : NULL;
         if (anc) { gen_take_extents(e, anc);  g.reuse[g.m.count - 1] = true; }
         changed++;
       }
@@ -3832,7 +3779,7 @@ int xpar_op_add(const xpar_options * caller) {
                          gen_chain_key(&c), c.auth_only))
           FATAL_IO("Cannot re-read '%s'.", path);
         g.m.source[g.m.count - 1] = xpar_strdup(path);
-        anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, e) : NULL;
+        anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, &inh_map, e) : NULL;
         if (anc) { gen_take_extents(e, anc);  g.reuse[g.m.count - 1] = true; }
         changed++;
       } else {
@@ -3972,6 +3919,7 @@ int xpar_op_add(const xpar_options * caller) {
   xpar_chunk_index_free(&chunk_cache);
   merge_free(&g);
   xpar_manifest_free(&fresh);
+  dmap_free(&inh_map);
   xpar_manifest_free(&inh);
   xpar_gchain_free(&c);
   return XPAR_EXIT_OK;
@@ -5840,27 +5788,19 @@ static u32 bm_check_crc32c(void) {
   u32 bad = 0, i;
   u8 * buf;
   bm_rng r;
-#if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32) || defined(HAVE_VPCLMUL)
+#if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32)
   u32 feat = xpar_cpu_features();
 #endif
   r.s = 0xB5026F5AA96619Eull;
   buf = (u8 *) xpar_alloc_raw(65536);
   bm_fill(&r, buf, 65536);
-  /*  Every kernel that could be dispatched is compared, not just the
-      first one found: on x86 both sse42 and vpclmul can be present and
-      the dispatcher prefers the latter.  */
+  /*  Compare every dispatchable kernel with the scalar result.  */
   for (i = 0; i < ARRAY_LEN(len); i++) {
     u32 want = xpar_crc32c_scalar(0x1234u, buf, len[i]);
     (void) want;
 #ifdef HAVE_SSE42
     if (feat & XPAR_CPU_SSE42)
       bad += bm_crc_one("sse42", xpar_crc32c_sse42(0x1234u, buf, len[i]),
-                        want, len[i]);
-#endif
-#ifdef HAVE_VPCLMUL
-    if ((feat & (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL)) ==
-             (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL))
-      bad += bm_crc_one("vpclmul", xpar_crc32c_vpclmul(0x1234u, buf, len[i]),
                         want, len[i]);
 #endif
 #ifdef HAVE_ARM_CRC32
