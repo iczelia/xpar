@@ -862,6 +862,51 @@ static int ex_by_depth(const xpar_manifest * m, u32 a, u32 b) {
                         m->entry[b].name, m->entry[b].name_len);
 }
 
+/*  Every path out of extract reads the manifest, so no path may skip its
+    validation: --stdout used to return before this ran.  */
+static void ex_validate(ex * x) {
+  xpar_mf_limits lim;
+  xpar_mf_result res;
+  xpar_mf_status s;
+  xpar_gen_range * anc = NULL;
+  u32 anc_count = 0;
+  xpar_memset(&lim, 0, sizeof lim);
+  lim.stream_base        = x->sd.stream_base;
+  lim.stream_length      = x->sd.stream_length;
+  lim.slice_size         = x->sd.slice_size;
+  lim.posix_record_count = x->have_chain ? XPAR_ABSENT_U32
+                                         : x->sd.posix_record_count;
+  lim.path_flags         = x->path_flags;
+  lim.align              = x->sd.align;
+  if (x->have_chain) {
+    u32 g = x->chain.gen[x->selected].parent, n = 0, k;
+    while (g != XPAR_GEN_NONE) { n++; g = x->chain.gen[g].parent; }
+    anc = (xpar_gen_range *) xpar_calloc(n ? n : 1, sizeof(xpar_gen_range));
+    g = x->chain.gen[x->selected].parent;
+    while (g != XPAR_GEN_NONE) {
+      anc[n - ++anc_count].base = x->chain.gen[g].sd.stream_base;
+      anc[n - anc_count].length = x->chain.gen[g].sd.stream_length;
+      g = x->chain.gen[g].parent;
+    }
+    /*  The fill above is oldest first by writing the reverse lineage.  */
+    for (k = 1; k < n; k++)
+      FATAL_UNLESS("Generation stream ranges overlap.",
+                   anc[k - 1].base + anc[k - 1].length <= anc[k].base);
+    lim.ancestor = anc;  lim.ancestor_count = n;
+  }
+  s = xpar_manifest_validate(&x->mf, &lim, &res);
+  if (s != XPAR_MF_OK) {
+    const xpar_entry * e = &x->mf.entry[res.entry];
+    FATAL_FORMAT("Entry %" PRIu32 " ('%.*s') %s.", res.entry,
+                 (int) e->name_len, e->name, xpar_mf_reason(s));
+  }
+  xpar_free(anc);
+  if (res.link_meta_mismatch)
+    ex_note(x, "xpar: %" PRIu32 " hard-link aliases disagree with their "
+               "canonical entry's metadata; the canonical values are "
+               "used.\n", res.link_meta_mismatch);
+}
+
 int xpar_op_extract(const xpar_options * o) {
   ex x;
   u32 i, * order;
@@ -962,20 +1007,55 @@ int xpar_op_extract(const xpar_options * o) {
   }
 
   if (o->to_stdout) {
-    u64 at = 0, chunk = 1 << 20;
-    u8 * buf = (u8 *) xpar_alloc_raw((sz) chunk);
-    u32 regs = 0;
+    u64 chunk = 1 << 20;
+    u8 * buf;
+    u32 regs = 0, only = 0, k, pass;
+    const xpar_entry * e;
+    xpar_blake3_t h;
+    u8 got[32];
     for (i = 0; i < x.mf.count; i++)
-      if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) regs++;
+      if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) { regs++;  only = i; }
     FATAL_UNLESS("--stdout writes the stream of a single-entry set, and "
                  "this one holds %" PRIu32 " entries; extract to a directory "
                  "instead.", regs == 1, regs);
-    while (at < x.sd.stream_length) {
-      u64 take = MIN(chunk, x.sd.stream_length - at);
-      if (!ex_read_stream(&x, x.sd.stream_base + at, take, buf))
-        FATAL_IO("The set stream is incomplete.");
-      xpar_xwrite(xpar_stdout, buf, (sz) take);
-      at += take;
+    /*  No destination directory exists to probe, so the naming rules are
+        the host's own.  */
+    x.path_flags = xpar_host_path_flags();
+    if (o->strict_names) x.path_flags |= XPAR_PATH_WIN | XPAR_PATH_NOCASE;
+    ex_validate(&x);
+    e = &x.mf.entry[only];
+    buf = (u8 *) xpar_alloc_raw((sz) chunk);
+    /*  Hash before emitting: a pipe cannot be taken back, so the bytes
+        are proved against the manifest first and written second. The
+        entry's own extents are followed, which a chained entry needs.  */
+    for (pass = 0; pass < 2; pass++) {
+      if (pass == 0) {
+        if (x.auth_only) xpar_blake3_init_keyed(&h, x.key.k_file);
+        else             xpar_blake3_init(&h);
+      }
+      for (k = 0; k < e->extent_count; k++) {
+        u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
+        while (left) {
+          u64 take = MIN(left, chunk);
+          if (!ex_read_stream(&x, at, take, buf)) {
+            xpar_free(buf);
+            FATAL_IO("The set stream is missing bytes [%" PRIu64 ", %" PRIu64
+                     ") that the entry needs.", at, at + take);
+          }
+          if (pass == 0) xpar_blake3_update(&h, buf, (sz) take);
+          else           xpar_xwrite(xpar_stdout, buf, (sz) take);
+          at += take;  left -= take;
+        }
+      }
+      if (pass == 0) {
+        xpar_blake3_final(&h, got, 32);
+        if (xpar_memcmp(got, e->content_hash, 32)) {
+          xpar_free(buf);
+          FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+                     "The stream does not match the recorded hash; nothing "
+                     "was written. `xpar repair` is the next move.");
+        }
+      }
     }
     xpar_free(buf);
     xpar_flush(xpar_stdout);
@@ -998,48 +1078,7 @@ int xpar_op_extract(const xpar_options * o) {
       o->strict_names)
     x.path_flags |= XPAR_PATH_WIN | XPAR_PATH_NOCASE;
 
-  { xpar_mf_limits lim;
-    xpar_mf_result res;
-    xpar_mf_status s;
-    xpar_gen_range * anc = NULL;
-    u32 anc_count = 0;
-    xpar_memset(&lim, 0, sizeof lim);
-    lim.stream_base        = x.sd.stream_base;
-    lim.stream_length      = x.sd.stream_length;
-    lim.slice_size         = x.sd.slice_size;
-    lim.posix_record_count = x.have_chain ? XPAR_ABSENT_U32
-                                          : x.sd.posix_record_count;
-    lim.path_flags         = x.path_flags;
-    lim.align              = x.sd.align;
-    if (x.have_chain) {
-      u32 g = x.chain.gen[x.selected].parent, n = 0, k;
-      while (g != XPAR_GEN_NONE) { n++; g = x.chain.gen[g].parent; }
-      anc = (xpar_gen_range *) xpar_calloc(n ? n : 1,
-                                           sizeof(xpar_gen_range));
-      g = x.chain.gen[x.selected].parent;
-      while (g != XPAR_GEN_NONE) {
-        anc[n - ++anc_count].base = x.chain.gen[g].sd.stream_base;
-        anc[n - anc_count].length = x.chain.gen[g].sd.stream_length;
-        g = x.chain.gen[g].parent;
-      }
-      /*  The fill above is oldest first by writing the reverse lineage.  */
-      for (k = 1; k < n; k++)
-        FATAL_UNLESS("Generation stream ranges overlap.",
-                     anc[k - 1].base + anc[k - 1].length <= anc[k].base);
-      lim.ancestor = anc;  lim.ancestor_count = n;
-    }
-    s = xpar_manifest_validate(&x.mf, &lim, &res);
-    if (s != XPAR_MF_OK) {
-      const xpar_entry * e = &x.mf.entry[res.entry];
-      FATAL_FORMAT("Entry %" PRIu32 " ('%.*s') %s.", res.entry, (int) e->name_len,
-                   e->name, xpar_mf_reason(s));
-    }
-    xpar_free(anc);
-    if (res.link_meta_mismatch)
-      ex_note(&x, "xpar: %" PRIu32 " hard-link aliases disagree with their "
-                  "canonical entry's metadata; the canonical values are "
-                  "used.\n", res.link_meta_mismatch);
-  }
+  ex_validate(&x);
 
   for (i = 0; i < x.mf.count; i++) {
     const xpar_entry * e = &x.mf.entry[i];
