@@ -69,6 +69,10 @@ enum { XPAR_DEST_DEFAULT = 0, XPAR_DEST_IN_PLACE, XPAR_DEST_TO,
 #define XPAR_PRES_DEFAULT (XPAR_PRES_MTIME | XPAR_PRES_MODE | \
                            XPAR_PRES_ATTRS | XPAR_PRES_LINKS)
 
+/*  Host metadata omitted by default under --reproducible.  */
+#define XPAR_PRES_HOSTDEP (XPAR_PRES_TIMES | XPAR_PRES_OWNER | \
+                           XPAR_PRES_XATTR | XPAR_PRES_XATTR_ALL)
+
 typedef enum {
   XPAR_R_NONE = 0,
   XPAR_R_COUNT,     /*  `-r 100`: recovery slices.  */

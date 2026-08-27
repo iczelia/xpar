@@ -296,7 +296,7 @@ enum {
   O_BURST, O_DEPTH, O_VOLUMES, O_DEDUP, O_DEDUP_CHUNK, O_DEDUP_MEMORY,
   O_DEDUP_MAX_REFS, O_PRESERVE, O_EXCLUDE, O_INCLUDE, O_FOLLOW, O_BASE,
   O_LABELS, O_AUTH_KEY, O_AUTH_ONLY, O_NO_VERIFY_AFTER, O_SPOOL,
-  O_STDIN_NAME,
+  O_SPOOL_DIR, O_STDIN_NAME,
   O_FAST, O_STRONG, O_RESYNC, O_RESYNC_STEP, O_RESYNC_WINDOW, O_RESYNC_EXH,
   O_SCAN, O_GENERATION, O_CHAIN, O_IN_PLACE, O_TO, O_BACKUP, O_PARANOID,
   O_KEEP_JOURNAL, O_NO_JOURNAL, O_DRY_RUN, O_EXIT_ON_CHANGE, O_DEEP,
@@ -356,7 +356,8 @@ static const yarg_options t_create[] = {
   { O_LABELS,          no_argument,       "labels"          },
   { O_AUTH_ONLY,       no_argument,       "auth-only"       },
   { O_NO_VERIFY_AFTER, no_argument,       "no-verify-after" },
-  { O_SPOOL,           optional_argument, "spool"           },
+  { O_SPOOL,           no_argument,       "spool"           },
+  { O_SPOOL_DIR,       required_argument, "spool-dir"       },
   { O_STDIN_NAME,      required_argument, "stdin-name"      },
   { 0,                 no_argument,       NULL              }
 };
@@ -618,7 +619,8 @@ static const char * const verb_opts[] = {
   "      --labels               Write a label file per volume\n"
   "      --auth-only            Omit public CRC and whole-file hashes\n"
   "      --no-verify-after      Skip the read-back pass\n"
-  "      --spool[=DIR]          Buffer a pipe to a file first\n"
+  "      --spool                Buffer a pipe to a file first\n"
+  "      --spool-dir=DIR        Buffer it under DIR; implies --spool\n"
   "      --stdin-name=PATH      Manifest path for a lone '-' input\n",
   /*  verify  */
   "      --fast                 Tags only; skip the algebraic pass\n"
@@ -1072,12 +1074,11 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
                      break;
     case O_AUTH_ONLY:       o->auth_only = true;  break;
     case O_NO_VERIFY_AFTER: o->no_verify_after = true;  break;
-    case O_SPOOL:
+    case O_SPOOL: o->spool = true;  break;
+    case O_SPOOL_DIR:
       o->spool = true;
-      if (v) {
-        need_dir(nm, v);
-        xpar_free(o->spool_dir);  o->spool_dir = dup_str(v);
-      }
+      need_dir(nm, v);
+      xpar_free(o->spool_dir);  o->spool_dir = dup_str(v);
       break;
     case O_STDIN_NAME:
       xpar_free(o->stdin_name);  o->stdin_name = dup_str(v ? v : "");

@@ -589,21 +589,26 @@ step "full-length path components extract and repair"
 
 mkdir longname;  cd longname || hard_error cd
 long=`awk 'BEGIN{ s = "";  while (length(s) < 255) s = s "z";  print s }'`
-equal "the test name is a full component" "`printf %s \"$long\" | nbytes`" "255"
 mkdir tree
-mkfile "tree/$long" 131072
-cp -r tree keep
-run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
-run 0 "$XPAR" extract --to=out arc.xpa
-same "out/tree/$long" "keep/$long"
-run 0 "$XPAR" create -r 300% -s 16K -o base -R tree
-"$DAMAGE" "tree/$long" "rand=4096,64" || hard_error "damage failed"
-run 0 "$XPAR" repair --to=rout base.xpa
-same "rout/tree/$long" "keep/$long"
-run 0 "$XPAR" repair --in-place base.xpa
-same "tree/$long" "keep/$long"
-staged=`find . -name '*.xpar-stage-*' -o -name '*.tmp' | nlines`
-equal "nothing was left staged" "$staged" "0"
+if can_hold "tree/$long"; then
+  n=`printf %s "$long" | nbytes`
+  equal "the test name is a full component" "$n" "255"
+  mkfile "tree/$long" 131072
+  cp -r tree keep
+  run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
+  run 0 "$XPAR" extract --to=out arc.xpa
+  same "out/tree/$long" "keep/$long"
+  run 0 "$XPAR" create -r 300% -s 16K -o base -R tree
+  "$DAMAGE" "tree/$long" "rand=4096,64" || hard_error "damage failed"
+  run 0 "$XPAR" repair --to=rout base.xpa
+  same "rout/tree/$long" "keep/$long"
+  run 0 "$XPAR" repair --in-place base.xpa
+  same "tree/$long" "keep/$long"
+  staged=`find . -name '*.xpar-stage-*' -o -name '*.tmp' | nlines`
+  equal "nothing was left staged" "$staged" "0"
+else
+  note "255-byte components unsupported; skipped"
+fi
 cd ..
 
 # Windows and DOS always enforce their rules; --mangle does so here.
@@ -612,12 +617,101 @@ step "Windows naming rules reject backslashes"
 
 mkdir winrules;  cd winrules || hard_error cd
 mkdir tree
-printf 'x' > 'tree/back\slash.bin'
-mkfile tree/ok.bin 4096
-run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
-run 0 "$XPAR" extract --to=plain arc.xpa
-run 3 "$XPAR" extract --mangle --to=strict arc.xpa
-note "Windows naming rules refuse backslashes"
+if can_hold 'tree/back\slash.bin'; then
+  printf 'x' > 'tree/back\slash.bin'
+  mkfile tree/ok.bin 4096
+  run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
+  run 0 "$XPAR" extract --to=plain arc.xpa
+  run 3 "$XPAR" extract --mangle --to=strict arc.xpa
+  note "Windows naming rules refuse backslashes"
+else
+  note "backslashes are native separators; skipped"
+fi
+cd ..
+
+# --reproducible omits host metadata but preserves file modes.
+
+step "--reproducible preserves permissions"
+
+mkdir repro;  cd repro || hard_error cd
+mkdir tree
+mkfile tree/secret.bin 8192
+mkfile tree/script.sh 8192 2222
+chmod 600 tree/secret.bin 2> /dev/null
+chmod 755 tree/script.sh  2> /dev/null
+
+# Skip permission checks on hosts without file modes.
+"$XPAR" create -r 300% -s 4K -o probe -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+if "$XPAR" list probe.xpa | grep -q '0600'; then
+  run 0 "$XPAR" create -f -r 300% -s 4K --reproducible \
+        --layout=armoured -o r -R tree
+  if "$XPAR" list r.xpa | grep -q '0600'; then ok
+  else bad "--reproducible dropped a file mode"; fi
+  if "$XPAR" list r.xpa | grep -q '0755'; then ok
+  else bad "--reproducible dropped the executable bit"; fi
+  if "$XPAR" list r.xpa | grep -q '19[0-9][0-9]-\|20[0-9][0-9]-'; then
+    bad "--reproducible kept a timestamp"
+  else ok; fi
+  run 0 "$XPAR" extract --to=out r.xpa
+  if test -x out/tree/script.sh; then ok
+  else bad "the extracted file lost its executable bit"; fi
+else
+  note "file modes unsupported; permission checks skipped"
+fi
+
+# Repeated runs remain byte-identical.
+mkdir a b
+cp -r tree a/;  cp -r tree b/
+( cd a && "$XPAR" create -r 300% -s 4K --reproducible -o s -R tree ) \
+  > "$log" 2>&1 || hard_error "create failed"
+( cd b && "$XPAR" create -r 300% -s 4K --reproducible -o s -R tree ) \
+  > "$log" 2>&1 || hard_error "create failed"
+same a/s.xpa b/s.xpa
+note "reproducible sets still match byte for byte"
+cd ..
+
+# --spool takes no argument, so it can never consume an input path; a
+# directory goes to --spool-dir, which requires one.
+
+step "--spool cannot consume an input path"
+
+mkdir spool;  cd spool || hard_error cd
+mkdir photos docs staging
+mkfile photos/p.bin 8192
+mkfile docs/d.bin 8192 2222
+run 0 "$XPAR" create -r 300% -s 4K -R -o s --spool photos docs
+run 0 "$XPAR" verify s.xpa
+"$XPAR" list s.xpa > names.txt 2> "$log" || hard_error "list failed"
+if grep -q 'photos/p.bin' names.txt; then ok
+else bad "--spool consumed the path after it"; fi
+if grep -q 'docs/d.bin' names.txt; then ok
+else bad "docs was not protected"; fi
+
+# Repeating it must stay harmless: an option that takes nothing can never
+# put the argument count and the parse out of step.
+run 0 "$XPAR" create -f -r 300% -s 4K -R -o s2 --spool --spool photos docs
+run 0 "$XPAR" verify s2.xpa
+
+# The directory form, and the spelling it replaced.
+run 0 "$XPAR" create -f -r 300% -s 4K -R -o s3 --spool-dir=staging photos
+run 4 "$XPAR" create -f -r 300% -s 4K -R -o s4 --spool-dir=nosuchdir photos
+run 4 "$XPAR" create -f -r 300% -s 4K -R -o s5 --spool=staging photos
+note "a directory goes to --spool-dir; --spool takes nothing"
+cd ..
+
+step "valid POSX tables load"
+
+mkdir posx;  cd posx || hard_error cd
+mkdir tree
+mkfile tree/a.bin 16384
+run 0 "$XPAR" create -r 300% -s 4K --preserve=+owner -o s -R tree
+run 0 "$XPAR" list s.xpa
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" create -f -r 300% -s 4K --preserve=+owner \
+      --layout=armoured -o a -R tree
+run 0 "$XPAR" extract --to=out a.xpa
+note "valid ownership records pass the count bound"
 cd ..
 
 summary

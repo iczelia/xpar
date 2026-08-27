@@ -173,6 +173,14 @@ exists() {
 nlines() { wc -l | tr -d ' '; }
 nbytes() { wc -c | tr -d ' '; }
 
+# Skip name tests unsupported by the host filesystem.
+can_hold() {   # can_hold <path>
+  ( : > "$1" ) 2> /dev/null || return 1
+  if test -f "$1"; then rm -f "$1";  return 0; fi
+  rm -f "$1" 2> /dev/null
+  return 1
+}
+
 # Read flat JSON Lines without adding an interpreter dependency.
 
 # Select a record type because fields such as "status" are not unique.

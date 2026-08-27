@@ -132,7 +132,13 @@ report it. Without either, progress is shown only on a terminal.
 .TP
 .B \-\-reproducible
 Omit the times and the host from the set, ensuring reproducibility across
-machines of SHA-exact sets.
+machines of SHA-exact sets. Permissions, attributes and links describe the
+data rather than the machine, so they are still recorded; name a class with
+.B \-\-preserve
+to keep one this would otherwise drop. Setting
+.B SOURCE_DATE_EPOCH
+in the environment turns this on, which is what a reproducible build
+expects, so a set written under one records no timestamps.
 .TP
 .BI \-\-simd= TIER
 Force a SIMD tier.
@@ -281,9 +287,14 @@ Omit public CRC and whole-file hashes from an authenticated set.
 .B \-\-no\-verify\-after
 Skip the post-write read-back pass.
 .TP
-.BI \-\-spool "[=DIR]"
-Stage a pipe in a temporary file, optionally under
-.IR DIR .
+.B \-\-spool
+Stage a pipe in a temporary file beside the output.
+.TP
+.BI \-\-spool\-dir= DIR
+Stage it under
+.I DIR
+instead, which implies
+.BR \-\-spool .
 .TP
 .BI \-\-stdin\-name= PATH
 Manifest path for a lone standard-input argument.

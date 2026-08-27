@@ -440,8 +440,9 @@ void xpar_walk_opts_default(xpar_walk_opts * o) {
 }
 
 static u32 keep_mask(const xpar_walk_opts * o) {
-  return o->reproducible ? (o->preserve & o->preserve_explicit)
-                         : o->preserve;
+  if (!o->reproducible) return o->preserve;
+  /*  Explicit preservation overrides reproducibility defaults.  */
+  return o->preserve & (~XPAR_PRES_HOSTDEP | o->preserve_explicit);
 }
 
 typedef struct { u64 dev, ino, nlink; } wstat;

@@ -1649,12 +1649,24 @@ void xpar_posix_records_free(xpar_posix_rec * rec, u32 count) {
   xpar_free(rec);
 }
 
+/*  Minimum encoded POSX record size.  */
+#define POSX_REC_MIN 16
+
 xpar_status xpar_posx_collect(const xpar_critset * c, const u8 * set_id,
                               u32 count, xpar_posix_rec ** out) {
   xpar_posix_rec * rec;
   u8 * seen;
   u32 i, covered = 0;
+  u64 have = 0;
   *out = NULL;
+  /*  Reject counts that cannot fit in the available POSX data.  */
+  for (i = 0; i < c->count; i++) {
+    const xpar_crit_pkt * p = &c->pkt[i];
+    if (!xpar_pkt_is(&p->hdr, XPAR_T_POSX) ||
+        xpar_memcmp(p->hdr.set_id, set_id, XPAR_SET_ID_LEN)) continue;
+    have += p->body_len;
+  }
+  if ((u64) count * POSX_REC_MIN > have) return XPAR_E_MALFORMED;
   rec = (xpar_posix_rec *) xpar_calloc(count ? count : 1, sizeof *rec);
   seen = (u8 *) xpar_calloc(count ? count : 1, 1);
   for (i = 0; i < count; i++) rec[i].uid = rec[i].gid = UINT32_MAX;
