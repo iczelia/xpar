@@ -91,8 +91,4 @@ u32 xpar_crc32c_sse42 (u32 crc, const u8 * p, sz n);
 #ifdef HAVE_ARM_CRC32
 u32 xpar_crc32c_arm   (u32 crc, const u8 * p, sz n);
 #endif
-#ifdef HAVE_VPCLMUL
-u32 xpar_crc32c_vpclmul(u32 crc, const u8 * p, sz n);
-#endif
-
 #endif

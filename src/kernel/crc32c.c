@@ -84,12 +84,6 @@ static void xpar_crc_dispatch(u32 f) {
     xpar_crc_impl = xpar_crc32c_sse42;  xpar_crc_name = "sse4.2";
   }
 #endif
-#ifdef HAVE_VPCLMUL
-  if ((f & (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL)) ==
-           (XPAR_CPU_SSE42 | XPAR_CPU_AVX2 | XPAR_CPU_VPCLMUL)) {
-    xpar_crc_impl = xpar_crc32c_vpclmul;  xpar_crc_name = "vpclmul";
-  }
-#endif
 #ifdef HAVE_ARM_CRC32
   if (f & XPAR_CPU_ARMCRC) {
     xpar_crc_impl = xpar_crc32c_arm;  xpar_crc_name = "armv8";
