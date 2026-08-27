@@ -857,13 +857,7 @@ static void ex_open_chain(ex * x) {
   }
 }
 
-static int ex_by_depth(const xpar_manifest * m, u32 a, u32 b) {
-  return -xpar_name_cmp(m->entry[a].name, m->entry[a].name_len,
-                        m->entry[b].name, m->entry[b].name_len);
-}
-
-/*  Every path out of extract reads the manifest, so no path may skip its
-    validation: --stdout used to return before this ran.  */
+/*  Validate the manifest for every extraction path.  */
 static void ex_validate(ex * x) {
   xpar_mf_limits lim;
   xpar_mf_result res;
@@ -909,7 +903,7 @@ static void ex_validate(ex * x) {
 
 int xpar_op_extract(const xpar_options * o) {
   ex x;
-  u32 i, * order;
+  u32 i;
   int rc = XPAR_EXIT_OK;
   xpar_stat_t st;
 
@@ -1167,24 +1161,14 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_free(p);
   }
 
-  /*  Metadata last, deepest path first.  */
-  order = (u32 *) xpar_alloc_raw((x.mf.count ? x.mf.count : 1) * 4);
-  for (i = 0; i < x.mf.count; i++) order[i] = i;
-  for (i = 1; i < x.mf.count; i++) {
-    u32 t = order[i], j = i;
-    while (j && ex_by_depth(&x.mf, order[j - 1], t) > 0) {
-      order[j] = order[j - 1];  j--;
-    }
-    order[j] = t;
-  }
-  for (i = 0; i < x.mf.count; i++) {
-    const xpar_entry * e = &x.mf.entry[order[i]];
-    char * p = ex_resolve_leaf(&x, e);
+  /*  Apply metadata deepest-first using reversed name order.  */
+  for (i = x.nix.count; i-- > 0;) {
+    u32 q = x.nix.order[i];
+    char * p = ex_resolve_leaf(&x, &x.mf.entry[q]);
     if (!p) continue;
-    if (xpar_lstat(p, &st) == 0) ex_apply_meta(&x, order[i], p);
+    if (xpar_lstat(p, &st) == 0) ex_apply_meta(&x, q, p);
     xpar_free(p);
   }
-  xpar_free(order);
 
   { u32 q;
     for (q = 0; q < ARRAY_LEN(ex_require_map); q++) {
