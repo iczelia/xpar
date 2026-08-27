@@ -41,6 +41,7 @@ tests/t_codec
 tests/t_central
 tests/mkdata
 tests/damage
+tests/forge
 bench/timeit
 tests/*.log
 tests/*.trs
