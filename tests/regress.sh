@@ -321,18 +321,27 @@ for t in set.xpa `find . -maxdepth 1 -name 'set.v*'`; do
 done
 rm -f "$v"
 
-#  Cap address space so a regression fails without exhausting the host.
-if ( ulimit -v 2000000 ) 2> /dev/null; then
+#  Use the cap only if this build can start under it; sanitizers may not.
+capped=no
+if ( ulimit -v 2000000 ) 2> /dev/null &&
+   ( ulimit -v 2000000; "$XPAR" --version ) > /dev/null 2>&1; then
+  capped=yes
+fi
+if test "$capped" = yes; then
   status=0
   ( ulimit -v 2000000; "$XPAR" recover --volume="`basename $v`" set.xpa ) \
     > "$log" 2>&1 || status=$?
   equal "recover survived the crafted key" "$status" 0
   #  The forged packet changes the volume, but rebuilding stays bounded.
-  grew=`expr \`wc -c < "$v"\` - \`wc -c < orig.bin\`` 2> /dev/null
-  equal "the rebuilt group stayed bounded" "`test "${grew:-999999}" -lt 65536 &&
-                                             echo yes || echo no`" yes
+  if test -s "$v"; then
+    grew=`expr \`wc -c < "$v"\` - \`wc -c < orig.bin\``
+    equal "the rebuilt group stayed bounded" "`test "${grew:-999999}" -lt 65536 &&
+                                               echo yes || echo no`" yes
+  else
+    bad "recover wrote no volume"
+  fi
 else
-  note "no address-space cap; skipping runaway test"
+  note "address-space cap unsupported; skipping runaway test"
 fi
 cd .. || hard_error cd
 
