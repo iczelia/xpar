@@ -590,7 +590,11 @@ step "full-length path components extract and repair"
 mkdir longname;  cd longname || hard_error cd
 long=`awk 'BEGIN{ s = "";  while (length(s) < 255) s = s "z";  print s }'`
 mkdir tree
-if can_hold "tree/$long"; then
+#  Probe the longest path used below.
+mkdir -p rout/tree
+can_hold "rout/tree/$long" && long_ok=yes || long_ok=no
+rm -rf rout
+if test "$long_ok" = yes; then
   n=`printf %s "$long" | nbytes`
   equal "the test name is a full component" "$n" "255"
   mkfile "tree/$long" 131072

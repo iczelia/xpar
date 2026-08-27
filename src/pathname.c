@@ -67,7 +67,7 @@ bool xpar_scan_digits(const char * s, sz * at, sz end) {
 }
 
 /*  Trim the final component to leave room for the staging suffix.  */
-static char * stage_stem(const char * stem, sz suffix) {
+char * xpar_stage_stem(const char * stem, sz suffix) {
   const char * base = xpar_path_base(stem);
   sz dirlen = (sz) (base - stem), blen = xpar_strlen(base);
   sz room = suffix < XPAR_COMPONENT_MAX ? XPAR_COMPONENT_MAX - suffix : 1;
@@ -82,7 +82,7 @@ static char * stage_stem(const char * stem, sz suffix) {
 
 xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
                             char ** out) {
-  char * trimmed = stage_stem(stem, 2 * STAGE_RANDOM + 4);
+  char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM + 4);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
@@ -105,7 +105,7 @@ xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
 }
 
 char * xpar_stage_dir(const char * stem) {
-  char * trimmed = stage_stem(stem, 2 * STAGE_RANDOM);
+  char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];

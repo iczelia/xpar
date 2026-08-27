@@ -52,6 +52,7 @@ typedef enum {
 } xpar_path_status;
 
 xpar_path_status xpar_path_check(const char * name, u32 len, u32 flags);
+u32              xpar_host_path_flags(void);
 const char *     xpar_path_reason(xpar_path_status s);
 
 xpar_path_status xpar_symlink_target_check(const u8 * target, u32 len);

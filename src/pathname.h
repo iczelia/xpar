@@ -45,4 +45,7 @@ xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
 
 char * xpar_stage_dir(const char * stem);
 
+/*  Trim STEM's final component to leave room for a SUFFIX-byte tail.  */
+char * xpar_stage_stem(const char * stem, sz suffix);
+
 #endif

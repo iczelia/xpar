@@ -199,7 +199,7 @@ const char * xpar_path_reason(xpar_path_status s) {
 }
 
 /*  Host naming rules override filesystem capabilities.  */
-static u32 host_path_flags(void) {
+u32 xpar_host_path_flags(void) {
 #if defined(_WIN32) || defined(__CYGWIN__) || defined(__MSDOS__)
   return XPAR_PATH_WIN | XPAR_PATH_NOCASE;
 #else
@@ -213,7 +213,8 @@ char * xpar_path_resolve(const char * dir, const char * name, u32 len,
   sz dlen = dir ? xpar_strlen(dir) : 0, off = dlen ? dlen + 1 : 0;
   char * out;
   u32 i;
-  xpar_path_status s = xpar_path_check(name, len, flags | host_path_flags());
+  xpar_path_status s =
+      xpar_path_check(name, len, flags | xpar_host_path_flags());
   if (s != XPAR_PATH_OK) { *why = s;  return NULL; }
   out = (char *) xpar_alloc_raw(off + len + 1);
   if (dlen) { xpar_memcpy(out, dir, dlen);  out[dlen] = '/'; }

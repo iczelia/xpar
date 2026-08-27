@@ -669,6 +669,45 @@ static void test_packets(void) {
   xpar_buf_free(&b);
 }
 
+static void test_posx_bound(void) {
+  u8 set_id[XPAR_SET_ID_LEN];
+  xpar_posix_rec * rec;
+  xpar_critset c;
+  xpar_crit_pkt p;
+  xt_rng r;
+
+  xt_section_begin("posx bound");
+  xt_seed(&r, 0x5150);
+  xt_fill(&r, set_id, sizeof set_id);
+
+  xpar_memset(&c, 0, sizeof c);
+  rec = (xpar_posix_rec *) (void *) &c;
+  CHECK(xpar_posx_collect(&c, set_id, 1, &rec) == XPAR_E_MALFORMED,
+        "positive count without POSX data");
+  CHECK(rec == NULL, "no table returned");
+  CHECK(xpar_posx_collect(&c, set_id, 0xFFFFFFFFu, &rec) == XPAR_E_MALFORMED,
+        "huge count rejected before allocation");
+  CHECK(rec == NULL, "no table returned");
+
+  CHECK(xpar_posx_collect(&c, set_id, 0, &rec) == XPAR_OK,
+        "empty ownership table loads");
+
+  xpar_memset(&p, 0, sizeof p);
+  xpar_memcpy(p.hdr.type, XPAR_T_POSX, 4);
+  xpar_memcpy(p.hdr.set_id, set_id, sizeof set_id);
+  p.body = set_id;              /*  Bound rejects before parsing.  */
+  p.body_len = 32;
+  c.pkt = &p;  c.count = 1;
+  CHECK(xpar_posx_collect(&c, set_id, 3, &rec) == XPAR_E_MALFORMED,
+        "record count exceeds POSX data");
+  CHECK(rec == NULL, "no table returned");
+
+  p.hdr.set_id[0] ^= 0xFF;
+  CHECK(xpar_posx_collect(&c, set_id, 1, &rec) == XPAR_E_MALFORMED,
+        "other-set POSX data is ignored");
+  CHECK(rec == NULL, "no table returned");
+}
+
 int xpar_main(int argc, char ** argv) {
   (void) argc;  (void) argv;
   xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
@@ -686,6 +725,7 @@ int xpar_main(int argc, char ** argv) {
   test_extents();
   test_paths();
   test_packets();
+  test_posx_bound();
 
   return xt_finish("t_unit");
 }

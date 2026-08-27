@@ -58,8 +58,8 @@ else
 fi
 
 if test -s clean.log; then
-  sigs=`sed -n 's/.*\[\(.*\)\]$/\1/p' clean.log | sort -u | wc -l`
-  reps=`sed -n 's/.*\[\(.*\)\]$/\1/p' clean.log | wc -l`
+  sigs=`sed -n 's/.*\[\(.*\)\]$/\1/p' clean.log | sort -u | nlines`
+  reps=`sed -n 's/.*\[\(.*\)\]$/\1/p' clean.log | nlines`
   if test "$reps" -gt 0 && test "$sigs" -lt "$reps"; then ok
   else bad "no two repetitions shared a work signature"; fi
 fi

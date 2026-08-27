@@ -176,7 +176,7 @@ static char * rp_tree_path(const char * dir, const xpar_entry * e,
                            xpar_path_status * why) {
   u32 cut = e->name_len;
   char * parent, * out;
-  *why = xpar_path_check(e->name, e->name_len, 0);
+  *why = xpar_path_check(e->name, e->name_len, xpar_host_path_flags());
   if (*why != XPAR_PATH_OK) return NULL;
   while (cut && e->name[cut - 1] != '/') cut--;
   if (!cut) return xpar_path_join_n(dir, e->name, e->name_len);

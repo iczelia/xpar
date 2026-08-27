@@ -94,9 +94,13 @@ jobs:
         run: make -j4 all
 
       - name: Test suite
-        run: make -j4 check
+        run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
   #  aarch64 SIMD on native hardware.
   linux-aarch64:
@@ -142,9 +146,13 @@ jobs:
         run: make -j4 all
 
       - name: Test suite
-        run: make -j4 check
+        run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
   #  macOS on both architectures.
   macos:
@@ -194,9 +202,13 @@ jobs:
         run: make -j4 all
 
       - name: Test suite
-        run: make -j4 check
+        run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
   #  Native 32- and 64-bit Windows through MSYS2.
   windows:
@@ -251,9 +263,13 @@ jobs:
         run: make -j4 all
 
       - name: Test suite
-        run: make -j4 check
+        run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
   #  Cross-build Windows binaries; the next job runs them.
   windows-cross:
