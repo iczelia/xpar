@@ -31,7 +31,6 @@
 #include "slice.h"
 
 /*  Copy up to `n` entries from the last scrub's codeword histogram.  */
-u32 xpar_scrub_histogram(u64 * out, u32 n);
 
 /*  Scrub state.  */
 
@@ -621,23 +620,10 @@ static void rebuild_cells(scrub * c) {
   xpar_free(slice);  xpar_free(crc);
 }
 
-/*  Reporting.
-    The distribution is snapshotted into a module-level array as well as
-    printed, so that xpar_scrub_histogram can hand it back whole.  */
-
-static u64 last_hist[SCRUB_HIST_MAX];
-static u32 last_hist_len;
-
-u32 xpar_scrub_histogram(u64 * out, u32 n) {
-  For(u32, i, MIN(n, last_hist_len), out[i] = last_hist[i])
-  return last_hist_len;
-}
+/*  Reporting.  */
 
 static void report(const scrub * c, int rc) {
   u32 i;
-  last_hist_len = c->hist_len < SCRUB_HIST_MAX ? c->hist_len
-                                               : SCRUB_HIST_MAX;
-  for (i = 0; i < last_hist_len; i++) last_hist[i] = c->hist[i];
   if (c->o->quiet) return;
   xpar_fprintf(xpar_stderr,
                "xpar: recovery: %" PRIu64 " slices named, %" PRIu64 " present, %" PRIu64 " "
