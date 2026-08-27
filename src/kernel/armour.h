@@ -101,28 +101,12 @@ typedef struct {
 xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
                                             xpar_armour_stat * st);
 
-/*  Decode with n*depth erasure flags in disk order.  Up to 2t known
-    erasures per codeword are recoverable.  The result is provisional.  */
-xpar_armour_status xpar_armour_decode_frame_erasures(
-                                      const xpar_armour * a, u8 * frame,
-                                      const u8 * erased,
-                                      xpar_armour_stat * st);
-
 /*  Return true when recovered plaintext passes its integrity check.  */
 typedef bool (* xpar_armour_check_fn)(void * ctx, const u8 * plain, u64 len);
 
 xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       u8 * region, u64 region_length,
                                       u8 * plain, u64 plain_length,
-                                      xpar_armour_check_fn check, void * ctx,
-                                      xpar_armour_stat * st);
-
-/*  Checked region decoding with frames*n*depth erasure flags.  */
-xpar_armour_status xpar_armour_decode_erasures(
-                                      const xpar_armour * a,
-                                      u8 * region, u64 region_length,
-                                      u8 * plain, u64 plain_length,
-                                      const u8 * erased,
                                       xpar_armour_check_fn check, void * ctx,
                                       xpar_armour_stat * st);
 
@@ -167,7 +151,6 @@ bool         xpar_armour_tier_usable(int tier);
 int          xpar_armour_tier(void);
 
 bool xpar_armour_use_tier(int tier);
-bool xpar_armour_use_tier_name(const char * name);
 void xpar_armour_use_default_tier(void);
 
 /*  Per-ISA tables from separately flagged translation units.  */

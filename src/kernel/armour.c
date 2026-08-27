@@ -68,7 +68,6 @@ static u32 f_alpha(const xpar_armour * a, u32 e) {
 static u32 f_alpha_mul(const xpar_armour * a, u32 x, u32 y) {
   return f_alpha(a, (u32) (((u64) x * (u64) y) % a->order));
 }
-
 static u32 sym_rd(const xpar_armour * a, const u8 * p) {
   return a->wb == 1 ? (u32) *p : (u32) xpar_rd16(p);
 }
@@ -174,13 +173,6 @@ bool xpar_armour_use_tier(int tier) {
   if (!xpar_armour_tier_usable(tier)) return false;
   arm_cur = tier;  arm_k = arm_tiers[tier].k;
   return true;
-}
-
-bool xpar_armour_use_tier_name(const char * name) {
-  for (int i = 0; i < ARM_NTIERS; i++)
-    if (!xpar_strcmp(name, arm_tiers[i].k->name))
-      return xpar_armour_use_tier(i);
-  return false;
 }
 
 void xpar_armour_use_default_tier(void) {
@@ -583,7 +575,7 @@ static u32 chien(const xpar_armour * a, u32 L) {
 
     False, so the caller rejects the codeword: a zero denominator, or a
     zero magnitude, which is what a spurious locator root produces.  */
-static bool forney(const xpar_armour * a, u32 L, bool allow_zero) {
+static bool forney(const xpar_armour * a, u32 L) {
   u32 i, j, l;
   for (j = 0; j < L; j++) {
     u32 acc = 0;
@@ -606,7 +598,7 @@ static bool forney(const xpar_armour * a, u32 L, bool allow_zero) {
     if (!den) return false;
     a->val[l] = f_div(a, f_mul(a, x, f_div(a, num, den)),
                       f_alpha_mul(a, a->p.fcr % a->order, r));
-    if (!allow_zero && !a->val[l]) return false;
+    if (!a->val[l]) return false;
   }
   return true;
 }
@@ -655,7 +647,7 @@ static int decode_one(const xpar_armour * a, u8 * frame, u32 d) {
   if (L == 0 || L > a->t) return -1;
   cnt = chien(a, L);
   if (cnt != L) return -1;
-  if (!forney(a, L, false)) return -1;
+  if (!forney(a, L)) return -1;
   if (!syndromes_agree(a, L)) return -1;
   for (j = 0; j < L; j++) {
     u8 * p = frame + (sz) (a->p.n - 1 - a->pos[j]) * lane + (sz) d * a->wb;
@@ -695,77 +687,6 @@ xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
   return XPAR_ARMOUR_CLEAN;
 }
 
-/*  A known erasure at degree r contributes the factor
-
-      1 + alpha^(prim*r) x
-
-    to the locator. Multiplying those factors directly avoids
-    Berlekamp-Massey and Chien entirely, and raises the admissible locator
-    degree from t unknown errors to 2t known erasures.  */
-static int decode_one_erasures(const xpar_armour * a, u8 * frame, u32 d,
-                               const u8 * erased) {
-  u32 j, L = 0, fixed = 0;
-  bool zero = true;
-  for (j = 0; j < a->t2; j++) {
-    a->s[j] = sym_rd(a, a->syn + (sz) j * a->lane + (sz) d * a->wb);
-    if (a->s[j]) zero = false;
-  }
-  if (zero) return 0;
-  for (j = 0; j < a->p.n; j++)
-    if (erased[(sz) j * a->p.depth + d]) {
-      if (L == a->t2) return -1;
-      a->pos[L++] = a->p.n - 1 - j;
-    }
-  if (!L) return -1;
-  xpar_memset(a->lam, 0, (sz) (a->t2 + 2) * sizeof(u32));
-  a->lam[0] = 1;
-  for (j = 0; j < L; j++) {
-    u32 x = f_alpha_mul(a, a->p.prim % a->order, a->pos[j]);
-    u32 i = j + 1;
-    while (i) {
-      a->lam[i] ^= f_mul(a, a->lam[i - 1], x);
-      i--;
-    }
-  }
-  if (!forney(a, L, true)) return -1;
-  if (!syndromes_agree(a, L)) return -1;
-  for (j = 0; j < L; j++)
-    if (a->val[j]) {
-      u8 * p = frame + (sz) (a->p.n - 1 - a->pos[j]) * a->lane +
-               (sz) d * a->wb;
-      sym_wr(a, p, sym_rd(a, p) ^ a->val[j]);
-      fixed++;
-    }
-  return (int) fixed;
-}
-
-xpar_armour_status xpar_armour_decode_frame_erasures(
-                                      const xpar_armour * a, u8 * frame,
-                                      const u8 * erased,
-                                      xpar_armour_stat * st) {
-  u32 d;
-  bool bad = false, fixed = false;
-  xpar_assert(erased != NULL);
-  frame_syndromes(a, frame);
-  if (st) st->frames++;
-  if (region_zero(a->syn, (sz) a->t2 * a->lane)) {
-    if (st) {
-      st->codewords += a->p.depth;
-      st->clean += a->p.depth;
-      if (st->hist && st->hist_len) st->hist[0] += a->p.depth;
-    }
-    return XPAR_ARMOUR_CLEAN;
-  }
-  for (d = 0; d < a->p.depth; d++) {
-    int e = decode_one_erasures(a, frame, d, erased);
-    stat_add(st, e);
-    if (e < 0) bad = true;
-    else if (e > 0) fixed = true;
-  }
-  if (bad) return XPAR_ARMOUR_FAILED;
-  return fixed ? XPAR_ARMOUR_CORRECTED : XPAR_ARMOUR_CLEAN;
-}
-
 xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       u8 * region, u64 region_length,
                                       u8 * plain, u64 plain_length,
@@ -784,32 +705,6 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
   for (f = 0; f < frames; f++)
     if (xpar_armour_decode_frame(a, region + f * fx, st) ==
         XPAR_ARMOUR_CORRECTED) fixed = true;
-  xpar_armour_extract(a, plain, plain_length, region);
-  if (!check(ctx, plain, plain_length)) return XPAR_ARMOUR_FAILED;
-  return fixed ? XPAR_ARMOUR_CORRECTED : XPAR_ARMOUR_CLEAN;
-}
-
-xpar_armour_status xpar_armour_decode_erasures(
-                                      const xpar_armour * a,
-                                      u8 * region, u64 region_length,
-                                      u8 * plain, u64 plain_length,
-                                      const u8 * erased,
-                                      xpar_armour_check_fn check, void * ctx,
-                                      xpar_armour_stat * st) {
-  u64 fx = xpar_armour_frame_disk(a), f;
-  u64 frames = xpar_ceil_div(plain_length, xpar_armour_frame_plain(a));
-  u64 em = (u64) a->p.n * a->p.depth;
-  bool fixed = false;
-  xpar_assert(check != NULL);
-  xpar_assert(erased != NULL);
-  xpar_assert(region_length == frames * fx);
-  xpar_armour_extract(a, plain, plain_length, region);
-  if (check(ctx, plain, plain_length)) return XPAR_ARMOUR_CLEAN;
-  for (f = 0; f < frames; f++)
-    if (xpar_armour_decode_frame_erasures(a, region + f * fx,
-                                          erased + f * em, st) ==
-        XPAR_ARMOUR_CORRECTED)
-      fixed = true;
   xpar_armour_extract(a, plain, plain_length, region);
   if (!check(ctx, plain, plain_length)) return XPAR_ARMOUR_FAILED;
   return fixed ? XPAR_ARMOUR_CORRECTED : XPAR_ARMOUR_CLEAN;
