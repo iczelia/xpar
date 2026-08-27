@@ -375,17 +375,23 @@ static const yarg_options t_verify[] = {
 };
 
 static const yarg_options t_repair[] = {
-  { O_IN_PLACE,       no_argument,       "in-place"       },
-  { O_TO,             required_argument, "to"             },
-  { O_BACKUP,         no_argument,       "backup"         },
-  { O_PARANOID,       no_argument,       "paranoid"       },
-  { O_KEEP_JOURNAL,   no_argument,       "keep-journal"   },
-  { O_NO_JOURNAL,     no_argument,       "no-journal"     },
-  { O_DRY_RUN,        no_argument,       "dry-run"        },
-  { O_EXIT_ON_CHANGE, no_argument,       "exit-on-change" },
-  { O_GENERATION,     required_argument, "generation"     },
-  { O_CHAIN,          no_argument,       "chain"          },
-  { 0,                no_argument,       NULL             }
+  { O_IN_PLACE,       no_argument,       "in-place"          },
+  { O_TO,             required_argument, "to"                },
+  { O_BACKUP,         no_argument,       "backup"            },
+  { O_PARANOID,       no_argument,       "paranoid"          },
+  { O_KEEP_JOURNAL,   no_argument,       "keep-journal"      },
+  { O_NO_JOURNAL,     no_argument,       "no-journal"        },
+  { O_DRY_RUN,        no_argument,       "dry-run"           },
+  { O_EXIT_ON_CHANGE, no_argument,       "exit-on-change"    },
+  /*  Repair runs the same resynchronising pass and prints the same advice
+      to widen it, so it has to take the options that advice names.  */
+  { O_RESYNC,         required_argument, "resync"            },
+  { O_RESYNC_STEP,    required_argument, "resync-step"       },
+  { O_RESYNC_WINDOW,  required_argument, "resync-window"     },
+  { O_RESYNC_EXH,     no_argument,       "resync-exhaustive" },
+  { O_GENERATION,     required_argument, "generation"        },
+  { O_CHAIN,          no_argument,       "chain"             },
+  { 0,                no_argument,       NULL                }
 };
 
 static const yarg_options t_scrub[] = {
@@ -633,6 +639,10 @@ static const char * const verb_opts[] = {
   "      --no-journal           Do not write one; excludes the above\n"
   "      --dry-run              Report what would change\n"
   "      --exit-on-change       Exit 1 when anything was repaired\n"
+  "      --resync=WHICH         off, auto (default), always\n"
+  "      --resync-step=N        Sample every Nth offset\n"
+  "      --resync-window=SIZE   Displacement searched either way\n"
+  "      --resync-exhaustive    Confirm every candidate; expensive\n"
   "      --generation=G         Number, or a set-id prefix\n"
   "      --chain                Every generation, oldest first\n",
   /*  scrub  */
