@@ -90,11 +90,6 @@ const char * xpar_blake3_variant(void) {
   return xpar_b3_name;
 }
 
-sz xpar_blake3_degree(void) {
-  xpar_b3_need_dispatch();
-  return xpar_b3_deg;
-}
-
 /*  Chunk state.  */
 
 static void xpar_b3_chunk_reset(xpar_blake3_chunk * c, const u32 * key,
@@ -664,12 +659,6 @@ void xpar_blake3_subtree_stream_final(const xpar_blake3_t * h, u8 * out,
   }
   xpar_b3_node_cv(&o, cv);
   xpar_memcpy(out, cv, n);
-}
-
-u64 xpar_blake3_final_u64(const xpar_blake3_t * h) {
-  u8 out[8];
-  xpar_blake3_final_seek(h, 0, out, sizeof(out));
-  return xpar_rd64(out);
 }
 
 void xpar_blake3_hash(const void * buf, sz len, u8 * out, sz n) {

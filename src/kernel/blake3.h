@@ -69,8 +69,6 @@ void xpar_blake3_final(const xpar_blake3_t *, u8 * out, sz n);
 /*  Extendable output past 32 bytes.  */
 void xpar_blake3_final_seek(const xpar_blake3_t *, u64 seek, u8 * out, sz n);
 
-u64 xpar_blake3_final_u64(const xpar_blake3_t *);
-
 /*  One-shots. `n` may be anything.  */
 void xpar_blake3_hash      (const void * buf, sz len, u8 * out, sz n);
 void xpar_blake3_hash_keyed(const u8 * key, const void * buf, sz len,
@@ -100,10 +98,6 @@ static inline bool xpar_blake3_tag_equal(const void * a, const void * b,
 
 /*  Name of the dispatched kernel, for `info` and the benchmark.  */
 const char * xpar_blake3_variant(void);
-
-/*  Lanes the dispatched kernel compresses at once. Exposed so the
-    benchmark can drive every tree shape the driver can produce.  */
-sz xpar_blake3_degree(void);
 
 /*  Internal: the per-ISA kernels, dispatched by blake3.c.  */
 extern const u32 xpar_blake3_iv[8];
