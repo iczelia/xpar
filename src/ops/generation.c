@@ -3200,7 +3200,9 @@ int xpar_op_addrecovery(const xpar_options * o) {
       recovery.  */
   source_set = xpar_vset_open(o);
   source_rc = xpar_vset_check(source_set, o, NULL);
-  if (source_rc != XPAR_EXIT_OK)
+  /*  A volume that only wants rewriting still hands back the whole stream,
+      and that is all this encode reads.  */
+  if (!xpar_vset_stream_intact(source_set, source_rc))
     FATAL_CODE(source_rc,
                "Generation %" PRIu32 "'s protected stream is damaged; recovery data "
                "was not added.",
@@ -4868,7 +4870,7 @@ int xpar_op_recover(const xpar_options * o) {
   /*  Recover one volume in one pass over surviving data.  */
   source_set = xpar_vset_open(o);
   source_rc = xpar_vset_check(source_set, o, NULL);
-  if (source_rc != XPAR_EXIT_OK)
+  if (!xpar_vset_stream_intact(source_set, source_rc))
     FATAL_CODE(source_rc,
                "Generation %" PRIu32 "'s protected stream is not clean; refusing to "
                "derive a replacement recovery volume from it.",

@@ -3282,8 +3282,7 @@ int xpar_op_repair(const xpar_options * o) {
         return before;
       }
       /*  --to extracts an intact stream without rewriting the source set.  */
-      if (o->dest == XPAR_DEST_TO && before != XPAR_EXIT_UNREPAIRABLE &&
-          !xpar_vset_bad_cells(owned) && !xpar_vset_bad_entries(owned)) {
+      if (o->dest == XPAR_DEST_TO && xpar_vset_stream_intact(owned, before)) {
         xpar_options ex = *o;
         if (!o->quiet && xpar_vset_volumes_to_rewrite(owned))
           xpar_fprintf(xpar_stderr,

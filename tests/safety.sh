@@ -390,6 +390,26 @@ run 0 "$XPAR" verify set.xpa
 note "the named volume was rewritten from the stream"
 cd ..
 
+# Every other verb has to cope with that state too: the stream is whole, so
+# nothing may report an internal error over a volume that wants rewriting.
+mkdir e;  cd e || hard_error cd
+mkdir tree;  mkfile tree/a.bin 262144
+"$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+rm -rf tree
+cp set.d00 spare.bin
+"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+mkdir ex rv
+run 0 "$XPAR" list set.xpa
+run 0 "$XPAR" info set.xpa
+run 0 "$XPAR" explain set.xpa
+run 0 "$XPAR" extract --to=ex set.xpa
+run 0 "$XPAR" addrecovery -r 10 set.xpa
+run 0 "$XPAR" recover --volume=0 --to=rv set.xpa
+run 1 "$XPAR" scrub set.xpa
+note "no verb mistook a rewritable volume for a broken stream"
+cd ..
+
 # --to extracts the tree without rewriting the set.
 mkdir d;  cd d || hard_error cd
 mkdir tree;  mkfile tree/a.bin 262144

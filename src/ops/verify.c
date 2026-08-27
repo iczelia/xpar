@@ -1662,6 +1662,7 @@ static void verify_written_set_at(const xpar_options * o,
   writer_check * check = NULL;
   u32 check_count = 1;
   int rc;
+  bool wrote_ok;
   xpar_memset(&ro.set_ref, 0, sizeof ro.set_ref);
   ro.verb = XPAR_VERB_VERIFY;
   ro.set = (char *) index_path;
@@ -1726,8 +1727,13 @@ static void verify_written_set_at(const xpar_options * o,
     writer_check_job(0, check);
   }
   rc = check[0].result;
+  /*  A data volume that only wants rewriting is damage this set already
+      carried; it is not a failure of the write being checked here.  */
+  wrote_ok = xpar_vset_stream_intact(s, rc);
   for (u32 i = 1; i < check_count; i++)
-    if (check[i].result != XPAR_EXIT_OK) rc = check[i].result;
+    if (check[i].result != XPAR_EXIT_OK) {
+      rc = check[i].result;  wrote_ok = false;
+    }
   if (xpar_vset_recovery(s) != xpar_vset_recovery_total(s)) {
     xpar_fprintf(xpar_stderr,
                  "xpar: internal read-back found only %" PRIu64 " of %" PRIu64 " "
@@ -1735,13 +1741,13 @@ static void verify_written_set_at(const xpar_options * o,
                  xpar_vset_recovery(s),
                  xpar_vset_recovery_total(s),
                  index_path);
-    rc = XPAR_EXIT_REPAIRABLE;
+    rc = XPAR_EXIT_REPAIRABLE;  wrote_ok = false;
   }
   for (u32 i = 0; i < check_count; i++) xpar_free(check[i].path);
   xpar_free(check);
   xpar_vset_close(s);
   xpar_setref_free(&ro.set_ref);
-  if (rc != XPAR_EXIT_OK)
+  if (!wrote_ok)
     FATAL_CODE(XPAR_EXIT_INTERNAL,
                "internal: the set just written does not verify through "
                "the public reader (status %d).", rc);
@@ -1773,6 +1779,11 @@ u64 xpar_vset_bad_cells(const xpar_vset * s) {
 }
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset * s) {
   return s->subst_damaged;
+}
+/*  The stream read back whole; any verdict short of unrepairable is then
+    only about which file on disk holds it.  */
+bool xpar_vset_stream_intact(const xpar_vset * s, int rc) {
+  return rc != XPAR_EXIT_UNREPAIRABLE && !s->er.bad_count && !s->bad_entries;
 }
 u64 xpar_vset_bad_slices(const xpar_vset * s) {
   return s->bad_slices;

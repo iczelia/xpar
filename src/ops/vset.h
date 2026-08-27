@@ -71,6 +71,7 @@ u64 xpar_vset_recovery(const xpar_vset *);
 u64 xpar_vset_recovery_total(const xpar_vset *);
 u64 xpar_vset_bad_cells(const xpar_vset *);
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);
+bool xpar_vset_stream_intact(const xpar_vset *, int rc);
 u64 xpar_vset_bad_slices(const xpar_vset *);
 u64 xpar_vset_bad_entries(const xpar_vset *);
 u64 xpar_vset_alias_bad(const xpar_vset *);
