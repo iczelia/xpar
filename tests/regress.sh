@@ -342,14 +342,9 @@ else
 fi
 cd .. || hard_error cd
 
-step "the hand-recovery recipe explain prints actually recovers the data"
+step "explain's hand-recovery recipe recovers the data"
 
-#  The recipe is the promise that the format survives the loss of this
-#  tool, so it has to run. Piping into `dd count=1` did not: reading a
-#  pipe, dd stops at the first short read and truncates the frame.
-#  A frame narrower than a pipe buffer always arrives in one read, so
-#  only a wide frame can catch the truncation. GF(2^8) frames are 223
-#  bytes and never can; the size below is what makes GF(2^16) wide.
+# Exercise short pipe reads with a GF(2^16) frame wider than 64 KiB.
 big_frame=no
 for field in 8 16; do
   mkdir -p x$field && cd x$field || hard_error "cd x$field"
@@ -380,9 +375,8 @@ fi
 
 step "--json --progress emits progress records, and --json alone does not"
 
-#  --json --progress previously had no progress caller.
 mkdir -p j1 && cd j1 || hard_error "cd j1"
-#  Use enough data to pass progress throttling.
+# Use enough data to pass progress throttling.
 mkfile data.bin 40000000 51
 run 0 "$XPAR" create -r 4 -s 1M --json --progress -o set data.bin
 "$XPAR" verify --json --progress set.xpa > p.json 2> "$log"
@@ -650,7 +644,7 @@ run 0 "$XPAR" verify --json s.xpa
 run 0 "$XPAR" --json -- s.xpa
 cd .. || hard_error cd
 
-step "explain names the file it was actually given"
+step "explain uses the resolved input name"
 
 # Use the resolved split-volume name in recipes.
 mkdir -p i1 && cd i1 || hard_error "cd i1"
