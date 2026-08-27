@@ -150,6 +150,17 @@ jobs:
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
 
+      #  Ensure clmul-neon is dispatched on its only runner.
+      - name: Differential kernel check
+        if: matrix.simd == 'enable-simd'
+        run: |
+          ./xpar benchmark --tiers > tiers.log 2>&1 || {
+            cat tiers.log;  exit 1;
+          }
+          cat tiers.log
+          grep -Eq 'gf tier clmul-neon +ok' tiers.log \
+            || { echo "gf tier clmul-neon was never dispatched"; exit 1; }
+
       - name: Show the test logs
         if: failure()
         run: cat test-suite.log tests/*.log 2>&1 || true
@@ -371,10 +382,12 @@ jobs:
 
 
   #  Foreign architectures under qemu-user, including big-endian s390x.
+  #  Assert each target's configured and dispatched SIMD tiers.
   cross:
     name: Cross ${{ matrix.target.arch }}
     needs: [ dist ]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -383,10 +396,33 @@ jobs:
             host: powerpc64le-linux-gnu
             qemu: ppc64le
             libc: ppc64el
+            #  The default qemu model exposes VSX through AT_HWCAP.
+            macros: HAVE_VSX
+            tiers: vsx
+            force: vsx
           - arch: riscv64
             host: riscv64-linux-gnu
             qemu: riscv64
             libc: riscv64
+            #  Zvbc intrinsics require GCC 14.
+            gcc: gcc-14-riscv64-linux-gnu
+            cc: riscv64-linux-gnu-gcc-14
+            #  QEMU before 9.1 reports V but not Zvbc through riscv_hwprobe.
+            cpu: -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64,zvbc=true
+            cpu2: rv64,v=true,vext_spec=v1.0,vlen=128,elen=64,zvbc=true
+            macros: HAVE_RVV HAVE_RVV_CLMUL
+            tiers: rvv-shuffle
+            force: rvv-shuffle
+          - arch: aarch64
+            host: aarch64-linux-gnu
+            qemu: aarch64
+            libc: arm64
+            #  QEMU's max CPU is the only SVE runner.
+            cpu: -cpu max
+            cpu2: max,sve-default-vector-length=16
+            macros: HAVE_NEON HAVE_PMULL HAVE_SVE HAVE_ARM_CRC32
+            tiers: neon clmul-neon sve
+            force: sve
           - arch: s390x
             host: s390x-linux-gnu
             qemu: s390x
@@ -395,6 +431,8 @@ jobs:
             host: arm-linux-gnueabihf
             qemu: arm
             libc: armhf
+    env:
+      QEMU: qemu-${{ matrix.target.qemu }}-static ${{ matrix.target.cpu }}
     steps:
       - name: Download source package artifact
         uses: actions/download-artifact@v7
@@ -410,7 +448,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-user-static \
-            gcc-${{ matrix.target.host }} libc6-dev-${{ matrix.target.libc }}-cross
+            ${{ matrix.target.gcc || format('gcc-{0}', matrix.target.host) }} \
+            libc6-dev-${{ matrix.target.libc }}-cross
 
       - name: Extract source package
         run: |
@@ -420,24 +459,86 @@ jobs:
 
       - name: Configure
         run: |
-          ./configure --host=${{ matrix.target.host }} \
-                      CC=${{ matrix.target.host }}-gcc \
+          cc=${{ matrix.target.cc || format('{0}-gcc', matrix.target.host) }}
+          ./configure --host=${{ matrix.target.host }} CC=$cc \
                       CFLAGS=-O2 LDFLAGS=-static
 
       - name: Make
         run: make -j4 all
 
+      #  Fail if an expected SIMD probe disappears.
+      - name: Verify the expected tiers were configured
+        run: |
+          for m in ${{ matrix.target.macros }}; do
+            grep -q "^#define $m " config.h \
+              || { echo "config.h has no $m"; exit 1; }
+          done
+
       #  Invoke qemu directly; do not depend on binfmt_misc.
-      - name: Sanity check under qemu
+      - name: Write the qemu launchers
         run: |
           file xpar
-          cat > run-xpar <<EOF
-          #!/bin/sh
-          exec qemu-${{ matrix.target.qemu }}-static "$PWD/xpar" "\$@"
-          EOF
-          chmod +x run-xpar
-          ./run-xpar --version
-          sh contrib/ci-check.sh ./run-xpar compat
+          mkdir qw
+          for t in xpar tests/mkdata tests/damage tests/forge; do
+            n=`basename "$t"`
+            printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$QEMU" "$PWD/$t" > "qw/$n"
+            chmod +x "qw/$n"
+          done
+          ./qw/xpar --version
+
+      #  Exclude bench.sh: its timeit path bypasses the qemu launchers.
+      - name: Test suite under qemu
+        run: |
+          t='tests/t_unit tests/t_codec tests/t_central tests/central.sh'
+          t="$t tests/faults.sh tests/safety.sh tests/sanity.sh"
+          t="$t tests/build.sh tests/regress.sh"
+          e="XPAR=$PWD/qw/xpar; export XPAR;"
+          e="$e MKDATA=$PWD/qw/mkdata; export MKDATA;"
+          e="$e DAMAGE=$PWD/qw/damage; export DAMAGE;"
+          e="$e FORGE=$PWD/qw/forge; export FORGE;"
+          make -j4 check VERBOSE=1 TESTS="$t" LOG_COMPILER="$QEMU" \
+                                   TESTS_ENVIRONMENT="$e"
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
+
+      #  Compare every dispatched vector kernel with scalar output.
+      - name: Differential kernel check under qemu
+        run: |
+          ./qw/xpar benchmark --tiers > tiers.log 2>&1 || {
+            cat tiers.log;  exit 1;
+          }
+          cat tiers.log
+          grep -q 'tiers agree with scalar' tiers.log \
+            || { echo "no differential summary was printed"; exit 1; }
+          for k in ${{ matrix.target.tiers }}; do
+            grep -Eq "gf tier $k +ok" tiers.log \
+              || { echo "gf tier $k was never dispatched"; exit 1; }
+          done
+
+      #  Force one tier so missing dispatch fails.
+      - name: Round-trip on the ${{ matrix.target.force }} tier
+        if: matrix.target.force
+        run: |
+          head -c 900000 /dev/urandom > forced.bin
+          cp forced.bin forced.orig
+          ./qw/xpar create --simd=${{ matrix.target.force }} -r 25% \
+                    -o forced forced.bin
+          dd if=/dev/urandom of=forced.bin bs=1 seek=100000 count=64 \
+             conv=notrunc 2> /dev/null
+          ./qw/xpar repair --simd=${{ matrix.target.force }} \
+                    --in-place forced.xpa
+          cmp forced.bin forced.orig
+
+      #  Exercise vector-length-agnostic kernels at a second length.
+      - name: Differential kernel check at a second vector length
+        if: matrix.target.cpu2
+        run: |
+          qemu-${{ matrix.target.qemu }}-static \
+            -cpu ${{ matrix.target.cpu2 }} ./xpar benchmark --tiers
 
   #  Run the DJGPP build under DOSBox-X and verify cross-host compatibility.
   dos:
