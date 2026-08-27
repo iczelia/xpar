@@ -356,20 +356,3 @@ bool xpar_stream_locate(const xpar_occindex * ix, u64 off,
   out->entry         = o.entry;
   return true;
 }
-
-u32 xpar_slice_spans(const xpar_geom * g, const xpar_occindex * ix,
-                     u64 slice, xpar_span * out, u32 max) {
-  u64 begin = xpar_slice_begin(g, slice);
-  u64 have  = xpar_slice_bytes(g, slice);
-  u64 p     = begin;
-  u32 n     = 0;
-  while (p < begin + have) {
-    xpar_span s;
-    if (!xpar_stream_locate(ix, p, &s)) break;
-    if (s.length > begin + have - p) s.length = begin + have - p;
-    if (n < max) out[n] = s;
-    n++;
-    p += s.length;
-  }
-  return n;
-}

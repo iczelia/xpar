@@ -148,7 +148,4 @@ typedef struct {
 bool xpar_stream_locate(const xpar_occindex * ix, u64 off,
                         xpar_span * out);
 
-u32 xpar_slice_spans(const xpar_geom * g, const xpar_occindex * ix,
-                     u64 slice, xpar_span * out, u32 max);
-
 #endif
