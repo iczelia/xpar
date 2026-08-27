@@ -215,6 +215,12 @@ AC_ARG_ENABLE([simd],
   [AS_HELP_STRING([--disable-simd],[build scalar kernels only])],
   [test "x$enableval" = "xno" && xpar_skip_simd=yes])
 
+dnl  Distinguish --disable-simd from failed SIMD probes.
+if test "x$xpar_skip_simd" = "xyes"; then
+  AC_DEFINE([XPAR_NO_SIMD], [1],
+            [Define when the vector kernels were deliberately not built])
+fi
+
 SSSE3_CFLAGS=""
 SSE42_CFLAGS=""
 AVX2_CFLAGS=""
@@ -224,7 +230,7 @@ GFNI512_CFLAGS=""
 VBMI_CFLAGS=""
 NEON_CFLAGS=""
 PMULL_CFLAGS=""
-SVE2_CFLAGS=""
+SVE_CFLAGS=""
 VSX_CFLAGS=""
 RVV_CFLAGS=""
 RVV_CLMUL_CFLAGS=""
@@ -322,8 +328,8 @@ AC_COMPILE_IFELSE(
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 
-CFLAGS="$save_CFLAGS -march=armv8.5-a+sve2"
-AC_MSG_CHECKING([for SVE2 intrinsics])
+CFLAGS="$save_CFLAGS -march=armv8-a+sve"
+AC_MSG_CHECKING([for SVE intrinsics])
 AC_COMPILE_IFELSE(
   [AC_LANG_PROGRAM([[#include <arm_sve.h>]], [[
      svbool_t p = svptrue_b8();
@@ -332,8 +338,8 @@ AC_COMPILE_IFELSE(
      return (int) svlastb_u8(p, a);
    ]])],
   [AC_MSG_RESULT([yes])
-   AC_DEFINE([HAVE_SVE2], [1], [Define if SVE2 is available])
-   SVE2_CFLAGS="-march=armv8.5-a+sve2"],
+   AC_DEFINE([HAVE_SVE], [1], [Define if ARM SVE is available])
+   SVE_CFLAGS="-march=armv8-a+sve"],
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 
@@ -488,7 +494,7 @@ AC_SUBST([GFNI512_CFLAGS])
 AC_SUBST([VBMI_CFLAGS])
 AC_SUBST([NEON_CFLAGS])
 AC_SUBST([PMULL_CFLAGS])
-AC_SUBST([SVE2_CFLAGS])
+AC_SUBST([SVE_CFLAGS])
 AC_SUBST([VSX_CFLAGS])
 AC_SUBST([RVV_CFLAGS])
 AC_SUBST([RVV_CLMUL_CFLAGS])
@@ -503,7 +509,7 @@ AM_CONDITIONAL([HAVE_GFNI512], [test "x$GFNI512_CFLAGS" != "x"])
 AM_CONDITIONAL([HAVE_VBMI],    [test "x$VBMI_CFLAGS"    != "x"])
 AM_CONDITIONAL([HAVE_NEON],    [test "x$xpar_have_neon" = "xyes"])
 AM_CONDITIONAL([HAVE_PMULL],   [test "x$PMULL_CFLAGS"    != "x"])
-AM_CONDITIONAL([HAVE_SVE2],    [test "x$SVE2_CFLAGS"     != "x"])
+AM_CONDITIONAL([HAVE_SVE],     [test "x$SVE_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_VSX],     [test "x$VSX_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_RVV],     [test "x$RVV_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_RVV_CLMUL],
@@ -572,7 +578,7 @@ AC_MSG_NOTICE([
     AVX-512 VBMI  : ${VBMI_CFLAGS:-no}
     NEON          : $xpar_have_neon
     ARM PMULL     : ${PMULL_CFLAGS:-no}
-    SVE2          : ${SVE2_CFLAGS:-no}
+    SVE           : ${SVE_CFLAGS:-no}
     PowerPC VSX   : ${VSX_CFLAGS:-no}
     RISC-V V      : ${RVV_CFLAGS:-no}
     RISC-V Zvbc   : ${RVV_CLMUL_CFLAGS:-no}
