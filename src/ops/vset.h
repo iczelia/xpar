@@ -53,6 +53,9 @@ const u8 * xpar_vset_rcvs(const xpar_vset *, u64, u64 *);
 bool xpar_vset_armoured(const xpar_vset *, const u8 **, u64 *, u64 *,
                         xpar_armour_params *, const char **);
 
+/*  Rewrite damaged named split volumes from intact substitutes.  */
+bool xpar_vset_rewrite_substituted(xpar_vset *, const char ** reason);
+
 /*  Reconstruct one bare split data-volume range from the other data and
     recovery slices, writing bytes relative to the start of the volume.
     The destination must support pread as well as pwrite: reconstructed
@@ -67,6 +70,7 @@ u32 xpar_vset_volumes(const xpar_vset *);
 u64 xpar_vset_recovery(const xpar_vset *);
 u64 xpar_vset_recovery_total(const xpar_vset *);
 u64 xpar_vset_bad_cells(const xpar_vset *);
+u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);
 u64 xpar_vset_bad_slices(const xpar_vset *);
 u64 xpar_vset_bad_entries(const xpar_vset *);
 u64 xpar_vset_alias_bad(const xpar_vset *);

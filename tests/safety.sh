@@ -358,4 +358,64 @@ same out/tree/b.bin tree.orig/b.bin
 note "the collapsed set is still self-contained"
 cd ..
 
+# A substitute must not hide damage to the named data volume.
+
+step "a substituted data volume is never reported as clean"
+
+mkdir subst;  cd subst || hard_error cd
+
+# Renamed volumes remain discoverable.
+mkdir a;  cd a || hard_error cd
+mkdir tree;  mkfile tree/a.bin 262144
+"$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+rm -rf tree
+mv set.d00 renamed.bin
+run 0 "$XPAR" verify set.xpa
+cd ..
+
+# An intact substitute must not make a damaged named volume clean.
+mkdir b;  cd b || hard_error cd
+mkdir tree;  mkfile tree/a.bin 262144
+"$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+rm -rf tree
+cp set.d00 spare.bin
+"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+differs set.d00 spare.bin
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+same set.d00 spare.bin
+run 0 "$XPAR" verify set.xpa
+note "the named volume was rewritten from the stream"
+cd ..
+
+# --to extracts the tree without rewriting the set.
+mkdir d;  cd d || hard_error cd
+mkdir tree;  mkfile tree/a.bin 262144
+"$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+rm -rf tree
+cp set.d00 spare.bin
+"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+cp set.d00 damaged.bin
+run 0 "$XPAR" repair --to=out set.xpa
+exists out/tree/a.bin
+same set.d00 damaged.bin
+note "--to wrote the tree and left the damaged volume where it was"
+cd ..
+
+# Repair a damaged volume without a substitute.
+mkdir c;  cd c || hard_error cd
+mkdir tree;  mkfile tree/a.bin 262144
+"$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
+  hard_error "create failed"
+rm -rf tree
+"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+run 0 "$XPAR" verify set.xpa
+cd ..
+cd ..
+
 summary

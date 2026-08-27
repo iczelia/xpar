@@ -111,6 +111,14 @@ typedef struct {
   u64 base, len;
 } xpar_genid;
 
+/*  A split volume whose bytes came from a file the layout does not name.  */
+typedef struct {
+  char * want;
+  char * got;
+  u32    vol;
+  bool   present;   /*  The named file exists but is damaged.  */
+} xpar_subst;
+
 struct xpar_vset {
   xpar_vimg *  img;
   u32          img_count, img_cap;
@@ -142,6 +150,9 @@ struct xpar_vset {
   u32           have;         /*  XPAR_TAGS_* actually complete.  */
   xpar_layt     layt;
   bool          have_layt;
+  xpar_subst *  subst;        /*  Substituted data volumes.  */
+  u32           subst_count, subst_cap;
+  u64           subst_damaged;/*  Named volumes needing rewrite.  */
   char *        dir;
   char * const * source;
   u64           recovery, recovery_gone;
@@ -947,6 +958,26 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
   return NULL;
 }
 
+/*  Track renamed substitutes and damaged files they supersede.  */
+static void subst_add(xpar_vset * s, const char * want, const char * got,
+                      u32 vol) {
+  xpar_subst * e;
+  char * named = xpar_path_join(s->dir, want);
+  xpar_stat_t st;
+  if (s->subst_count == s->subst_cap) {
+    s->subst_cap = s->subst_cap ? s->subst_cap * 2 : 4;
+    s->subst = (xpar_subst *) xpar_realloc(
+                 s->subst, (sz) s->subst_cap * sizeof *s->subst);
+  }
+  e = &s->subst[s->subst_count++];
+  e->want    = xpar_strdup(want);
+  e->got     = xpar_strdup(got);
+  e->vol     = vol;
+  e->present = xpar_lstat(named, &st) == 0 && st.is_regular;
+  if (e->present) s->subst_damaged++;
+  xpar_free(named);
+}
+
 static void load_owned_data(xpar_vset * s) {
   u32 i;
   if (s->setd.layout == XPAR_LAYOUT_ARMOURED) {
@@ -966,6 +997,7 @@ static void load_owned_data(xpar_vset * s) {
     if (path) {
       split_image_add(s, path);
       if (xpar_strcmp(lv->name, found_name)) {
+        subst_add(s, lv->name, found_name, i);
         xpar_free(lv->name);
         lv->name = found_name;
       } else {
@@ -974,6 +1006,57 @@ static void load_owned_data(xpar_vset * s) {
       xpar_free(path);
     }
   }
+}
+
+/*  Rewrite damaged named volumes from their intact substitutes.  */
+bool xpar_vset_rewrite_substituted(xpar_vset * s, const char ** reason) {
+  u32 i;
+  u8 * buf;
+  bool ok = true;
+  if (reason) *reason = NULL;
+  if (!s->subst_damaged || !s->have_layt) return true;
+  buf = (u8 *) xpar_alloc_raw(1u << 16);
+  for (i = 0; i < s->subst_count && ok; i++) {
+    const xpar_vol * v;
+    char * path, * stage = NULL;
+    xpar_file * f;
+    u64 at = 0, left;
+    if (!s->subst[i].present) continue;
+    if (s->subst[i].vol >= s->layt.count) continue;
+    v = &s->layt.vol[s->subst[i].vol];
+    path = xpar_path_join(s->dir, s->subst[i].want);
+    f = xpar_stage_open(path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
+                        1, &stage);
+    if (!f) {
+      if (reason) *reason = "staging failed";
+      ok = false;
+    }
+    left = ok ? v->byte_length : 0;
+    while (left) {
+      sz take = (sz) MIN(left, (u64) (1u << 16));
+      if (!xpar_vset_read(s, v->stream_offset + at, buf, take)) {
+        if (reason) *reason = "stream read failed";
+        ok = false;  break;
+      }
+      xpar_xwrite(f, buf, take);
+      at += take;  left -= take;
+    }
+    if (f) {
+      if (ok && xpar_fsync(f) != 0) {
+        if (reason) *reason = "flush failed";
+        ok = false;
+      }
+      xpar_xclose(f);
+      if (ok && (xpar_rename(stage, path) != 0 || xpar_fsync_dir(path) != 0)) {
+        if (reason) *reason = "publish failed";
+        ok = false;
+      }
+      if (!ok) xpar_remove(stage);
+    }
+    xpar_free(stage);  xpar_free(path);
+  }
+  xpar_free(buf);
+  return ok;
 }
 
 /*  Extent canonicality is uniform, so its first byte classifies it.  */
@@ -1408,6 +1491,9 @@ void xpar_vset_close(xpar_vset * s) {
   xpar_free(s->ext_alias); xpar_free(s->gen);
   xpar_free(s->superseded); xpar_free(s->ignored_cell);
   xpar_free(s->resync);
+  For(u32, i, s->subst_count,
+      xpar_free(s->subst[i].want);  xpar_free(s->subst[i].got))
+  xpar_free(s->subst);
   xpar_free(s->dir);
   xpar_key_forget(&s->key, s->master);
   xpar_free(s);
@@ -1684,6 +1770,9 @@ void xpar_verify_written_set_sources(const xpar_options * o,
 }
 u64 xpar_vset_bad_cells(const xpar_vset * s) {
   return s->er.bad_count;
+}
+u64 xpar_vset_volumes_to_rewrite(const xpar_vset * s) {
+  return s->subst_damaged;
 }
 u64 xpar_vset_bad_slices(const xpar_vset * s) {
   return s->bad_slices;
@@ -2503,6 +2592,8 @@ scanned:
   }
   rc = XPAR_EXIT_OK;
   if (s->er.bad_count || s->bad_entries) rc = XPAR_EXIT_REPAIRABLE;
+  /*  A damaged named volume makes the set repairable.  */
+  if (s->subst_damaged && rc == XPAR_EXIT_OK) rc = XPAR_EXIT_REPAIRABLE;
   if (s->depth > s->recovery || s->opaque_bad) rc = XPAR_EXIT_UNREPAIRABLE;
   return rc;
 }
@@ -2526,6 +2617,18 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  "layout are not on disk; available protection is reduced\n",
                  s->recovery_gone,
                  (s->recovery + s->recovery_gone));
+  /*  Always report substituted volumes.  */
+  for (i = 0; i < s->subst_count; i++) {
+    if (s->subst[i].present)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: data volume '%s' is damaged; intact copy found "
+                   "as '%s'\n",
+                   s->subst[i].want, s->subst[i].got);
+    else
+      xpar_fprintf(xpar_stderr,
+                   "xpar: data volume '%s' is missing; using '%s'\n",
+                   s->subst[i].want, s->subst[i].got);
+  }
 
   if (o->quiet) return;
   for (i = 0; i < s->mf.count; i++)
@@ -2656,6 +2759,8 @@ void xpar_vset_json_summary(const xpar_vset * s, xpar_json * js,
   xpar_json_u64(js, "entries_alias_only", s->alias_bad);
   xpar_json_u64(js, "entries_opaque", s->opaque_bad);
   xpar_json_u64(js, "entries_superseded", s->superseded_entries);
+  xpar_json_u64(js, "volumes_substituted", s->subst_count);
+  xpar_json_u64(js, "volumes_to_rewrite", s->subst_damaged);
   xpar_json_u64(js, "syndromes", syndromes);
   xpar_json_u64(js, "bytes_read", s->bytes_read);
   xpar_json_u64(js, "bytes_written", 0);

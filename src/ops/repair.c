@@ -3067,6 +3067,18 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked) {
   if (sd->layout == XPAR_LAYOUT_SPLIT ||
       sd->layout == XPAR_LAYOUT_ARMOURED) {
     int out = owned_repair_stream(o, s, checked, rec, rpresent, rtop);
+    /*  Rewrite damaged named volumes from intact substitutes.  */
+    if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
+        o->dest != XPAR_DEST_TO) {
+      const char * why = NULL;
+      if (!xpar_vset_rewrite_substituted(s, &why)) {
+        if (!o->quiet)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: could not rewrite a data volume: %s\n",
+                       why ? why : "unknown error");
+        out = XPAR_EXIT_UNREPAIRABLE;
+      }
+    }
     for (u32 q = 0; q < rv_count; q++) owned_close(&rv[q]);
     xpar_free(rv); xpar_free(rpresent); xpar_free((void *) rec);
     return out;
@@ -3269,9 +3281,17 @@ int xpar_op_repair(const xpar_options * o) {
         xpar_vset_close(owned);
         return before;
       }
-      if (before == XPAR_EXIT_OK && o->dest == XPAR_DEST_TO) {
-        /*  Extraction is the bounded materialiser for a clean owned set.  */
+      /*  --to extracts an intact stream without rewriting the source set.  */
+      if (o->dest == XPAR_DEST_TO && before != XPAR_EXIT_UNREPAIRABLE &&
+          !xpar_vset_bad_cells(owned) && !xpar_vset_bad_entries(owned)) {
         xpar_options ex = *o;
+        if (!o->quiet && xpar_vset_volumes_to_rewrite(owned))
+          xpar_fprintf(xpar_stderr,
+                       "xpar: %" PRIu64 " source data volume%s %s rewriting\n",
+                       xpar_vset_volumes_to_rewrite(owned),
+                       PLURAL(xpar_vset_volumes_to_rewrite(owned)),
+                       xpar_vset_volumes_to_rewrite(owned) == 1
+                         ? "still needs" : "still need");
         xpar_vset_close(owned);
         ex.verb = XPAR_VERB_EXTRACT;
         return xpar_op_extract(&ex);

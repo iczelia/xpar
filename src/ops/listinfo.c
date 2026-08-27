@@ -33,18 +33,25 @@
 /*  The packet volumes in xpar_chain are found by their set identity. Bare
     split volumes have no packet to scan, so report them by the content
     identity LAYT gives them, including a renamed match on the same shelf.  */
-static char * li_data_present(const xpar_chain * c, const xpar_vol * v) {
+static char * li_data_present(const xpar_chain * c, const xpar_vol * v,
+                              bool * named_here) {
+  /*  A bare set path searches the current directory.  */
+  const char * dir = (c->dir && *c->dir) ? c->dir : ".";
   char * path;
   xpar_dir * d;
   const xpar_dirent * de;
+  xpar_stat_t st;
+  if (named_here) *named_here = false;
   if (!v->name) return NULL;
-  path = xpar_path_join(c->dir, v->name);
+  path = xpar_path_join(dir, v->name);
+  if (named_here)
+    *named_here = xpar_lstat(path, &st) == 0 && st.is_regular;
   if (xpar_vol_tag_match(path, v)) return path;
   xpar_free(path);
-  if (!v->vol_tag || !(d = xpar_opendir(c->dir))) return NULL;
+  if (!v->vol_tag || !(d = xpar_opendir(dir))) return NULL;
   while ((de = xpar_readdir(d)) != NULL) {
     if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
-    path = xpar_path_join(c->dir, de->name);
+    path = xpar_path_join(dir, de->name);
     if (xpar_vol_tag_match(path, v)) { xpar_closedir(d); return path; }
     xpar_free(path);
   }
@@ -598,7 +605,7 @@ int xpar_op_info(const xpar_options * o) {
                                                              : "recovery");
       char * data_path = NULL;
       u32 v;
-      bool present = false;
+      bool present = false, named_here = false;
       for (v = 0; v < c.vol_count; v++)
         if (c.vol[v].gen == sel && c.vol[v].path && layt.vol[i].name) {
           sz pl = xpar_strlen(c.vol[v].path);
@@ -607,7 +614,7 @@ int xpar_op_info(const xpar_options * o) {
                                        layt.vol[i].name)) present = true;
         }
       if (layt.vol[i].kind == XPAR_VOL_DATA) {
-        data_path = li_data_present(&c, &layt.vol[i]);
+        data_path = li_data_present(&c, &layt.vol[i], &named_here);
         present = data_path != NULL;
       }
       if (layt.vol[i].kind == XPAR_VOL_RECOVERY)
@@ -633,7 +640,8 @@ int xpar_op_info(const xpar_options * o) {
         else
           xpar_fprintf(xpar_stdout, "    %-8s %-32s %s\n", kind,
                        layt.vol[i].name ? layt.vol[i].name : "?",
-                       present ? "present" : "MISSING");
+                       present ? "present"
+                               : (named_here ? "DAMAGED" : "MISSING"));
       }
       xpar_free(data_path);
     }
