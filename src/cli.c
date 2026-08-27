@@ -616,7 +616,7 @@ static const char * const verb_opts[] = {
   "      --preserve=LIST        Metadata to record (see below)\n"
   "  -R, --recurse              Descend into directories\n"
   "      --exclude=GLOB         Repeatable\n"
-  "      --include=GLOB         Repeatable\n"
+  "      --include=GLOB         Repeatable; restricts to matches\n"
   "      --follow-symlinks      Store the target, not the link\n"
   "      --base=DIR             Store names relative to DIR\n"
   "      --labels               Write a label file per volume\n"
@@ -652,7 +652,7 @@ static const char * const verb_opts[] = {
   "      --generation=G         Number, or a set-id prefix\n"
   "      --chain                Every generation, oldest first\n",
   /*  scrub  */
-  "      --deep                 Decode every codeword, not just the bad\n"
+  "      --deep                 Re-encode recovery and compare it\n"
   "      --rewrite              Write back what the pass corrected\n"
   "      --rebuild-cells        Rebuild the cell CRC table\n"
   "      --generation=G         Number, or a set-id prefix\n"
@@ -761,7 +761,7 @@ static void v1_flag_refuse(int argc, char ** argv) {
   if (!argv[1][2]) {
     xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x mode flag; "
                  "version 2.0 requires a verb.\n", argv[1]);
-    xpar_fputs("xpar: use create, verify, repair, or extract; xpar help "
+    xpar_fputs("xpar: use create, verify, repair, or extract; 'xpar --help' "
                "lists all verbs.\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE);
   }
