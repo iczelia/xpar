@@ -101,9 +101,10 @@ check_create() {
 }
 
 check_verify() {
-  f_scan_bytes=`jnum0 "$work/out.json" bytes_read summary`
+  _rd=`jnum0 "$work/out.json" bytes_read summary`
+  f_scan_bytes=$((_rd + f_archive_bytes))
   f_damaged_cells=`jnum0 "$work/out.json" cells_bad summary`
-  sig="read=$f_scan_bytes cells=$f_damaged_cells"
+  sig="read=$_rd cells=$f_damaged_cells"
 }
 
 # Reapply identical corruption before each repetition.

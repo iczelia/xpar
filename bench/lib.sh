@@ -187,7 +187,7 @@ bench_open_output() {
     printf 'format_overhead_bytes,' >> "$csv"
     printf 'scan_bytes,elapsed_us,maxrss_kb,' >> "$csv"
     printf 'in_blocks,' >> "$csv"
-    printf 'out_blocks,cold,status,expect,work_ok,' >> "$csv"
+    printf 'out_blocks,cold,status,expect,work_ok,safety,' >> "$csv"
     printf 'expected_unsupported,note\n' >> "$csv"
   }
   test -f "$jsonl" || : > "$jsonl"
@@ -205,6 +205,7 @@ reset_row() {
   f_column_groups=0;  f_repaired_bytes=0;  f_archive_bytes=0
   f_nominal_payload_bytes=0;  f_format_overhead_bytes=0
   f_scan_bytes=0;  f_expect=0;  f_unsupported=;  f_note=;  f_refusals=
+  f_safety=default
 }
 
 emit_row() {
@@ -214,13 +215,13 @@ emit_row() {
     "$f_cell_bytes" "$f_slices" "$f_recovery_spec" "$f_recovery_slices" \
     "$f_layout" "${jobs:-auto}" "$f_damage" "$f_damaged_cells" \
     "$f_damaged_slices" >> "$csv"
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$f_column_depth" "$f_column_groups" "$f_repaired_bytes" \
     "$f_archive_bytes" "$f_nominal_payload_bytes" \
     "$f_format_overhead_bytes" \
     "$f_scan_bytes" "$m_us" "$m_rss" "$m_in" "$m_out" \
-    "$cold" "$m_status" "$f_expect" "$work_ok" "$f_unsupported" \
-    "$f_note" >> "$csv"
+    "$cold" "$m_status" "$f_expect" "$work_ok" "$f_safety" \
+    "$f_unsupported" "$f_note" >> "$csv"
 
   printf '{"run_id":%s,"experiment":"%s","tool":"%s","op":"%s","rep":%s,' \
     "$run_id" "$f_experiment" "$f_tool" "$f_op" "$rep" >> "$jsonl"
@@ -243,6 +244,7 @@ emit_row() {
     "$m_us" "$m_rss" "$m_in" "$m_out" >> "$jsonl"
   printf '"cold":"%s","status":%s,"expect":%s,"work_ok":%s,' \
     "$cold" "$m_status" "$f_expect" "$work_ok" >> "$jsonl"
+  printf '"safety":"%s",' "$f_safety" >> "$jsonl"
   printf '"expected_unsupported":"%s","note":"%s"}\n' \
     "$f_unsupported" "$f_note" >> "$jsonl"
 }
@@ -255,6 +257,18 @@ check_none() { sig=-; }
 
 bench_measure() {   # <setup-fn> <check-fn> <command...>
   _setup=$1;  _check=$2;  shift 2
+  #  Derive the safety mode from the command actually measured, so that
+  #  a call site cannot opt out of the durability machinery without the
+  #  row it produces saying so.
+  f_safety=
+  for _a in "$@"; do
+    case $_a in
+      --no-journal)      f_safety="$f_safety no-journal" ;;
+      --no-verify-after) f_safety="$f_safety no-verify-after" ;;
+    esac
+  done
+  f_safety=`printf '%s' "$f_safety" | sed 's/^ //; s/ /+/g'`
+  test -n "$f_safety" || f_safety=default
   _sig0=
   rep=1
   while test "$rep" -le "$reps"; do

@@ -169,8 +169,11 @@ check_create() {
 }
 
 check_verify() {
-  f_scan_bytes=`jnum0 "$work/out.json" bytes_read summary`
-  sig="read=$f_scan_bytes"
+  _rd=`jnum0 "$work/out.json" bytes_read summary`
+  #  Count what a verification actually reads: the stream and the
+  #  archive that describes it. The PAR arms count both, so xpar must.
+  f_scan_bytes=$((_rd + f_archive_bytes))
+  sig="read=$_rd"
 }
 
 setup_repair() {
