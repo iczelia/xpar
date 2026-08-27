@@ -448,6 +448,28 @@ run 0 "$XPAR" info set.xpa
 run 0 "$XPAR" repair --in-place set.xpa
 cd .. || hard_error cd
 
+step "creator disagreement is tolerated; other conflicts are fatal"
+
+#  CRTR provenance may differ across volumes; other replicated packets may not.
+mkdir -p a5 && cd a5 || hard_error "cd a5"
+mkfile p.bin 200000 84
+run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set p.bin
+run 0 "$XPAR" info set.xpa
+
+#  Conflicting CRTR provenance is accepted.
+"$FORGE" set.xpa CRTR 78706172203939 || hard_error "forge failed"
+run 0 "$XPAR" info set.xpa
+run 0 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+
+#  Conflicting SETD remains fatal.
+rm -f set.* && cp p.bin q.bin
+run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set q.bin
+"$FORGE" set.xpa SETD 00112233445566778899aabbccddeeff ||
+  hard_error "forge failed"
+run 3 "$XPAR" info set.xpa
+cd .. || hard_error cd
+
 step "addrecovery tops up every layout and the result still repairs"
 
 #  Cover critical-group reuse across every layout.

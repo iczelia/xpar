@@ -1556,6 +1556,8 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
         continue;
       }
       s->pkt[slot].copies++;  s->copies++;
+      /*  CRTR is per-volume provenance and may differ across copies.  */
+      if (xpar_pkt_is(hdr, XPAR_T_CRTR)) return false;
       if (s->pkt[slot].body_len != n ||
           xpar_memcmp(s->pkt[slot].body, body, (sz) n) != 0) {
         s->pkt[slot].conflicts++;  s->conflicts++;
