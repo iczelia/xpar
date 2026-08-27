@@ -296,6 +296,24 @@ static void xpar_b3_subtree_node(const u8 * in, sz len, const u32 * key,
   xpar_memcpy(out, cvs, 2 * XPAR_BLAKE3_OUT_LEN);
 }
 
+/*  Compute an aligned, complete subtree's chaining value.  */
+static void b3_span_cv(const u8 * p, sz span, const u32 * key, u8 flags,
+                       u64 counter, u8 * cv) {
+  xpar_b3_node node;
+  if (span == XPAR_BLAKE3_CHUNK_LEN) {
+    xpar_blake3_chunk c;
+    c.flags = flags;
+    xpar_b3_chunk_reset(&c, key, counter);
+    xpar_b3_chunk_update(&c, p, span);
+    xpar_b3_chunk_node(&c, &node);
+  } else {
+    u8 pair[2 * XPAR_BLAKE3_OUT_LEN];
+    xpar_b3_subtree_node(p, span, key, counter, flags, pair);
+    xpar_b3_parent_node(pair, key, flags, &node);
+  }
+  xpar_b3_node_cv(&node, cv);
+}
+
 static void subtree_tag(const u8 * key_bytes, const void * buf, sz len,
                         u64 chunk_counter, u8 * out, sz n) {
   const u8 * p = (const u8 *) buf;
@@ -310,21 +328,7 @@ static void subtree_tag(const u8 * key_bytes, const void * buf, sz len,
   xpar_assert(n <= XPAR_BLAKE3_OUT_LEN);
   for (i = 0; i < 8; i++)
     key[i] = key_bytes ? xpar_rd32(key_bytes + 4 * i) : xpar_blake3_iv[i];
-  if (len == XPAR_BLAKE3_CHUNK_LEN) {
-    xpar_blake3_chunk c;
-    xpar_b3_node node;
-    c.flags = flags;
-    xpar_b3_chunk_reset(&c, key, chunk_counter);
-    xpar_b3_chunk_update(&c, p, len);
-    xpar_b3_chunk_node(&c, &node);
-    xpar_b3_node_cv(&node, cv);
-  } else {
-    u8 pair[2 * XPAR_BLAKE3_OUT_LEN];
-    xpar_b3_node node;
-    xpar_b3_subtree_node(p, len, key, chunk_counter, flags, pair);
-    xpar_b3_parent_node(pair, key, flags, &node);
-    xpar_b3_node_cv(&node, cv);
-  }
+  b3_span_cv(p, len, key, flags, chunk_counter, cv);
   xpar_memcpy(out, cv, n);
   xpar_secure_zero(key, sizeof key);
 }
@@ -389,21 +393,7 @@ static void xpar_b3_parallel_one(sz index, void * opaque) {
   u64 counter = p->counter +
                 (u64) index * p->span / XPAR_BLAKE3_CHUNK_LEN;
   u8 * cv = p->cv + index * XPAR_BLAKE3_OUT_LEN;
-  if (p->span == XPAR_BLAKE3_CHUNK_LEN) {
-    xpar_blake3_chunk c;
-    xpar_b3_node node;
-    c.flags = p->flags;
-    xpar_b3_chunk_reset(&c, p->key, counter);
-    xpar_b3_chunk_update(&c, in, p->span);
-    xpar_b3_chunk_node(&c, &node);
-    xpar_b3_node_cv(&node, cv);
-  } else {
-    u8 pair[2 * XPAR_BLAKE3_OUT_LEN];
-    xpar_b3_node node;
-    xpar_b3_subtree_node(in, p->span, p->key, counter, p->flags, pair);
-    xpar_b3_parent_node(pair, p->key, p->flags, &node);
-    xpar_b3_node_cv(&node, cv);
-  }
+  b3_span_cv(in, p->span, p->key, p->flags, counter, cv);
 }
 
 /*  Absorb one aligned, complete subtree.  */
@@ -481,7 +471,9 @@ void xpar_blake3_init_derive_key(xpar_blake3_t * h, const char * context) {
   xpar_b3_hasher_init(h, k, XPAR_B3_DERIVE_MAT);
 }
 
-void xpar_blake3_update(xpar_blake3_t * h, const void * buf, sz n) {
+/*  Shared serial and parallel update driver.  */
+static void b3_update(xpar_blake3_t * h, const void * buf, sz n,
+                      xpar_pool * pool) {
   const u8 * p = (const u8 *) buf;
   if (n == 0) return;
   /*  Finish the chunk in progress first, but only compress it once more
@@ -506,6 +498,7 @@ void xpar_blake3_update(xpar_blake3_t * h, const void * buf, sz n) {
     u64 done = (h->chunk.counter - h->chunk_base) *
                XPAR_BLAKE3_CHUNK_LEN;
     u64 nchunks;
+    /*  Chunk alignment keeps sub at least one chunk.  */
     while ((sub - 1) & done) sub /= 2;
     nchunks = sub / XPAR_BLAKE3_CHUNK_LEN;
     if (sub <= XPAR_BLAKE3_CHUNK_LEN) {
@@ -518,6 +511,8 @@ void xpar_blake3_update(xpar_blake3_t * h, const void * buf, sz n) {
       xpar_b3_chunk_node(&c, &o);
       xpar_b3_node_cv(&o, cv);
       xpar_b3_push(h, cv, h->chunk.counter);
+    } else if (pool) {
+      xpar_b3_absorb_parallel(h, p, (sz) sub, pool);
     } else {
       u8 pair[2 * XPAR_BLAKE3_OUT_LEN];
       xpar_b3_subtree_node(p, (sz) sub, h->key, h->chunk.counter,
@@ -535,85 +530,51 @@ void xpar_blake3_update(xpar_blake3_t * h, const void * buf, sz n) {
   }
 }
 
-void xpar_blake3_update_parallel(xpar_blake3_t * h, const void * buf, sz n,
-                                 xpar_pool * pool) {
-  const u8 * p = (const u8 *) buf;
-  if (!pool || xpar_pool_threads(pool) <= 1 || n < 2 * XPAR_B3_MT_SUBTREE) {
-    xpar_blake3_update(h, buf, n);
-    return;
-  }
-  /*  Finish an incomplete chunk exactly as update() does.  */
-  if (xpar_b3_chunk_len(&h->chunk) > 0) {
-    sz take = XPAR_BLAKE3_CHUNK_LEN - xpar_b3_chunk_len(&h->chunk);
-    if (take > n) take = n;
-    xpar_b3_chunk_update(&h->chunk, p, take);
-    p += take;  n -= take;
-    if (n == 0) return;
-    {
-      xpar_b3_node o;
-      u8 cv[XPAR_BLAKE3_OUT_LEN];
-      xpar_b3_chunk_node(&h->chunk, &o);
-      xpar_b3_node_cv(&o, cv);
-      xpar_b3_push(h, cv, h->chunk.counter);
-      xpar_b3_chunk_reset(&h->chunk, h->key, h->chunk.counter + 1);
-    }
-  }
-  while (n > XPAR_BLAKE3_CHUNK_LEN) {
-    u64 sub = (u64) 1 << xpar_log2_floor((u64) n);
-    u64 done = (h->chunk.counter - h->chunk_base) *
-               XPAR_BLAKE3_CHUNK_LEN;
-    u64 chunks;
-    while ((sub - 1) & done) sub /= 2;
-    chunks = sub / XPAR_BLAKE3_CHUNK_LEN;
-    if (sub <= XPAR_BLAKE3_CHUNK_LEN) {
-      xpar_blake3_chunk c;
-      xpar_b3_node o;
-      u8 cv[XPAR_BLAKE3_OUT_LEN];
-      c.flags = h->chunk.flags;
-      xpar_b3_chunk_reset(&c, h->key, h->chunk.counter);
-      xpar_b3_chunk_update(&c, p, (sz) sub);
-      xpar_b3_chunk_node(&c, &o);
-      xpar_b3_node_cv(&o, cv);
-      xpar_b3_push(h, cv, h->chunk.counter);
-      h->chunk.counter++;
-    } else {
-      xpar_b3_absorb_parallel(h, p, (sz) sub, pool);
-      h->chunk.counter += chunks;
-    }
-    p += (sz) sub;  n -= (sz) sub;
-  }
-  if (n) xpar_blake3_update(h, p, n);
+void xpar_blake3_update(xpar_blake3_t * h, const void * buf, sz n) {
+  b3_update(h, buf, n, NULL);
 }
 
-void xpar_blake3_final_seek(const xpar_blake3_t * h, u64 seek, u8 * out,
-                            sz n) {
-  xpar_b3_node o;
-  sz left;
-  if (n == 0) return;
+/*  Parallelism requires at least two subtrees.  */
+void xpar_blake3_update_parallel(xpar_blake3_t * h, const void * buf, sz n,
+                                 xpar_pool * pool) {
+  bool worth = pool && xpar_pool_threads(pool) > 1 &&
+               n >= 2 * XPAR_B3_MT_SUBTREE;
+  b3_update(h, buf, n, worth ? pool : NULL);
+}
+
+/*  Seed finalization and return the remaining stack depth.  */
+static sz b3_seed(const xpar_blake3_t * h, xpar_b3_node * o) {
   if (h->stack_len == 0) {
-    xpar_b3_chunk_node(&h->chunk, &o);
-    xpar_b3_root(&o, seek, out, n);
-    return;
+    xpar_b3_chunk_node(&h->chunk, o);
+    return 0;
   }
   if (xpar_b3_chunk_len(&h->chunk) > 0) {
-    left = h->stack_len;
-    xpar_b3_chunk_node(&h->chunk, &o);
-  } else {
-    /*  Only reachable if a caller finalises a hasher whose last update
-        ended exactly on a subtree boundary.  */
-    xpar_assert(h->stack_len >= 2);
-    left = h->stack_len - 2;
-    xpar_b3_parent_node(h->stack + left * XPAR_BLAKE3_OUT_LEN, h->key,
-                        h->chunk.flags, &o);
+    xpar_b3_chunk_node(&h->chunk, o);
+    return h->stack_len;
   }
+  xpar_assert(h->stack_len >= 2);
+  xpar_b3_parent_node(h->stack + (h->stack_len - 2) * XPAR_BLAKE3_OUT_LEN,
+                      h->key, h->chunk.flags, o);
+  return h->stack_len - 2;
+}
+
+/*  Fold the parent stack deepest-first.  */
+static void b3_fold(const xpar_blake3_t * h, xpar_b3_node * o, sz left) {
   while (left > 0) {
     u8 block[XPAR_BLAKE3_BLOCK_LEN];
     left--;
     xpar_memcpy(block, h->stack + left * XPAR_BLAKE3_OUT_LEN,
                 XPAR_BLAKE3_OUT_LEN);
-    xpar_b3_node_cv(&o, block + XPAR_BLAKE3_OUT_LEN);
-    xpar_b3_parent_node(block, h->key, h->chunk.flags, &o);
+    xpar_b3_node_cv(o, block + XPAR_BLAKE3_OUT_LEN);
+    xpar_b3_parent_node(block, h->key, h->chunk.flags, o);
   }
+}
+
+void xpar_blake3_final_seek(const xpar_blake3_t * h, u64 seek, u8 * out,
+                            sz n) {
+  xpar_b3_node o;
+  if (n == 0) return;
+  b3_fold(h, &o, b3_seed(h, &o));
   xpar_b3_root(&o, seek, out, n);
 }
 
@@ -621,42 +582,16 @@ void xpar_blake3_final(const xpar_blake3_t * h, u8 * out, sz n) {
   xpar_blake3_final_seek(h, 0, out, n);
 }
 
+/*  Finalize to a subtree chaining value instead of the root.  */
 void xpar_blake3_subtree_stream_final(const xpar_blake3_t * h, u8 * out,
                                       sz n) {
   xpar_b3_node o;
   u8 cv[XPAR_BLAKE3_OUT_LEN];
-  sz left;
   u64 chunks = h->chunk.counter - h->chunk_base +
                (xpar_b3_chunk_len(&h->chunk) != 0);
   xpar_assert(n <= sizeof cv);
   xpar_assert(chunks && !(chunks & (chunks - 1)));
-  if (h->stack_len == 0) {
-    xpar_b3_chunk_node(&h->chunk, &o);
-  } else if (xpar_b3_chunk_len(&h->chunk) > 0) {
-    left = h->stack_len;
-    xpar_b3_chunk_node(&h->chunk, &o);
-    while (left > 0) {
-      u8 block[XPAR_BLAKE3_BLOCK_LEN];
-      left--;
-      xpar_memcpy(block, h->stack + left * XPAR_BLAKE3_OUT_LEN,
-                  XPAR_BLAKE3_OUT_LEN);
-      xpar_b3_node_cv(&o, block + XPAR_BLAKE3_OUT_LEN);
-      xpar_b3_parent_node(block, h->key, h->chunk.flags, &o);
-    }
-  } else {
-    xpar_assert(h->stack_len >= 2);
-    left = h->stack_len - 2;
-    xpar_b3_parent_node(h->stack + left * XPAR_BLAKE3_OUT_LEN, h->key,
-                        h->chunk.flags, &o);
-    while (left > 0) {
-      u8 block[XPAR_BLAKE3_BLOCK_LEN];
-      left--;
-      xpar_memcpy(block, h->stack + left * XPAR_BLAKE3_OUT_LEN,
-                  XPAR_BLAKE3_OUT_LEN);
-      xpar_b3_node_cv(&o, block + XPAR_BLAKE3_OUT_LEN);
-      xpar_b3_parent_node(block, h->key, h->chunk.flags, &o);
-    }
-  }
+  b3_fold(h, &o, b3_seed(h, &o));
   xpar_b3_node_cv(&o, cv);
   xpar_memcpy(out, cv, n);
 }
