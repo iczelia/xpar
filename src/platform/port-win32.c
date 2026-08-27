@@ -345,14 +345,6 @@ xpar_file * xpar_open(const char * path, int flags) {
   if (acc == XPAR_O_WRONLY)     access = GENERIC_WRITE;
   else if (acc == XPAR_O_RDWR)  access = GENERIC_READ | GENERIC_WRITE;
   else                          access = GENERIC_READ;
-  /*  Append-only is granted only when FILE_APPEND_DATA stands without
-      FILE_WRITE_DATA, which GENERIC_WRITE carries. Keeping both leaves
-      the file pointer at zero and overwrites from the start.  */
-  if (flags & XPAR_O_APPEND) {
-    access &= ~(DWORD) GENERIC_WRITE;
-    access |= FILE_APPEND_DATA | SYNCHRONIZE;
-  }
-
   if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_EXCL))  creation = CREATE_NEW;
   else if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_TRUNC))
     creation = CREATE_ALWAYS;
@@ -375,6 +367,11 @@ xpar_file * xpar_open(const char * path, int flags) {
   if (!f) { CloseHandle(h);  SetLastError(ERROR_OUTOFMEMORY);  return NULL; }
   f->h = h;  f->kind = GetFileType(h);  f->owned = true;
   f->writable = (access & (GENERIC_WRITE | FILE_APPEND_DATA)) != 0;
+  /*  A single-writer seek preserves GENERIC_WRITE for FlushFileBuffers.  */
+  if ((flags & XPAR_O_APPEND) && f->kind == FILE_TYPE_DISK) {
+    LONG hi = 0;
+    SetFilePointer(h, 0, &hi, FILE_END);
+  }
 #if defined(XPAR_WIN_LEGACY)
   InitializeCriticalSection(&f->seek_cs);
 #endif

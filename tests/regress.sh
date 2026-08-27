@@ -75,6 +75,25 @@ equal "intact extract status" "$status" 0
 same out.bin pristine.bin
 cd .. || hard_error cd
 
+step "--stdout corrects with the inner code, as --to does"
+
+#  --stdout must apply lazy inner-code correction like directory extraction.
+mkdir -p e3 && cd e3 || hard_error "cd e3"
+mkfile data.bin 400000 88
+cp data.bin pristine.bin
+run 0 "$XPAR" create -r 20% --layout=armoured -o p data.bin
+rm -f data.bin
+"$DAMAGE" p.xpa rand=50000,32 || hard_error "damage failed"
+
+rm -rf d1 && mkdir d1
+run 0 "$XPAR" extract --to=d1 p.xpa
+same d1/data.bin pristine.bin
+
+capture out.bin "$XPAR" extract --stdout p.xpa
+equal "stdout status on correctable damage" "$status" 0
+same out.bin pristine.bin
+cd .. || hard_error cd
+
 step "a substituted data volume is rewritten from chain-space offsets"
 
 #  xpar_vol.stream_offset is relative to the generation, but xpar_vset_read

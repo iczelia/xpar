@@ -1015,13 +1015,10 @@ int xpar_op_extract(const xpar_options * o) {
     u8 got[32];
     for (i = 0; i < x.mf.count; i++)
       if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) { regs++;  only = i; }
-    FATAL_UNLESS("--stdout writes the stream of a single-entry set, and "
-                 "this one holds %" PRIu32 " entries; extract to a directory "
-                 "instead.", regs == 1, regs);
-    /*  No destination directory exists to probe, so the naming rules are
-        the host's own.  */
-    x.path_flags = xpar_host_path_flags();
-    if (o->strict_names) x.path_flags |= XPAR_PATH_WIN | XPAR_PATH_NOCASE;
+    FATAL_UNLESS("--stdout requires one entry, but the set has %" PRIu32
+                 "; extract to a directory.", regs == 1, regs);
+    /*  stdout creates no paths, so destination name rules do not apply.  */
+    x.path_flags = 0;
     ex_validate(&x);
     e = &x.mf.entry[only];
     buf = (u8 *) xpar_alloc_raw((sz) chunk);
@@ -1029,32 +1026,49 @@ int xpar_op_extract(const xpar_options * o) {
         are proved against the manifest first and written second. The
         entry's own extents are followed, which a chained entry needs.  */
     for (pass = 0; pass < 2; pass++) {
-      if (pass == 0) {
-        if (x.auth_only) xpar_blake3_init_keyed(&h, x.key.k_file);
-        else             xpar_blake3_init(&h);
-      }
+      if (x.auth_only) xpar_blake3_init_keyed(&h, x.key.k_file);
+      else             xpar_blake3_init(&h);
       for (k = 0; k < e->extent_count; k++) {
         u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
         while (left) {
           u64 take = MIN(left, chunk);
           if (!ex_read_stream(&x, at, take, buf)) {
             xpar_free(buf);
-            FATAL_IO("The set stream is missing bytes [%" PRIu64 ", %" PRIu64
-                     ") that the entry needs.", at, at + take);
+            FATAL_IO("Set stream lacks required bytes [%" PRIu64 ", %" PRIu64
+                     ").", at, at + take);
           }
-          if (pass == 0) xpar_blake3_update(&h, buf, (sz) take);
-          else           xpar_xwrite(xpar_stdout, buf, (sz) take);
+          xpar_blake3_update(&h, buf, (sz) take);
           at += take;  left -= take;
         }
       }
-      if (pass == 0) {
-        xpar_blake3_final(&h, got, 32);
-        if (xpar_memcmp(got, e->content_hash, 32)) {
-          xpar_free(buf);
-          FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-                     "The stream does not match the recorded hash; nothing "
-                     "was written. `xpar repair` is the next move.");
+      xpar_blake3_final(&h, got, 32);
+      if (!xpar_memcmp(got, e->content_hash, 32)) break;
+      /*  Retry after lazy inner-code correction, as file extraction does.  */
+      if (pass == 0 && e->extent_count) {
+        u64 lo = 0, hi = 0;
+        for (k = 0; k < e->extent_count; k++) {
+          u64 a = e->extents[k].stream_offset;
+          u64 b = a + e->extents[k].length;
+          if (!k || a < lo) lo = a;
+          if (!k || b > hi) hi = b;
         }
+        if (ex_armour_apply(&x, lo, hi)) continue;
+      }
+      xpar_free(buf);
+      FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+                 "Stream hash mismatch; nothing written. Run `xpar repair`.");
+    }
+    for (k = 0; k < e->extent_count; k++) {
+      u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
+      while (left) {
+        u64 take = MIN(left, chunk);
+        if (!ex_read_stream(&x, at, take, buf)) {
+          xpar_free(buf);
+          FATAL_IO("Set stream lacks required bytes [%" PRIu64 ", %" PRIu64
+                   ").", at, at + take);
+        }
+        xpar_xwrite(xpar_stdout, buf, (sz) take);
+        at += take;  left -= take;
       }
     }
     xpar_free(buf);

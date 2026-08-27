@@ -5013,19 +5013,10 @@ int xpar_op_recover(const xpar_options * o) {
     gen_group_stored(&group, &c, g, &layt,
                      layt.vol[target].kind == XPAR_VOL_INDEX
                        ? XPAR_VOL_STANDALONE : target, c.gen[g].set_id);
-    /*  Decide exactly as the writer did, or the volume comes back without
-        the critical group the original carried. The writer thresholds on
-        the armoured size, and counts recovery volumes only: a split LAYT
-        also lists data volumes.  */
+    /*  Count only recovery volumes; split layouts also list data volumes.
+        Use the plain size because recover lacks the original armour settings;
+        exact sizing would require reading them from ARMG.  */
     crit_bytes = group.len;
-    if (o->armour != XPAR_ARMOUR_NONE) {
-      xpar_buf a;
-      xpar_buf_init(&a);
-      gen_armour_pack(&a, o, group.data, group.len, c.gen[g].set_id,
-                      gen_chain_key(&c));
-      crit_bytes = a.len;
-      xpar_buf_free(&a);
-    }
     for (q = 0; q < layt.count; q++) {
       if (layt.vol[q].kind != XPAR_VOL_RECOVERY) continue;
       if (q < target) rec_index++;

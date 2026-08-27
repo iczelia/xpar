@@ -30,8 +30,6 @@
 #include "port-fs.h"
 #include "slice.h"
 
-/*  Copy up to `n` entries from the last scrub's codeword histogram.  */
-
 /*  Scrub state.  */
 
 /*  Counts above this limit remain in totals but not the distribution.  */
