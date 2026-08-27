@@ -1270,6 +1270,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
 
   xpar_json_init(&c.js, o->json ? xpar_stdout : xpar_stderr, o->json);
   xpar_progress_init(&c.prog, xpar_progress_wanted(o), 0, "Creating");
+  if (o->json) xpar_progress_sink(&c.prog, xpar_json_progress_sink, &c.js);
 
   c.wr.reproducible = o->reproducible;
   {
@@ -1492,6 +1493,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
 
   xpar_progress_init(&c.prog, xpar_progress_wanted(o),
                      c.geom.stream_length * (c.recovery ? 2 : 1), "Creating");
+  if (o->json) xpar_progress_sink(&c.prog, xpar_json_progress_sink, &c.js);
   emit_json_set(&c);
   emit_json_files(&c);
 
