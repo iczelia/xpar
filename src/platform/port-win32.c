@@ -35,6 +35,7 @@
 #include <wincrypt.h>
 
 #include "common.h"
+#include "port-win-path.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -60,80 +61,9 @@ const char * xpar_getenv(const char * name) { return getenv(name); }
 
 #if !defined(XPAR_WIN_LEGACY)
 
-static wchar_t * to_wide(const char * s) {
-  int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
-  wchar_t * w;
-  if (n <= 0) return NULL;
-  w = HeapAlloc(GetProcessHeap(), 0, (sz) n * sizeof(wchar_t));
-  if (!w) return NULL;
-  if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) {
-    HeapFree(GetProcessHeap(), 0, w);
-    return NULL;
-  }
-  return w;
-}
-
-static wchar_t * to_wide_path(const char * s) {
-  wchar_t * raw = to_wide(s), * full, * out;
-  DWORD n, got;
-  sz bytes;
-  if (!raw) return NULL;
-  if ((raw[0] == L'\\' && raw[1] == L'\\' &&
-       (raw[2] == L'?' || raw[2] == L'.') && raw[3] == L'\\') ||
-      (raw[0] == L'\\' && raw[1] == L'?' && raw[2] == L'?' &&
-       raw[3] == L'\\')) {
-    HeapFree(GetProcessHeap(), 0, raw);
-    SetLastError(ERROR_INVALID_NAME);
-    return NULL;
-  }
-  n = GetFullPathNameW(raw, 0, NULL, NULL);
-  if (!n || n > 32768u) {
-    HeapFree(GetProcessHeap(), 0, raw);
-    return NULL;
-  }
-  bytes = ((sz) n + 1) * sizeof(*full);
-  full = HeapAlloc(GetProcessHeap(), 0, bytes);
-  if (!full) {
-    HeapFree(GetProcessHeap(), 0, raw);
-    return NULL;
-  }
-  got = GetFullPathNameW(raw, n + 1, full, NULL);
-  HeapFree(GetProcessHeap(), 0, raw);
-  if (!got || got > n) {
-    HeapFree(GetProcessHeap(), 0, full);
-    return NULL;
-  }
-  if (full[0] == L'\\' && full[1] == L'\\') {
-    out = HeapAlloc(GetProcessHeap(), 0,
-                    ((sz) got + 7) * sizeof(*out));
-    if (out) {
-      xpar_memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof(*out));
-      xpar_memcpy(out + 8, full + 2, ((sz) got - 1) * sizeof(*out));
-    }
-  } else {
-    out = HeapAlloc(GetProcessHeap(), 0,
-                    ((sz) got + 5) * sizeof(*out));
-    if (out) {
-      xpar_memcpy(out, L"\\\\?\\", 4 * sizeof(*out));
-      xpar_memcpy(out + 4, full, ((sz) got + 1) * sizeof(*out));
-    }
-  }
-  HeapFree(GetProcessHeap(), 0, full);
-  return out;
-}
-
-static char * to_utf8(const wchar_t * w) {
-  int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
-  char * s;
-  if (n <= 0) return NULL;
-  s = HeapAlloc(GetProcessHeap(), 0, (sz) n);
-  if (!s) return NULL;
-  if (WideCharToMultiByte(CP_UTF8, 0, w, -1, s, n, NULL, NULL) <= 0) {
-    HeapFree(GetProcessHeap(), 0, s);
-    return NULL;
-  }
-  return s;
-}
+/*  Shared UTF and path conversion.  */
+static wchar_t * to_wide_path(const char * s) { return xpar_win_path(s); }
+static char    * to_utf8(const wchar_t * w)   { return xpar_win_utf8(w, -1); }
 
 #endif
 
@@ -936,7 +866,6 @@ u64 xpar_usec_now(void) {
 /*  FILETIME counts 100 ns ticks from 1601-01-01, and 11644473600 is the
     number of seconds from there to the Unix epoch (369 years, 89 of them
     leap).  */
-#define WIN_EPOCH_DELTA_100NS  116444736000000000ULL
 
 i64 xpar_wall_ns(void) {
   FILETIME ft;

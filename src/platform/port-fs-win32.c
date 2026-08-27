@@ -29,8 +29,8 @@
 
 #include "common.h"
 #include "port-fs.h"
+#include "port-win-path.h"
 
-#define WIN_EPOCH_DELTA_100NS  116444736000000000ULL
 
 #if !defined(FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
   #define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
@@ -58,71 +58,13 @@ static void fail_unsupported(void) { SetLastError(ERROR_NOT_SUPPORTED); }
 
 /*  Returns a heap block the caller frees with xpar_free.  */
 #if !defined(XPAR_WIN_LEGACY)
-static wchar_t * path_text(const char * s) {
-  int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
-  wchar_t * w;
-  if (n <= 0) return NULL;
-  w = xpar_alloc_raw((sz) n * sizeof(wchar_t));
-  if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) {
-    xpar_free(w);
-    return NULL;
-  }
-  return w;
-}
-
-static xchar * path_conv(const char * s) {
-  wchar_t * raw = path_text(s), * full, * out;
-  DWORD n, got;
-  if (!raw) return NULL;
-  if ((raw[0] == L'\\' && raw[1] == L'\\' &&
-       (raw[2] == L'?' || raw[2] == L'.') && raw[3] == L'\\') ||
-      (raw[0] == L'\\' && raw[1] == L'?' && raw[2] == L'?' &&
-       raw[3] == L'\\')) {
-    xpar_free(raw);
-    SetLastError(ERROR_INVALID_NAME);
-    return NULL;
-  }
-  n = GetFullPathNameW(raw, 0, NULL, NULL);
-  if (!n || n > 32768u) {
-    xpar_free(raw);
-    return NULL;
-  }
-  full = xpar_alloc_raw(((sz) n + 1) * sizeof(*full));
-  got = GetFullPathNameW(raw, n + 1, full, NULL);
-  xpar_free(raw);
-  if (!got || got > n) {
-    xpar_free(full);
-    return NULL;
-  }
-  if (full[0] == L'\\' && full[1] == L'\\') {
-    out = xpar_alloc_raw(((sz) got + 7) * sizeof(*out));
-    xpar_memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof(*out));
-    xpar_memcpy(out + 8, full + 2, ((sz) got - 1) * sizeof(*out));
-  } else {
-    out = xpar_alloc_raw(((sz) got + 5) * sizeof(*out));
-    xpar_memcpy(out, L"\\\\?\\", 4 * sizeof(*out));
-    xpar_memcpy(out + 4, full, ((sz) got + 1) * sizeof(*out));
-  }
-  xpar_free(full);
-  return out;
+static wchar_t * path_text(const char * s) { return xpar_win_wide(s); }
+static xchar   * path_conv(const char * s) { return xpar_win_path(s); }
+static char * path_back(const wchar_t * w, int wlen) {
+  return xpar_win_utf8(w, wlen);
 }
 #else
 static xchar * path_conv(const char * s) { return xpar_strdup(s); }
-#endif
-
-#if !defined(XPAR_WIN_LEGACY)
-static char * path_back(const wchar_t * w, int wlen) {
-  int n = WideCharToMultiByte(CP_UTF8, 0, w, wlen, NULL, 0, NULL, NULL);
-  char * s;
-  if (n < 0) return NULL;
-  s = xpar_alloc_raw((sz) n + 1);
-  if (n && WideCharToMultiByte(CP_UTF8, 0, w, wlen, s, n, NULL, NULL) <= 0) {
-    xpar_free(s);
-    return NULL;
-  }
-  s[n] = '\0';
-  return s;
-}
 #endif
 
 static i64 ft_ns(FILETIME ft) {
