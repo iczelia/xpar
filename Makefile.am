@@ -179,12 +179,12 @@ libxpar_pmull_a_CPPFLAGS   = $(AM_CPPFLAGS)
 xpar_LDADD                += libxpar_pmull.a
 endif
 
-if HAVE_SVE2
-noinst_LIBRARIES          += libxpar_sve2.a
-libxpar_sve2_a_SOURCES     = src/kernel/gf-sve2.c
-libxpar_sve2_a_CFLAGS      = $(AM_CFLAGS) $(SVE2_CFLAGS)
-libxpar_sve2_a_CPPFLAGS    = $(AM_CPPFLAGS)
-xpar_LDADD                += libxpar_sve2.a
+if HAVE_SVE
+noinst_LIBRARIES          += libxpar_sve.a
+libxpar_sve_a_SOURCES      = src/kernel/gf-sve.c
+libxpar_sve_a_CFLAGS       = $(AM_CFLAGS) $(SVE_CFLAGS)
+libxpar_sve_a_CPPFLAGS     = $(AM_CPPFLAGS)
+xpar_LDADD                += libxpar_sve.a
 endif
 
 if HAVE_VSX
@@ -230,7 +230,7 @@ check_PROGRAMS =
 TESTS =
 else
 check_PROGRAMS = tests/t_unit tests/t_codec tests/t_central \
-                 tests/mkdata tests/damage bench/timeit
+                 tests/mkdata tests/damage tests/forge bench/timeit
 
 tests_t_unit_SOURCES    = tests/t_unit.c
 tests_t_unit_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
@@ -252,6 +252,11 @@ tests_damage_SOURCES    = tests/damage.c
 tests_damage_CPPFLAGS   =
 tests_damage_LDADD      =
 
+## forge links xpar to sign packets.
+tests_forge_SOURCES     = tests/forge.c
+tests_forge_CPPFLAGS    = $(AM_CPPFLAGS)
+tests_forge_LDADD       = $(xpar_LDADD)
+
 
 TESTS = tests/t_unit tests/t_codec tests/t_central \
         tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
@@ -268,6 +273,7 @@ AM_TESTS_ENVIRONMENT = \
   XPAR='$(abs_top_builddir)/xpar$(EXEEXT)';           export XPAR; \
   MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
   DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
+  FORGE='$(abs_top_builddir)/tests/forge$(EXEEXT)';   export FORGE; \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
   XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
   XPAR_SH='$(SHELL)';                                 export XPAR_SH; \
