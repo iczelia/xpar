@@ -315,6 +315,17 @@ static bool link_less(const linkid * a, const linkid * b) {
   return a->entry < b->entry;
 }
 
+/*  id[] remains entry-sorted until the inode sort.  */
+static bool link_find(const linkid * id, u32 n, u32 entry, linkid * out) {
+  u32 lo = 0, hi = n;
+  while (lo < hi) {
+    u32 mid = lo + (hi - lo) / 2;
+    if (id[mid].entry == entry) { *out = id[mid];  return true; }
+    if (id[mid].entry < entry) lo = mid + 1;  else hi = mid;
+  }
+  return false;
+}
+
 static void link_sift(linkid * a, u32 root, u32 n) {
   while (1) {
     u32 ch = 2 * root + 1, big;
@@ -355,15 +366,14 @@ static void check_links(scrub * c) {
   /*  Direction one: the manifest says these names share an inode.  */
   for (i = 0; i < m->count; i++) {
     i64 tgt;
-    u32 a, b;
-    bool ha = false, hb = false;
+    bool ha, hb;
     linkid ia, ib;
     if (m->entry[i].entry_type != XPAR_ENTRY_HARDLINK) continue;
     tgt = xpar_link_target(m, &nix, i);
     if (tgt < 0) continue;
     xpar_memset(&ia, 0, sizeof ia);  xpar_memset(&ib, 0, sizeof ib);
-    for (a = 0; a < n; a++) if (id[a].entry == i)   { ia = id[a];  ha = 1; }
-    for (b = 0; b < n; b++) if (id[b].entry == tgt) { ib = id[b];  hb = 1; }
+    ha = link_find(id, n, i, &ia);
+    hb = link_find(id, n, (u32) tgt, &ib);
     if (ha && hb && (ia.dev != ib.dev || ia.ino != ib.ino)) {
       c->link_drift++;
       if (!c->o->quiet)
