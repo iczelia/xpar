@@ -66,8 +66,23 @@ bool xpar_scan_digits(const char * s, sz * at, sz end) {
   return true;
 }
 
+/*  Trim the final component to leave room for the staging suffix.  */
+static char * stage_stem(const char * stem, sz suffix) {
+  const char * base = xpar_path_base(stem);
+  sz dirlen = (sz) (base - stem), blen = xpar_strlen(base);
+  sz room = suffix < XPAR_COMPONENT_MAX ? XPAR_COMPONENT_MAX - suffix : 1;
+  char * out;
+  if (blen <= room) return xpar_strdup(stem);
+  out = (char *) xpar_alloc_raw(dirlen + room + 1);
+  if (dirlen) xpar_memcpy(out, stem, dirlen);
+  xpar_memcpy(out + dirlen, base, room);
+  out[dirlen + room] = 0;
+  return out;
+}
+
 xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
                             char ** out) {
+  char * trimmed = stage_stem(stem, 2 * STAGE_RANDOM + 4);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
@@ -75,28 +90,32 @@ xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
     xpar_file * f;
     xpar_random_bytes(rnd, sizeof rnd);
     xpar_hex(hex, rnd, sizeof rnd);
-    xpar_asprintf(&path, "%s%s.tmp", stem, hex);
+    xpar_asprintf(&path, "%s%s.tmp", trimmed, hex);
     f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL);
     if (f) {
       (void) xpar_set_mode(path, nofollow, 0600);
       *out = path;
+      xpar_free(trimmed);
       return f;
     }
     xpar_free(path);
   }
+  xpar_free(trimmed);
   return NULL;
 }
 
 char * xpar_stage_dir(const char * stem) {
+  char * trimmed = stage_stem(stem, 2 * STAGE_RANDOM);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
     char * path = NULL;
     xpar_random_bytes(rnd, sizeof rnd);
     xpar_hex(hex, rnd, sizeof rnd);
-    xpar_asprintf(&path, "%s%s", stem, hex);
-    if (xpar_mkdir(path, 0700) == 0) return path;
+    xpar_asprintf(&path, "%s%s", trimmed, hex);
+    if (xpar_mkdir(path, 0700) == 0) { xpar_free(trimmed);  return path; }
     xpar_free(path);
   }
+  xpar_free(trimmed);
   return NULL;
 }

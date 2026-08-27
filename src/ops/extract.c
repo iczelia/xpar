@@ -512,15 +512,28 @@ static char * ex_resolve_leaf(ex * x, const xpar_entry * e) {
   return out;
 }
 
+/*  Trim full-length components to leave room for the staging suffix.  */
 static char * ex_stage_name(const char * path) {
   xpar_stat_t st;
+  const char * base = xpar_path_base(path);
+  sz dirlen = (sz) (base - path), blen = xpar_strlen(base);
+  sz room = XPAR_COMPONENT_MAX - sizeof ".xpar-stage-000";
+  char * stem;
   u32 i;
+  if (blen <= room) stem = xpar_strdup(path);
+  else {
+    stem = (char *) xpar_alloc_raw(dirlen + room + 1);
+    if (dirlen) xpar_memcpy(stem, path, dirlen);
+    xpar_memcpy(stem + dirlen, base, room);
+    stem[dirlen + room] = 0;
+  }
   for (i = 0; i < 1000; i++) {
     char * p = NULL;
-    xpar_asprintf(&p, "%s.xpar-stage-%03" PRIu32, path, i);
-    if (xpar_lstat(p, &st) != 0) return p;
+    xpar_asprintf(&p, "%s.xpar-stage-%03" PRIu32, stem, i);
+    if (xpar_lstat(p, &st) != 0) { xpar_free(stem);  return p; }
     xpar_free(p);
   }
+  xpar_free(stem);
   return NULL;
 }
 
@@ -863,9 +876,14 @@ int xpar_op_extract(const xpar_options * o) {
                xpar_lstat(x.dest, &st) == 0 && !st.is_symlink, x.dest);
   x.caps = xpar_fs_caps(x.dest);
   x.path_flags = 0;
+#if defined(_WIN32) || defined(__CYGWIN__) || defined(__MSDOS__)
+  /*  Windows and DOS always interpret backslashes and reserved names.  */
+  x.path_flags = XPAR_PATH_WIN | XPAR_PATH_NOCASE;
+#endif
+  /*  Apply portable naming rules to non-POSIX destinations.  */
   if (!(x.caps & (XPAR_FS_LINKID | XPAR_FS_HARDLINK | XPAR_FS_OWNER)) ||
       o->mangle)
-    x.path_flags = XPAR_PATH_WIN | XPAR_PATH_NOCASE;
+    x.path_flags |= XPAR_PATH_WIN | XPAR_PATH_NOCASE;
 
   { xpar_mf_limits lim;
     xpar_mf_result res;

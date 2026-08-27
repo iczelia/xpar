@@ -125,6 +125,8 @@ typedef struct {
   u8 *         fstate;        /*  Bit 0: the file exists. Bit 1: too long.  */
   xpar_resync_map * resync;   /*  Strongly confirmed displaced slices.  */
 
+  u64          unrecovered;   /*  Entries repair could not reproduce.  */
+
   xpar_erasures er;           /*  Cells with no intact occurrence.  */
   u8 *          susp;         /*  Cells damaged in at least one place.  */
 
@@ -1915,10 +1917,8 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       else xpar_blake3_init(&h);
     while (at < e->length) {
       u64 take = MIN(chunk, e->length - at);
-      if (!rp_read_repaired(r, i, at, take, buf))
-        FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-                   "The repaired bytes for '%.*s' became unreadable.",
-                   (int) e->name_len, e->name);
+      /*  The content hash, not a short read, validates rebuilt data.  */
+      (void) rp_read_repaired(r, i, at, take, buf);
       xpar_xwrite(f, buf, (sz) take);
       xpar_blake3_update(&h, buf, (sz) take);
       at += take;
@@ -1928,16 +1928,27 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       FATAL_IO("Flushing staged repair of '%s' failed.", out);
     xpar_xclose(f);
       xpar_blake3_final(&h, got, sizeof got);
-      FATAL_UNLESS("The staged repair of '%.*s' failed its content hash.",
-                   xpar_ct_equal(got, e->content_hash, sizeof got),
-                   (int) e->name_len, e->name);
+      /*  Skip unrecoverable entries without abandoning the tree.  */
+      if (!xpar_ct_equal(got, e->content_hash, sizeof got)) {
+        xpar_remove(stage);
+        xpar_free(stage);  xpar_free(bak);  xpar_free(out);
+        r->unrecovered++;
+        rp_note(r, "xpar: '%.*s' could not be reproduced; omitted from "
+                "the repaired tree\n",
+                (int) e->name_len, e->name);
+        continue;
+      }
       if (backup) {
-        bak = rp_backup_name(out);
-        if (xpar_rename(out, bak) != 0)
-          FATAL_IO("Cannot preserve '%s' as '%s': %s.", out, bak,
-                   xpar_strerror(xpar_errno()));
+        xpar_stat_t bst;
+        /*  Missing entries have no original to back up.  */
+        if (xpar_lstat(out, &bst) == 0) {
+          bak = rp_backup_name(out);
+          if (xpar_rename(out, bak) != 0)
+            FATAL_IO("Cannot preserve '%s' as '%s': %s.", out, bak,
+                     xpar_strerror(xpar_errno()));
+        }
         if (xpar_rename(stage, out) != 0) {
-          (void) xpar_rename(bak, out);
+          if (bak) (void) xpar_rename(bak, out);
           FATAL_IO("Publishing repaired '%s' failed: %s.", out,
                    xpar_strerror(xpar_errno()));
         }
@@ -3472,6 +3483,14 @@ int xpar_op_repair(const xpar_options * o) {
       rp_write_tree(&r, o->dest == XPAR_DEST_TO ? o->to_dir : r.dir,
                     o->dest == XPAR_DEST_BACKUP);
     r.changed = r.writes > 0;
+    if (r.unrecovered) {
+      rp_note(&r, "xpar: %" PRIu64 " entr%s unrecoverable; repaired the "
+              "rest of the tree\n",
+              r.unrecovered, r.unrecovered == 1 ? "y is" : "ies are");
+      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
+      rp_free(&r);
+      return XPAR_EXIT_UNREPAIRABLE;
+    }
     rp_report(&r, "repaired", XPAR_EXIT_OK);
     rp_free(&r);
     return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE

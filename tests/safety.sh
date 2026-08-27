@@ -512,7 +512,7 @@ head -c 120000 keep/a.bin > tree/a.bin
 run 0 "$XPAR" repair --in-place --keep-journal s.xpa
 same tree/a.bin keep/a.bin
 run 0 "$XPAR" undo s.xpa
-equal "undo restored the truncated length" "`wc -c < tree/a.bin`" "120000"
+equal "undo restored the truncated length" "`nbytes < tree/a.bin`" "120000"
 cd ..
 
 # Undo restores an overlong tail.
@@ -541,6 +541,83 @@ rm -f tree/a.bin
 run 0 "$XPAR" repair --in-place --no-journal s.xpa
 same tree/a.bin keep/a.bin
 cd ..
+cd ..
+
+# Content hashes validate rebuilt entries; one failure must not abort the tree.
+
+step "a missing entry does not abandon the rest of the tree"
+
+mkdir missing;  cd missing || hard_error cd
+mkdir tree
+mkfile tree/f1.bin 131072
+mkfile tree/f2.bin 131072 2222
+mkfile tree/f3.bin 131072 3333
+mkfile tree/f4.bin 131072 4444
+cp -r tree keep
+run 0 "$XPAR" create -r 400% -s 16K -o base -R tree
+
+damage_and_drop() {
+  rm -rf tree;  cp -r keep tree
+  "$DAMAGE" tree/f1.bin "rand=4096,64" || hard_error "damage failed"
+  "$DAMAGE" tree/f4.bin "rand=8192,64" || hard_error "damage failed"
+  rm -f tree/f2.bin
+}
+
+# --to rebuilds the missing entry.
+damage_and_drop
+run 0 "$XPAR" repair --to=out base.xpa
+for f in f1 f2 f3 f4; do same "out/tree/$f.bin" "keep/$f.bin"; done
+equal "no stage file was orphaned" "`find out -name '*.tmp' | nlines`" "0"
+
+# --backup rebuilds it and backs up only existing files.
+damage_and_drop
+run 0 "$XPAR" repair --backup base.xpa
+for f in f1 f2 f3 f4; do same "tree/$f.bin" "keep/$f.bin"; done
+equal "backups kept for the two damaged files" "`ls tree/*.1 | nlines`" "2"
+equal "no stage file was orphaned" "`find tree -name '*.tmp' | nlines`" "0"
+
+# --in-place also rebuilds it.
+damage_and_drop
+run 0 "$XPAR" repair --in-place base.xpa
+for f in f1 f2 f3 f4; do same "tree/$f.bin" "keep/$f.bin"; done
+note "a missing entry is rebuilt by every destination"
+cd ..
+
+# Full-length components must leave room for staging suffixes.
+
+step "full-length path components extract and repair"
+
+mkdir longname;  cd longname || hard_error cd
+long=`awk 'BEGIN{ s = "";  while (length(s) < 255) s = s "z";  print s }'`
+equal "the test name is a full component" "`printf %s \"$long\" | nbytes`" "255"
+mkdir tree
+mkfile "tree/$long" 131072
+cp -r tree keep
+run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
+run 0 "$XPAR" extract --to=out arc.xpa
+same "out/tree/$long" "keep/$long"
+run 0 "$XPAR" create -r 300% -s 16K -o base -R tree
+"$DAMAGE" "tree/$long" "rand=4096,64" || hard_error "damage failed"
+run 0 "$XPAR" repair --to=rout base.xpa
+same "rout/tree/$long" "keep/$long"
+run 0 "$XPAR" repair --in-place base.xpa
+same "tree/$long" "keep/$long"
+staged=`find . -name '*.xpar-stage-*' -o -name '*.tmp' | nlines`
+equal "nothing was left staged" "$staged" "0"
+cd ..
+
+# Windows and DOS always enforce their rules; --mangle does so here.
+
+step "Windows naming rules reject backslashes"
+
+mkdir winrules;  cd winrules || hard_error cd
+mkdir tree
+printf 'x' > 'tree/back\slash.bin'
+mkfile tree/ok.bin 4096
+run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
+run 0 "$XPAR" extract --to=plain arc.xpa
+run 3 "$XPAR" extract --mangle --to=strict arc.xpa
+note "Windows naming rules refuse backslashes"
 cd ..
 
 summary

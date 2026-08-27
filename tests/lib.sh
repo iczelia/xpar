@@ -168,6 +168,11 @@ exists() {
   if test -e "$1"; then ok;  else bad "$1 does not exist"; fi
 }
 
+# BSD wc pads its output to a fixed width and GNU's does not, so a count
+# compared as a string has to be stripped. These give a bare number anywhere.
+nlines() { wc -l | tr -d ' '; }
+nbytes() { wc -c | tr -d ' '; }
+
 # Read flat JSON Lines without adding an interpreter dependency.
 
 # Select a record type because fields such as "status" are not unique.

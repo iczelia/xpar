@@ -37,6 +37,9 @@ bool xpar_path_ends_with(const char * s, const char * suffix);
     parsed with it.  */
 bool xpar_scan_digits(const char * s, sz * at, sz end);
 
+/*  Maximum component length used by staging helpers.  */
+#define XPAR_COMPONENT_MAX 255
+
 xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
                             char ** out);
 
