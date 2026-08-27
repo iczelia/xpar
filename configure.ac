@@ -234,7 +234,6 @@ SVE_CFLAGS=""
 VSX_CFLAGS=""
 RVV_CFLAGS=""
 RVV_CLMUL_CFLAGS=""
-VPCLMUL_CFLAGS=""
 xpar_have_neon=no
 
 save_CFLAGS="$CFLAGS"
@@ -255,25 +254,6 @@ AC_COMPILE_IFELSE(
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 fi
-
-case "$host_cpu" in
-  x86_64*|amd64*)
-    CFLAGS="$save_CFLAGS -msse4.2 -mavx2 -mvpclmulqdq"
-    AC_MSG_CHECKING([for VPCLMULQDQ intrinsics])
-    AC_COMPILE_IFELSE(
-      [AC_LANG_PROGRAM([[#include <immintrin.h>]], [[
-         __m256i a = _mm256_set1_epi64x(1);
-         __m256i b = _mm256_clmulepi64_epi128(a, a, 0);
-         return (int) _mm_crc32_u64(
-           0, (unsigned long long) _mm256_extract_epi64(b, 0));
-       ]])],
-      [AC_MSG_RESULT([yes])
-       AC_DEFINE([HAVE_VPCLMUL], [1], [Define if VPCLMULQDQ is available])
-       VPCLMUL_CFLAGS="-msse4.2 -mavx2 -mvpclmulqdq"],
-      [AC_MSG_RESULT([no])])
-    CFLAGS="$save_CFLAGS"
-    ;;
-esac
 
 for xpar_rvv_try in "-march=rv64gcv" "-march=rv32gcv" \
                     "-mcpu=generic_rv64+v" "-mcpu=generic_rv32+v"; do
@@ -498,7 +478,6 @@ AC_SUBST([SVE_CFLAGS])
 AC_SUBST([VSX_CFLAGS])
 AC_SUBST([RVV_CFLAGS])
 AC_SUBST([RVV_CLMUL_CFLAGS])
-AC_SUBST([VPCLMUL_CFLAGS])
 AC_SUBST([ARM_CRC_CFLAGS])
 
 AM_CONDITIONAL([HAVE_SSSE3],   [test "x$SSSE3_CFLAGS"   != "x"])
@@ -514,7 +493,6 @@ AM_CONDITIONAL([HAVE_VSX],     [test "x$VSX_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_RVV],     [test "x$RVV_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_RVV_CLMUL],
   [test "x$RVV_CLMUL_CFLAGS" != "x" && test "x$RVV_CFLAGS" != "x"])
-AM_CONDITIONAL([HAVE_VPCLMUL], [test "x$VPCLMUL_CFLAGS" != "x"])
 AM_CONDITIONAL([HAVE_ARM_CRC], [test "x$ARM_CRC_CFLAGS" != "x"])
 
 AX_APPEND_COMPILE_FLAGS([ \
@@ -582,6 +560,5 @@ AC_MSG_NOTICE([
     PowerPC VSX   : ${VSX_CFLAGS:-no}
     RISC-V V      : ${RVV_CFLAGS:-no}
     RISC-V Zvbc   : ${RVV_CLMUL_CFLAGS:-no}
-    VPCLMULQDQ    : ${VPCLMUL_CFLAGS:-no}
     sanitizers    : $enable_sanitizers
 ])
