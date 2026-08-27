@@ -180,6 +180,11 @@ void xpar_json_progress(xpar_json * j, u64 done, u64 total, u64 rate_bps) {
   xpar_json_end(j);
 }
 
+void xpar_json_progress_sink(void * user, u64 done, u64 total,
+                             u64 rate_bps) {
+  xpar_json_progress((xpar_json *) user, done, total, rate_bps);
+}
+
 void xpar_json_summary(xpar_json * j, const char * status, int exit_code) {
   if (!j->enabled) return;
   xpar_json_begin(j, "summary");
