@@ -269,7 +269,10 @@ Descend into directories.
 Exclude matching paths; repeatable.
 .TP
 .BI \-\-include= GLOB
-Re-include matching paths; repeatable.
+Repeatable. Supplying it at all restricts the selection to matching
+paths; it does not re-admit paths that
+.B \-\-exclude
+removed.
 .TP
 .B \-\-follow\-symlinks
 Store target content rather than the symbolic link.
@@ -358,7 +361,8 @@ to be repaired in place, which is an unrelated decision.
 Report only, or exit 1 when anything was repaired.
 .TP
 .BR "scrub \-\-deep" ", " "scrub \-\-rewrite" ", " "scrub \-\-rebuild\-cells"
-Decode all codewords, write corrections, or rebuild per-cell CRCs.
+Re-encode the recovery data from the protected data and compare it,
+write corrections back, or rebuild per-cell CRCs.
 .TP
 .BI "extract \-\-to=" DIR
 Extract below
