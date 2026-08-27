@@ -957,12 +957,17 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
     /*  Entry hashes exclude an overlong tail; journal and remove it.  */
     if (exists && st.size > e->length) r->fstate[i] |= 2;
     if (!exists || st.size != e->length) certified = false;
+    /*  Whether the entry lies in this generation is independent of whether
+        it is certified, so it is settled before the cell walk, whose
+        `certified` guard is only an early exit.  */
+    for (k = 0; k < e->extent_count; k++)
+      if (e->extents[k].stream_offset >= gen_begin &&
+          e->extents[k].stream_offset < gen_end) { touches = true;  break; }
     for (k = 0; k < e->extent_count && certified; k++) {
       const xpar_extent * x = &e->extents[k];
       u64 p;
       if (x->stream_offset < gen_begin || x->stream_offset >= gen_end)
         continue;
-      touches = true;
       for (p = x->stream_offset; p < x->stream_offset + x->length;) {
         u64 s = xpar_slice_of(&r->geom, p);
         u32 c = xpar_cell_of(&r->geom, p);
