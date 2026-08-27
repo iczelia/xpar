@@ -3130,6 +3130,44 @@ static void gen_emit_stored(xpar_buf * out, const xpar_chain * c, u32 g,
   }
 }
 
+/*  Reuse the set's replicated CRTR so added volumes cannot conflict.  */
+static void gen_crtr_stored(xpar_buf * out, const xpar_chain * c, u32 g,
+                            const u8 * set_id) {
+  u32 i;
+  for (i = 0; i < c->crit.count; i++) {
+    const xpar_crit_pkt * p = &c->crit.pkt[i];
+    if (!xpar_pkt_is(&p->hdr, XPAR_T_CRTR)) continue;
+    if (xpar_memcmp(p->hdr.set_id, c->gen[g].set_id, XPAR_SET_ID_LEN))
+      continue;
+    xpar_pkt_write(out, XPAR_T_CRTR, p->hdr.flags, set_id, p->body,
+                   (sz) p->body_len, gen_chain_key(c));
+    return;
+  }
+  xpar_crtr_write(out, "xpar " PACKAGE_VERSION, set_id, gen_chain_key(c),
+                  NULL);
+}
+
+/*  Rebuild a critical group from stored packet bodies.  */
+static void gen_group_stored(xpar_buf * out, const xpar_chain * c, u32 g,
+                             const xpar_layt * layt, u32 this_vol,
+                             const u8 * set_id) {
+  u32 j;
+  xpar_setd_write(out, &c->gen[g].sd, set_id, gen_chain_key(c));
+  for (j = 0; j < c->gen[g].sd.file_count; j++) {
+    const xpar_crit_pkt * q = gen_owned_file(c, g, c->gen[g].sd.file_id[j]);
+    if (q) xpar_pkt_write(out, XPAR_T_FILE, q->hdr.flags, set_id, q->body,
+                          (sz) q->body_len, gen_chain_key(c));
+  }
+  gen_emit_stored(out, c, g, XPAR_T_POSX, set_id);
+  gen_emit_stored(out, c, g, XPAR_T_SLCR, set_id);
+  gen_emit_stored(out, c, g, XPAR_T_AUTH, set_id);
+  if (layt) {
+    xpar_layt l = *layt;
+    l.this_volume = this_vol;
+    xpar_layt_write(out, &l, set_id, gen_chain_key(c));
+  }
+}
+
 /*  The entries of generation `g` as they are on disk, with a source path
     per entry so the stream can be read again. Only the entries whose
     canonical bytes lie in this generation's range are ever read.  */
@@ -3202,7 +3240,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
   gen_plan p;
   gen_tables t;
   u32 * owner = NULL;
-  u32 g, i, j, nvol, base_vol;
+  u32 g, i, nvol, base_vol;
   u64 have, want, axis, e;
   gen_vol * vol;
   xpar_layt layt;
@@ -3346,20 +3384,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
     vh.volume_kind = XPAR_VOL_INDEX;
     xpar_volh_write(&head, &vh, c.gen[g].set_id, gen_chain_key(&c));
     xpar_buf_init(&group);
-    xpar_setd_write(&group, &c.gen[g].sd, c.gen[g].set_id,
-                    gen_chain_key(&c));
-    for (j = 0; j < c.gen[g].sd.file_count; j++) {
-      const xpar_crit_pkt * q = gen_owned_file(&c, g,
-                                               c.gen[g].sd.file_id[j]);
-      if (q) xpar_pkt_write(&group, XPAR_T_FILE, q->hdr.flags,
-                            c.gen[g].set_id, q->body, (sz) q->body_len,
-                            gen_chain_key(&c));
-    }
-    gen_emit_stored(&group, &c, g, XPAR_T_POSX, c.gen[g].set_id);
-    gen_emit_stored(&group, &c, g, XPAR_T_SLCR, c.gen[g].set_id);
-    gen_emit_stored(&group, &c, g, XPAR_T_AUTH, c.gen[g].set_id);
-    old.this_volume = XPAR_VOL_STANDALONE;
-    xpar_layt_write(&group, &old, c.gen[g].set_id, gen_chain_key(&c));
+    gen_group_stored(&group, &c, g, &old, XPAR_VOL_STANDALONE,
+                     c.gen[g].set_id);
     xpar_buf_put(&head, group.data, group.len);
     xpar_buf_free(&group);
     gen_wropt(o, &w);
@@ -3468,23 +3494,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
     {
       xpar_buf group;
       xpar_buf_init(&group);
-      xpar_setd_write(&group, &c.gen[g].sd, c.gen[g].set_id,
-                      gen_chain_key(&c));
-      for (j = 0; j < c.gen[g].sd.file_count; j++) {
-        const xpar_crit_pkt * q = gen_owned_file(&c, g,
-                                                 c.gen[g].sd.file_id[j]);
-        if (q) xpar_pkt_write(&group, XPAR_T_FILE, q->hdr.flags,
-                              c.gen[g].set_id, q->body, (sz) q->body_len,
-                              gen_chain_key(&c));
-      }
-      gen_emit_stored(&group, &c, g, XPAR_T_POSX, c.gen[g].set_id);
-      gen_emit_stored(&group, &c, g, XPAR_T_SLCR, c.gen[g].set_id);
-      gen_emit_stored(&group, &c, g, XPAR_T_AUTH, c.gen[g].set_id);
-      {
-        xpar_layt l = layt;
-        l.this_volume = base_vol + i;
-        xpar_layt_write(&group, &l, c.gen[g].set_id, gen_chain_key(&c));
-      }
+      gen_group_stored(&group, &c, g, &layt, base_vol + i,
+                       c.gen[g].set_id);
       if (o->armour != XPAR_ARMOUR_NONE)
         gen_armour_pack(&out, o, group.data, group.len, c.gen[g].set_id,
                         gen_chain_key(&c));
@@ -3497,8 +3508,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
       xpar_rcvs_write(&out, e, rec, (sz) p.geom.slice_size,
                       c.gen[g].set_id, gen_chain_key(&c));
     }
-    xpar_crtr_write(&out, "xpar " PACKAGE_VERSION, c.gen[g].set_id,
-                    gen_chain_key(&c), NULL);
+    gen_crtr_stored(&out, &c, g, c.gen[g].set_id);
     staged[staged_count].stage = gen_stage_whole(vol[i].name, out.data,
                                                   out.len);
     staged[staged_count].final = vol[i].name;
@@ -4882,28 +4892,6 @@ done:
 
 /*  recover.  */
 
-/*  Reproduce a critical group from stored bodies without changing set_id
-    inputs.  */
-static void gen_group_stored(xpar_buf * out, const xpar_chain * c, u32 g,
-                             const xpar_layt * layt, u32 this_vol,
-                             const u8 * set_id) {
-  u32 j;
-  xpar_setd_write(out, &c->gen[g].sd, set_id, gen_chain_key(c));
-  for (j = 0; j < c->gen[g].sd.file_count; j++) {
-    const xpar_crit_pkt * q = gen_owned_file(c, g, c->gen[g].sd.file_id[j]);
-    if (q) xpar_pkt_write(out, XPAR_T_FILE, q->hdr.flags, set_id, q->body,
-                          (sz) q->body_len, gen_chain_key(c));
-  }
-  gen_emit_stored(out, c, g, XPAR_T_POSX, set_id);
-  gen_emit_stored(out, c, g, XPAR_T_SLCR, set_id);
-  gen_emit_stored(out, c, g, XPAR_T_AUTH, set_id);
-  if (layt) {
-    xpar_layt l = *layt;
-    l.this_volume = this_vol;
-    xpar_layt_write(out, &l, set_id, gen_chain_key(c));
-  }
-}
-
 int xpar_op_recover(const xpar_options * o) {
   xpar_chain c;
   xpar_manifest m;
@@ -5131,8 +5119,7 @@ int xpar_op_recover(const xpar_options * o) {
     xpar_rcvs_write(&out, e, rec, (sz) p.geom.slice_size,
                     c.gen[g].set_id, gen_chain_key(&c));
   }
-  xpar_crtr_write(&out, "xpar " PACKAGE_VERSION, c.gen[g].set_id,
-                  gen_chain_key(&c), NULL);
+  gen_crtr_stored(&out, &c, g, c.gen[g].set_id);
 
   if (o->to_dir && xpar_strlen(o->to_dir))
     xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
