@@ -189,6 +189,13 @@ this is not given.
 .TP
 .BI \-\-layout= WHICH
 .IR sidecar " (default), " split ", or " armoured .
+.B add
+takes the layout of the chain it extends and refuses to change it, since a
+split or armoured generation owns the bytes it protects and a chain that
+mixed layouts could not be extracted as one set.
+.B consolidate
+writes a fresh generation zero, so it inherits the chain's layout but does
+accept a different one.
 .TP
 .BI \-\-codec= WHICH
 .IR auto " (default), " fft ", or " matrix .

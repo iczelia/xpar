@@ -1010,7 +1010,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       FATAL_UNLESS("--cell cannot exceed %" PRIu64 " bytes.",
                    o->cell_bytes <= XPAR_SLICE_REFUSE, XPAR_SLICE_REFUSE);
       break;
-    case O_LAYOUT:    o->layout = need_word(nm, v, w_layout);  break;
+    case O_LAYOUT:    o->layout = need_word(nm, v, w_layout);
+                      o->layout_given = true;  break;
     case O_CODEC: {
       int i = need_word(nm, v, w_codec);
       o->codec = i ? i - 1 : XPAR_CLI_AUTO;

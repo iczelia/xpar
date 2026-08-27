@@ -722,6 +722,27 @@ static void gen_require_write_key(const xpar_chain * c, const char * verb) {
                "%s requires --auth-key=FILE for this set.", verb);
 }
 
+static const char * gen_layout_name(int l) {
+  switch (l) {
+    case XPAR_LAYOUT_SPLIT:    return "split";
+    case XPAR_LAYOUT_ARMOURED: return "armoured";
+    default: break;
+  }
+  return "sidecar";
+}
+
+/*  Existing chains inherit their layout. Only consolidate may change it.  */
+static int gen_chain_layout(const xpar_options * o, const xpar_chain * c,
+                            u32 head, bool extending) {
+  int chain = (int) c->gen[head].sd.layout;
+  if (!o->layout_given) return chain;
+  if (extending && o->layout != chain)
+    FATAL("This chain uses layout '%s'; omit --layout or consolidate to "
+          "change it.",
+          gen_layout_name(chain));
+  return o->layout;
+}
+
 u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   u32 i, found = XPAR_GEN_NONE, matches = 0;
   if (!g) {
@@ -3478,7 +3499,9 @@ int xpar_op_addrecovery(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-int xpar_op_add(const xpar_options * o) {
+int xpar_op_add(const xpar_options * caller) {
+  xpar_options eff = *caller;
+  const xpar_options * o = &eff;
   xpar_chain c;
   xpar_manifest inh, fresh;
   gen_merge g;
@@ -3504,6 +3527,7 @@ int xpar_op_add(const xpar_options * o) {
                "A generation must keep its chain's authentication mode; "
                "this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
+  eff.layout = gen_chain_layout(o, &c, head, true);
 
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
     if (c.gen[i].parent_missing) {
@@ -4496,7 +4520,9 @@ int xpar_op_prune(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-int xpar_op_consolidate(const xpar_options * o) {
+int xpar_op_consolidate(const xpar_options * caller) {
+  xpar_options eff = *caller;
+  const xpar_options * o = &eff;
   xpar_chain c;
   xpar_manifest m;
   xpar_posix_rec ** tab;
@@ -4520,6 +4546,7 @@ int xpar_op_consolidate(const xpar_options * o) {
                "A consolidated set must keep its chain's authentication "
                "mode; this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
+  eff.layout = gen_chain_layout(o, &c, head, false);
   base = o->output ? o->output : c.base;
   if (!base) FATAL("This set has no base name; pass --output.");
   if (!o->output && !o->replace)

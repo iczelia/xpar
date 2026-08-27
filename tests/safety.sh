@@ -300,4 +300,62 @@ run 0 "$XPAR" repair --auth-key=key.bin --in-place set.xpa
 same tree/a.bin tree.orig/a.bin
 cd ..
 
+# Existing chains inherit their layout.
+
+step "an owned-layout chain stays self-contained across add"
+
+for layout in armoured split; do
+  mkdir "own-$layout";  cd "own-$layout" || hard_error cd
+  mkdir tree
+  mkfile tree/a.bin 262144
+  mkfile tree/b.bin 65536 2222
+  cp -r tree tree.orig
+  run 0 "$XPAR" create -s 32K -r 4 --layout="$layout" -o set -R tree
+  mkfile tree/c.bin 131072 3333
+  run 0 "$XPAR" add -r 4 set.xpa -R tree
+
+  case $layout in
+    split)    exists set.g001.d00 ;;
+    armoured) exists set.g001.xpa ;;
+  esac
+
+  rm -rf tree
+  run 0 "$XPAR" extract --to=out set.xpa
+  same out/tree/a.bin tree.orig/a.bin
+  same out/tree/b.bin tree.orig/b.bin
+  exists out/tree/c.bin
+  note "$layout: add kept the set extractable without the originals"
+  cd ..
+done
+
+step "a chain refuses to change layout under it"
+
+mkdir mixed;  cd mixed || hard_error cd
+mkdir tree
+mkfile tree/a.bin 262144
+run 0 "$XPAR" create -s 32K -r 4 --layout=armoured -o set -R tree
+mkfile tree/b.bin 65536 2222
+run 4 "$XPAR" add -r 4 --layout=sidecar set.xpa -R tree
+run 0 "$XPAR" add -r 4 --layout=armoured set.xpa -R tree
+exists set.g001.xpa
+cd ..
+
+step "consolidate keeps the chain's layout"
+
+mkdir flat;  cd flat || hard_error cd
+mkdir tree
+mkfile tree/a.bin 262144
+cp -r tree tree.orig
+run 0 "$XPAR" create -s 32K -r 4 --layout=armoured -o set -R tree
+mkfile tree/b.bin 65536 2222
+cp tree/b.bin tree.orig/b.bin
+run 0 "$XPAR" add -r 4 set.xpa -R tree
+run 0 "$XPAR" consolidate --replace set.xpa
+rm -rf tree
+run 0 "$XPAR" extract --to=out set.xpa
+same out/tree/a.bin tree.orig/a.bin
+same out/tree/b.bin tree.orig/b.bin
+note "the collapsed set is still self-contained"
+cd ..
+
 summary
