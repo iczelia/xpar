@@ -51,24 +51,6 @@ int xpar_parse_u64(const char * s, u64 * out) {
   return 0;
 }
 
-int xpar_parse_i64(const char * s, i64 * out) {
-  int neg = 0;
-  u64 v;
-  if (!s || !*s) return -1;
-  if (*s == '-') { neg = 1;  s++; }
-  if (xpar_parse_u64(s, &v) != 0) return -1;
-  if (neg) {
-    if (v > (u64) INT64_MAX + 1) return -1;
-    /*  Negating INT64_MIN through i64 is undefined, so the endpoint is
-        spelled out rather than computed.  */
-    *out = v == (u64) INT64_MAX + 1 ? INT64_MIN : -(i64) v;
-  } else {
-    if (v > (u64) INT64_MAX) return -1;
-    *out = (i64) v;
-  }
-  return 0;
-}
-
 bool xpar_pread_serial(xpar_read_req * r, sz count) {
   sz i;
   for (i = 0; i < count; i++)

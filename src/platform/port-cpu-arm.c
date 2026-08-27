@@ -33,13 +33,11 @@
   #include <windows.h>
 #endif
 
-/*  AT_HWCAP bit positions, from the Linux kernel: arm64 bit 1 ASIMD and
-    bit 7 CRC32 (Documentation/arch/arm64/elf_hwcaps.rst), arm bit 12 NEON
-    (arch/arm/include/uapi/asm/hwcap.h). They are ABI and cannot move.  */
+/*  Linux HWCAP ABI bits; see the kernel's arm and arm64 UAPI headers.  */
 #define XPAR_HWCAP64_ASIMD  (1UL << 1)
 #define XPAR_HWCAP64_CRC32  (1UL << 7)
 #define XPAR_HWCAP64_PMULL  (1UL << 4)
-#define XPAR_HWCAP2_SVE2    (1UL << 1)
+#define XPAR_HWCAP64_SVE    (1UL << 22)
 #define XPAR_HWCAP32_NEON   (1UL << 12)
 
 #if defined(__APPLE__)
@@ -65,8 +63,8 @@ u32 xpar_cpu_probe(void) {
 #if defined(__ARM_FEATURE_CRYPTO)
   f |= XPAR_CPU_PMULL;
 #endif
-#if defined(__ARM_FEATURE_SVE2)
-  f |= XPAR_CPU_SVE2;
+#if defined(__ARM_FEATURE_SVE)
+  f |= XPAR_CPU_SVE;
 #endif
 
 #if defined(HAVE_GETAUXVAL) && defined(HAVE_SYS_AUXV_H)
@@ -75,18 +73,16 @@ u32 xpar_cpu_probe(void) {
     if (h & XPAR_HWCAP64_ASIMD) f |= XPAR_CPU_NEON;
     if (h & XPAR_HWCAP64_CRC32) f |= XPAR_CPU_ARMCRC;
     if (h & XPAR_HWCAP64_PMULL) f |= XPAR_CPU_PMULL;
+    if (h & XPAR_HWCAP64_SVE)   f |= XPAR_CPU_SVE;
   #else
     if (h & XPAR_HWCAP32_NEON)  f |= XPAR_CPU_NEON;
   #endif
   }
-  #if defined(AT_HWCAP2) && defined(__aarch64__)
-  if (getauxval(AT_HWCAP2) & XPAR_HWCAP2_SVE2) f |= XPAR_CPU_SVE2;
-  #endif
 #elif defined(__APPLE__)
   if (sysctl_flag("hw.optional.neon"))         f |= XPAR_CPU_NEON;
   if (sysctl_flag("hw.optional.armv8_crc32"))  f |= XPAR_CPU_ARMCRC;
   if (sysctl_flag("hw.optional.arm.FEAT_PMULL")) f |= XPAR_CPU_PMULL;
-  if (sysctl_flag("hw.optional.arm.FEAT_SVE2"))  f |= XPAR_CPU_SVE2;
+  if (sysctl_flag("hw.optional.arm.FEAT_SVE"))   f |= XPAR_CPU_SVE;
 #elif defined(_WIN32)
   #if defined(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)
   if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
@@ -111,8 +107,8 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 #if defined(HAVE_PMULL)
   { "clmul-neon", XPAR_CPU_NEON | XPAR_CPU_PMULL    },
 #endif
-#if defined(HAVE_SVE2)
-  { "sve2",       XPAR_CPU_SVE2                     },
+#if defined(HAVE_SVE)
+  { "sve",        XPAR_CPU_SVE                      },
 #endif
 #if defined(HAVE_ARM_CRC32)
   { "neon-crc", XPAR_CPU_NEON | XPAR_CPU_ARMCRC     },

@@ -35,7 +35,7 @@
 #define XPAR_CPU_VBMI      (1u << 10)  /*  AVX-512 VPERMB  */
 #define XPAR_CPU_VPCLMUL   (1u << 11)  /*  vector carry-less multiply  */
 #define XPAR_CPU_PMULL     (1u << 12)  /*  ARM polynomial multiply  */
-#define XPAR_CPU_SVE2      (1u << 13)
+#define XPAR_CPU_SVE      (1u << 13)
 #define XPAR_CPU_RVV       (1u << 14)
 #define XPAR_CPU_RVVCLMUL  (1u << 15)
 #define XPAR_CPU_VSX       (1u << 16)

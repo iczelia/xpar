@@ -201,7 +201,6 @@ int    xpar_strncmp(const char * a, const char * b, sz n);
 char * xpar_strdup (const char * s);
 char * xpar_strndup(const char * s, sz n);
 
-int xpar_parse_i64(const char * s, i64 * out);
 int xpar_parse_u64(const char * s, u64 * out);
 
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap);
