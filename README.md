@@ -28,8 +28,27 @@ in-place, and small (optionally transposed, for better burst error correction)
 blocks are used for the inner code.
 
 Its file format has been extensively documented by the formal specification
-as given by [doc/xpar-format.pdf](doc/xpar-format.pdf).  A manual page is
-also supplied.
+in [doc/xpar-format.tex](doc/xpar-format.tex); `make docs` typesets it, and a
+ready-made `xpar-format-<version>.pdf` is attached to every release.  A manual
+page is also supplied.
+
+## Upgrading from xpar 1.x
+
+xpar 2.0 is a rewrite.  The container format is new and this version is unable
+to read xpar 1.x archives; no 1.x decoder is shipped.  1.x files are refused
+processing:
+
+```
+% xpar verify old.xpa
+xpar: 'old.xpa' is an xpar 1.0 joint-mode archive.
+xpar: decode it with xpar 1.x, then re-protect it.
+```
+
+To move, decode with an xpar 1.x binary and re-protect the result with 2.0.
+
+The command line also changed: operations are verbs rather than mode flags,
+so `-J`, `-W`, `-L`, `-s`, `-t`, `--interlacing`, `-H`/`--integrity` and
+`--auth` are gone.  Scripts written against xpar 1.x will not run unchanged.
 
 ## Installation
 
@@ -102,9 +121,10 @@ xpar: status: repairable
 
 ```
 {"type":"summary","t":4864,"status":"clean","exit":0,"slices_checked":1221,
- "slices_bad":0,"cells_bad":0,"column_depth":0,"recovery_available":366,
- "recovery_needed":0,"entries_damaged":0,"entries_alias_only":0,
- "entries_superseded":0,"syndromes":0,"bytes_read":10001216,"bytes_written":0}
+ "slices_bad":0,"cells_bad":0,"column_depth":0,"column_groups":0,
+ "recovery_available":366,"recovery_needed":0,"entries_damaged":0,
+ "entries_alias_only":0,"entries_opaque":0,"entries_superseded":0,
+ "syndromes":0,"bytes_read":10001216,"bytes_written":0}
 ```
 
 In order to repair broken archives, one may use the `repair` command:
