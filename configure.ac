@@ -155,7 +155,7 @@ AC_CHECK_FUNCS([mmap madvise posix_fadvise posix_memalign aligned_alloc \
                 lsetxattr lgetxattr llistxattr fsetxattr \
                 getpwuid_r getgrgid_r getpwnam_r getgrnam_r \
                 link readlink symlink realpath getrandom arc4random_buf \
-                sysconf getpagesize sched_getaffinity])
+                flock sysconf getpagesize sched_getaffinity])
 
 AC_MSG_CHECKING([for AT_SYMLINK_NOFOLLOW])
 AC_COMPILE_IFELSE(
@@ -428,6 +428,7 @@ AC_COMPILE_IFELSE(
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 
+CFLAGS="$save_CFLAGS -mgfni -mavx512f -mavx512bw -mavx512vl"
 AC_MSG_CHECKING([for GFNI intrinsics with AVX-512])
 AC_COMPILE_IFELSE(
   [AC_LANG_PROGRAM([[#include <immintrin.h>]], [[
