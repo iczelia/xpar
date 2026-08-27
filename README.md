@@ -373,7 +373,7 @@ with `--no-verify-after`) to ensure that the data has been written correctly.
 ## Portability
 
 Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
-/ GFNI-512 / VBMI / VPCLMULQDQ, ARM NEON / PMULL / SVE, PowerPC VSX, and
+/ GFNI-512 / VBMI, ARM NEON / PMULL / SVE, PowerPC VSX, and
 RISC-V vector (both shuffle and clmul paths).  The binary format is
 platform-agnostic.
 
