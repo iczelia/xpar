@@ -345,7 +345,13 @@ xpar_file * xpar_open(const char * path, int flags) {
   if (acc == XPAR_O_WRONLY)     access = GENERIC_WRITE;
   else if (acc == XPAR_O_RDWR)  access = GENERIC_READ | GENERIC_WRITE;
   else                          access = GENERIC_READ;
-  if (flags & XPAR_O_APPEND)    access |= FILE_APPEND_DATA;
+  /*  Append-only is granted only when FILE_APPEND_DATA stands without
+      FILE_WRITE_DATA, which GENERIC_WRITE carries. Keeping both leaves
+      the file pointer at zero and overwrites from the start.  */
+  if (flags & XPAR_O_APPEND) {
+    access &= ~(DWORD) GENERIC_WRITE;
+    access |= FILE_APPEND_DATA | SYNCHRONIZE;
+  }
 
   if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_EXCL))  creation = CREATE_NEW;
   else if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_TRUNC))
