@@ -42,6 +42,22 @@ static const char * const ex_sk_name[EX_SK_COUNT] = {
   "atime", "ctime", "attrs", "symlink-unsafe", "materialised-as-copy"
 };
 
+/*  Map reported degradations to their --require bits.  */
+static const struct { u32 bit;  u8 cls; } ex_require_map[] = {
+  { XPAR_PRES_SETID,     EX_SK_SETID    },
+  { XPAR_PRES_OWNER,     EX_SK_OWNER    },
+  { XPAR_PRES_XATTR,     EX_SK_XATTR    },
+  { XPAR_PRES_XATTR_ALL, EX_SK_XATTR_NS },
+  { XPAR_PRES_MODE,      EX_SK_MODE     },
+  { XPAR_PRES_MTIME,     EX_SK_TIMES    },
+  { XPAR_PRES_BTIME,     EX_SK_BTIME    },
+  { XPAR_PRES_ATIME,     EX_SK_ATIME    },
+  { XPAR_PRES_CTIME,     EX_SK_CTIME    },
+  { XPAR_PRES_ATTRS,     EX_SK_ATTRS    },
+  { XPAR_PRES_LINKS,     EX_SK_SYMLINK  },
+  { XPAR_PRES_LINKS,     EX_SK_LINKCOPY }
+};
+
 /*  Armoured volume and its lazily corrected plaintext.  */
 typedef struct {
   xpar_armour * a;
@@ -102,6 +118,7 @@ typedef struct {
 
   u64 skip[EX_SK_COUNT];
   u64 entries, bytes, links, copies, mismatches, io_failures;
+  u64 substituted;             /*  Data volumes read from a spare copy.  */
   bool owner_failed, xattr_failed;
 } ex;
 
@@ -649,6 +666,12 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
                 XPAR_O_NOFOLLOW);
   if (!f) FATAL_IO("Cannot create '%s': %s.", stage,
                    xpar_strerror(xpar_errno()));
+  /*  Narrow modes before writing; privileged bits wait for metadata.  */
+  if ((x->o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32)
+    (void) xpar_set_mode(stage, 1,
+                         e->mode & XPAR_MODE_PERM &
+                         ~(u32) (XPAR_MODE_SETUID | XPAR_MODE_SETGID |
+                                 XPAR_MODE_STICKY));
   buf = (u8 *) xpar_alloc_raw((sz) chunk);
   if (x->auth_only) xpar_blake3_init_keyed(&h, x->key.k_file);
   else              xpar_blake3_init(&h);
@@ -656,13 +679,18 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
     u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
     while (left) {
       u64 take = MIN(left, chunk);
-      if (!ex_read_stream(x, at, take, buf))
+      if (!ex_read_stream(x, at, take, buf)) {
+        /*  Remove the partial stage on read failure.  */
+        xpar_xclose(f);
+        xpar_remove(stage);
+        xpar_free(stage);  xpar_free(buf);
         FATAL_IO("The set stream is missing bytes [%" PRIu64 ", %" PRIu64
                  ") that "
                  "'%.*s' needs; the data volume holding them is not "
                  "here.", at,
                  (at + take), (int) e->name_len,
                  e->name);
+      }
       xpar_xwrite(f, buf, (sz) take);
       xpar_blake3_update(&h, buf, (sz) take);
       at += take;  left -= take;  fo += take;
@@ -911,6 +939,18 @@ int xpar_op_extract(const xpar_options * o) {
         FATAL_IO("Data volume '%s' is missing; extraction needs the whole "
                  "stream.", path);
       if (xpar_strcmp(v->name, basename)) {
+        /*  Report substituted volumes consistently across verbs.  */
+        char * named = xpar_path_join(x.dir, v->name);
+        xpar_stat_t vst;
+        x.substituted++;
+        if (!o->quiet)
+          xpar_fprintf(xpar_stderr,
+                       xpar_lstat(named, &vst) == 0
+                         ? "xpar: data volume '%s' is damaged; intact copy "
+                           "found as '%s'\n"
+                         : "xpar: data volume '%s' is missing; using '%s'\n",
+                       v->name, basename);
+        xpar_free(named);
         xpar_free(v->name);
         v->name = basename;
       } else {
@@ -954,7 +994,7 @@ int xpar_op_extract(const xpar_options * o) {
   x.path_flags = xpar_host_path_flags();
   /*  Apply portable naming rules to non-POSIX destinations.  */
   if (!(x.caps & (XPAR_FS_LINKID | XPAR_FS_HARDLINK | XPAR_FS_OWNER)) ||
-      o->mangle)
+      o->strict_names)
     x.path_flags |= XPAR_PATH_WIN | XPAR_PATH_NOCASE;
 
   { xpar_mf_limits lim;
@@ -1026,6 +1066,12 @@ int xpar_op_extract(const xpar_options * o) {
     if (!p) continue;
     if (xpar_mkdir_p(p, 0777) != 0 && xpar_lstat(p, &st) != 0)
       FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(xpar_errno()));
+    /*  Restrict private directories before populating them.  */
+    if ((o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32)
+      (void) xpar_set_mode(p, 1,
+                           (e->mode & XPAR_MODE_PERM &
+                            ~(u32) (XPAR_MODE_SETUID | XPAR_MODE_SETGID |
+                                    XPAR_MODE_STICKY)) | 0700);
     xpar_free(p);
   }
   for (i = 0; i < x.mf.count; i++) {
@@ -1086,15 +1132,16 @@ int xpar_op_extract(const xpar_options * o) {
   }
   xpar_free(order);
 
-  if ((o->require & o->preserve & XPAR_PRES_LINKS) && x.copies) {
-    ex_note(&x, "xpar: --require=links: %" PRIu64 " aliases were materialised "
-                "as copies.\n", x.copies);
-    rc = XPAR_EXIT_IO;
+  { u32 q;
+    for (q = 0; q < ARRAY_LEN(ex_require_map); q++) {
+      u8 cls = ex_require_map[q].cls;
+      if (!(o->require & o->preserve & ex_require_map[q].bit)) continue;
+      if (!x.skip[cls]) continue;
+      ex_note(&x, "xpar: --require: %" PRIu64 " entr%s lost %s.\n",
+              x.skip[cls], x.skip[cls] == 1 ? "y" : "ies", ex_sk_name[cls]);
+      rc = XPAR_EXIT_IO;
+    }
   }
-  if ((o->require & o->preserve & XPAR_PRES_OWNER) && x.owner_failed)
-    rc = XPAR_EXIT_IO;
-  if ((o->require & o->preserve & XPAR_PRES_XATTR) && x.xattr_failed)
-    rc = XPAR_EXIT_IO;
   if (x.io_failures) rc = XPAR_EXIT_IO;
   if (x.mismatches && rc == XPAR_EXIT_OK) rc = XPAR_EXIT_REPAIRABLE;
 
@@ -1105,6 +1152,7 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_json_u64(&x.js, "links", x.links);
     xpar_json_u64(&x.js, "materialised_as_copy", x.copies);
     xpar_json_u64(&x.js, "mismatches", x.mismatches);
+    xpar_json_u64(&x.js, "volumes_substituted", x.substituted);
     xpar_json_u64(&x.js, "io_failures", x.io_failures);
     xpar_json_end(&x.js);
     xpar_json_summary(&x.js, rc == XPAR_EXIT_OK ? "ok" : "damaged", rc);

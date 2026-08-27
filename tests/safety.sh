@@ -615,7 +615,7 @@ else
 fi
 cd ..
 
-# Windows and DOS always enforce their rules; --mangle does so here.
+# Windows and DOS always enforce their rules; --strict-names does so here.
 
 step "Windows naming rules reject backslashes"
 
@@ -626,7 +626,7 @@ if can_hold 'tree/back\slash.bin'; then
   mkfile tree/ok.bin 4096
   run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
   run 0 "$XPAR" extract --to=plain arc.xpa
-  run 3 "$XPAR" extract --mangle --to=strict arc.xpa
+  run 3 "$XPAR" extract --strict-names --to=strict arc.xpa
   note "Windows naming rules refuse backslashes"
 else
   note "backslashes are native separators; skipped"
@@ -840,6 +840,174 @@ cd ..
 run 3 "$XPAR" undo spell/base.xpa
 cd spell || hard_error cd
 note "alternate spellings accepted; other directories refused"
+cd ..
+
+# Data that merely looks like a v1 set is data, not a v1 set.
+
+step "create protects files that only resemble xpar 1.x"
+
+mkdir v1look;  cd v1look || hard_error cd
+printf 'XPAS this is a text file\n' > notes.txt
+printf 'XPAL and so is this\n'      > other.txt
+run 0 "$XPAR" create -r 300% -s 4K -o out notes.txt other.txt
+run 0 "$XPAR" verify out.xpa
+#  Real v1 signatures remain invalid set inputs.
+printf 'XPAS\001\002\003\004and the rest of a v1 shard' > shard.xpa
+run 3 "$XPAR" verify shard.xpa
+note "v1-like prefixes remain valid file data"
+cd ..
+
+# Case-folded collisions require their own sort order.
+
+step "case-folded duplicates are found wherever they sort"
+
+mkdir fold;  cd fold || hard_error cd
+mkdir tree
+#  Bytewise these are not neighbours: R, R, Z sort before r.
+for n in README Readme.md Zebra.txt readme; do mkfile "tree/$n" 2048; done
+run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
+run 0 "$XPAR" extract --to=plain a.xpa
+run 3 "$XPAR" extract --strict-names --to=folded a.xpa
+equal "nothing was written from a colliding pair" \
+      "`find folded -type f 2>/dev/null | nlines`" "0"
+cd ..
+
+# A private file must never be briefly readable while it is written.
+
+step "extracted modes are never wider than recorded"
+
+mkdir modes;  cd modes || hard_error cd
+mkdir tree
+mkfile tree/secret.bin 65536
+mkfile tree/public.bin 65536 2222
+chmod 600 tree/secret.bin 2> /dev/null
+chmod 644 tree/public.bin 2> /dev/null
+run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
+run 0 "$XPAR" extract --to=out a.xpa
+equal "the private file kept its mode" "`mode_of out/tree/secret.bin`" "600"
+equal "the public file kept its mode"  "`mode_of out/tree/public.bin`" "644"
+note "modes are restricted before extraction writes data"
+cd ..
+
+# Replacing a journal requires --replace-journal, not -f.
+
+step "a tagless set still gets journal-collision protection"
+
+mkdir tagless;  cd tagless || hard_error cd
+mkfile data.bin 200000
+run 0 "$XPAR" create -r 300% -s 4K --slice-tag=none -o b data.bin
+"$DAMAGE" data.bin "rand=4096,64" || hard_error "damage failed"
+run 0 "$XPAR" repair --in-place -f --keep-journal b.xpa
+exists b.xparundo
+"$DAMAGE" data.bin "rand=8192,64" || hard_error "damage failed"
+run 4 "$XPAR" repair --in-place -f --keep-journal b.xpa
+run 0 "$XPAR" repair --in-place -f --keep-journal --replace-journal b.xpa
+note "-f does not replace journals"
+cd ..
+
+# A generation must not quietly weaken the chain it joins.
+
+step "add keeps the chain's integrity settings"
+
+mkdir strength;  cd strength || hard_error cd
+mkdir tree
+mkfile tree/f1.bin 131072
+run 0 "$XPAR" create -r 20% -s 4K --field=16 --slice-tag=16 -o s -R tree
+mkfile tree/f2.bin 131072 2222
+run 0 "$XPAR" add -r 20% s.xpa -R tree
+field_of() {   # field_of <generation>
+  "$XPAR" info --generation="$1" s.xpa 2> /dev/null |
+    sed -n 's/.*matrix over GF(2^\([0-9]*\)).*/\1/p' | head -1
+}
+tag_of() {     # tag_of <generation>
+  "$XPAR" info --generation="$1" s.xpa 2> /dev/null |
+    sed -n 's/.*strong tag of \([0-9]*\) bytes.*/\1/p' | head -1
+}
+equal "the new generation kept the chain's field" "`field_of 1`" "`field_of 0`"
+equal "the new generation kept the chain's tag length" \
+      "`tag_of 1`" "`tag_of 0`"
+equal "and that field is the one asked for" "`field_of 0`" "16"
+equal "and that tag length is the one asked for" "`tag_of 0`" "16"
+mkfile tree/f3.bin 131072 3333
+run 0 "$XPAR" add -r 20% --slice-tag=8 s.xpa -R tree
+equal "an explicit --slice-tag is still honoured" "`tag_of 2`" "8"
+cd ..
+
+# Report substitute volumes.
+
+step "extract says when it read a substitute volume"
+
+mkdir subst2;  cd subst2 || hard_error cd
+mkdir tree
+mkfile tree/a.bin 400000
+run 0 "$XPAR" create -r 100% -s 4K --layout=split -o sp -R tree
+cp sp.d00 spare.bin
+"$DAMAGE" sp.d00 "rand=1000,4096" || hard_error "damage failed"
+"$XPAR" extract --to=out sp.xpa > /dev/null 2> "$log" || hard_error "extract failed"
+same out/tree/a.bin tree/a.bin
+equal "the substitution was reported" \
+      "`grep -c 'intact copy found' \"$log\"`" "1"
+cd ..
+
+step "the spec's cell bound is enforced"
+
+mkdir cells;  cd cells || hard_error cd
+mkfile big.bin 4194304
+#  The 65536-cell boundary is valid.
+run 0 "$XPAR" create -r 100% -s 268435456 --cell=4096 -o edge big.bin
+#  Reject the first value past it.
+"$XPAR" create -f -r 100% -s 512MB --cell=4096 -o bad big.bin > "$log" 2>&1
+equal "past the bound is refused" "$?" "4"
+equal "the refusal names the cell bound" \
+      "`grep -c '65536 cells' \"$log\"`" "1"
+note "writers enforce K <= 65536"
+cd ..
+
+# An absent tree is not damage when the data is inside the archive.
+
+step "consolidating a self-contained chain says what is really wrong"
+
+mkdir owned;  cd owned || hard_error cd
+mkdir tree
+mkfile tree/a.bin 150000
+run 0 "$XPAR" create -r 50% -s 4K --layout=armoured -o s -R tree
+mkfile tree/b.bin 100000 2222
+run 0 "$XPAR" add -r 50% s.xpa -R tree
+run 0 "$XPAR" consolidate --output=copy s.xpa
+rm -rf tree
+run 0 "$XPAR" extract --to=pre s.xpa
+"$XPAR" consolidate --replace s.xpa > "$log" 2>&1
+equal "it refuses" "$?" "2"
+equal "and does not call the missing tree damage" \
+      "`grep -c 'record the damage as the new truth' \"$log\"`" "0"
+equal "and names the layout as the reason" \
+      "`grep -c 'self-contained' \"$log\"`" "1"
+#  --force cannot replace missing input.
+"$XPAR" consolidate --replace --force s.xpa > "$log" 2>&1
+equal "--force does not pretend to help" "$?" "2"
+exists s.xpa
+cd ..
+
+# explain reads a 384-byte prologue, not the whole archive.
+
+step "explain reads only what it needs"
+
+mkdir explain;  cd explain || hard_error cd
+mkdir tree
+mkfile tree/a.bin 262144
+run 0 "$XPAR" create -r 20% -s 4K --layout=armoured -o a -R tree
+run 0 "$XPAR" create -f -r 20% -s 4K -o s -R tree
+"$XPAR" explain a.xpa > arm.txt 2> "$log" || hard_error "explain failed"
+equal "the armoured recipe is printed" \
+      "`grep -c 'armoured xpar archive' arm.txt`" "1"
+#  Base names resolve to the volume actually read.
+"$XPAR" explain a > base.txt 2> "$log" || hard_error "explain failed"
+equal "a base name resolves to its volume" \
+      "`grep -c 'a.xpa is an armoured' base.txt`" "1"
+#  Packet-bearing volumes still require a full scan.
+"$XPAR" explain s.xpa > side.txt 2> "$log" || hard_error "explain failed"
+equal "a sidecar volume is explained too" \
+      "`grep -c 'packet-bearing xpar volume' side.txt`" "1"
 cd ..
 
 summary

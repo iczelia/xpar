@@ -721,21 +721,22 @@ void xpar_advise_random(xpar_file * f, u64 off, u64 len) {
 
 void * xpar_malloc(sz n) {
   void * p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, n ? n : 1);
-  if (!p) FATAL("Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return p;
 }
 
 void * xpar_calloc(sz n, sz size) {
-  if (n && size && n > (sz) -1 / size) FATAL("Allocation size overflow.");
+  if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
+                              "Allocation size overflow.");
   { void * p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                          n && size ? n * size : 1);
-    if (!p) FATAL("Out of memory.");
+    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
     return p; }
 }
 
 void * xpar_alloc_raw(sz n) {
   void * p = HeapAlloc(GetProcessHeap(), 0, n ? n : 1);
-  if (!p) FATAL("Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return p;
 }
 
@@ -743,7 +744,7 @@ void * xpar_realloc(void * p, sz n) {
   void * q;
   if (!p) return xpar_alloc_raw(n);
   q = HeapReAlloc(GetProcessHeap(), 0, p, n ? n : 1);
-  if (!q) FATAL("Out of memory.");
+  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return q;
 }
 
@@ -763,9 +764,10 @@ void * xpar_alloc_aligned(sz n, sz align) {
   if (!xpar_is_pow2(align)) FATAL("Alignment is not a power of two.");
   if (n == 0) n = 1;
   pad = align + sizeof(void *);
-  if (n > (sz) -1 - pad) FATAL("Allocation size overflow.");
+  if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
+                              "Allocation size overflow.");
   raw = HeapAlloc(GetProcessHeap(), 0, n + pad);
-  if (!raw) FATAL("Out of memory.");
+  if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
       ~(uintptr_t) (align - 1);
   ((void **) a)[-1] = raw;

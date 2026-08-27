@@ -98,6 +98,8 @@ const char * xpar_plan_reason(xpar_plan_status s) {
     case XPAR_PLAN_NO_FIT:       return "no plan fits the memory budget";
     case XPAR_PLAN_BAD_GEOMETRY: return "Z, S or R outside what the field "
                                         "admits";
+    case XPAR_PLAN_TOO_MANY_CELLS:
+      return "slice exceeds 65536 cells; raise --cell or use more slices";
     case XPAR_PLAN_NO_CODEC:     return "no codec can express these "
                                         "parameters";
   }
@@ -359,6 +361,7 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
                                                          : 0;
   gr.field_log2    = probe;
   gs = xpar_geom_choose(&gr, &out->geom);
+  if (gs == XPAR_GEOM_CELLS) return XPAR_PLAN_TOO_MANY_CELLS;
   if (gs != XPAR_GEOM_OK) return XPAR_PLAN_BAD_GEOMETRY;
   out->recovery_slices = r;
 

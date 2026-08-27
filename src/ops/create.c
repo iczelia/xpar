@@ -28,7 +28,6 @@
 #include "pathname.h"
 #include "plan.h"
 #include "slice.h"
-#include "v1detect.h"
 #include "volname.h"
 #include "kernel/armour.h"
 #include "kernel/codec.h"
@@ -67,11 +66,6 @@ typedef struct {
 
 static const xpar_key * create_key(const ctx * c) {
   return c->keyed ? &c->key : NULL;
-}
-
-static void scan_inputs(const xpar_options * o) {
-  For(u32, i, o->path_count,
-      if (xpar_strcmp(o->paths[i], "-")) xpar_v1_refuse_if_v1(o->paths[i]))
 }
 
 static char * base_name(const xpar_options * o) {
@@ -1273,7 +1267,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     c.auth.unkeyed_retained = !o->auth_only;
     xpar_key_check(c.auth.key_check, c.master);
   }
-  scan_inputs(o);
 
   xpar_json_init(&c.js, o->json ? xpar_stdout : xpar_stderr, o->json);
   xpar_progress_init(&c.prog, o->progress != XPAR_PROGRESS_OFF && !o->quiet &&
@@ -1389,7 +1382,10 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     FATAL_CODE(XPAR_EXIT_NOPLAN, "No plan fits: %s.", why);
   }
   if (ps != XPAR_PLAN_OK)
-    FATAL_CODE(XPAR_EXIT_NOPLAN, "%s.", xpar_plan_reason(ps));
+    /*  Format limits are usage errors, not planning failures.  */
+    FATAL_CODE(ps == XPAR_PLAN_TOO_MANY_CELLS ? XPAR_EXIT_USAGE
+                                              : XPAR_EXIT_NOPLAN,
+               "%s.", xpar_plan_reason(ps));
   c.geom = c.plan.geom;
   if (!budget) budget = c.plan.mem_total;
 

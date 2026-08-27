@@ -743,6 +743,15 @@ static int gen_chain_layout(const xpar_options * o, const xpar_chain * c,
   return o->layout;
 }
 
+/*  Inherit field and tag strength unless explicitly overridden.  */
+static void gen_chain_integrity(const xpar_options * o, const xpar_chain * c,
+                                u32 head, xpar_options * eff) {
+  const xpar_setd * sd = &c->gen[head].sd;
+  if (o->field == XPAR_CLI_AUTO)
+    eff->field = sd->field_log2 == 8 ? 8 : 16;
+  if (!o->slice_tag_given) eff->slice_tag = sd->slice_tag_len;
+}
+
 u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   u32 i, found = XPAR_GEN_NONE, matches = 0;
   if (!g) {
@@ -3530,6 +3539,7 @@ int xpar_op_add(const xpar_options * caller) {
                "this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   eff.layout = gen_chain_layout(o, &c, head, true);
+  gen_chain_integrity(o, &c, head, &eff);
 
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
     if (c.gen[i].parent_missing) {
@@ -4543,7 +4553,8 @@ int xpar_op_consolidate(const xpar_options * caller) {
   u32 * owner = NULL;
   gen_write_req rq;
   bool * owned;
-  u32 head, i, caps, bad = 0;
+  u32 head, i, caps, bad = 0, unreadable = 0;
+  bool owned_layout;
   u64 live = 0, total = 0;
   bool warn_posix = false;
   const char * base;
@@ -4560,6 +4571,7 @@ int xpar_op_consolidate(const xpar_options * caller) {
                "mode; this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   eff.layout = gen_chain_layout(o, &c, head, false);
+  owned_layout = c.gen[head].sd.layout != XPAR_LAYOUT_SIDECAR;
   base = o->output ? o->output : c.base;
   if (!base) FATAL("This set has no base name; pass --output.");
   if (!o->output && !o->replace)
@@ -4592,8 +4604,9 @@ int xpar_op_consolidate(const xpar_options * caller) {
     }
     if (!gen_refresh(&m.entry[i], path, o, caps, &warn_posix,
                      gen_chain_key(&c), c.auth_only)) {
-      xpar_fprintf(xpar_stderr, "xpar: cannot read '%s'.\n", path);
-      bad++;  xpar_free(path);  continue;
+      if (!owned_layout)
+        xpar_fprintf(xpar_stderr, "xpar: cannot read '%s'.\n", path);
+      bad++;  unreadable++;  xpar_free(path);  continue;
     }
     if (xpar_memcmp(want, m.entry[i].content_hash, 32)) {
       xpar_fprintf(xpar_stderr,
@@ -4621,6 +4634,14 @@ int xpar_op_consolidate(const xpar_options * caller) {
                  live);
     goto done;
   }
+  /*  Owned layouts cannot consolidate from a missing source tree.  */
+  if (owned_layout && unreadable)
+    FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+               "Cannot consolidate this self-contained chain: %" PRIu32
+               " of %" PRIu32 " source entries are missing. Extract it, "
+               "then create a new %s set from that tree.", unreadable,
+               m.count,
+               gen_layout_name(c.gen[head].sd.layout));
   if (bad && !o->force)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
                "%" PRIu32 " entries do not match the chain; consolidating would "

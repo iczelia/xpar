@@ -173,6 +173,13 @@ exists() {
 nlines() { wc -l | tr -d ' '; }
 nbytes() { wc -c | tr -d ' '; }
 
+# GNU and BSD stat spell the mode differently; try each.
+mode_of() {   # mode_of <path>
+  stat -c '%a' "$1" 2> /dev/null && return 0
+  stat -f '%Lp' "$1" 2> /dev/null && return 0
+  echo "?"
+}
+
 # Test whether shell and native helpers can create a path.
 can_hold() {   # can_hold <path>
   ( : > "$1" ) 2> /dev/null || return 1

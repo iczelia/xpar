@@ -39,6 +39,8 @@ const char * xpar_geom_reason(xpar_geom_status s) {
     case XPAR_GEOM_FIELD:     return "S + R does not fit the field";
     case XPAR_GEOM_UNREACHABLE:
       return "more slices requested than the stream has bytes";
+    case XPAR_GEOM_CELLS:
+      return "slice exceeds 65536 cells; raise --cell or use more slices";
   }
   return "geometry refused";
 }
@@ -99,6 +101,8 @@ xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,
                                       req->armour_frame);
   out->cells_per_slice = out->cell_bytes
                            ? (u32) xpar_ceil_div(z, out->cell_bytes) : 1;
+  if (out->cell_bytes && xpar_ceil_div(z, out->cell_bytes) > XPAR_CELLS_MAX)
+    return XPAR_GEOM_CELLS;
   return XPAR_GEOM_OK;
 }
 
@@ -131,6 +135,8 @@ bool xpar_geom_from_setd(const xpar_setd * sd, xpar_geom * out) {
   if (sd->cell_bytes) {
     if (sd->cell_bytes < XPAR_CELL_MIN || sd->cell_bytes % 64) return false;
     if (sd->cell_bytes > sd->slice_size) return false;
+    if (xpar_ceil_div(sd->slice_size, sd->cell_bytes) > XPAR_CELLS_MAX)
+      return false;
   }
   out->slice_size      = sd->slice_size;
   out->slice_count     = sd->data_slice_count;

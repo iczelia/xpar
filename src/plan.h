@@ -27,6 +27,7 @@ typedef enum {
   XPAR_PLAN_OK = 0,
   XPAR_PLAN_NO_FIT,        /*  Nothing fits the memory budget.  */
   XPAR_PLAN_BAD_GEOMETRY,  /*  S, R or Z outside what the field admits.  */
+  XPAR_PLAN_TOO_MANY_CELLS,/*  ceil(Z/Y) past the format's cell bound.  */
   XPAR_PLAN_NO_CODEC       /*  No codec can express these parameters.  */
 } xpar_plan_status;
 

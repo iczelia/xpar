@@ -2041,11 +2041,12 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
     const xpar_entry * e = &r->mf.entry[i];
     xpar_path_status why;
     char * out;
-    if (e->entry_type != XPAR_ENTRY_DIR &&
-        e->entry_type != XPAR_ENTRY_SYMLINK) continue;
-    out = xpar_path_resolve(dir, e->name, e->name_len, 0, &why);
-    if (out) { rp_basic_meta(r, i, out, e->entry_type == XPAR_ENTRY_SYMLINK);
-               xpar_free(out); }
+    bool link = e->entry_type == XPAR_ENTRY_SYMLINK;
+    if (e->entry_type != XPAR_ENTRY_DIR && !link) continue;
+    /*  Allow the leaf symlink, but reject symlinked parents.  */
+    out = xpar_path_resolve(dir, e->name, e->name_len,
+                            link ? XPAR_PATH_LEAF_LINK : 0, &why);
+    if (out) { rp_basic_meta(r, i, out, link);  xpar_free(out); }
   }
   xpar_free(buf);  xpar_free(hit);
 }
@@ -2579,11 +2580,21 @@ static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
 static void owned_write_tree(const xpar_options *, xpar_vset *,
                              u8 * const *, xpar_file *, const u64 *);
 
+/*  Owned-layout repair summary.  */
+typedef struct {
+  u64  cells_bad;
+  u64  slices_rebuilt;
+  u64  bytes_rebuilt;
+  u64  volumes_rewritten;
+  bool inner_corrected;
+} owned_acct;
+
 /*  Decode owned cells into a sparse stage. Recovery rows stay mapped and
     column width shrinks until the complete footprint fits -m.  */
 static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
                                int checked, const u8 * const * rec,
-                               const u8 * rpresent, u64 rtop) {
+                               const u8 * rpresent, u64 rtop,
+                               owned_acct * acct) {
   const xpar_setd * sd = xpar_vset_setd(s);
   const xpar_geom * g = xpar_vset_geom(s);
   const xpar_erasures * er = xpar_vset_erasures(s);
@@ -2617,12 +2628,17 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
       if (xpar_cell_bad(er, i, (u32) col)) { any = true; break; }
     slot[i] = any ? touched++ : UINT64_MAX;
   }
+  acct->cells_bad = er->bad_count;
+  acct->slices_rebuilt = touched;
+  for (i = 0; i < g->slice_count; i++)
+    if (slot[i] != UINT64_MAX) acct->bytes_rebuilt += xpar_slice_bytes(g, i);
   if (!touched) {
     if (armoured && xpar_vset_inner_corrected(s)) {
       if (o->dest == XPAR_DEST_BACKUP) owned_backup_path(arm_path);
       xpar_garm_write_patched(arm_path, &ap, arm_plain, arm_len, strm_off,
                               g->stream_length, NULL, NULL,
                               g->slice_count, g->slice_size);
+      acct->inner_corrected = true;
     }
     xpar_free(slot);
     return XPAR_EXIT_OK;
@@ -3010,8 +3026,9 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
       u32 idx = order[i], owner = metadata_owner[idx];
       const xpar_posix_rec * pr = NULL;
       xpar_path_status why;
-      char * p = xpar_path_resolve(o->to_dir, e->name, e->name_len, 0, &why);
       bool link = e->entry_type == XPAR_ENTRY_SYMLINK;
+      char * p = xpar_path_resolve(o->to_dir, e->name, e->name_len,
+                                   link ? XPAR_PATH_LEAF_LINK : 0, &why);
       if (!p) continue;
       if (link && !(caps & XPAR_FS_NOFOLLOW)) {
         rp_meta_skip(o, e, "symlink-unsafe",
@@ -3042,7 +3059,8 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
   }
 }
 
-static int repair_owned(const xpar_options * o, xpar_vset * s, int checked) {
+static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
+                        owned_acct * acct) {
   const xpar_setd * sd = xpar_vset_setd(s);
   const xpar_geom * g = xpar_vset_geom(s);
   const xpar_erasures * er = xpar_vset_erasures(s);
@@ -3096,12 +3114,14 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked) {
   for (i = 0; i < rtop; i++) rpresent[i] = rec[i] != NULL;
   if (sd->layout == XPAR_LAYOUT_SPLIT ||
       sd->layout == XPAR_LAYOUT_ARMOURED) {
-    int out = owned_repair_stream(o, s, checked, rec, rpresent, rtop);
+    int out = owned_repair_stream(o, s, checked, rec, rpresent, rtop, acct);
     /*  Rewrite damaged named volumes from intact substitutes.  */
     if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
         o->dest != XPAR_DEST_TO) {
       const char * why = NULL;
+      acct->volumes_rewritten = xpar_vset_volumes_to_rewrite(s);
       if (!xpar_vset_rewrite_substituted(s, &why)) {
+        acct->volumes_rewritten = 0;
         if (!o->quiet)
           xpar_fprintf(xpar_stderr,
                        "xpar: could not rewrite a data volume: %s\n",
@@ -3295,10 +3315,12 @@ int xpar_op_repair(const xpar_options * o) {
     const xpar_setd * osd = xpar_vset_setd(owned);
     if (osd->layout != XPAR_LAYOUT_SIDECAR) {
       xpar_json owned_js;
+      owned_acct acct;
       u8 owned_layout = osd->layout;
       int before = xpar_vset_check(owned, o, NULL);
       int out;
       bool changed = before != XPAR_EXIT_OK;
+      xpar_memset(&acct, 0, sizeof acct);
       xpar_json_init(&owned_js, xpar_stdout, o->json);
       if (o->json) xpar_vset_json_set(owned, &owned_js);
       if (o->dry_run) {
@@ -3325,7 +3347,7 @@ int xpar_op_repair(const xpar_options * o) {
         ex.verb = XPAR_VERB_EXTRACT;
         return xpar_op_extract(&ex);
       }
-      out = repair_owned(o, owned, before);
+      out = repair_owned(o, owned, before, &acct);
       xpar_vset_close(owned);
       if (out == XPAR_EXIT_OK && o->dest != XPAR_DEST_TO) {
         owned = xpar_vset_open(o);
@@ -3342,6 +3364,11 @@ int xpar_op_repair(const xpar_options * o) {
         xpar_json_bool(&owned_js, "changed", changed);
         xpar_json_str(&owned_js, "destination",
                       o->dest == XPAR_DEST_TO ? "tree" : "set");
+        xpar_json_u64(&owned_js, "cells_damaged", acct.cells_bad);
+        xpar_json_u64(&owned_js, "slices_rebuilt", acct.slices_rebuilt);
+        xpar_json_u64(&owned_js, "bytes_rebuilt", acct.bytes_rebuilt);
+        xpar_json_u64(&owned_js, "volumes_rewritten", acct.volumes_rewritten);
+        xpar_json_bool(&owned_js, "inner_corrected", acct.inner_corrected);
         xpar_json_end(&owned_js);
         xpar_json_summary(&owned_js,
                           out == XPAR_EXIT_OK ? "clean" :
@@ -3349,9 +3376,23 @@ int xpar_op_repair(const xpar_options * o) {
                                                        "unrepairable",
                           out);
       }
-      if (!o->quiet)
-        xpar_fprintf(xpar_stderr, "xpar: owned-layout repair: %s\n",
-                     out == XPAR_EXIT_OK ? "clean" : "unrepairable");
+      if (!o->quiet && out != XPAR_EXIT_OK)
+        xpar_fprintf(xpar_stderr, "xpar: owned-layout repair: unrepairable\n");
+      else if (!o->quiet && !acct.slices_rebuilt && !acct.volumes_rewritten &&
+               !acct.inner_corrected)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: owned-layout repair: no repair needed\n");
+      else if (!o->quiet)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: owned-layout repair: %" PRIu64 " cell%s damaged, %"
+                     PRIu64 " slice%s rebuilt, %" PRIu64 " byte%s; %" PRIu64
+                     " data volume%s rewritten%s.\n",
+                     acct.cells_bad, PLURAL(acct.cells_bad),
+                     acct.slices_rebuilt, PLURAL(acct.slices_rebuilt),
+                     acct.bytes_rebuilt, PLURAL(acct.bytes_rebuilt),
+                     acct.volumes_rewritten, PLURAL(acct.volumes_rewritten),
+                     acct.inner_corrected
+                       ? "; the inner code corrected the archive" : "");
       return out;
     }
     xpar_vset_close(owned);
@@ -3534,11 +3575,13 @@ int xpar_op_repair(const xpar_options * o) {
     xpar_free(r.journal);
     r.journal = j;
   }
+  /*  Replacing a journal requires its own option, not -f.  */
   { xpar_stat_t st;
-    if (!o->no_journal && !o->force && xpar_lstat(r.journal, &st) == 0 &&
+    if (!o->no_journal && !o->replace_journal &&
+        xpar_lstat(r.journal, &st) == 0 &&
         st.size >= RP_J_HDR + RP_J_FOOT)
-      FATAL("Undo journal '%s' already exists; run `xpar undo` or use -f "
-            "to replace it.", r.journal);
+      FATAL("Undo journal '%s' exists; run xpar undo or pass "
+            "--replace-journal.", r.journal);
   }
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);

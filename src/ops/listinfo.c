@@ -732,27 +732,32 @@ static void li_recipe(const char * file, u64 hdr, u64 w, u64 n, u64 k,
 }
 
 int xpar_op_explain(const xpar_options * o) {
-  u8 * data;  sz len = 0;
+  /*  Armoured recipes need only the three 128-byte prologues.  */
+  u8 head[384];
+  u8 * data = NULL;  sz len = 0, got;
   xpar_arm_prologue pr;
   int which = 0;
   xpar_file * f;
   i64 fsize;
   xpar_json js;
+  /*  Resolve base names like other verbs.  */
+  const char * path = o->set_ref.count ? o->set_ref.vol[0] : o->set;
 
   xpar_json_init(&js, xpar_stdout, o->json);
 
-  f = xpar_open(o->set, XPAR_O_RDONLY);
-  if (!f) FATAL_IO("Cannot open '%s': %s.", o->set,
+  f = xpar_open(path, XPAR_O_RDONLY);
+  if (!f) FATAL_IO("Cannot open '%s': %s.", path,
                    xpar_strerror(xpar_errno()));
   fsize = xpar_size(f);
   if (fsize < 0 || (u64) fsize >= (u64) (sz) -1)
-    FATAL_IO("Cannot size '%s'.", o->set);
-  data = (u8 *) xpar_alloc_raw((sz) fsize + 1);
-  if (fsize) xpar_xread(f, data, (sz) fsize);
-  xpar_xclose(f);
+    FATAL_IO("Cannot size '%s'.", path);
   len = (sz) fsize;
+  got = len < sizeof head ? len : sizeof head;
+  xpar_memset(head, 0, sizeof head);
+  if (got && xpar_pread(f, head, got, 0) != got)
+    FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
 
-  if (xpar_garm_prologue(data, len, &pr, &which)) {
+  if (xpar_garm_prologue(head, len, &pr, &which)) {
     u64 w = pr.symbol_bits / 8;
     u64 fx = pr.depth * pr.n * w;
     u64 frames = fx ? xpar_ceil_div(pr.armoured_length, fx) : 0;
@@ -773,7 +778,7 @@ int xpar_op_explain(const xpar_options * o) {
                    "  plaintext        %" PRIu64 " bytes\n"
                    "  armoured region  %" PRIu64 " bytes at offset %d\n"
                    "  protected stream %" PRIu64 " bytes at plaintext offset %" PRIu64 "\n\n",
-                   o->set, which + 1, w,
+                   path, which + 1, w,
                    w == 1 ? "" : "s", pr.symbol_bits,
                    pr.n, pr.k,
                    ((pr.n - pr.k) / 2),
@@ -793,7 +798,7 @@ int xpar_op_explain(const xpar_options * o) {
       xpar_json_str(&js, "layout", "armoured");
       xpar_json_end(&js);
       xpar_json_begin(&js, "recipe");
-      xpar_json_str(&js, "source", o->set);
+      xpar_json_str(&js, "source", path);
       xpar_json_str(&js, "kind", "protected-stream");
       xpar_json_u64(&js, "header_bytes", ARM_HDR_EXPLAIN);
       xpar_json_u64(&js, "symbol_bytes", w);
@@ -805,14 +810,20 @@ int xpar_op_explain(const xpar_options * o) {
       xpar_json_end(&js);
       xpar_json_summary(&js, "ok", XPAR_EXIT_OK);
     } else {
-      li_recipe(o->set, ARM_HDR_EXPLAIN, w, pr.n, pr.k, pr.depth, frames,
+      li_recipe(path, ARM_HDR_EXPLAIN, w, pr.n, pr.k, pr.depth, frames,
                 pr.stream_offset, pr.stream_length,
                 "the whole archive is armoured; this extracts the protected "
                 "stream");
     }
-    xpar_free(data);
+    xpar_xclose(f);
     return XPAR_EXIT_OK;
   }
+
+  /*  Not armoured: finding ARMG packets does need the whole file.  */
+  data = (u8 *) xpar_alloc_raw(len + 1);
+  if (len && xpar_pread(f, data, len, 0) != len)
+    FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
+  xpar_xclose(f);
 
   {
     xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
@@ -848,7 +859,7 @@ int xpar_op_explain(const xpar_options * o) {
                      "\n  interleave D     %" PRIu64 "\n"
                      "  frame            %" PRIu64 " bytes on disk, %" PRIu64 " of "
                      "plaintext\n  frames           %" PRIu64 "\n\n",
-                     o->set, off,
+                     path, off,
                      (off + XPAR_PKT_HDR + 48),
                      ag.n, ag.k,
                      ((ag.n - ag.k) / 2), ag.symbol_bits,
@@ -863,7 +874,7 @@ int xpar_op_explain(const xpar_options * o) {
         xpar_json_str(&js, "layout", "packet-bearing");
         xpar_json_end(&js);
         xpar_json_begin(&js, "recipe");
-        xpar_json_str(&js, "source", o->set);
+        xpar_json_str(&js, "source", path);
         xpar_json_str(&js, "kind", "critical-metadata");
         xpar_json_u64(&js, "header_bytes", off + XPAR_PKT_HDR + 48);
         xpar_json_u64(&js, "symbol_bytes", ag.symbol_bits / 8);

@@ -711,26 +711,27 @@ void xpar_advise_random(xpar_file * f, u64 off, u64 len) {
 
 void * xpar_malloc(sz n) {
   void * p = calloc(n ? n : 1, 1);
-  if (!p) FATAL("Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return p;
 }
 
 void * xpar_calloc(sz n, sz size) {
-  if (n && size && n > (sz) -1 / size) FATAL("Allocation size overflow.");
+  if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
+                              "Allocation size overflow.");
   { void * p = calloc(n ? n : 1, size ? size : 1);
-    if (!p) FATAL("Out of memory.");
+    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
     return p; }
 }
 
 void * xpar_alloc_raw(sz n) {
   void * p = malloc(n ? n : 1);
-  if (!p) FATAL("Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return p;
 }
 
 void * xpar_realloc(void * p, sz n) {
   void * q = realloc(p, n ? n : 1);
-  if (!q) FATAL("Out of memory.");
+  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
   return q;
 }
 
@@ -742,15 +743,17 @@ void * xpar_alloc_aligned(sz n, sz align) {
   if (n == 0) n = 1;
 #if defined(HAVE_POSIX_MEMALIGN)
   { void * p = NULL;
-    if (posix_memalign(&p, align, n) != 0 || !p) FATAL("Out of memory.");
+    if (posix_memalign(&p, align, n) != 0 || !p)
+      FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
     return p; }
 #else
   { sz pad = align + sizeof(void *);
     u8 * raw;
     uintptr_t a;
-    if (n > (sz) -1 - pad) FATAL("Allocation size overflow.");
+    if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
+                              "Allocation size overflow.");
     raw = (u8 *) malloc(n + pad);
-    if (!raw) FATAL("Out of memory.");
+    if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
     a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
         ~(uintptr_t) (align - 1);
     ((void **) a)[-1] = raw;

@@ -221,6 +221,7 @@ char * xpar_path_resolve(const char * dir, const char * name, u32 len,
   xpar_memcpy(out + off, name, len);
   out[off + len] = 0;
   for (i = 0; i <= len; i++) {
+    if (i == len && (flags & XPAR_PATH_LEAF_LINK)) break;
     if (i == len || name[i] == '/') {
       xpar_stat_t st;
       sz cut = off + i;
@@ -281,30 +282,32 @@ void xpar_manifest_free(xpar_manifest * m) {
 
 /*  Heap-sort an index permutation without recursion or host qsort.  */
 
-static int idx_cmp(const xpar_manifest * m, u32 a, u32 b) {
-  return xpar_name_cmp(m->entry[a].name, m->entry[a].name_len,
-                       m->entry[b].name, m->entry[b].name_len);
+static int idx_cmp(const xpar_manifest * m, u32 a, u32 b, bool fold) {
+  const xpar_entry * x = &m->entry[a], * y = &m->entry[b];
+  if (fold) return name_cmp_fold(x->name, x->name_len, y->name, y->name_len);
+  return xpar_name_cmp(x->name, x->name_len, y->name, y->name_len);
 }
 
-static void sift(const xpar_manifest * m, u32 * a, u32 root, u32 n) {
+static void sift(const xpar_manifest * m, u32 * a, u32 root, u32 n,
+                 bool fold) {
   while (1) {
     u32 c = 2 * root + 1, big;
     if (c >= n) return;
     big = c;
-    if (c + 1 < n && idx_cmp(m, a[c], a[c + 1]) < 0) big = c + 1;
-    if (idx_cmp(m, a[root], a[big]) >= 0) return;
+    if (c + 1 < n && idx_cmp(m, a[c], a[c + 1], fold) < 0) big = c + 1;
+    if (idx_cmp(m, a[root], a[big], fold) >= 0) return;
     { u32 t = a[root];  a[root] = a[big];  a[big] = t; }
     root = big;
   }
 }
 
-static void sort_names(const xpar_manifest * m, u32 * a, u32 n) {
+static void sort_names(const xpar_manifest * m, u32 * a, u32 n, bool fold) {
   u32 i;
   if (n < 2) return;
-  for (i = n / 2; i-- > 0;) sift(m, a, i, n);
+  for (i = n / 2; i-- > 0;) sift(m, a, i, n, fold);
   for (i = n; i-- > 1;) {
     u32 t = a[0];  a[0] = a[i];  a[i] = t;
-    sift(m, a, 0, i);
+    sift(m, a, 0, i, fold);
   }
 }
 
@@ -313,7 +316,7 @@ void xpar_nameidx_build(const xpar_manifest * m, xpar_nameidx * ix) {
   ix->order = (u32 *) xpar_alloc_raw((m->count ? m->count : 1) *
                                      sizeof(u32));
   For(u32, i, m->count, ix->order[i] = i)
-  sort_names(m, ix->order, m->count);
+  sort_names(m, ix->order, m->count, false);
 }
 
 void xpar_nameidx_free(xpar_nameidx * ix) {
@@ -901,7 +904,7 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
 
   order = (u32 *) xpar_alloc_raw(m->count * sizeof(u32));
   for (i = 0; i < m->count; i++) order[i] = i;
-  sort_names(m, order, m->count);
+  sort_names(m, order, m->count, false);
   sorted = (xpar_entry *) xpar_alloc_raw(m->count * sizeof(xpar_entry));
   src    = (char **) xpar_alloc_raw(m->count * sizeof(char *));
   ws     = (wstat *) xpar_alloc_raw(m->count * sizeof(wstat));
@@ -1403,16 +1406,28 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
   for (i = 1; i < ix.count && s == XPAR_MF_OK; i++) {
     const xpar_entry * a = &m->entry[ix.order[i - 1]];
     const xpar_entry * b = &m->entry[ix.order[i]];
-    bool dup = xpar_name_cmp(a->name, a->name_len, b->name,
-                             b->name_len) == 0;
-    if (!dup && (lim->path_flags & XPAR_PATH_NOCASE))
-      dup = name_cmp_fold(a->name, a->name_len, b->name, b->name_len) == 0;
-    if (dup) {
+    if (xpar_name_cmp(a->name, a->name_len, b->name, b->name_len) == 0) {
       s = XPAR_MF_DUP_NAME;
       out->entry = ix.order[i - 1];  out->other = ix.order[i];
     }
   }
   xpar_nameidx_free(&ix);
+  /*  Case-folded collisions require their own sort order.  */
+  if (s == XPAR_MF_OK && (lim->path_flags & XPAR_PATH_NOCASE) &&
+      m->count > 1) {
+    u32 * fo = (u32 *) xpar_alloc_raw(m->count * sizeof(u32));
+    for (i = 0; i < m->count; i++) fo[i] = i;
+    sort_names(m, fo, m->count, true);
+    for (i = 1; i < m->count && s == XPAR_MF_OK; i++) {
+      const xpar_entry * a = &m->entry[fo[i - 1]];
+      const xpar_entry * b = &m->entry[fo[i]];
+      if (name_cmp_fold(a->name, a->name_len, b->name, b->name_len) == 0) {
+        s = XPAR_MF_DUP_NAME;
+        out->entry = fo[i - 1];  out->other = fo[i];
+      }
+    }
+    xpar_free(fo);
+  }
   if (s != XPAR_MF_OK) { out->status = s;  return s; }
 
   for (i = 0; i < m->count; i++) {

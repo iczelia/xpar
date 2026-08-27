@@ -63,7 +63,8 @@ typedef enum {
   XPAR_GEOM_QUANTUM,    /*  Z not a multiple of 64, or below 64.  */
   XPAR_GEOM_HUGE,       /*  Z past refusal point or cap.  */
   XPAR_GEOM_FIELD,      /*  S + R does not fit the field.  */
-  XPAR_GEOM_UNREACHABLE /*  -b asks for more slices than there are bytes.  */
+  XPAR_GEOM_UNREACHABLE,/*  -b asks for more slices than there are bytes.  */
+  XPAR_GEOM_CELLS       /*  ceil(Z/Y) past the format's 65536 cell bound.  */
 } xpar_geom_status;
 
 xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,

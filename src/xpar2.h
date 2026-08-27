@@ -73,6 +73,8 @@ enum { XPAR_DEDUP_NONE = 0, XPAR_DEDUP_FILE = 1, XPAR_DEDUP_CHUNK = 2 };
 #define XPAR_OPTIONAL_KNOWN  0u
 
 #define XPAR_CELL_MIN      4096
+/*  Format limit for cells per slice.  */
+#define XPAR_CELLS_MAX     65536
 #define XPAR_SLICE_MIN     64
 #define XPAR_SLICE_MAX     ((u64) 1 << 40)
 #define XPAR_NAME_MAX      65535

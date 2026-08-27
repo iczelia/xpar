@@ -35,13 +35,13 @@
 
 static char * dup_str(const char * s) {
   char * p = xpar_strdup(s);
-  FATAL_UNLESS("Out of memory.", p != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", p != NULL);
   return p;
 }
 
 static void push_str(char *** v, u32 * n, const char * s) {
   char ** nv = (char **) xpar_realloc(*v, (*n + 1) * sizeof(char *));
-  FATAL_UNLESS("Out of memory.", nv != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
   nv[*n] = dup_str(s);  *v = nv;  (*n)++;
 }
 
@@ -259,7 +259,8 @@ static u32 parse_pres(const char * nm, const char * v, u32 dflt, u32 * lit,
     if (i == ARRAY_LEN(pres_tokens)) bad_token(nm, tok);
     if (sign == '-') { set &= ~pres_tokens[i].bits;  continue; }
     if (!sign && !replaced) { set = 0;  replaced = true; }
-    set |= pres_tokens[i].bits;  *lit |= pres_tokens[i].lit;
+    set |= pres_tokens[i].bits;
+    if (lit) *lit |= pres_tokens[i].lit;
     if (named) *named |= pres_tokens[i].bits;
   }
   return set;
@@ -299,8 +300,9 @@ enum {
   O_SPOOL_DIR, O_STDIN_NAME,
   O_FAST, O_STRONG, O_RESYNC, O_RESYNC_STEP, O_RESYNC_WINDOW, O_RESYNC_EXH,
   O_SCAN, O_GENERATION, O_CHAIN, O_IN_PLACE, O_TO, O_BACKUP, O_PARANOID,
-  O_KEEP_JOURNAL, O_NO_JOURNAL, O_DRY_RUN, O_EXIT_ON_CHANGE, O_DEEP,
-  O_REWRITE, O_REBUILD_CELLS, O_STDOUT, O_OWNER_MAP, O_REQUIRE, O_MANGLE,
+  O_KEEP_JOURNAL, O_NO_JOURNAL, O_REPLACE_JOURNAL, O_DRY_RUN,
+  O_EXIT_ON_CHANGE, O_DEEP,
+  O_REWRITE, O_REBUILD_CELLS, O_STDOUT, O_OWNER_MAP, O_REQUIRE, O_STRICT_NAMES,
   O_VOLUME, O_RESCAN, O_VERIFY_UNCHANGED, O_ALLOW_MISSING, O_DEDUP_SCOPE,
   O_REPLACE, O_BEFORE, O_DEPS, O_LINKS, O_LIST_DEDUP, O_TIERS
 };
@@ -382,6 +384,7 @@ static const yarg_options t_repair[] = {
   { O_PARANOID,       no_argument,       "paranoid"          },
   { O_KEEP_JOURNAL,   no_argument,       "keep-journal"      },
   { O_NO_JOURNAL,     no_argument,       "no-journal"        },
+  { O_REPLACE_JOURNAL, no_argument,      "replace-journal"   },
   { O_DRY_RUN,        no_argument,       "dry-run"           },
   { O_EXIT_ON_CHANGE, no_argument,       "exit-on-change"    },
   /*  Repair runs the same resynchronising pass and prints the same advice
@@ -410,7 +413,7 @@ static const yarg_options t_extract[] = {
   { O_PRESERVE,   required_argument, "preserve"   },
   { O_OWNER_MAP,  required_argument, "owner-map"  },
   { O_REQUIRE,    required_argument, "require"    },
-  { O_MANGLE,     no_argument,       "mangle"     },
+  { O_STRICT_NAMES, no_argument,     "strict-names" },
   { O_GENERATION, required_argument, "generation" },
   { 0,            no_argument,       NULL         }
 };
@@ -639,6 +642,7 @@ static const char * const verb_opts[] = {
   "      --paranoid             Re-read and re-verify every write\n"
   "      --keep-journal         Keep the undo journal on success\n"
   "      --no-journal           Do not write one; excludes the above\n"
+  "      --replace-journal      Overwrite a journal an earlier repair left\n"
   "      --dry-run              Report what would change\n"
   "      --exit-on-change       Exit 1 when anything was repaired\n"
   "      --resync=WHICH         off, auto (default), always\n"
@@ -659,7 +663,7 @@ static const char * const verb_opts[] = {
   "      --preserve=LIST        Metadata to apply (see below)\n"
   "      --owner-map=WHICH      name (default), numeric\n"
   "      --require=LIST         Turn a degradation into an error\n"
-  "      --mangle               Generate 8.3 names where needed\n"
+  "      --strict-names         Apply Windows and DOS naming rules\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  recover  */
   "      --volume=WHICH         Volume number, or its name\n"
@@ -784,7 +788,7 @@ static char * join_path(const char * dir, const char * name) {
 
 static void push_vol(xpar_setref * s, char * path) {
   char ** nv = (char **) xpar_realloc(s->vol, (s->count + 1) * sizeof(char *));
-  FATAL_UNLESS("Out of memory.", nv != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
   nv[s->count] = path;  s->vol = nv;  s->count++;
 }
 
@@ -817,7 +821,7 @@ static char * swap_ext(const char * p) {
     if (p[i] == '.') {
       char * head = xpar_strndup(p, i);
       char * out;
-      FATAL_UNLESS("Out of memory.", head != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", head != NULL);
       out = cat_str(head, XPAR_EXT);
       xpar_free(head);
       return out;
@@ -860,7 +864,7 @@ static void gather_chain_siblings(xpar_setref * s) {
       leaf = s->base + dlen;
     }
   dir = dlen ? xpar_strndup(s->base, dlen) : dup_str("");
-  FATAL_UNLESS("Out of memory.", dir != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", dir != NULL);
   d = xpar_opendir(*dir ? dir : ".");
   if (d) {
     while ((e = xpar_readdir(d)) != NULL)
@@ -890,7 +894,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   } else if (is_file(arg)) {
     if (xpar_vname_has_ext(arg)) {
       char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
-      FATAL_UNLESS("Out of memory.", b != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", b != NULL);
       strip_volume_suffix(b);
       strip_gen_suffix(b);
       out->base = b;
@@ -904,7 +908,8 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
         push_vol(out, b);
         if (!out->base) {
           out->base = xpar_strndup(b, xpar_strlen(b) - XPAR_EXT_LEN);
-          FATAL_UNLESS("Out of memory.", out->base != NULL);
+          FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.",
+                            out->base != NULL);
         }
       } else xpar_free(b);
       if (!out->count)
@@ -1024,6 +1029,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_SLICE_TAG: {
       int i = need_word(nm, v, w_tag);
       o->slice_tag = i == 0 ? 0 : (i == 1 ? 8 : 16);
+      o->slice_tag_given = true;
       break;
     }
     case O_ARMOUR:       o->armour = need_word(nm, v, w_armour);  break;
@@ -1060,7 +1066,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       o->preserve = parse_pres(nm, v, XPAR_PRES_DEFAULT, pres_lit,
                                pres_named);
       break;
-    case O_REQUIRE: o->require = parse_pres(nm, v, 0, pres_lit, NULL);  break;
+    /*  --require does not imply metadata preservation.  */
+    case O_REQUIRE: o->require = parse_pres(nm, v, 0, NULL, NULL);  break;
     case 'R':      o->recurse = true;  break;
     case O_EXCLUDE: push_str(&o->exclude, &o->exclude_count, v ? v : "");
                     break;
@@ -1099,7 +1106,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       parse_genref(nm, v, &g);
       nv = (xpar_genref *) xpar_realloc(o->gens,
                                         (o->gen_count + 1) * sizeof g);
-      FATAL_UNLESS("Out of memory.", nv != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
       nv[o->gen_count] = g;  o->gens = nv;  o->gen_count++;
       break;
     }
@@ -1126,6 +1133,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_PARANOID:       o->paranoid = true;  break;
     case O_KEEP_JOURNAL:   o->keep_journal = true;  break;
     case O_NO_JOURNAL:     o->no_journal = true;  break;
+    case O_REPLACE_JOURNAL: o->replace_journal = true;  break;
     case O_DRY_RUN:        o->dry_run = true;  break;
     case O_EXIT_ON_CHANGE: o->exit_on_change = true;  break;
 
@@ -1135,7 +1143,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
 
     case O_STDOUT:    o->to_stdout = true;  break;
     case O_OWNER_MAP: o->owner_map = need_word(nm, v, w_owner);  break;
-    case O_MANGLE:    o->mangle = true;  break;
+    case O_STRICT_NAMES: o->strict_names = true;  break;
 
     case O_VOLUME:
       FATAL_UNLESS("Option %s expects a volume number or a volume name.",
@@ -1289,7 +1297,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     v1_flag_refuse(argc, argv);
 
   r = yarg_parse_verb(argc, argv, verbs, t_global, st);
-  FATAL_UNLESS("Out of memory.", r != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", r != NULL);
   if (r->status == YARG_VERB_AMBIGUOUS) {
     xpar_fprintf(xpar_stderr, "xpar: '%s' is an ambiguous verb prefix.\n",
                  argv[1]);
@@ -1297,7 +1305,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
                  r->cands ? r->cands : "");
     xpar_exit(XPAR_EXIT_USAGE);
   }
-  FATAL_UNLESS("Out of memory.", r->res != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", r->res != NULL);
   if (r->res->error) {
     xpar_fprintf(xpar_stderr, "xpar: %s", r->res->error);
     xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes.\n",

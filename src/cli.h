@@ -130,6 +130,8 @@ typedef struct {
   u64  cell_bytes;       /* --cell; 0 selects automatic Y. */
   int  layout;           /*  XPAR_LAYOUT_*  */
   bool layout_given;     /*  Explicit --layout.  */
+  bool slice_tag_given;  /*  Explicit --slice-tag; 8 is also the default.  */
+  bool replace_journal;  /*  Replace an existing undo journal.  */
   int  codec;            /*  XPAR_CODEC_* or XPAR_CLI_AUTO.  */
   int  field;            /*  8, 16 or XPAR_CLI_AUTO.  */
   int  align;            /*  XPAR_ALIGN_*  */
@@ -180,7 +182,7 @@ typedef struct {
   bool deep, rewrite, rebuild_cells;
 
   /*  extract.  */
-  bool to_stdout, mangle;
+  bool to_stdout, strict_names;
   int  owner_map;        /*  XPAR_OWNERMAP_*  */
 
   /*  recover.  */

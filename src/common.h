@@ -36,6 +36,11 @@
     if (!(cond)) FATAL(fmt, ##__VA_ARGS__);                                   \
   } while (0)
 
+#define FATAL_UNLESS_CODE(code, fmt, cond, ...)                               \
+  do {                                                                        \
+    if (!(cond)) FATAL_CODE(code, fmt, ##__VA_ARGS__);                        \
+  } while (0)
+
 #define FATAL_PERROR(who)                                                     \
   do {                                                                        \
     xpar_fprintf(xpar_stderr, "xpar: %s: %s\n", (who),                        \

@@ -279,7 +279,7 @@ bench_timeit_LDADD    =
 
 EXTRA_DIST = \
   bootstrap README.md \
-  contrib/inject-errors.c contrib/check-win95-pe.sh contrib/ci-check.sh \
+  contrib/check-win95-pe.sh contrib/ci-check.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
   contrib/dos/run-check.sh contrib/dos/run2.c \

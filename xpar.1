@@ -343,6 +343,17 @@ Keep damaged originals, or re-read and re-verify every write.
 .BR "repair \-\-keep\-journal" ", " "repair \-\-no\-journal"
 Keep the journal after success, or disable it. These exclude each other.
 .TP
+.B "repair \-\-replace\-journal"
+Discard an undo journal an earlier repair left behind and write a new one.
+Without it such a journal stops the repair, because replacing it would end
+any chance of undoing the repair that wrote it. This is deliberately not
+.BR \-f :
+a set created with
+.B \-\-slice\-tag=none
+already requires
+.B \-f
+to be repaired in place, which is an unrelated decision.
+.TP
 .BR "repair \-\-dry\-run" ", " "repair \-\-exit\-on\-change"
 Report only, or exit 1 when anything was repaired.
 .TP
@@ -365,8 +376,8 @@ Apply the metadata classes described under create.
 .BI "extract \-\-require=" LIST
 Turn the named metadata degradations into errors.
 .TP
-.B "extract \-\-mangle"
-Generate DOS 8.3 names where required.
+.B "extract \-\-strict\-names"
+Apply the Windows and DOS naming rules whatever the host is.
 .TP
 .BI "recover \-\-volume=" WHICH
 Regenerate the named or numbered volume.
