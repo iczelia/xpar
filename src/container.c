@@ -353,6 +353,11 @@ static xpar_status setd_body(const u8 * body, sz n, xpar_setd * out) {
   if (out->cell_bytes != 0 &&
       (out->cell_bytes < XPAR_CELL_MIN || out->cell_bytes % 64 ||
        (u64) out->cell_bytes > out->slice_size))     return XPAR_E_MALFORMED;
+  /*  K = ceil(Z/Y) is capped, and every entry point reads SETD, so the
+      bound belongs here rather than only in the geometry builder.  */
+  if (out->cell_bytes != 0 &&
+      xpar_ceil_div(out->slice_size, out->cell_bytes) > XPAR_CELLS_MAX)
+    return XPAR_E_MALFORMED;
 
   Fi(XPAR_SET_ID_LEN, if (out->parent_set_id[i]) zero_parent = false)
   if (out->generation == 0) {
@@ -774,6 +779,7 @@ static xpar_status slcr_body(const u8 * body, sz n, xpar_slcr * out) {
   out->first_slice = xpar_rd64(body);
   out->count       = xpar_rd64(body + 8);
   if (out->count < 1) return XPAR_E_MALFORMED;
+  if (out->count > XPAR_TABLE_SPLIT) return XPAR_E_MALFORMED;
   if (out->count > ((u64) n - 16) / 4) return XPAR_E_MALFORMED;
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   need = 16 + out->count * 4;
@@ -804,6 +810,7 @@ static xpar_status sltg_body(const u8 * body, sz n, xpar_sltg * out) {
   out->count       = xpar_rd64(body + 8);
   out->tag_len     = body[16];
   if (out->count < 1) return XPAR_E_MALFORMED;
+  if (out->count > XPAR_TABLE_SPLIT) return XPAR_E_MALFORMED;
   if (out->tag_len != 8 && out->tag_len != 16) return XPAR_E_MALFORMED;
   /*  Bytes 17..23 are reserved and shall be zero.  */
   { sz q;  for (q = 17; q < 24; q++) if (body[q]) return XPAR_E_MALFORMED; }
@@ -844,6 +851,8 @@ static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
   k = xpar_ceil_div(slice_size, out->cell_bytes);
   if (k > 0xFFFFFFFFu) return XPAR_E_MALFORMED;
   out->cells_per_slice = (u32) k;
+  if (k > XPAR_TABLE_SPLIT || out->count > XPAR_TABLE_SPLIT / k)
+    return XPAR_E_MALFORMED;
   if (out->count > (((u64) n - 24) / 4) / k) return XPAR_E_MALFORMED;
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   if (!mul64(out->count, k, &cells)) return XPAR_E_MALFORMED;
@@ -1175,6 +1184,10 @@ static xpar_status layt_body(const u8 * body, sz n, xpar_layt * out) {
     if (xpar_has_nul(e + 32, nl) ||
         xpar_path_check((const char *) e + 32, nl, XPAR_PATH_WIN) !=
           XPAR_PATH_OK) return XPAR_E_MALFORMED;
+    /*  One path component, so a name cannot steer a volume open into a
+        subdirectory. xpar_path_check alone accepts a relative path.  */
+    For(u32, q, nl, if (e[32 + q] == '/' || e[32 + q] == '\\')
+                      return XPAR_E_MALFORMED)
     out->vol[i].name = dup_str(e + 32, nl);
     used = xpar_align_up((u64) 32 + nl, XPAR_PKT_ALIGN);
     if (used > (u64) (n - p)) return XPAR_E_MALFORMED;
