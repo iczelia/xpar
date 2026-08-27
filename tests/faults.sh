@@ -215,12 +215,15 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   cp set.xpa index.orig
   for v in $vols; do cp "$v" "$v.orig"; done
 
-  #  Intact data with damaged recovery is not a data emergency, but it
-  #  must never be reported as a clean set either.
+  #  Intact data with damaged recovery is not a data emergency: verify
+  #  answers for the protected data and stays clean, exactly as it does
+  #  for the missing volume below. scrub --deep is the verb that reads
+  #  the recovery back, so that one has to notice. Pinning both directions
+  #  keeps either from drifting silently.
   victim=`echo $vols | tr ' ' '\n' | head -1`
   "$DAMAGE" "$victim" "rand=200,4096" || hard_error "damage failed"
-  run_any "0 1 2" "$XPAR" verify set.xpa
-  run_any "0 1 2" "$XPAR" scrub --deep set.xpa
+  run 0 "$XPAR" verify set.xpa
+  run_any "1 2" "$XPAR" scrub --deep set.xpa
   same data.bin pristine.bin
   for v in $vols; do cp "$v.orig" "$v"; done
 
