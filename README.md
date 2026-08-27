@@ -206,25 +206,25 @@ disappears off the face of the planet.
 ```
 % xpar explain p.xpa
 [...]
-  code             RS(255, 223), t = 16 over GF(2^8)
+  symbol width W   1 byte (GF(2^8))
+  code             RS(255, 223), t = 16
   interleave D     1
   frame            255 bytes on disk, 223 of plaintext
-  frames           5
+  frames           28
 [...]
 set -e
 in=p.xpa
 out=recovered.bin
-W=1; n=255; k=223; D=1; hdr=168
+W=1; n=255; k=223; D=1; hdr=384
 Fd=$((D*k*W))          # plaintext bytes per frame = 223
 Fx=$((D*n*W))          # disk bytes per frame      = 255
-frames=5
-off=0               # stream_offset from the prologue
+frames=28
+off=648                # stream_offset from the prologue
 len=1008               # stream_length from the prologue
 dd if="$in" of=region.bin bs=$hdr skip=1 status=none
 f=0
 while [ $f -lt $frames ]; do
-  dd if=region.bin bs=$Fx skip=$f count=1 status=none | \
-    dd bs=$Fd count=1 status=none
+  dd if=region.bin bs=$Fx skip=$f count=1 status=none | head -c $Fd
   f=$((f+1))
 done > plain.bin
 if [ $off -gt 0 ]; then
@@ -331,7 +331,7 @@ xpar: benchmark: avx2         gf8-mac         8388608 bytes      136 us  58823.5
 xpar: benchmark: gfni256      gf8-mac         8388608 bytes      164 us  48780.49 MiB/s
 xpar: benchmark: scalar       gf8-mac         8388608 bytes     3683 us   2172.14 MiB/s
 xpar: benchmark: ...
-xpar: benchmark: 9 tiers checked, every kernel byte-identical to scalar.
+xpar: benchmark: 9 tiers agree with scalar
 ```
 
 The following exit codes/ERRORLEVELs of all sub-commands are possible:
