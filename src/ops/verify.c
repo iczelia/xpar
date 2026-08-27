@@ -1194,66 +1194,43 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
   const xpar_entry * e = &s->mf.entry[entry];
   xpar_resync_map * map = &s->resync[entry];
   xpar_resync_probe * p;
-  xpar_resync_result result;
+  xpar_resync_opts opt;
+  xpar_resync_outcome got;
   v_confirm confirm;
   u64 * located;
-  u64 z = s->geom.slice_size, aligned = 0, confirmations = 0;
-  u32 n, i, d;
-  bool engage;
+  u64 z = s->geom.slice_size;
+  u32 n, i;
   if (map->searched) return;
   map->searched = true;
+  /*  Defer keyed resync to repair, which can verify keyed tags.  */
   if (o->resync == XPAR_RESYNC_OFF || !f || s->keyed) return;
   p = v_entry_probes(s, entry, &n);
   if (!n) { xpar_free(p);  return; }
   confirm.s = s;  confirm.f = f;  confirm.probe = p;
   confirm.buf = (u8 *) xpar_alloc_raw((sz) z);
-  for (i = 0; i < n; i++)
-    if (p[i].expected <= file_size && file_size - p[i].expected >= z &&
-        xpar_pread(f, confirm.buf, (sz) z, p[i].expected) == (sz) z &&
-        xpar_crc32c(0, confirm.buf, (sz) z) == p[i].crc) aligned++;
-  engage = o->resync == XPAR_RESYNC_ALWAYS ||
-           (o->resync == XPAR_RESYNC_AUTO &&
-            (file_size != e->length || aligned * 2 < n));
-  if (!engage || !(s->have & XPAR_TAGS_TAG) ||
-      !s->tagset.t.slice_tag) goto done;
-  if (!xpar_resync_search(f, file_size, z, p, n, o->resync_step,
-                          o->resync_window, &result)) goto done;
   located = (u64 *) xpar_alloc_raw((sz) n * sizeof(u64));
-  for (i = 0; i < n; i++) located[i] = UINT64_MAX;
-  if (result.dominant && !result.overflow) {
-    for (d = 0; d < result.count; d++) {
-      if (d && result.delta[d].votes < 2) break;
-      for (i = 0; i < n; i++) {
-        u64 physical;
-        if (located[i] != UINT64_MAX ||
-            !xpar_resync_shift(p[i].expected, result.delta[d].delta,
-                               &physical) ||
-            physical > file_size || file_size - physical < z) continue;
-        confirmations++;
-        if (v_confirm_at(&confirm, i, physical)) located[i] = physical;
-      }
-    }
-  } else if (o->resync == XPAR_RESYNC_ALWAYS && o->resync_exhaustive) {
-    confirmations = xpar_resync_exhaustive(
-      f, file_size, z, p, n, o->resync_step, o->resync_window,
-      v_confirm_at, &confirm, located);
-  } else if (result.candidates && !o->quiet) {
-    xpar_fprintf(xpar_stderr,
-                 "xpar: %s: misplaced slices have no dominant "
-                 "displacement; use --resync=always "
-                 "--resync-exhaustive to confirm all %" PRIu64 " candidates.\n",
-                 path, result.candidates);
-  }
+
+  opt.mode       = (u32) o->resync;
+  opt.step       = o->resync_step;
+  opt.window     = o->resync_window;
+  opt.exhaustive = o->resync_exhaustive;
+  opt.have_tags  = (s->have & XPAR_TAGS_TAG) != 0 &&
+                   s->tagset.t.slice_tag != NULL;
+  xpar_resync_entry(f, file_size, z, e->length, p, n, &opt,
+                    v_confirm_at, &confirm, confirm.buf, located, &got);
+
+  if (got.candidates && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: %s: no dominant displacement among %"
+                 PRIu64 " candidates; use --resync=always "
+                 "--resync-exhaustive.\n", path, got.candidates);
   for (i = 0; i < n; i++)
     if (located[i] != UINT64_MAX)
       xpar_resync_map_add(map, p[i].expected, located[i]);
   if (map->count && !o->quiet)
-    xpar_fprintf(xpar_stderr,
-                 "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64 " strong "
-                 "confirmations.\n", path, map->count,
-                 confirmations);
+    xpar_fprintf(xpar_stderr, "xpar: %s: found %" PRIu32
+                 " displaced slices (%" PRIu64 " confirmations).\n",
+                 path, map->count, got.confirmations);
   xpar_free(located);
-done:
   xpar_free(confirm.buf);  xpar_free(p);
 }
 

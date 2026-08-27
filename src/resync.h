@@ -73,4 +73,31 @@ u64 xpar_resync_exhaustive(xpar_file * f, u64 file_size, u64 window,
                            xpar_resync_confirm_fn confirm, void * user,
                            u64 * located);
 
+/*  Per-entry resync policy and outcome.  */
+
+typedef struct {
+  u32  mode;
+  u32  step;
+  u64  window;
+  bool exhaustive;
+  bool have_tags;
+} xpar_resync_opts;
+
+typedef struct {
+  bool engaged;
+  bool searched;
+  bool need_tags;
+  u64  confirmations;
+  u64  candidates;
+} xpar_resync_outcome;
+
+/*  Fill located with physical offsets or UINT64_MAX; scratch is one slice.  */
+void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
+                       u64 entry_length,
+                       const xpar_resync_probe * probe, u32 probe_count,
+                       const xpar_resync_opts * o,
+                       xpar_resync_confirm_fn confirm, void * user,
+                       u8 * scratch, u64 * located,
+                       xpar_resync_outcome * out);
+
 #endif

@@ -656,14 +656,14 @@ next:
 static void rp_resync_entry(rp * r, u32 entry) {
   const xpar_entry * e = &r->mf.entry[entry];
   xpar_resync_probe * p;
-  xpar_resync_result result;
+  xpar_resync_opts opt;
+  xpar_resync_outcome got;
   rp_confirm confirm;
   xpar_file * f;
   xpar_stat_t st;
   u64 * located;
-  u64 z = r->geom.slice_size, aligned = 0, confirmations = 0;
-  u32 n, i, d;
-  bool engage;
+  u64 z = r->geom.slice_size;
+  u32 n, i;
   if (e->entry_type != XPAR_ENTRY_REGULAR || !e->extent_count ||
       r->alias[entry] || xpar_lstat(r->path[entry], &st) != 0 ||
       !st.is_regular) return;
@@ -673,59 +673,32 @@ static void rp_resync_entry(rp * r, u32 entry) {
   if (!f) { xpar_free(p);  return; }
   confirm.r = r;  confirm.f = f;  confirm.probe = p;
   confirm.buf = (u8 *) xpar_alloc_raw((sz) z);
-  for (i = 0; i < n; i++)
-    if (p[i].expected <= st.size && st.size - p[i].expected >= z &&
-        xpar_pread(f, confirm.buf, (sz) z, p[i].expected) == (sz) z &&
-        xpar_crc32c(0, confirm.buf, (sz) z) == p[i].crc) aligned++;
-  engage = r->o->resync == XPAR_RESYNC_ALWAYS ||
-           (r->o->resync == XPAR_RESYNC_AUTO &&
-            (st.size != e->length || aligned * 2 < n));
-  if (!engage) goto done;
-  if (!(r->tag_have & XPAR_TAGS_TAG) || !r->tags.t.slice_tag) {
-    if (r->verbose)
-      rp_note(r, "xpar: %s: misplaced-data search needs strong slice "
-                 "tags; treating displaced bytes as erasures.\n",
-              r->path[entry]);
-    goto done;
-  }
-  if (!xpar_resync_search(f, st.size, z, p, n, r->o->resync_step,
-                          r->o->resync_window, &result)) goto done;
   located = (u64 *) xpar_alloc_raw((sz) n * sizeof(u64));
-  for (i = 0; i < n; i++) located[i] = UINT64_MAX;
-  if (result.dominant && !result.overflow) {
-    for (d = 0; d < result.count; d++) {
-      if (d && result.delta[d].votes < 2) break;
-      for (i = 0; i < n; i++) {
-        u64 physical;
-        if (located[i] != UINT64_MAX ||
-            !xpar_resync_shift(p[i].expected, result.delta[d].delta,
-                               &physical) ||
-            physical > st.size || st.size - physical < z) continue;
-        confirmations++;
-        if (rp_confirm_at(&confirm, i, physical)) located[i] = physical;
-      }
-    }
-  } else if (r->o->resync == XPAR_RESYNC_ALWAYS &&
-             r->o->resync_exhaustive) {
-    confirmations = xpar_resync_exhaustive(
-      f, st.size, z, p, n, r->o->resync_step, r->o->resync_window,
-      rp_confirm_at, &confirm, located);
-  } else if (result.candidates) {
-    rp_note(r, "xpar: %s: misplaced slices have no dominant displacement; "
-               "use --resync=always --resync-exhaustive to confirm all "
-               "%" PRIu64 " candidates.\n", r->path[entry],
-            result.candidates);
-  }
+
+  opt.mode       = (u32) r->o->resync;
+  opt.step       = r->o->resync_step;
+  opt.window     = r->o->resync_window;
+  opt.exhaustive = r->o->resync_exhaustive;
+  opt.have_tags  = (r->tag_have & XPAR_TAGS_TAG) != 0 &&
+                   r->tags.t.slice_tag != NULL;
+  xpar_resync_entry(f, st.size, z, e->length, p, n, &opt,
+                    rp_confirm_at, &confirm, confirm.buf, located, &got);
+
+  if (got.need_tags && r->verbose)
+    rp_note(r, "xpar: %s: resync needs strong slice tags; using erasures.\n",
+            r->path[entry]);
+  if (got.candidates)
+    rp_note(r, "xpar: %s: no dominant displacement among %" PRIu64
+               " candidates; use --resync=always --resync-exhaustive.\n",
+            r->path[entry], got.candidates);
   for (i = 0; i < n; i++)
     if (located[i] != UINT64_MAX)
       xpar_resync_map_add(&r->resync[entry], p[i].expected, located[i]);
   if (r->resync[entry].count)
-    rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices with %" PRIu64
-            " strong "
-               "confirmations.\n", r->path[entry], r->resync[entry].count,
-            confirmations);
+    rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices (%" PRIu64
+               " confirmations).\n", r->path[entry], r->resync[entry].count,
+            got.confirmations);
   xpar_free(located);
-done:
   xpar_free(confirm.buf);  xpar_free(p);
 }
 

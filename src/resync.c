@@ -16,6 +16,8 @@
 
 #include "resync.h"
 
+#include "cli.h"
+
 #include "crc32c.h"
 
 #define RS_IO       ((sz) 1 << 20)
@@ -325,4 +327,59 @@ bool xpar_resync_map_shift(const xpar_resync_map * m, u64 off,
     *physical = off - d;
   }
   return true;
+}
+
+/*  Shared per-entry resync policy and confirmation driver.  */
+void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
+                       u64 entry_length,
+                       const xpar_resync_probe * probe, u32 probe_count,
+                       const xpar_resync_opts * o,
+                       xpar_resync_confirm_fn confirm, void * user,
+                       u8 * scratch, u64 * located,
+                       xpar_resync_outcome * out) {
+  xpar_resync_result result;
+  u64 aligned = 0;
+  u32 i, d;
+
+  xpar_memset(out, 0, sizeof *out);
+  for (i = 0; i < probe_count; i++) located[i] = UINT64_MAX;
+  if (o->mode == XPAR_RESYNC_OFF || !probe_count) return;
+
+  for (i = 0; i < probe_count; i++)
+    if (probe[i].expected <= file_size &&
+        file_size - probe[i].expected >= slice_size &&
+        xpar_pread(f, scratch, (sz) slice_size, probe[i].expected) ==
+          (sz) slice_size &&
+        xpar_crc32c(0, scratch, (sz) slice_size) == probe[i].crc) aligned++;
+
+  out->engaged = o->mode == XPAR_RESYNC_ALWAYS ||
+                 (o->mode == XPAR_RESYNC_AUTO &&
+                  (file_size != entry_length || aligned * 2 < probe_count));
+  if (!out->engaged) return;
+  if (!o->have_tags) { out->need_tags = true;  return; }
+  if (!xpar_resync_search(f, file_size, slice_size, probe, probe_count,
+                          o->step, o->window, &result)) return;
+  out->searched = true;
+
+  if (result.dominant && !result.overflow) {
+    for (d = 0; d < result.count; d++) {
+      if (d && result.delta[d].votes < 2) break;
+      for (i = 0; i < probe_count; i++) {
+        u64 physical;
+        if (located[i] != UINT64_MAX ||
+            !xpar_resync_shift(probe[i].expected, result.delta[d].delta,
+                               &physical) ||
+            physical > file_size || file_size - physical < slice_size)
+          continue;
+        out->confirmations++;
+        if (confirm(user, i, physical)) located[i] = physical;
+      }
+    }
+  } else if (o->mode == XPAR_RESYNC_ALWAYS && o->exhaustive) {
+    out->confirmations = xpar_resync_exhaustive(
+      f, file_size, slice_size, probe, probe_count, o->step, o->window,
+      confirm, user, located);
+  } else {
+    out->candidates = result.candidates;
+  }
 }
