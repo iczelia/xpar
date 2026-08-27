@@ -312,7 +312,10 @@ also accept the create options.
 Check tags without the algebraic pass.
 .TP
 .BR "verify \-\-strong"
-Hash every entry as well as its slices.
+Check the BLAKE3 slice tags, not just the CRC32C slice checksums.
+Entry hashes are checked whenever
+.B \-\-fast
+is absent, with or without this.
 .TP
 .BI "verify \-\-resync=" WHICH ", " "repair \-\-resync=" WHICH
 .IR off ", " auto " (default), or " always .
@@ -610,8 +613,9 @@ The index volume: the manifest, the slice tables and the volume layout.
 .IB base .v NN + MM .xpa
 A recovery volume holding
 .I MM
-recovery slices starting at exponent
+recovery slices, the first of which covers the stream from slice
 .IR NN .
+The number is a slice index, not a Reed-Solomon exponent.
 Each number is padded to two digits, or to as many as the widest value in
 that position needs.
 .TP

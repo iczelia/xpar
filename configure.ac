@@ -229,7 +229,7 @@ GFNI_CFLAGS=""
 GFNI512_CFLAGS=""
 VBMI_CFLAGS=""
 NEON_CFLAGS=""
-PMULL_CFLAGS=""
+NEON_CLMUL_CFLAGS=""
 SVE_CFLAGS=""
 VSX_CFLAGS=""
 RVV_CFLAGS=""
@@ -323,8 +323,8 @@ AC_COMPILE_IFELSE(
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 
-CFLAGS="$save_CFLAGS -march=armv8-a+crypto"
-AC_MSG_CHECKING([for ARM PMULL intrinsics])
+CFLAGS="$save_CFLAGS -march=armv8-a"
+AC_MSG_CHECKING([for the 8-bit NEON polynomial multiply])
 dnl  The PMULL kernel also requires the 128-bit table lookup.
 AC_COMPILE_IFELSE(
   [AC_LANG_PROGRAM([[#include <arm_neon.h>]], [[
@@ -336,8 +336,9 @@ AC_COMPILE_IFELSE(
           + (int) vgetq_lane_u8(t, 0);
    ]])],
   [AC_MSG_RESULT([yes])
-   AC_DEFINE([HAVE_PMULL], [1], [Define if ARM PMULL is available])
-   PMULL_CFLAGS="-march=armv8-a+crypto"],
+   AC_DEFINE([HAVE_NEON_CLMUL], [1],
+             [Define if the 8-bit NEON polynomial multiply is available])
+   NEON_CLMUL_CFLAGS="-march=armv8-a"],
   [AC_MSG_RESULT([no])])
 CFLAGS="$save_CFLAGS"
 
@@ -473,7 +474,7 @@ AC_SUBST([GFNI_CFLAGS])
 AC_SUBST([GFNI512_CFLAGS])
 AC_SUBST([VBMI_CFLAGS])
 AC_SUBST([NEON_CFLAGS])
-AC_SUBST([PMULL_CFLAGS])
+AC_SUBST([NEON_CLMUL_CFLAGS])
 AC_SUBST([SVE_CFLAGS])
 AC_SUBST([VSX_CFLAGS])
 AC_SUBST([RVV_CFLAGS])
@@ -487,7 +488,7 @@ AM_CONDITIONAL([HAVE_GFNI],    [test "x$GFNI_CFLAGS"    != "x"])
 AM_CONDITIONAL([HAVE_GFNI512], [test "x$GFNI512_CFLAGS" != "x"])
 AM_CONDITIONAL([HAVE_VBMI],    [test "x$VBMI_CFLAGS"    != "x"])
 AM_CONDITIONAL([HAVE_NEON],    [test "x$xpar_have_neon" = "xyes"])
-AM_CONDITIONAL([HAVE_PMULL],   [test "x$PMULL_CFLAGS"    != "x"])
+AM_CONDITIONAL([HAVE_NEON_CLMUL], [test "x$NEON_CLMUL_CFLAGS" != "x"])
 AM_CONDITIONAL([HAVE_SVE],     [test "x$SVE_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_VSX],     [test "x$VSX_CFLAGS"      != "x"])
 AM_CONDITIONAL([HAVE_RVV],     [test "x$RVV_CFLAGS"      != "x"])
@@ -555,7 +556,7 @@ AC_MSG_NOTICE([
     GFNI (512)    : ${GFNI512_CFLAGS:-no}
     AVX-512 VBMI  : ${VBMI_CFLAGS:-no}
     NEON          : $xpar_have_neon
-    ARM PMULL     : ${PMULL_CFLAGS:-no}
+    NEON clmul    : ${NEON_CLMUL_CFLAGS:-no}
     SVE           : ${SVE_CFLAGS:-no}
     PowerPC VSX   : ${VSX_CFLAGS:-no}
     RISC-V V      : ${RVV_CFLAGS:-no}

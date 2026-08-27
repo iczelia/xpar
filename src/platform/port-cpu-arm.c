@@ -36,7 +36,6 @@
 /*  Linux HWCAP ABI bits; see the kernel's arm and arm64 UAPI headers.  */
 #define XPAR_HWCAP64_ASIMD  (1UL << 1)
 #define XPAR_HWCAP64_CRC32  (1UL << 7)
-#define XPAR_HWCAP64_PMULL  (1UL << 4)
 #define XPAR_HWCAP64_SVE    (1UL << 22)
 #define XPAR_HWCAP32_NEON   (1UL << 12)
 
@@ -60,9 +59,6 @@ u32 xpar_cpu_probe(void) {
 #if defined(__ARM_FEATURE_CRC32)
   f |= XPAR_CPU_ARMCRC;
 #endif
-#if defined(__ARM_FEATURE_CRYPTO)
-  f |= XPAR_CPU_PMULL;
-#endif
 #if defined(__ARM_FEATURE_SVE)
   f |= XPAR_CPU_SVE;
 #endif
@@ -72,7 +68,6 @@ u32 xpar_cpu_probe(void) {
   #if defined(__aarch64__)
     if (h & XPAR_HWCAP64_ASIMD) f |= XPAR_CPU_NEON;
     if (h & XPAR_HWCAP64_CRC32) f |= XPAR_CPU_ARMCRC;
-    if (h & XPAR_HWCAP64_PMULL) f |= XPAR_CPU_PMULL;
     if (h & XPAR_HWCAP64_SVE)   f |= XPAR_CPU_SVE;
   #else
     if (h & XPAR_HWCAP32_NEON)  f |= XPAR_CPU_NEON;
@@ -81,13 +76,8 @@ u32 xpar_cpu_probe(void) {
 #elif defined(__APPLE__)
   if (sysctl_flag("hw.optional.neon"))         f |= XPAR_CPU_NEON;
   if (sysctl_flag("hw.optional.armv8_crc32"))  f |= XPAR_CPU_ARMCRC;
-  if (sysctl_flag("hw.optional.arm.FEAT_PMULL")) f |= XPAR_CPU_PMULL;
   if (sysctl_flag("hw.optional.arm.FEAT_SVE"))   f |= XPAR_CPU_SVE;
 #elif defined(_WIN32)
-  #if defined(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)
-  if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
-    f |= XPAR_CPU_PMULL;
-  #endif
   #if defined(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE)
   if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
     f |= XPAR_CPU_ARMCRC;
@@ -104,8 +94,8 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 #if defined(HAVE_NEON)
   { "neon",     XPAR_CPU_NEON                       },
 #endif
-#if defined(HAVE_PMULL)
-  { "clmul-neon", XPAR_CPU_NEON | XPAR_CPU_PMULL    },
+#if defined(HAVE_NEON_CLMUL)
+  { "clmul-neon", XPAR_CPU_NEON                      },
 #endif
 #if defined(HAVE_SVE)
   { "sve",        XPAR_CPU_SVE                      },

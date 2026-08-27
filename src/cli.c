@@ -627,7 +627,7 @@ static const char * const verb_opts[] = {
   "      --stdin-name=PATH      Manifest path for a lone '-' input\n",
   /*  verify  */
   "      --fast                 Tags only; skip the algebraic pass\n"
-  "      --strong               Hash every entry as well as its slices\n"
+  "      --strong               Check slice tags, not just slice CRCs\n"
   "      --resync=WHICH         off, auto (default), always\n"
   "      --resync-step=N        Sample every Nth offset\n"
   "      --resync-window=SIZE   Displacement searched either way\n"

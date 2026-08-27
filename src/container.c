@@ -454,6 +454,7 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
   out->extent_count = ec;
   out->entry_type = xpar_rd16(body + 116);
   out->attrs      = xpar_rd16(body + 118);
+  if (out->attrs & ~(u32) XPAR_ATTR_KNOWN) return XPAR_E_MALFORMED;
   out->name_len   = nl;
   out->extra_len  = xl;
 
@@ -485,6 +486,7 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
   if (xl) {
     out->extra = (u8 *) xpar_malloc(xl + 1);
     xpar_memcpy(out->extra, body + 128 + (sz) ec * 16 + nl, xl);
+    out->extra[xl] = 0;   /*  The slot the + 1 reserves, as dup_str does.  */
   }
   return XPAR_OK;
 }
@@ -1001,6 +1003,9 @@ xpar_status xpar_rcvs_read(const u8 * body, sz n, u64 slice_size,
   if (n < 16) return XPAR_E_SHORT;
   z = slice_size ? slice_size : (u64) n - 16;
   if ((u64) n != 16 + z) return XPAR_E_MALFORMED;
+  /*  The spec requires a reader to reject a nonzero reserved field, and
+      every sibling reader here does.  */
+  if (xpar_rd64(body + 8)) return XPAR_E_MALFORMED;
   out->exponent = xpar_rd64(body);
   out->data     = body + 16;
   out->length   = z;
@@ -1362,6 +1367,8 @@ xpar_status xpar_armg_read(const u8 * body, sz n, xpar_armg * out) {
   u64 want, need;
   xpar_memset(out, 0, sizeof *out);
   if (n < 48) return XPAR_E_SHORT;
+  /*  body[1] and body[2..4) are reserved between symbol_bits and poly.  */
+  if (body[1] || xpar_rd16(body + 2)) return XPAR_E_MALFORMED;
   out->symbol_bits     = body[0];
   out->poly            = xpar_rd32(body + 4);
   out->n               = xpar_rd32(body + 8);
@@ -1405,6 +1412,7 @@ void xpar_armg_write(xpar_buf * out, const xpar_armg * a,
 xpar_status xpar_strm_read(const u8 * body, sz n, xpar_strm * out) {
   xpar_memset(out, 0, sizeof *out);
   if (n < 16) return XPAR_E_SHORT;
+  if (xpar_rd64(body + 8)) return XPAR_E_MALFORMED;
   out->stream_offset = xpar_rd64(body);
   out->data          = body + 16;
   out->length        = (u64) n - 16;

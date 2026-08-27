@@ -183,7 +183,7 @@ extern const xpar_gf_kernels xpar_gf_kernels_vbmi512;
 #ifdef HAVE_NEON
 extern const xpar_gf_kernels xpar_gf_kernels_neon;
 #endif
-#ifdef HAVE_PMULL
+#ifdef HAVE_NEON_CLMUL
 extern const xpar_gf_kernels xpar_gf_kernels_neon_clmul;
 #endif
 #ifdef HAVE_SVE

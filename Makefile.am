@@ -164,10 +164,10 @@ libxpar_neon_a_CPPFLAGS    = $(AM_CPPFLAGS)
 xpar_LDADD                += libxpar_neon.a
 endif
 
-if HAVE_PMULL
+if HAVE_NEON_CLMUL
 noinst_LIBRARIES          += libxpar_pmull.a
 libxpar_pmull_a_SOURCES    = src/kernel/gf-neon-clmul.c
-libxpar_pmull_a_CFLAGS     = $(AM_CFLAGS) $(PMULL_CFLAGS)
+libxpar_pmull_a_CFLAGS     = $(AM_CFLAGS) $(NEON_CLMUL_CFLAGS)
 libxpar_pmull_a_CPPFLAGS   = $(AM_CPPFLAGS)
 xpar_LDADD                += libxpar_pmull.a
 endif
