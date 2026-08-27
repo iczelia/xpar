@@ -327,10 +327,16 @@ xpar: No plan fits: raise -m to 2.0 MiB, note that no -b fits this -m,
 % xpar benchmark --tiers
 xpar: benchmark: V-HASH, V-CRC and V-GEN KATs ok
 xpar: benchmark: tier         operation         bytes     time       rate
-xpar: benchmark: avx2         gf8-mac         8388608 bytes      136 us  58823.53 MiB/s
-xpar: benchmark: gfni256      gf8-mac         8388608 bytes      164 us  48780.49 MiB/s
-xpar: benchmark: scalar       gf8-mac         8388608 bytes     3683 us   2172.14 MiB/s
+xpar: benchmark: gfni256      gf8-mac         8388608 bytes      175 us  45714.29 MiB/s
+xpar: benchmark: gf tier gfni256  ok
+xpar: benchmark: gfni512      gf8-mac         8388608 bytes      218 us  36697.25 MiB/s
+xpar: benchmark: gf tier gfni512  ok
 xpar: benchmark: ...
+xpar: benchmark: gfni256      armour-gf8       285440 bytes     1028 us    264.80 MiB/s
+xpar: benchmark: gfni256      armour-gf16     8616960 bytes     7867 us   1044.59 MiB/s
+xpar: benchmark: armour tier gfni256  ok
+xpar: benchmark: ...
+xpar: benchmark: crc32c sse4.2, blake3 avx2
 xpar: benchmark: 9 tiers agree with scalar
 ```
 
