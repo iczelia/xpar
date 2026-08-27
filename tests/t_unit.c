@@ -131,8 +131,16 @@ static void test_crc32c(void) {
     sz cut = (sz) xt_below(&r, (u32) cap + 1);
     u32 a = xpar_crc32c(0, buf, cut);
     u32 b = xpar_crc32c(0, buf + cut, cap - cut);
+    u32 op[XPAR_CRC32C_OP_WORDS];
     CHECK_U64(xpar_crc32c_combine(a, b, cap - cut), xpar_crc32c(0, buf, cap),
               "combine at cut %" PRIu64, (u64) cut);
+    /*  Check the reusable operator and a second CRC with the same operator.  */
+    xpar_crc32c_shift_op(op, cap - cut);
+    CHECK_U64(xpar_crc32c_combine_op(op, a, b), xpar_crc32c(0, buf, cap),
+              "combine_op at cut %" PRIu64, (u64) cut);
+    CHECK_U64(xpar_crc32c_combine_op(op, a ^ 0x5A5A5A5Au, b),
+              xpar_crc32c_combine(a ^ 0x5A5A5A5Au, b, cap - cut),
+              "reused operator at cut %" PRIu64, (u64) cut);
   }
 
   /* Stored CRC shifting includes the zero suffix CRC. */
