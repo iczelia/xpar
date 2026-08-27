@@ -491,7 +491,9 @@ jobs:
         run: |
           t='tests/t_unit tests/t_codec tests/t_central tests/central.sh'
           t="$t tests/faults.sh tests/safety.sh tests/sanity.sh"
-          t="$t tests/build.sh tests/regress.sh"
+          t="$t tests/regress.sh"
+          #  build.sh reads uname, so it misreads a tierless cross target.
+          test -z "${{ matrix.target.macros }}" || t="$t tests/build.sh"
           e="XPAR=$PWD/qw/xpar; export XPAR;"
           e="$e MKDATA=$PWD/qw/mkdata; export MKDATA;"
           e="$e DAMAGE=$PWD/qw/damage; export DAMAGE;"
