@@ -1072,7 +1072,10 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, const char ** reason) {
     left = ok ? v->byte_length : 0;
     while (left) {
       sz take = (sz) MIN(left, (u64) (1u << 16));
-      if (!xpar_vset_read(s, v->stream_offset + at, buf, take)) {
+      /*  LAYT offsets are relative to the generation; xpar_vset_read takes
+          a chain-space offset, as every other caller supplies.  */
+      if (!xpar_vset_read(s, s->geom.stream_base + v->stream_offset + at,
+                          buf, take)) {
         if (reason) *reason = "stream read failed";
         ok = false;  break;
       }
