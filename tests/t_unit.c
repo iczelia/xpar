@@ -19,6 +19,7 @@
 #include "container.h"
 #include "manifest.h"
 #include "slice.h"
+#include "platform/port-fs.h"
 #include "kernel/blake3.h"
 #include "kernel/crc32c.h"
 #include "kernel/gf.h"
@@ -731,6 +732,190 @@ static void test_posx_bound(void) {
   CHECK(rec == NULL, "no table returned");
 }
 
+/*  The generator has to reach every nonzero element. A modulus that is
+    irreducible but not primitive still satisfies a^order = 1, so the
+    property worth asserting is that the logarithm is a bijection.  */
+static void test_gf_tables(void) {
+  u8 * seen8;
+  u8 * seen16;
+  u32 i, dup = 0, miss = 0, gap = 0;
+
+  xt_section_begin("gf tables");
+
+  seen8 = (u8 *) xpar_calloc(256, 1);
+  for (i = 0; i < 255; i++) {
+    u8 v = xpar_gf8_exp[i];
+    if (!v) { gap++;  continue; }
+    if (seen8[v]) dup++;
+    seen8[v] = 1;
+    if (xpar_gf8_log[v] != (u8) i) miss++;
+  }
+  CHECK_U64(dup, 0, "GF(2^8) alpha^i repeats before the group order");
+  CHECK_U64(miss, 0, "GF(2^8) log and exp disagree");
+  for (i = 1; i < 256; i++) if (!seen8[i]) gap++;
+  CHECK_U64(gap, 0, "GF(2^8) alpha does not reach every nonzero element");
+  xpar_free(seen8);
+
+  dup = 0;  miss = 0;  gap = 0;
+  seen16 = (u8 *) xpar_calloc(65536, 1);
+  for (i = 0; i < 65535u; i++) {
+    u16 v = xpar_gf16_exp[i];
+    if (!v) { gap++;  continue; }
+    if (seen16[v]) dup++;
+    seen16[v] = 1;
+    if (xpar_gf16_log[v] != (u16) i) miss++;
+  }
+  CHECK_U64(dup, 0, "GF(2^16) alpha^i repeats before the group order");
+  CHECK_U64(miss, 0, "GF(2^16) log and exp disagree");
+  for (i = 1; i < 65536u; i++) if (!seen16[i]) gap++;
+  CHECK_U64(gap, 0, "GF(2^16) alpha does not reach every nonzero element");
+  xpar_free(seen16);
+}
+
+/*  XPAR_O_APPEND has to seek to the end on every host. Win32 grants
+    append-only access only when FILE_APPEND_DATA stands alone, so an
+    implementation that ORs it into GENERIC_WRITE overwrites from zero
+    and scrub --rebuild-cells eats the head of the volume it extends.  */
+static void test_append_open(void) {
+  static const char * path = "t_append.tmp";
+  xpar_file * f;
+  u8 got[8];
+  sz n = 0;
+
+  xt_section_begin("append open");
+  xpar_remove(path);
+
+  f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC);
+  CHECK(f != NULL, "create the file");
+  if (!f) return;
+  xpar_xwrite(f, "AAAA", 4);
+  xpar_xclose(f);
+
+  f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
+  CHECK(f != NULL, "reopen for append");
+  if (f) { xpar_xwrite(f, "BBBB", 4);  xpar_xclose(f); }
+
+  f = xpar_open(path, XPAR_O_RDONLY);
+  CHECK(f != NULL, "reopen for read");
+  if (f) { n = xpar_xread(f, got, sizeof got);  xpar_xclose(f); }
+  CHECK_U64(n, 8, "append extends rather than overwrites");
+  if (n == 8) xt_bytes_equal("appended file", got, (const u8 *) "AAAABBBB", 8);
+
+  xpar_remove(path);
+}
+
+/*  Readers must enforce the format's own bounds, not just the ones the
+    body length happens to imply. Each case pairs a rejection with the
+    largest conforming value, so a fix cannot pass by refusing both.  */
+
+/*  A minimal generation-0 descriptor: one file, no slices, no stream.  */
+static void hd_setd(u8 body[96], u64 slice_size, u32 cell_bytes) {
+  xpar_memset(body, 0, 96);
+  xpar_wr64(body, slice_size);
+  xpar_wr32(body + 24, 1);          /*  file_count  */
+  body[28] = 8;                     /*  field_log2  */
+  body[30] = 8;                     /*  recovery_axis_log2  */
+  xpar_wr32(body + 44, cell_bytes);
+}
+
+static void test_reader_bounds(void) {
+  u8 setd[96];
+  xpar_setd sd;
+  xpar_slcr cr;
+  xpar_sltg tg;
+  xpar_slcl cl;
+  xpar_layt lt;
+  u8 * b;
+  sz n;
+
+  xt_section_begin("reader bounds");
+
+  /*  SETD: a slice holds at most XPAR_CELLS_MAX cells.  */
+  hd_setd(setd, XPAR_SLICE_MAX, XPAR_CELL_MIN);
+  CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_E_MALFORMED,
+        "SETD with ceil(Z/Y) above XPAR_CELLS_MAX");
+  xpar_setd_free(&sd);
+
+  { u64 y = XPAR_SLICE_MAX / XPAR_CELLS_MAX;
+    CHECK(y >= XPAR_CELL_MIN && y <= 0xFFFFFFFFu && y % 64 == 0,
+          "the at-cap control needs a representable, legal cell size");
+    hd_setd(setd, XPAR_SLICE_MAX, (u32) y);
+    CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_OK,
+          "SETD with exactly XPAR_CELLS_MAX cells still loads");
+    xpar_setd_free(&sd); }
+
+  /*  SLCR: at most XPAR_TABLE_SPLIT slices per packet.  */
+  n = 16 + (XPAR_TABLE_SPLIT + 1) * 4;
+  b = (u8 *) xpar_calloc(n, 1);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT + 1);
+  CHECK(xpar_slcr_read(b, n, &cr) == XPAR_E_MALFORMED,
+        "SLCR covering more than XPAR_TABLE_SPLIT slices");
+  xpar_slcr_free(&cr);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT);
+  CHECK(xpar_slcr_read(b, 16 + XPAR_TABLE_SPLIT * 4, &cr) == XPAR_OK,
+        "SLCR at exactly XPAR_TABLE_SPLIT still loads");
+  xpar_slcr_free(&cr);
+  xpar_free(b);
+
+  /*  SLTG: the same cap, counted in tags.  */
+  n = 24 + (XPAR_TABLE_SPLIT + 1) * 8;
+  b = (u8 *) xpar_calloc(n, 1);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT + 1);
+  b[16] = 8;
+  CHECK(xpar_sltg_read(b, n, &tg) == XPAR_E_MALFORMED,
+        "SLTG covering more than XPAR_TABLE_SPLIT slices");
+  xpar_sltg_free(&tg);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT);
+  CHECK(xpar_sltg_read(b, 24 + XPAR_TABLE_SPLIT * 8, &tg) == XPAR_OK,
+        "SLTG at exactly XPAR_TABLE_SPLIT still loads");
+  xpar_sltg_free(&tg);
+  xpar_free(b);
+
+  /*  SLCL: n * ceil(Z/Y) is what the cap counts, so two cells per slice
+      halve the permitted slice count.  */
+  n = 24 + ((XPAR_TABLE_SPLIT / 2) + 1) * 2 * 4;
+  b = (u8 *) xpar_calloc(n, 1);
+  xpar_wr64(b + 8, (XPAR_TABLE_SPLIT / 2) + 1);
+  xpar_wr32(b + 16, 4096);
+  CHECK(xpar_slcl_read(b, n, 8192, &cl) == XPAR_E_MALFORMED,
+        "SLCL covering more than XPAR_TABLE_SPLIT cells");
+  xpar_slcl_free(&cl);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT / 2);
+  CHECK(xpar_slcl_read(b, 24 + (XPAR_TABLE_SPLIT / 2) * 2 * 4, 8192, &cl) ==
+          XPAR_OK,
+        "SLCL at exactly XPAR_TABLE_SPLIT cells still loads");
+  xpar_slcl_free(&cl);
+  xpar_free(b);
+
+  /*  LAYT: a volume name is one path component, not a relative path.  */
+  { static const char * const nm[2] = { "s.r00.xpa", "sub/s.r00.xpa" };
+    sz i;
+    for (i = 0; i < 2; i++) {
+      sz ln = xpar_strlen(nm[i]);
+      sz e1 = xpar_align_up(32 + 5, XPAR_PKT_ALIGN);
+      sz e2 = xpar_align_up(32 + ln, XPAR_PKT_ALIGN);
+      n = 8 + e1 + e2;
+      b = (u8 *) xpar_calloc(n, 1);
+      xpar_wr32(b, 2);
+      xpar_wr32(b + 4, XPAR_VOL_STANDALONE);
+      b[8] = XPAR_VOL_INDEX;
+      xpar_wr16(b + 10, 5);
+      xpar_memcpy(b + 8 + 32, "s.xpa", 5);
+      b[8 + e1] = XPAR_VOL_RECOVERY;
+      xpar_wr16(b + 8 + e1 + 2, (u16) ln);
+      xpar_wr64(b + 8 + e1 + 16, 1);         /*  byte_length  */
+      xpar_memcpy(b + 8 + e1 + 32, nm[i], ln);
+      if (i == 0)
+        CHECK(xpar_layt_read(b, n, &lt) == XPAR_OK,
+              "LAYT with a bare volume name loads");
+      else
+        CHECK(xpar_layt_read(b, n, &lt) == XPAR_E_MALFORMED,
+              "LAYT volume name containing a path separator");
+      xpar_layt_free(&lt);
+      xpar_free(b);
+    } }
+}
+
 int xpar_main(int argc, char ** argv) {
   (void) argc;  (void) argv;
   xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
@@ -749,6 +934,9 @@ int xpar_main(int argc, char ** argv) {
   test_paths();
   test_packets();
   test_posx_bound();
+  test_gf_tables();
+  test_append_open();
+  test_reader_bounds();
 
   return xt_finish("t_unit");
 }
