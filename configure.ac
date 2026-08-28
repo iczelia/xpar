@@ -539,6 +539,18 @@ if test "x$enable_sanitizers" != "xno"; then
             [Define when a sanitizer owns the fault handlers])
 fi
 
+dnl  Find timeout(1); tests run uncapped if it is unavailable.
+AC_ARG_VAR([XPAR_TEST_TIMEOUT_SECONDS],
+           [seconds a single test may run (default 1800)])
+test -n "$XPAR_TEST_TIMEOUT_SECONDS" || XPAR_TEST_TIMEOUT_SECONDS=1800
+AC_CHECK_PROGS([XPAR_TIMEOUT_PROG], [timeout gtimeout], [])
+if test -n "$XPAR_TIMEOUT_PROG"; then
+  XPAR_TEST_TIMEOUT="$XPAR_TIMEOUT_PROG $XPAR_TEST_TIMEOUT_SECONDS"
+else
+  XPAR_TEST_TIMEOUT=
+fi
+AC_SUBST([XPAR_TEST_TIMEOUT])
+
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
 

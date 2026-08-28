@@ -257,7 +257,10 @@ TESTS = tests/t_unit tests/t_codec tests/t_central \
 endif
 
 TEST_EXTENSIONS = .sh
-SH_LOG_COMPILER = $(SHELL)
+
+#  Fail hung tests individually when timeout(1) is available.
+SH_LOG_COMPILER = $(XPAR_TEST_TIMEOUT) $(SHELL)
+LOG_COMPILER    = $(XPAR_TEST_TIMEOUT)
 
 AM_TESTS_ENVIRONMENT = \
   abs_top_builddir='$(abs_top_builddir)';  export abs_top_builddir; \
