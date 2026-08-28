@@ -30,14 +30,18 @@ struct xpar_armour {
   u32 t;         /*  Correction capacity, symbols per codeword.  */
   u32 order;     /*  2^w - 1.  */
   sz  lane;      /*  D*W: one symbol position of a frame, in bytes.  */
+  u32 vb;        /*  Frames batched into one virtual lane; see below.  */
+  sz  vlane;     /*  vb*lane: the widest lane the kernels are given.  */
+  sz  vstep;     /*  Whole-vector step of the active tier; 0 when scalar.  */
   xpar_gf8_coef  * gen8;    /*  Taps, reversed: gen[u] = g[2t-1-u].  */
   xpar_gf16_coef * gen16;
   xpar_gf8_coef  * rt8;     /*  rt[j] = alpha^(fcr + j*prim).  */
   xpar_gf16_coef * rt16;
   u32 * gpoly;   /*  t2+1: g[i] is the coefficient of x^i, g[t2] = 1.  */
-  u8  * par;     /*  t2*lane: the encoder's rotating parity register.  */
-  u8  * fb;      /*  lane: one symbol position of feedback.  */
-  u8  * syn;     /*  t2*lane: a whole frame's syndromes, symbol-major.  */
+  u8  * par;     /*  t2*vlane: the encoder's rotating parity register.  */
+  u8  * fb;      /*  vlane: one symbol position of feedback.  */
+  u8  * syn;     /*  t2*vlane: the batch's syndromes, symbol-major.  */
+  u8  * gsym;    /*  vlane: one symbol position gathered across frames.  */
   u32 * s;       /*  t2: one codeword's syndromes, unpacked.  */
   u32 * lam;     /*  t2+2: the error locator.  */
   u32 * bp;      /*  t2+2: Berlekamp-Massey's saved connection poly.  */
@@ -110,7 +114,8 @@ const char * xpar_armour_check(const xpar_armour_params * p) {
   if (p->poly != (p->symbol_bits == 8 ? (XPAR_GF8_POLY  & 0xFFu)
                                       : (XPAR_GF16_POLY & 0xFFFFu)))
     return "Armour field polynomial is not the one this build implements.";
-  if (p->n < 3 || p->n > order)      return "Armour n is out of range.";
+  /*  Format minimum.  */
+  if (p->n < 16 || p->n > order)     return "Armour n is out of range.";
   if (p->k < 1 || p->k >= p->n)      return "Armour k is out of range.";
   t2 = p->n - p->k;
   if (t2 & 1)                        return "Armour n - k must be even.";
@@ -367,6 +372,28 @@ static void prepare_coefs(xpar_armour * a) {
   }
 }
 
+/*  Batch narrow frame lanes to SIMD width and zero-pad to a vector.  */
+
+#define ARM_VLANE  2048   /*  Target virtual lane, bytes.  */
+#define ARM_VMAX   4096   /*  Frame ceiling, so a tiny lane stays bounded.  */
+#define ARM_PAD    128    /*  Guard lanes the batch buffers always carry.  */
+
+static u32 batch_frames(const xpar_armour * a) {
+  u64 v;
+  /*  Scalar code does not benefit from batching.  */
+  if (!xpar_strcmp(a->kern->name, "scalar")) return 1;
+  if (a->lane >= ARM_VLANE) return 1;
+  v = xpar_ceil_div(ARM_VLANE, (u64) a->lane);
+  return (u32) (v > ARM_VMAX ? ARM_VMAX : v);
+}
+
+/*  Pad the active batch to a whole vector.  */
+static sz virt_lane(const xpar_armour * a, u32 cnt) {
+  u64 used = (u64) cnt * (u64) a->lane;
+  if (!a->vstep) return (sz) used;
+  return (sz) xpar_align_up(used, (u64) a->vstep);
+}
+
 xpar_armour * xpar_armour_new(const xpar_armour_params * p) {
   const char * why = xpar_armour_check(p);
   xpar_armour * a;
@@ -382,9 +409,15 @@ xpar_armour * xpar_armour_new(const xpar_armour_params * p) {
   a->lane  = (sz) p->depth * a->wb;
   build_generator(a);
   prepare_coefs(a);
-  a->par  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->lane, 64);
-  a->fb   = (u8 *) xpar_alloc_aligned(a->lane, 64);
-  a->syn  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->lane, 64);
+  /*  GF(2^16) kernels step two vectors at a time; see ARM_BODY16.  */
+  a->vstep = (sz) a->kern->vbytes * (a->wb == 1 ? 1 : 2);
+  a->vb    = batch_frames(a);
+  /*  Include the buffer guard.  */
+  a->vlane = (sz) xpar_align_up(virt_lane(a, a->vb), ARM_PAD);
+  a->par  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
+  a->fb   = (u8 *) xpar_alloc_aligned(a->vlane, 64);
+  a->syn  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
+  a->gsym = (u8 *) xpar_alloc_aligned(a->vlane, 64);
   a->s    = (u32 *) xpar_calloc(a->t2, sizeof(u32));
   a->lam  = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
   a->bp   = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
@@ -402,7 +435,7 @@ void xpar_armour_free(xpar_armour * a) {
   xpar_free(a->gpoly);  xpar_free(a->gen8);  xpar_free(a->gen16);
   xpar_free(a->rt8);    xpar_free(a->rt16);
   xpar_free_aligned(a->par);  xpar_free_aligned(a->fb);
-  xpar_free_aligned(a->syn);
+  xpar_free_aligned(a->syn);  xpar_free_aligned(a->gsym);
   xpar_free(a->s);    xpar_free(a->lam);   xpar_free(a->bp);
   xpar_free(a->tmp);  xpar_free(a->om);    xpar_free(a->ev);
   xpar_free(a->step); xpar_free(a->pos);   xpar_free(a->val);
@@ -427,6 +460,8 @@ u64 xpar_armour_size(const xpar_armour * a, u64 plain_length) {
 u64 xpar_armour_burst(const xpar_armour * a) {
   return ((u64) a->t * a->p.depth - 1) * a->wb;
 }
+
+u64 xpar_armour_batch(const xpar_armour * a) { return a->vb; }
 
 void xpar_armour_generator(const xpar_armour * a, u32 * g) {
   for (u32 i = 0; i <= a->t2; i++) g[i] = a->gpoly[i];
@@ -453,23 +488,63 @@ static void feedback(const xpar_gf_kernels * gk, u8 * fb, const u8 * dat,
   }
 }
 
-void xpar_armour_encode_frame(const xpar_armour * a, u8 * frame) {
+/*  Gather or scatter one symbol position across a frame batch.  */
+
+static void gather(sz lane, u8 * dst, const u8 * src, u64 fx, u32 cnt) {
+  u32 f;
+  if (lane == 1) for (f = 0; f < cnt; f++) dst[f] = src[(sz) (f * fx)];
+  else if (lane == 2)
+    for (f = 0; f < cnt; f++)
+      xpar_wr16(dst + 2 * f, xpar_rd16(src + (sz) (f * fx)));
+  else
+    for (f = 0; f < cnt; f++)
+      xpar_memcpy(dst + (sz) f * lane, src + (sz) (f * fx), lane);
+}
+
+static void scatter(sz lane, u8 * dst, u64 fx, u32 cnt, const u8 * src) {
+  u32 f;
+  if (lane == 1) for (f = 0; f < cnt; f++) dst[(sz) (f * fx)] = src[f];
+  else if (lane == 2)
+    for (f = 0; f < cnt; f++)
+      xpar_wr16(dst + (sz) (f * fx), xpar_rd16(src + 2 * f));
+  else
+    for (f = 0; f < cnt; f++)
+      xpar_memcpy(dst + (sz) (f * fx), src + (sz) f * lane, lane);
+}
+
+/*  Encode a frame batch with the single-frame recurrence.  */
+static void encode_batch(const xpar_armour * a, u8 * base, u64 fx, u32 cnt) {
   const xpar_gf_kernels * gk = xpar_gf_active();
-  sz lane = a->lane;  u32 t2 = a->t2, head = 0, i, u;
-  u8 * out = frame + (sz) a->p.k * lane;
-  xpar_memset(a->par, 0, (sz) t2 * lane);
+  sz lane = a->lane, used = (sz) cnt * lane, vl = virt_lane(a, cnt);
+  u32 t2 = a->t2, head = 0, i, u;
+  xpar_memset(a->par, 0, (sz) t2 * vl);
+  xpar_memset(a->gsym + used, 0, vl - used);
   for (i = 0; i < a->p.k; i++) {
-    feedback(gk, a->fb, frame + (sz) i * lane, a->par + (sz) head * lane,
-             lane);
+    gather(lane, a->gsym, base + (sz) i * lane, fx, cnt);
+    feedback(gk, a->fb, a->gsym, a->par + (sz) head * vl, vl);
     if (++head == t2) head = 0;
     if (a->wb == 1)
-      a->kern->taps8(a->par, lane, t2, head, a->gen8, a->fb, lane);
+      a->kern->taps8(a->par, vl, t2, head, a->gen8, a->fb, vl);
     else
-      a->kern->taps16(a->par, lane, t2, head, a->gen16, a->fb, lane);
+      a->kern->taps16(a->par, vl, t2, head, a->gen16, a->fb, vl);
   }
   for (u = 0; u < t2; u++)
-    xpar_memcpy(out + (sz) u * lane,
-                a->par + (sz) ((head + u) % t2) * lane, lane);
+    scatter(lane, base + (sz) (a->p.k + u) * lane, fx, cnt,
+            a->par + (sz) ((head + u) % t2) * vl);
+}
+
+static void encode_run(const xpar_armour * a, u8 * frames, u64 count) {
+  u64 fx = xpar_armour_frame_disk(a), done = 0;
+  while (done < count) {
+    u64 left = count - done;
+    u32 cnt = (u32) (left < (u64) a->vb ? left : (u64) a->vb);
+    encode_batch(a, frames + done * fx, fx, cnt);
+    done += cnt;
+  }
+}
+
+void xpar_armour_encode_frame(const xpar_armour * a, u8 * frame) {
+  encode_batch(a, frame, xpar_armour_frame_disk(a), 1);
 }
 
 void xpar_armour_encode(const xpar_armour * a, u8 * out,
@@ -481,9 +556,9 @@ void xpar_armour_encode(const xpar_armour * a, u8 * out,
     u64 take = plain_length - off < fd ? plain_length - off : fd;
     xpar_memcpy(fr, plain + off, (sz) take);
     if (take < fd) xpar_memset(fr + take, 0, (sz) (fd - take));
-    xpar_armour_encode_frame(a, fr);
     off += take;
   }
+  encode_run(a, out, frames);
 }
 
 void xpar_armour_extract(const xpar_armour * a, u8 * plain, u64 plain_length,
@@ -502,13 +577,18 @@ void xpar_armour_extract(const xpar_armour * a, u8 * plain, u64 plain_length,
     recurrences are independent of each other and, across the D codewords
     of a frame, independent again, so one symbol position is 2t region
     operations and the whole pass is 2t byte-operations per input byte.  */
-static void frame_syndromes(const xpar_armour * a, const u8 * frame) {
-  sz lane = a->lane;  u32 i;
-  xpar_memset(a->syn, 0, (sz) a->t2 * lane);
+static void batch_syndromes(const xpar_armour * a, const u8 * base, u64 fx,
+                            u32 cnt) {
+  sz lane = a->lane, used = (sz) cnt * lane, vl = virt_lane(a, cnt);
+  u32 i;
+  xpar_memset(a->syn, 0, (sz) a->t2 * vl);
+  xpar_memset(a->gsym + used, 0, vl - used);
   for (i = 0; i < a->p.n; i++) {
-    const u8 * sym = frame + (sz) i * lane;
-    if (a->wb == 1) a->kern->horner8 (a->syn, lane, a->t2, a->rt8,  sym, lane);
-    else            a->kern->horner16(a->syn, lane, a->t2, a->rt16, sym, lane);
+    gather(lane, a->gsym, base + (sz) i * lane, fx, cnt);
+    if (a->wb == 1)
+      a->kern->horner8 (a->syn, vl, a->t2, a->rt8,  a->gsym, vl);
+    else
+      a->kern->horner16(a->syn, vl, a->t2, a->rt16, a->gsym, vl);
   }
 }
 
@@ -642,11 +722,12 @@ static bool syndromes_agree(const xpar_armour * a, u32 L) {
     number of symbols corrected, or -1 when the codeword is past
     capacity; nothing is written to the frame unless every stage
     agreed.  */
-static int decode_one(const xpar_armour * a, u8 * frame, u32 d) {
+static int decode_one(const xpar_armour * a, u8 * frame, u32 d,
+                      const u8 * syn, sz stride) {
   sz lane = a->lane;  u32 j, L, cnt;
   bool zero = true;
   for (j = 0; j < a->t2; j++) {
-    a->s[j] = sym_rd(a, a->syn + (sz) j * lane + (sz) d * a->wb);
+    a->s[j] = sym_rd(a, syn + (sz) j * stride + (sz) d * a->wb);
     if (a->s[j]) zero = false;
   }
   if (zero) return 0;
@@ -672,26 +753,66 @@ static void stat_add(xpar_armour_stat * st, int e) {
   if (st->hist && (u32) e < st->hist_len) st->hist[(u32) e]++;
 }
 
-xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
-                                            xpar_armour_stat * st) {
-  u32 d;  bool bad = false, fixed = false;
-  frame_syndromes(a, frame);
-  if (st) st->frames++;
-  if (region_zero(a->syn, (sz) a->t2 * a->lane)) {
-    if (st) {
-      st->codewords += a->p.depth;  st->clean += a->p.depth;
-      if (st->hist && st->hist_len) st->hist[0] += a->p.depth;
+/*  One frame's t2 syndrome lanes inside a batch, which are strided.  */
+static bool frame_clean(const xpar_armour * a, const u8 * syn, sz stride) {
+  u32 j;  sz q;  u8 acc = 0;
+  for (j = 0; j < a->t2; j++, syn += stride)
+    for (q = 0; q < a->lane; q++) acc |= syn[q];
+  return acc == 0;
+}
+
+static void stat_clean(xpar_armour_stat * st, u64 codewords) {
+  if (!st) return;
+  st->codewords += codewords;  st->clean += codewords;
+  if (st->hist && st->hist_len) st->hist[0] += codewords;
+}
+
+/*  Count a frame as corrected only if all its codewords succeeded.  */
+static void decode_run(const xpar_armour * a, u8 * frames, u64 count,
+                       xpar_armour_stat * st, bool * any_bad,
+                       bool * any_fixed) {
+  u64 fx = xpar_armour_frame_disk(a), done = 0;
+  *any_bad = false;  *any_fixed = false;
+  while (done < count) {
+    u64 left = count - done;
+    u32 cnt = (u32) (left < (u64) a->vb ? left : (u64) a->vb);
+    u8 * base = frames + done * fx;
+    sz vl = virt_lane(a, cnt);
+    u32 f, d;
+    batch_syndromes(a, base, fx, cnt);
+    if (st) st->frames += cnt;
+    if (region_zero(a->syn, (sz) a->t2 * vl)) {
+      stat_clean(st, (u64) cnt * a->p.depth);
+      done += cnt;  continue;
     }
-    return XPAR_ARMOUR_CLEAN;
+    for (f = 0; f < cnt; f++) {
+      const u8 * fs = a->syn + (sz) f * a->lane;
+      bool bad = false, fixed = false;
+      if (frame_clean(a, fs, vl)) { stat_clean(st, a->p.depth);  continue; }
+      for (d = 0; d < a->p.depth; d++) {
+        int e = decode_one(a, base + (u64) f * fx, d, fs, vl);
+        stat_add(st, e);
+        if (e < 0) bad = true;  else if (e > 0) fixed = true;
+      }
+      if (bad) *any_bad = true;  else if (fixed) *any_fixed = true;
+    }
+    done += cnt;
   }
-  for (d = 0; d < a->p.depth; d++) {
-    int e = decode_one(a, frame, d);
-    stat_add(st, e);
-    if (e < 0) bad = true;  else if (e > 0) fixed = true;
-  }
+}
+
+xpar_armour_status xpar_armour_decode_frames(const xpar_armour * a,
+                                             u8 * frames, u64 count,
+                                             xpar_armour_stat * st) {
+  bool bad, fixed;
+  decode_run(a, frames, count, st, &bad, &fixed);
   if (bad)   return XPAR_ARMOUR_FAILED;
   if (fixed) return XPAR_ARMOUR_CORRECTED;
   return XPAR_ARMOUR_CLEAN;
+}
+
+xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
+                                            xpar_armour_stat * st) {
+  return xpar_armour_decode_frames(a, frame, 1, st);
 }
 
 xpar_armour_status xpar_armour_decode(const xpar_armour * a,
@@ -700,7 +821,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       xpar_armour_check_fn check,
                                       const void * ctx,
                                       xpar_armour_stat * st) {
-  u64 fx = xpar_armour_frame_disk(a), f;
+  u64 fx = xpar_armour_frame_disk(a);
   u64 frames = xpar_ceil_div(plain_length, xpar_armour_frame_plain(a));
   bool fixed = false;
   xpar_assert(check != NULL);
@@ -710,9 +831,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
   /*  A frame that reports FAILED is not decisive either way. Its damage
       may have been confined to parity, or to a codeword whose plaintext
       another frame's success makes whole; only the tag knows.  */
-  for (f = 0; f < frames; f++)
-    if (xpar_armour_decode_frame(a, region + f * fx, st) ==
-        XPAR_ARMOUR_CORRECTED) fixed = true;
+  { bool bad;  decode_run(a, region, frames, st, &bad, &fixed); }
   xpar_armour_extract(a, plain, plain_length, region);
   if (!check(ctx, plain, plain_length)) return XPAR_ARMOUR_FAILED;
   return fixed ? XPAR_ARMOUR_CORRECTED : XPAR_ARMOUR_CLEAN;

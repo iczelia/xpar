@@ -414,6 +414,8 @@ static void k_horner16(u8 * restrict syn, sz stride, u32 t2,
 
 /*  Scalar tier.  */
 
+#define ARM_VB 0   /*  Scalar tier.  */
+
 static void k_taps8(u8 * restrict par, sz stride, u32 t2, u32 head,
                     const xpar_gf8_coef * gen,
                     const u8 * restrict fb, sz n) {
@@ -438,5 +440,5 @@ static void k_horner16(u8 * restrict syn, sz stride, u32 t2,
 #endif
 
 const xpar_armour_kernels ARM_CAT(xpar_armour_kernels, ARM_SUF) = {
-  ARM_NAME, k_taps8, k_taps16, k_horner8, k_horner16
+  ARM_NAME, ARM_VB, k_taps8, k_taps16, k_horner8, k_horner16
 };

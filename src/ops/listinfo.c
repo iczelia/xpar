@@ -18,6 +18,8 @@
 #include "chain.h"
 
 #include "armour.h"
+#include "auth.h"
+#include "gf.h"
 #include "blake3.h"
 #include "codec.h"
 #include "container.h"
@@ -61,7 +63,7 @@ static char * li_data_present(const xpar_chain * c, const xpar_vol * v,
   xpar_stat_t st;
   if (named_here) *named_here = false;
   if (!v->name) return NULL;
-  path = xpar_path_join(dir, v->name);
+  path = xpar_path_vol(dir, v->name);
   if (named_here)
     *named_here = xpar_lstat(path, &st) == 0 && st.is_regular;
   if (xpar_vol_tag_match(path, v)) return path;
@@ -130,51 +132,59 @@ static char li_type(const xpar_entry * e) {
   return 'f';
 }
 
-/*  Count extent references with one manifest-wide hash table.  */
+/*  Count overlapping extent references.  */
 
-typedef struct { u64 off, len, refs; } li_ref;
-typedef struct { li_ref * slot; u32 mask; bool live; } li_refs;
-
-static u64 li_ref_hash(u64 off, u64 len) {
-  return (off ^ (len * 0x9E3779B97F4A7C15ull)) * 0xBF58476D1CE4E5B9ull;
-}
+typedef struct { u64 off, len, reach; } li_ref;
+typedef struct { li_ref * v; u32 n; bool live; } li_refs;
 
 static void li_refs_build(li_refs * t, const xpar_manifest * m) {
-  u64 total = 0, cap = 16;
-  u32 i, k;
+  u64 total = 0, reach = 0;
+  u32 i, k, at = 0;
   xpar_memset(t, 0, sizeof *t);
   for (i = 0; i < m->count; i++) total += m->entry[i].extent_count;
-  while (cap < total * 2 && cap < ((u64) 1 << 31)) cap <<= 1;
-  t->mask = (u32) (cap - 1);
-  t->slot = (li_ref *) xpar_calloc((sz) cap, sizeof(li_ref));
-  t->live = true;
+  if (!total || total > 0xFFFFFFFFu) { t->live = total == 0;  return; }
+  t->v = (li_ref *) xpar_calloc((sz) total, sizeof(li_ref));
   for (i = 0; i < m->count; i++)
     for (k = 0; k < m->entry[i].extent_count; k++) {
-      const xpar_extent * e = &m->entry[i].extents[k];
-      u32 j = (u32) (li_ref_hash(e->stream_offset, e->length) & t->mask);
-      while (t->slot[j].refs &&
-             (t->slot[j].off != e->stream_offset ||
-              t->slot[j].len != e->length)) j = (j + 1) & t->mask;
-      t->slot[j].off = e->stream_offset;
-      t->slot[j].len = e->length;
-      t->slot[j].refs++;
+      t->v[at].off = m->entry[i].extents[k].stream_offset;
+      t->v[at].len = m->entry[i].extents[k].length;
+      at++;
     }
+  t->n = at;
+  /*  Insertion sort by start; extent lists are short and nearly sorted.  */
+  for (i = 1; i < t->n; i++) {
+    li_ref x = t->v[i];
+    u32 j = i;
+    while (j && t->v[j - 1].off > x.off) { t->v[j] = t->v[j - 1];  j--; }
+    t->v[j] = x;
+  }
+  /*  Track the maximum end for bounded backward scans.  */
+  for (i = 0; i < t->n; i++) {
+    u64 end = t->v[i].off + t->v[i].len;
+    if (end > reach) reach = end;
+    t->v[i].reach = reach;
+  }
+  t->live = true;
 }
 
 static void li_refs_free(li_refs * t) {
-  xpar_free(t->slot);  xpar_memset(t, 0, sizeof *t);
+  xpar_free(t->v);  xpar_memset(t, 0, sizeof *t);
 }
 
 static u64 li_extent_refs(const li_refs * t, const xpar_extent * want) {
-  u32 j;
-  if (!t->live) return 0;
-  j = (u32) (li_ref_hash(want->stream_offset, want->length) & t->mask);
-  while (t->slot[j].refs) {
-    if (t->slot[j].off == want->stream_offset &&
-        t->slot[j].len == want->length) return t->slot[j].refs;
-    j = (j + 1) & t->mask;
+  u64 qo = want->stream_offset, qe = qo + want->length, refs = 0;
+  u32 lo = 0, hi = t->n, i;
+  if (!t->live || !t->n || !want->length) return 0;
+  /*  First index whose start is at or past the query's end.  */
+  while (lo < hi) {
+    u32 mid = lo + (hi - lo) / 2;
+    if (t->v[mid].off < qe) lo = mid + 1;  else hi = mid;
   }
-  return 0;
+  for (i = lo; i-- > 0;) {
+    if (t->v[i].reach <= qo) break;
+    if (t->v[i].off + t->v[i].len > qo) refs++;
+  }
+  return refs;
 }
 
 int xpar_op_list(const xpar_options * o) {
@@ -272,6 +282,23 @@ int xpar_op_list(const xpar_options * o) {
           xpar_json_strn(&js, "target", (const char *) e->extra,
                          e->extra_len);
         xpar_json_end(&js);
+        /*  Match the human --dedup output.  */
+        if (o->list_dedup) {
+          u32 k;
+          for (k = 0; k < e->extent_count; k++) {
+            i64 h = xpar_gchain_gen_of(&c, e->extents[k].stream_offset,
+                                       e->extents[k].length);
+            xpar_json_begin(&js, "extent");
+            xpar_json_u64(&js, "index", i);
+            xpar_json_u64(&js, "extent", k);
+            xpar_json_u64(&js, "stream_offset", e->extents[k].stream_offset);
+            xpar_json_u64(&js, "length", e->extents[k].length);
+            if (h < 0) xpar_json_null(&js, "generation");
+            else xpar_json_u64(&js, "generation", c.gen[h].sd.generation);
+            xpar_json_u64(&js, "refs", li_extent_refs(&refs, &e->extents[k]));
+            xpar_json_end(&js);
+          }
+        }
         continue;
       }
       xpar_fprintf(xpar_stdout, "  %c %12" PRIu64 "  %3" PRIu32
@@ -347,9 +374,10 @@ int xpar_op_list(const xpar_options * o) {
 
 /*  Read the stored armour parameters from ARMG or the archive prologue.  */
 static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
-                         bool * whole_file) {
+                         bool * whole_file, u64 * plain_len, u64 * disk_len) {
   u32 i;
   *whole_file = false;
+  *plain_len = *disk_len = 0;
   for (i = 0; i < c->vol_count; i++) {
     xpar_arm_prologue pr;
     if (c->vol[i].gen != g) continue;
@@ -359,6 +387,8 @@ static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
       p->n = pr.n;  p->k = pr.k;  p->fcr = pr.fcr;  p->prim = pr.prim;
       p->depth = pr.depth;
       *whole_file = true;
+      *plain_len = pr.plain_length;
+      *disk_len  = 384 + pr.armoured_length;
       return true;
     }
   }
@@ -407,19 +437,21 @@ static void li_chain_table(const xpar_chain * c, u32 sel) {
 static void li_deps(const xpar_chain * c, u32 sel) {
   xpar_manifest m;
   u32 * owner = NULL;
-  u64 * ext;  u64 * pkt;
+  u64 * ext;  u64 * pkt;  u64 * sup;
   u32 g, i, k;
 
   xpar_gchain_manifest(c, sel, &m, &owner);
   ext = (u64 *) xpar_calloc(c->gen_count, sizeof(u64));
   pkt = (u64 *) xpar_calloc(c->gen_count, sizeof(u64));
+  sup = (u64 *) xpar_calloc(c->gen_count, sizeof(u64));
   xpar_gchain_deps(c, &m, owner, ext, pkt);
+  xpar_gchain_superseded(c, &m, sup);
 
   xpar_fprintf(xpar_stdout,
                "  deps       : what generation %" PRIu32 "'s manifest would lose if "
                "a generation\n               were removed from the chain\n"
                "    gen  stream bytes  owns packets  entries using  "
-               "would be lost\n", c->gen[sel].sd.generation);
+               "would be lost  superseded/R\n", c->gen[sel].sd.generation);
   for (g = 0; g < c->gen_count; g++) {
     u64 lost = 0;
     for (i = 0; i < m.count; i++) {
@@ -432,18 +464,26 @@ static void li_deps(const xpar_chain * c, u32 sel) {
       if (hit) lost++;
     }
     xpar_fprintf(xpar_stdout,
-                 "    %-3" PRIu32 "  %12" PRIu64 "  %12" PRIu64 "  %13" PRIu64 "  %13" PRIu64 "\n",
+                 "    %-3" PRIu32 "  %12" PRIu64 "  %12" PRIu64 "  %13" PRIu64
+                 "  %13" PRIu64 "  %6" PRIu64 "/%-5" PRIu64 "%s\n",
                  c->gen[g].sd.generation,
                  c->gen[g].sd.stream_length,
                  pkt[g], ext[g],
-                 lost);
+                 lost, sup[g], c->gen[g].recovery_top,
+                 sup[g] && sup[g] >= c->gen[g].recovery_top && ext[g]
+                   ? "  spent" : "");
   }
+  xpar_fprintf(xpar_stdout,
+               "               superseded/R counts the slices of a "
+               "generation nothing still\n               reads against the "
+               "recovery it carries; `spent` means its\n               "
+               "remaining entries can no longer be repaired.\n");
   xpar_fprintf(xpar_stdout,
                "               `prune` refuses to remove a generation whose "
                "last column\n               is non-zero. That count comes "
                "from the extents recorded in\n               the manifest, "
                "not from --dedup-scope.\n");
-  xpar_free(ext);  xpar_free(pkt);  xpar_free(owner);
+  xpar_free(ext);  xpar_free(pkt);  xpar_free(sup);  xpar_free(owner);
   xpar_manifest_free(&m);
 }
 
@@ -455,6 +495,7 @@ int xpar_op_info(const xpar_options * o) {
   const xpar_setd * sd;
   xpar_armour_params ap;
   bool whole_file = false, have_armour;
+  u64 arm_plain = 0, arm_disk = 0;
   xpar_layt layt;
   bool have_layt = false;
   u64 crit_bytes = 0;
@@ -515,7 +556,8 @@ int xpar_op_info(const xpar_options * o) {
   }
   sd  = &c.gen[sel].sd;
   xpar_hex(idbuf, c.gen[sel].set_id, XPAR_SET_ID_LEN);
-  have_armour = li_armour_of(&c, sel, &ap, &whole_file);
+  have_armour = li_armour_of(&c, sel, &ap, &whole_file, &arm_plain,
+                             &arm_disk);
   if (c.gen[sel].layt_body &&
       xpar_layt_read(c.gen[sel].layt_body, c.gen[sel].layt_len, &layt) ==
         XPAR_OK) have_layt = true;
@@ -632,7 +674,7 @@ int xpar_op_info(const xpar_options * o) {
                    "%" PRIu64 " of plaintext\n"
                    "               correctable burst %" PRIu64 " bytes anywhere in "
                    "a frame\n"
-                   "               overhead %.3f%%\n",
+                   "               code overhead %.3f%%\n",
                    ap.symbol_bits, ap.n,
                    ap.k, t,
                    ap.depth,
@@ -642,6 +684,22 @@ int xpar_op_info(const xpar_options * o) {
                    xpar_armour_frame_plain(a),
                    xpar_armour_burst(a),
                    100.0 * (f64) (ap.n - ap.k) / (f64) ap.k);
+      /*  Include padding in the effective overhead.  */
+      if (whole_file && arm_plain && arm_disk) {
+        f64 real = 100.0 * ((f64) arm_disk - (f64) arm_plain) /
+                   (f64) arm_plain;
+        f64 code = 100.0 * (f64) (ap.n - ap.k) / (f64) ap.k;
+        xpar_fprintf(xpar_stdout,
+                     "               on disk %" PRIu64 " bytes for %" PRIu64
+                     " of plaintext, overhead %.3f%%\n",
+                     arm_disk, arm_plain, real);
+        if (real > 2.0 * code + 1.0)
+          xpar_fprintf(xpar_stdout,
+                       "               padding of the last frame dominates; "
+                       "a smaller --burst or --depth\n"
+                       "               would fit this archive more "
+                       "closely\n");
+      }
     }
     if (a) xpar_armour_free(a);
   } else {
@@ -710,6 +768,31 @@ int xpar_op_info(const xpar_options * o) {
                  "               max(1 MiB, payload / 20) it goes in every "
                  "volume\n",
                  li_size(sbuf, sizeof sbuf, crit_bytes));
+  }
+
+  /*  Report creator and comments.  */
+  {
+    u32 comments = 0;
+    for (i = 0; i < c.crit.count; i++) {
+      const xpar_crit_pkt * p = &c.crit.pkt[i];
+      sz n = 0;
+      if (xpar_memcmp(p->hdr.set_id, c.gen[sel].set_id, XPAR_SET_ID_LEN) ||
+          !xpar_pkt_is(&p->hdr, XPAR_T_CRTR)) continue;
+      if (xpar_text_read(p->body, (sz) p->body_len, &n) != XPAR_OK) break;
+      xpar_fprintf(xpar_stdout, "  creator    : %.*s\n", (int) n,
+                   (const char *) p->body);
+      break;
+    }
+    for (i = 0; i < c.crit.count; i++) {
+      const xpar_crit_pkt * p = &c.crit.pkt[i];
+      sz n = 0;
+      if (xpar_memcmp(p->hdr.set_id, c.gen[sel].set_id, XPAR_SET_ID_LEN) ||
+          !xpar_pkt_is(&p->hdr, XPAR_T_CMNT)) continue;
+      if (xpar_text_read(p->body, (sz) p->body_len, &n) != XPAR_OK) continue;
+      xpar_fprintf(xpar_stdout, "  %-11s: %.*s\n",
+                   comments++ ? "" : "comment", (int) n,
+                   (const char *) p->body);
+    }
   }
 
   li_chain_table(&c, sel);
@@ -781,6 +864,94 @@ static void li_recipe(const char * file, u64 hdr, u64 w, u64 n, u64 k,
     stream_len);
 }
 
+/*  Authenticate before producing an explain recipe.  */
+static void li_auth_plain(const xpar_options * o, const u8 * data, u64 len) {
+  xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
+  xpar_key key;  u8 master[XPAR_BLAKE3_KEY_LEN];
+  bool loaded = false;
+  xpar_memset(&key, 0, sizeof key);
+  xpar_memset(master, 0, sizeof master);
+  if (o->auth_key) {
+    xpar_keyfile_load_or_die(o->auth_key, &key, master);
+    loaded = true;
+  }
+  xpar_scan_init(&sc, data, len, NULL, false);
+  sc.accept_unverified_keyed = true;
+  while (xpar_scan_next(&sc, &hdr, &body, &off)) {
+    xpar_auth a;
+    if (!xpar_pkt_is(&hdr, XPAR_T_AUTH) ||
+        xpar_auth_read(body, (sz) (hdr.length - XPAR_PKT_HDR), &a) != XPAR_OK)
+      continue;
+    if (!loaded)
+      FATAL_CODE(XPAR_EXIT_AUTH,
+                 "This set is authenticated; supply --auth-key=FILE.");
+    if (!xpar_auth_key_ok(&a, master))
+      FATAL_CODE(XPAR_EXIT_AUTH,
+                 "The authentication key is wrong for this set.");
+    break;
+  }
+  xpar_key_forget(&key, master);
+}
+
+/*  Check AUTH inside an armoured critical group.  */
+static void li_auth_gate(const xpar_options * o, const u8 * data, u64 len) {
+  xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
+  li_auth_plain(o, data, len);
+  xpar_scan_init(&sc, data, len, NULL, false);
+  sc.accept_unverified_keyed = true;
+  while (xpar_scan_next(&sc, &hdr, &body, &off)) {
+    xpar_armg ag;
+    xpar_armour_params ap;
+    xpar_armour * a;
+    u8 * plain;
+    if (!xpar_pkt_is(&hdr, XPAR_T_ARMG)) continue;
+    if (xpar_armg_read(body, (sz) (hdr.length - XPAR_PKT_HDR), &ag) != XPAR_OK)
+      continue;
+    ap.symbol_bits = ag.symbol_bits;  ap.poly = ag.poly;
+    ap.n = ag.n;  ap.k = ag.k;  ap.fcr = ag.fcr;  ap.prim = ag.prim;
+    ap.depth = ag.depth;
+    if (xpar_armour_check(&ap) || ag.plain_length > (u64) (sz) -1) continue;
+    xpar_gf_init();
+    a = xpar_armour_new(&ap);
+    if (!a) continue;
+    plain = (u8 *) xpar_alloc_raw((sz) ag.plain_length);
+    xpar_armour_extract(a, plain, ag.plain_length, ag.data);
+    li_auth_plain(o, plain, ag.plain_length);
+    xpar_free(plain);
+    xpar_armour_free(a);
+  }
+  xpar_reject_unknown_critical(&sc);
+}
+
+/*  Decode whole-file armour, zero-filling a short tail.  */
+static u8 * li_archive_plain(xpar_file * f, u64 len,
+                             const xpar_arm_prologue * pr) {
+  xpar_armour_params ap;
+  xpar_armour * a;
+  u8 * region, * plain;
+  u64 have;
+  if (len <= ARM_HDR_EXPLAIN || !pr->plain_length ||
+      pr->plain_length > (u64) (sz) -1 ||
+      pr->armoured_length > (u64) (sz) -1) return NULL;
+  ap.symbol_bits = pr->symbol_bits;  ap.poly = pr->poly;
+  ap.n = pr->n;  ap.k = pr->k;  ap.fcr = pr->fcr;  ap.prim = pr->prim;
+  ap.depth = pr->depth;
+  if (xpar_armour_check(&ap)) return NULL;
+  xpar_gf_init();
+  a = xpar_armour_new(&ap);
+  if (!a) return NULL;
+  have = MIN(len - ARM_HDR_EXPLAIN, pr->armoured_length);
+  region = (u8 *) xpar_alloc_raw((sz) pr->armoured_length);
+  xpar_memset(region, 0, (sz) pr->armoured_length);
+  if (xpar_pread(f, region, (sz) have, ARM_HDR_EXPLAIN) != (sz) have) {
+    xpar_free(region);  xpar_armour_free(a);  return NULL;
+  }
+  plain = (u8 *) xpar_alloc_raw((sz) pr->plain_length);
+  xpar_armour_extract(a, plain, pr->plain_length, region);
+  xpar_free(region);  xpar_armour_free(a);
+  return plain;
+}
+
 int xpar_op_explain(const xpar_options * o) {
   /*  Armoured recipes need only the three 128-byte prologues.  */
   u8 head[384];
@@ -816,6 +987,11 @@ int xpar_op_explain(const xpar_options * o) {
   };
   if (xpar_garm_prologue(head, len, &pr, &which)) {
     u64 w = pr.symbol_bits / 8;
+    u8 * arm_plain = li_archive_plain(f, len, &pr);
+    if (arm_plain) {
+      li_auth_gate(o, arm_plain, pr.plain_length);
+      xpar_free(arm_plain);
+    }
     u64 fx = pr.depth * pr.n * w;
     u64 frames = fx ? xpar_ceil_div(pr.armoured_length, fx) : 0;
     if (!o->quiet && !o->json) {
@@ -877,6 +1053,7 @@ int xpar_op_explain(const xpar_options * o) {
   if (len && xpar_pread(f, data, len, 0) != len)
     FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
   xpar_xclose(f);
+  li_auth_gate(o, data, len);
 
   {
     xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;

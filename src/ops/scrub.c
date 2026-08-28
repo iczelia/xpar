@@ -30,6 +30,8 @@
 #include "port-fs.h"
 #include "slice.h"
 
+#include "platform/port-thread.h"
+
 /*  Scrub state.  */
 
 /*  Counts above this limit remain in totals but not the distribution.  */
@@ -93,6 +95,7 @@ static void scan_image(scrub * c, const u8 * buf, u64 size) {
   sc.accept_unverified_keyed = xpar_vset_key(c->s) == NULL;
   while (xpar_scan_next(&sc, &hdr, &body, &off))
     if (xpar_pkt_is(&hdr, XPAR_T_RCVS)) take_rcvs(c, &hdr, body);
+  xpar_reject_unknown_critical(&sc);
   c->pkt_bad   += sc.skip_checksum;
   c->pkt_short += sc.skip_length;
 }
@@ -136,7 +139,7 @@ static void load_recovery(scrub * c) {
     const xpar_vol * v = &l->vol[i];
     char * path;
     if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
-    path = xpar_path_join(dir, v->name);
+    path = xpar_path_vol(dir, v->name);
     c->rmap[c->rcount] = xpar_map(path);
     if (!c->rmap[c->rcount].valid) {
       xpar_fprintf(xpar_stderr, "xpar: cannot read recovery volume '%s'\n",
@@ -160,6 +163,72 @@ static void hist_add(scrub * c, const xpar_armour_stat * st) {
   For(u32, i, MIN(st->hist_len, c->hist_len), c->hist[i] += st->hist[i])
 }
 
+static void stat_merge(xpar_armour_stat * d, const xpar_armour_stat * s) {
+  d->frames    += s->frames;     d->codewords += s->codewords;
+  d->clean     += s->clean;      d->corrected += s->corrected;
+  d->failed    += s->failed;     d->symbols   += s->symbols;
+  if (s->worst > d->worst) d->worst = s->worst;
+  if (d->hist && s->hist)
+    For(u32, i, MIN(d->hist_len, s->hist_len), d->hist[i] += s->hist[i])
+}
+
+/*  Decode independent frame ranges with per-worker codecs.  */
+
+typedef struct {
+  const xpar_armour_params * p;
+  u8 * region;
+  u64  frames, fx;
+  sz   chunks;
+  xpar_armour_stat * st;
+} scrub_frames_job;
+
+static void scrub_frames_run(sz index, void * ctx) {
+  scrub_frames_job * j = (scrub_frames_job *) ctx;
+  u64 lo = j->frames * (u64) index / (u64) j->chunks;
+  u64 hi = j->frames * (u64) (index + 1) / (u64) j->chunks;
+  xpar_armour * a;
+  if (hi <= lo) return;
+  a = xpar_armour_new(j->p);
+  xpar_armour_decode_frames(a, j->region + lo * j->fx, hi - lo, &j->st[index]);
+  xpar_armour_free(a);
+}
+
+static void scrub_frames(scrub * c, const xpar_armour * ar, u8 * region,
+                         u64 frames, xpar_armour_stat * st) {
+  scrub_frames_job j;
+  xpar_pool * pool;
+  u64 batch = xpar_armour_batch(ar), fit;
+  sz i;
+  if (!frames) return;
+  fit = frames / (batch ? batch : 1);
+  pool = xpar_pool_create(c->o->jobs);
+  j.chunks = (sz) xpar_pool_threads(pool);
+  /*  Give each worker at least one full batch. */
+  if ((u64) j.chunks > fit) j.chunks = (sz) fit;
+  if (j.chunks <= 1) {
+    xpar_pool_destroy(pool);
+    xpar_armour_decode_frames(ar, region, frames, st);
+    return;
+  }
+  j.p = xpar_armour_params_of(ar);
+  j.region = region;  j.frames = frames;
+  j.fx = xpar_armour_frame_disk(ar);
+  j.st = (xpar_armour_stat *) xpar_calloc(j.chunks,
+                                          sizeof(xpar_armour_stat));
+  for (i = 0; i < j.chunks; i++) {
+    j.st[i].hist_len = st->hist_len;
+    j.st[i].hist = st->hist_len
+                     ? (u64 *) xpar_calloc(st->hist_len, sizeof(u64)) : NULL;
+  }
+  xpar_pool_run(pool, j.chunks, scrub_frames_run, &j);
+  for (i = 0; i < j.chunks; i++) {
+    stat_merge(st, &j.st[i]);
+    xpar_free(j.st[i].hist);
+  }
+  xpar_free(j.st);
+  xpar_pool_destroy(pool);
+}
+
 /*  One armoured packet group: every frame, then the plaintext parse that
     decides whether a rewrite is authorised.  */
 static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
@@ -169,7 +238,7 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
   xpar_armour * ar;
   xpar_armour_stat st;
   u8 * region, * plain;
-  u64 fdisk, i, nframes;
+  u64 fdisk, nframes;
   bool ok;
 
   if (xpar_armg_read(body, n, &a) != XPAR_OK) return;
@@ -194,8 +263,7 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
     u64 * h = (u64 *) xpar_calloc(len, sizeof(u64));
     xpar_memset(&st, 0, sizeof st);
     st.hist = h;  st.hist_len = len;
-    for (i = 0; i < nframes; i++)
-      xpar_armour_decode_frame(ar, region + i * fdisk, &st);
+    scrub_frames(c, ar, region, nframes, &st);
     hist_add(c, &st);
     xpar_free(h); }
 
@@ -241,11 +309,12 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
   xpar_armour * ar;
   xpar_armour_stat st;
   u8 * region, * plain;
-  u64 fd, frames, i;
+  u64 fd, frames, avail;
   bool ok;
-  if (size < 8 || xpar_memcmp(buf, "XPAR2ARM", 8) ||
+  if (!xpar_garm_is_archive(buf, (sz) size) ||
       !xpar_garm_prologue(buf, (sz) size, &pr, NULL)) return;
-  if (pr.armoured_length > size - 384) { c->failed++; return; }
+  avail = size > 384 ? size - 384 : 0;
+  if (avail > pr.armoured_length) avail = pr.armoured_length;
   p.symbol_bits = pr.symbol_bits; p.poly = pr.poly;
   p.n = pr.n; p.k = pr.k; p.fcr = pr.fcr; p.prim = pr.prim;
   p.depth = pr.depth;
@@ -255,7 +324,10 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
   frames = fd ? pr.armoured_length / fd : 0;
   region = (u8 *) xpar_alloc_raw((sz) pr.armoured_length);
   plain = (u8 *) xpar_alloc_raw(pr.plain_length ? (sz) pr.plain_length : 1);
-  xpar_memcpy(region, buf + 384, (sz) pr.armoured_length);
+  /*  A short file is read as erasures of its missing tail.  */
+  xpar_memcpy(region, buf + 384, (sz) avail);
+  if (avail < pr.armoured_length)
+    xpar_memset(region + avail, 0, (sz) (pr.armoured_length - avail));
   c->regions++;
   {
     u32 t = (p.n - p.k) / 2;
@@ -263,8 +335,7 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
     u64 * h = (u64 *) xpar_calloc(len, sizeof(u64));
     xpar_memset(&st, 0, sizeof st);
     st.hist = h; st.hist_len = len;
-    for (i = 0; i < frames; i++)
-      xpar_armour_decode_frame(ar, region + i * fd, &st);
+    scrub_frames(c, ar, region, frames, &st);
     hist_add(c, &st);
     xpar_free(h);
   }
@@ -292,7 +363,7 @@ static void scrub_armour(scrub * c) {
     u64 n = 0;
     const u8 * p = xpar_vset_volume(c->s, i, &n);
     if (!p) continue;
-    if (n >= 8 && !xpar_memcmp(p, "XPAR2ARM", 8))
+    if (xpar_garm_is_archive(p, (sz) n))
       scrub_archive(c, p, n, xpar_vset_volume_path(c->s, i));
     else
       scrub_image(c, p, n, xpar_vset_volume_path(c->s, i));
@@ -678,6 +749,11 @@ static void report(const scrub * c, int rc) {
     xpar_fprintf(xpar_stderr, "xpar: --rewrite: refreshed %" PRIu64
                  " regions\n",
                  c->regions_rewritten);
+  /*  --rewrite does not re-encode missing recovery slices.  */
+  if (c->o->rewrite && (c->pkt_bad || c->rcvs_present < c->rcvs_count))
+    xpar_fprintf(xpar_stderr,
+                 "xpar: --rewrite does not rebuild recovery slices; run "
+                 "`xpar repair` to regenerate them from the data\n");
   if (c->rcvs_wrong)
     xpar_fprintf(xpar_stderr,
                  "xpar: --deep: %" PRIu64 " recovery slices do not recompute "
@@ -777,7 +853,23 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
 
 int xpar_op_scrub(const xpar_options * o) {
   int rc;
-  if (!o->chain) return scrub_one(o, NULL, NULL, true);
+  xpar_vset * only = NULL;
+  bool walk = o->chain;
+
+  /*  Scrub unselected ancestry.  */
+  if (!walk && !o->gen_count && !o->from_stdin) {
+    only = xpar_vset_open(o);
+    if (xpar_vset_setd(only)->generation) {
+      xpar_vset_close(only);
+      only = NULL;
+      walk = true;
+    }
+  }
+  if (!walk) {
+    rc = scrub_one(o, only, NULL, true);
+    if (only) xpar_vset_close(only);
+    return rc;
+  }
 
   {
     /*  The public reader does not expose the generation table, so use the
@@ -816,6 +908,7 @@ int xpar_op_scrub(const xpar_options * o) {
       if (!member[g]) continue;
       xpar_gchain_genref(&c, g, &ref, id);
       one.chain = false;
+      one.chain_member = true;
       one.gens = &ref;
       one.gen_count = 1;
       current = g == selected ? head : xpar_vset_open(&one);

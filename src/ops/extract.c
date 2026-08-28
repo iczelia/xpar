@@ -119,6 +119,8 @@ typedef struct {
   u64 skip[EX_SK_COUNT];
   u64 entries, bytes, links, copies, mismatches, io_failures;
   u64 substituted;             /*  Data volumes read from a spare copy.  */
+  u64 vol_damaged;             /*  Data volumes read despite a bad tag.  */
+  u64 hash_bad;                /*  Entries whose content hash still fails.  */
   bool owner_failed, xattr_failed;
 } ex;
 
@@ -143,29 +145,40 @@ static void ex_skip(ex * x, const xpar_entry * e, int cls,
   xpar_json_end(&x->js);
 }
 
-static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename) {
-  char * path;
+static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename,
+                           bool * damaged) {
+  char * named, * path;
   xpar_dir * d;
   const xpar_dirent * de;
+  xpar_stat_t st;
   *basename = NULL;
-  path = xpar_path_join(x->dir, v->name);
-  if (xpar_vol_tag_match(path, v)) {
+  *damaged = false;
+  named = xpar_path_vol(x->dir, v->name);
+  if (xpar_vol_tag_match(named, v)) {
     *basename = xpar_strdup(v->name);
-    return path;
+    return named;
   }
-  xpar_free(path);
-  if (!v->vol_tag || !(d = xpar_opendir(x->dir))) return NULL;
-  while ((de = xpar_readdir(d)) != NULL) {
-    if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
-    path = xpar_path_join(x->dir, de->name);
-    if (xpar_vol_tag_match(path, v)) {
-      *basename = xpar_strdup(de->name);
-      xpar_closedir(d);
-      return path;
+  if (v->vol_tag && (d = xpar_opendir(x->dir)) != NULL) {
+    while ((de = xpar_readdir(d)) != NULL) {
+      if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
+      path = xpar_path_join(x->dir, de->name);
+      if (xpar_vol_tag_match(path, v)) {
+        *basename = xpar_strdup(de->name);
+        xpar_closedir(d);
+        xpar_free(named);
+        return path;
+      }
+      xpar_free(path);
     }
-    xpar_free(path);
+    xpar_closedir(d);
   }
-  xpar_closedir(d);
+  /*  A present volume with a bad tag is damaged, not missing.  */
+  if (xpar_lstat(named, &st) == 0 && st.is_regular) {
+    *basename = xpar_strdup(v->name);
+    *damaged = true;
+    return named;
+  }
+  xpar_free(named);
   return NULL;
 }
 
@@ -221,6 +234,7 @@ static void ex_collect(ex * x, const u8 * buf, u64 size) {
       xpar_critset_add(&x->crit, &h, body);
     }
   }
+  xpar_reject_unknown_critical(&sc);
 }
 
 static bool ex_have_setd(const ex * x) {
@@ -238,8 +252,10 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   xpar_armour_params p;
   xpar_armour * a;
   u8 * plain;
+  const u8 * arm;
   u64 plain_len, arm_len;
-  FATAL_UNLESS("No prologue copy in '%s' verifies; try "
+  FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
+               "No prologue copy in '%s' verifies; try "
                "`xpar recover-prologue`.",
                xpar_garm_prologue(v->data, (sz) v->size, &pr, NULL),
                v->path);
@@ -249,14 +265,21 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   plain_len = pr.plain_length; arm_len = pr.armoured_length;
   FATAL_UNLESS("The armoured prologue names unusable parameters: %s",
                xpar_armour_check(&p) == NULL, xpar_armour_check(&p));
-  FATAL_UNLESS("The armoured region runs past the end of '%s'.",
-               384 + arm_len <= v->size, v->path);
   FATAL_UNLESS("The armoured region is too large for this host.",
-               plain_len <= (u64) (sz) -1 / 2);
+               plain_len <= (u64) (sz) -1 / 2 && arm_len <= (u64) (sz) -1);
+  /*  Zero-fill a missing tail as erasures.  */
+  if (384 + arm_len > v->size) {
+    u64 avail = v->size > 384 ? v->size - 384 : 0;
+    u8 * pad = (u8 *) xpar_alloc_raw((sz) arm_len);
+    xpar_memcpy(pad, v->data + 384, (sz) avail);
+    xpar_memset(pad + avail, 0, (sz) (arm_len - avail));
+    ex_keep_plain(x, pad);
+    arm = pad;
+  } else arm = v->data + 384;
   xpar_gf_init();
   a = xpar_armour_new(&p);
   plain = (u8 *) xpar_alloc_raw((sz) plain_len ? (sz) plain_len : 1);
-  xpar_armour_extract(a, plain, plain_len, v->data + 384);
+  xpar_armour_extract(a, plain, plain_len, arm);
   ex_collect(x, plain, plain_len);
   ex_keep_plain(x, plain);
   if (x->arm_count == x->arm_cap) {
@@ -265,17 +288,18 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   }
   { ex_arm * m = &x->arm[x->arm_count++];
     u64 fp = xpar_armour_frame_plain(a);
-    m->a = a;  m->src = v->data + 384;  m->src_len = arm_len;
+    m->a = a;  m->src = arm;  m->src_len = arm_len;
     m->plain = plain;  m->plain_len = plain_len;
     m->frames = fp ? xpar_ceil_div(plain_len, fp) : 0;
     m->done = (u8 *) xpar_calloc((sz) (m->frames ? m->frames : 1), 1); }
-  if (!ex_have_setd(x)) {
+  /*  Decode when packets or the descriptor do not verify.  */
+  if (!xpar_verify_packets_ok(plain, plain_len, x->key_loaded ? &x->key : NULL)
+      || !ex_have_setd(x)) {
     u8 * region = (u8 *) xpar_alloc_raw((sz) arm_len ? (sz) arm_len : 1);
     u8 * fixed  = (u8 *) xpar_alloc_raw((sz) plain_len ? (sz) plain_len : 1);
-    u64 fd = xpar_armour_frame_disk(a), off;
-    xpar_memcpy(region, v->data + 384, (sz) arm_len);
-    for (off = 0; off + fd <= arm_len; off += fd)
-      xpar_armour_decode_frame(a, region + off, NULL);
+    u64 fd = xpar_armour_frame_disk(a);
+    xpar_memcpy(region, arm, (sz) arm_len);
+    if (fd) xpar_armour_decode_frames(a, region, arm_len / fd, NULL);
     xpar_armour_extract(a, fixed, plain_len, region);
     xpar_free(region);
     ex_collect(x, fixed, plain_len);
@@ -362,8 +386,9 @@ static void ex_pick_setd(ex * x) {
     xpar_setd_free(&sd);
     if (x->o->gen_count ? named : head) { want = p;  break; }
   }
-  FATAL_UNLESS("No set descriptor survived in '%s'.", want != NULL,
-               x->o->set);
+  FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
+                    "No set descriptor survived in '%s'.", want != NULL,
+                    x->o->set);
   if (xpar_setd_read(want->body, (sz) want->body_len, &x->sd) != XPAR_OK)
     FATAL_FORMAT("The set descriptor is malformed.");
   xpar_memcpy(x->set_id, want->hdr.set_id, XPAR_SET_ID_LEN);
@@ -397,7 +422,8 @@ static void ex_read_manifest(ex * x) {
     const xpar_crit_pkt * p = xpar_critset_find_file(
                                 &x->crit, x->set_id, x->sd.file_id[i]);
     xpar_entry tmp, * e;
-    FATAL_UNLESS("Manifest entry %" PRIu32 " of %" PRIu32
+    FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
+                 "Manifest entry %" PRIu32 " of %" PRIu32
                  " is missing from every volume.",
                  p != NULL, i + 1, x->sd.file_count);
     if (xpar_entry_read(p->body, (sz) p->body_len, x->sd.posix_record_count,
@@ -505,7 +531,7 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
     }
   }
 
-  if ((o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32) {
+  if ((o->preserve & XPAR_PRES_MODE) && !link && e->mode != XPAR_ABSENT_U32) {
     u32 m = e->mode & XPAR_MODE_PERM;
     u32 id = m & (XPAR_MODE_SETUID | XPAR_MODE_SETGID | XPAR_MODE_STICKY);
     if (id && !(o->preserve & XPAR_PRES_SETID)) {
@@ -716,16 +742,16 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
       return ex_write_entry(x, idx, path);
     }
   }
-  x->entries++;  x->bytes += fo;
   if (xpar_memcmp(got, e->content_hash, 32)) {
-    x->mismatches++;
+    x->mismatches++;  x->hash_bad++;
     xpar_remove(stage);
-    ex_note(x, "xpar: '%.*s' does not match its recorded hash; the set is "
-               "damaged and `xpar repair` is the next move.\n",
+    ex_note(x, "xpar: '%.*s' does not match its recorded hash; the damaged "
+               "copy was not written. Run `xpar repair` first.\n",
             (int) e->name_len, e->name);
     xpar_free(stage);
     return false;
   }
+  x->entries++;  x->bytes += fo;
   if (!ex_replace(x, stage, path)) {
     xpar_free(stage);
     return false;
@@ -891,14 +917,10 @@ static void ex_validate(ex * x) {
   s = xpar_manifest_validate(&x->mf, &lim, &res);
   if (s != XPAR_MF_OK) {
     const xpar_entry * e = &x->mf.entry[res.entry];
-    FATAL_FORMAT("Entry %" PRIu32 " ('%.*s') %s.", res.entry,
+    FATAL_FORMAT("Entry %" PRIu32 " ('%.*s'): %s.", res.entry,
                  (int) e->name_len, e->name, xpar_mf_reason(s));
   }
   xpar_free(anc);
-  if (res.link_meta_mismatch)
-    ex_note(x, "xpar: %" PRIu32 " hard-link aliases disagree with their "
-               "canonical entry's metadata; the canonical values are "
-               "used.\n", res.link_meta_mismatch);
 }
 
 int xpar_op_extract(const xpar_options * o) {
@@ -929,7 +951,7 @@ int xpar_op_extract(const xpar_options * o) {
   for (i = 0; i < o->set_ref.count; i++) {
     if (!ex_vol_open(&x, o->set_ref.vol[i])) continue;
     { const xpar_volimg * v = &x.vol[x.vol_count - 1];
-      if (v->size >= 8 && !xpar_memcmp(v->data, "XPAR2ARM", 8))
+      if (xpar_garm_is_archive(v->data, (sz) v->size))
         ex_open_armoured(&x, v);
       else
         ex_collect(&x, v->data, v->size);
@@ -956,23 +978,33 @@ int xpar_op_extract(const xpar_options * o) {
       x.have_layt = true;
   }
   if (!x.stream_count && !x.strm) {
-    FATAL_UNLESS("This set has no volume layout.", x.have_layt);
+    FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
+                      "This set has no volume layout.", x.have_layt);
     if (xpar_layt_tiles(&x.layt, x.sd.stream_length) != XPAR_OK)
       FATAL_FORMAT("The data volumes do not tile the stream.");
     for (i = 0; i < x.layt.count; i++) {
       xpar_vol * v = &x.layt.vol[i];
       char * path, * basename;
       u32 k;
-      bool seen = false;
+      bool seen = false, damaged = false;
       if (v->kind != XPAR_VOL_DATA || !v->name) continue;
-      path = ex_find_data(&x, v, &basename);
-      FATAL_UNLESS("Data volume '%s' is missing; extraction needs the whole "
-                   "stream.", path != NULL, v->name);
+      path = ex_find_data(&x, v, &basename, &damaged);
+      FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
+                   "Data volume '%s' is missing; extraction needs the whole "
+                   "stream. Run `xpar repair` to rebuild it.",
+                   path != NULL, v->name);
       for (k = 0; k < x.vol_count && !seen; k++)
         if (!xpar_strcmp(x.vol[k].path, path)) seen = true;
       if (!seen && !ex_vol_open(&x, path))
-        FATAL_IO("Data volume '%s' is missing; extraction needs the whole "
-                 "stream.", path);
+        FATAL_IO("Data volume '%s' cannot be read.", path);
+      if (damaged) {
+        /*  Entry hashes determine whether damaged input survived.  */
+        x.vol_damaged++;
+        if (!o->quiet)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: data volume '%s' is damaged; run `xpar repair` "
+                       "first for a faithful copy\n", v->name);
+      }
       if (xpar_strcmp(v->name, basename)) {
         /*  Report substituted volumes consistently across verbs.  */
         char * named = xpar_path_join(x.dir, v->name);
@@ -1176,6 +1208,9 @@ int xpar_op_extract(const xpar_options * o) {
   }
   if (x.io_failures) rc = XPAR_EXIT_IO;
   if (x.mismatches && rc == XPAR_EXIT_OK) rc = XPAR_EXIT_REPAIRABLE;
+  /*  Extract cannot recover a surviving hash mismatch.  */
+  if (x.hash_bad && (rc == XPAR_EXIT_OK || rc == XPAR_EXIT_REPAIRABLE))
+    rc = XPAR_EXIT_UNREPAIRABLE;
 
   if (o->json) {
     xpar_json_begin(&x.js, "extract");
@@ -1185,6 +1220,7 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_json_u64(&x.js, "materialised_as_copy", x.copies);
     xpar_json_u64(&x.js, "mismatches", x.mismatches);
     xpar_json_u64(&x.js, "volumes_substituted", x.substituted);
+    xpar_json_u64(&x.js, "volumes_damaged", x.vol_damaged);
     xpar_json_u64(&x.js, "io_failures", x.io_failures);
     xpar_json_end(&x.js);
     xpar_json_summary(&x.js, rc == XPAR_EXIT_OK ? "ok" : "damaged", rc);

@@ -72,6 +72,9 @@ int  xpar_main(int argc, char ** argv);
 void xpar_exit(int code) XPAR_NORETURN;
 const char * xpar_getenv(const char * name);
 
+/*  The host's temporary directory, used when the environment names none.  */
+const char * xpar_tmpdir(void);
+
 typedef struct xpar_file xpar_file;
 
 extern xpar_file * const xpar_stdin;

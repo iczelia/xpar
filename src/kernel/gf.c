@@ -125,8 +125,9 @@ static void gf16_affine(u16 c, u64 blk[4]) {
 }
 
 /*  Coefficient preparation.
-    Both forms are always built, so a prepared coefficient outlives a
-    tier change and `benchmark --tiers` can switch tiers under one.
+    The affine matrices and the nibble tables are always built. tab6 costs
+    as much again and only vbmi512 reads it, so it is built only while that
+    tier is active: prepare a coefficient after choosing the tier.
 
     The split tables come out of the same linearity that gives the affine
     matrices. A nibble table entry is `(i << 4k) * c`, and `i << 4k` is
@@ -182,7 +183,7 @@ void xpar_gf16_prepare(xpar_gf16_coef * m, u16 c) {
       m->tab[2 * k + 1][i] = (u8) (t[i] >> 8);
     }
   }
-  /*  Only VBMI uses tab6; tier selection precedes coefficient setup.  */
+  /*  Only vbmi512 uses tab6.  */
   if (!gf_want_tab6) return;
   for (k = 0; k < 3; k++) {
     int bits = k == 2 ? 4 : 6;

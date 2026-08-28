@@ -58,6 +58,8 @@ typedef struct {
   xpar_key key;
   u8 master[XPAR_BLAKE3_KEY_LEN];
   bool key_loaded, authenticated, auth_only;
+  /*  Packets failing authentication with the loaded key.  */
+  u64 auth_failed;
   char * base, * dir;
 } xpar_chain;
 
@@ -78,6 +80,12 @@ typedef struct {
 
 bool xpar_garm_prologue(const u8 *, sz, xpar_arm_prologue *, int *);
 
+/*  Detect an archive from any valid prologue copy.  */
+bool xpar_garm_is_archive(const u8 *, sz);
+
+/*  How many of the three stored prologue copies still check out.  */
+u32 xpar_garm_prologue_copies(const u8 *, sz);
+
 /*  Read critical-group armour from ARMG; false when stored plain.  */
 bool xpar_gchain_crit_armour(const xpar_chain *, u32, xpar_armour_params *);
 
@@ -93,6 +101,10 @@ void xpar_garm_write_inserted(const char *, const xpar_armour_params *,
                               const u8 *, u64, u64, const u8 *, u64,
                               u64, u64);
 i64 xpar_gchain_gen_of(const xpar_chain *, u64, u64);
+/*  Report superseded slices and users of a generation.  */
+void xpar_gchain_superseded(const xpar_chain *, const xpar_manifest *, u64 *);
+u64 xpar_gchain_users(const xpar_chain *, const xpar_manifest *, u32);
+
 void xpar_gchain_deps(const xpar_chain *, const xpar_manifest *, const u32 *,
                       u64 *, u64 *);
 

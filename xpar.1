@@ -37,14 +37,48 @@ Any unambiguous prefix of a verb is accepted;  an exact match always wins
 over a prefix match.
 .TP
 .B create
-Build a redundancy set from the input paths.
+Build a redundancy set from the input paths. It refuses a directory
+argument without
+.BR \-R ,
+an output base ending in a
+.BI .g NNN
+generation suffix, a
+.B \-\-cell
+larger than the slice, a
+.B \-\-burst
+or
+.B \-\-depth
+the memory budget cannot honour, and
+.B \-\-labels
+outside
+.BR \-\-layout=split .
+Re-run over a tree it already protects, it skips its own volumes and
+says which.
 .TP
 .B verify
-Checks the integrity of the data. Nothing is written to disk. The exit codes
-distinguish clean, damaged but repairable, and hopelessly damaged data.
+Checks the integrity of the data and writes nothing beside the set. An
+armoured archive is staged in memory when its plaintext fits
+.BR \-m ,
+otherwise under
+.BR TMPDIR ,
+.B TMP
+or
+.BR TEMP ,
+and the stage is removed on exit; only when none of those is set and the
+plaintext exceeds
+.B \-m
+does the stage fall back beside the archive. The exit codes distinguish
+clean, damaged but repairable, and hopelessly damaged data.
 .TP
 .B repair
 Verify and repair errors or erasures.
+.B \-\-in\-place
+also recreates missing empty files, directories and symbolic links from
+the manifest, restoring their recorded mode and times; rewrites a
+packet-bearing volume whose packets fail their checksums from intact
+replicas in the other volumes; and restores a split data volume found
+under another name or at the wrong length to its recorded name and
+length.
 .TP
 .B scrub
 Read all data and recovery volumes and report corrected symbols per codeword.
@@ -55,7 +89,9 @@ recompute recovery data from the protected data.
 .B extract
 Reconstruct data from a split or armoured set (see
 .BR \-\-layout ).
-A sidecar set protects files already on disk and needs no extraction.
+A sidecar set protects files already on disk and needs no extraction. On
+an armoured set it corrects inner-code damage as it reads, and exits 2,
+never 4, when the data cannot be reproduced.
 .TP
 .B recover
 Regenerate one volume of a set from the others.
@@ -79,23 +115,36 @@ is given.
 Print the manifest of the set.
 .TP
 .B info
-Print geometry, codec, plan and redundancy.
+Print geometry, codec, plan and redundancy, together with the creator
+string, any comment packets, and, for
+.BR \-\-layout=armoured ,
+the armour overhead the archive carries on disk rather than the code's
+nominal rate.
 .B \-\-deps
 adds the per-generation dependency table that
 .B prune
-consults.
+consults; its
+.B superseded/R
+column counts the slices of a generation that nothing still reads against
+the recovery that generation carries.
 .TP
 .B explain
 Print the hand-recovery recipe: the exact
 .BR dd (1)
-commands that extract the protected data from this particular set without
-xpar (without error or erasure correction).
+commands that recover this particular set's armoured region without xpar
+(without error or erasure correction). That region is the protected data
+only under
+.BR \-\-layout=armoured ;
+in a sidecar or split set the data is the original files, and the recipe
+extracts the critical metadata group instead.
 .TP
 .B undo
 Replay an in-place repair journal after a crash interrupted an operation.
 .TP
 .B recover\-prologue
 Recover the parameters of a destroyed armoured prologue via brute-force.
+A frame the inner code can still correct counts as a decode, so damage
+short of the code's capacity does not hide a framing.
 .TP
 .B benchmark
 Measure xpar's low-level SIMD kernels.
@@ -132,9 +181,10 @@ report it. Without either, progress is shown only on a terminal.
 .IR auto " (default), " always ", " never .
 .TP
 .B \-\-reproducible
-Omit the times and the host from the set, ensuring reproducibility across
-machines of SHA-exact sets. Permissions, attributes and links describe the
-data rather than the machine, so they are still recorded; name a class with
+Omit the source timestamps and the version suffix of the creator string,
+ensuring reproducibility across machines of SHA-exact sets. No host name is
+recorded in any case. Permissions, attributes and links describe the data
+rather than the machine, so they are still recorded; name a class with
 .B \-\-preserve
 to keep one this would otherwise drop. Setting
 .B SOURCE_DATE_EPOCH
@@ -150,7 +200,10 @@ silently downgraded.
 .BI \-\-auth\-key= FILE
 Read the authentication key from
 .IR FILE .
-An empty file is rejected. Authentication does not encrypt the set.
+An empty file is rejected. Authentication does not encrypt the set. Every
+verb that opens an authenticated set needs the key and exits 6 without it;
+see
+.BR SECURITY .
 .TP
 .BR \-h ", " \-\-help
 Display usage information.
@@ -171,12 +224,23 @@ Base name for output volumes.
 .BI \-r " SPEC" "\fR, \fP" \-\-recovery= SPEC
 Recovery count, percentage, size, or multiple; see
 .BR REDUNDANCY .
+Omitting it makes
+.B create
+use five per cent, while
+.B add
+and
+.B consolidate
+inherit the ratio the generation being extended already carries, and say
+so; they warn when the result still protects less than the set did.
 .TP
 .BI \-\-min\-recovery= N
 Minimum derived recovery-slice count.
 .TP
 .BI \-\-max\-recovery= SPEC
-Recovery-axis space reserved for later top-ups.
+Recovery-axis space reserved for later top-ups. The axis is widened to
+hold it whatever the codec, so
+.B addrecovery
+can later grow to that ceiling.
 .TP
 .BI \-s " SIZE" "\fR, \fP" \-\-slice\-size= SIZE
 Set slice size. Mutually exclusive with
@@ -189,10 +253,16 @@ Plan for this many data slices. Mutually exclusive with
 .BI \-\-cell= SIZE
 Set the cell size Y, which is the erasure unit: a fault costs the cell
 that holds it rather than the whole slice, and the recovery budget is
-spent per column of cells, not per set. A multiple of 64 bytes, at least
-4096, and clamped to the slice size. Smaller cells localise damage more
-finely and cost more checksum metadata. The planner chooses 64 KiB when
-this is not given.
+spent per column of cells, not per set. A multiple of 64 bytes and at
+least 4096. Smaller cells localise damage more finely and cost more
+checksum metadata. Without it the planner takes min(64 KiB, Z), so a
+slice smaller than 64 KiB has exactly one cell and a slice under 4096
+bytes has none at all, the erasure unit then being the whole slice. An
+explicit
+.B \-\-cell
+larger than the slice
+.B create
+planned is refused, not clamped.
 .TP
 .BI \-\-layout= WHICH
 .IR sidecar " (default), " split ", or " armoured .
@@ -217,7 +287,17 @@ accept a different one.
 .IR none ", 8 (default), or 16 bytes."
 .TP
 .BI \-\-armour= WHICH
-.IR none ", " metadata ", or " all " (default)."
+.IR none ", " metadata ", or " all .
+.I metadata
+is the default for
+.B \-\-layout=sidecar
+and
+.BR \-\-layout=split ,
+which armour the critical metadata group alone;
+.I all
+is the default for
+.BR \-\-layout=armoured ,
+which armours the whole archive, and is refused for the other two.
 .TP
 .BI \-\-armour\-field= W
 .IR auto " (default), 8, or 16-bit inner field."
@@ -225,17 +305,34 @@ accept a different one.
 .BI \-\-armour\-t= N
 Correct up to
 .I N
-symbols per inner-code codeword.
+symbols per inner-code codeword. Use four or more.
+.B \-\-armour\-t=1
+leaves a codeword two parity symbols, which is enough to correct one
+symbol and not enough to tell two apart from one, so almost every
+two-symbol error is silently miscorrected and only the outer checksums
+notice.
 .TP
 .BI \-\-armour\-pct= P
-Set inner-code overhead, greater than zero and at most 50 percent.
+Set inner-code overhead relative to the protected data, so that 2t/k is
+at most
+.IR P .
+Greater than zero and at most 50 percent. Excludes
+.BR \-\-armour\-t .
 .TP
 .BI \-\-burst= SIZE
 Choose interleave depth for this burst size. Excludes
 .BR \-\-depth .
 .TP
 .BI \-\-depth= D
-Set interleave depth; default 1.
+Set interleave depth; default 1. An interleave the working-set limit
+cannot hold is refused rather than quietly reduced, and the refusal names
+both the
+.B \-m
+the request would need and the largest
+.B \-\-burst
+or
+.B \-\-depth
+the current budget affords.
 .TP
 .BI \-\-volumes= WHICH
 .IR ladder " (default), " equal ", or a positive count."
@@ -283,10 +380,13 @@ Store names relative to
 .IR DIR .
 .TP
 .B \-\-labels
-Write a label file per volume.
+Write a label file per volume. Only
+.B \-\-layout=split
+has data volumes to label, so the other layouts refuse it.
 .TP
 .B \-\-auth\-only
-Omit public CRC and whole-file hashes from an authenticated set.
+Omit public CRC and whole-file hashes from an authenticated set. It works
+at any set size.
 .TP
 .B \-\-no\-verify\-after
 Skip the post-write read-back pass.
@@ -317,6 +417,9 @@ Check the BLAKE3 slice tags, not just the CRC32C slice checksums.
 Entry hashes are checked whenever
 .B \-\-fast
 is absent, with or without this.
+.B verify
+warns when recovery slices themselves fail their checksum, since the set
+can then be clean and still be protected by fewer slices than it names.
 .TP
 .BI "verify \-\-resync=" WHICH ", " "repair \-\-resync=" WHICH
 .IR off ", " auto " (default), or " always .
@@ -335,10 +438,16 @@ dominant displacement, so recovering from a deletion generally needs
 .B \-\-resync=always
 together with this option; the diagnostic says so when it applies.
 .TP
-.BI "verify \-\-scan=" DIR
+.BI \-\-scan= DIR
 Also search
 .I DIR
-for volumes.
+for this set's volumes, index and recovery alike, when they are not
+beside the set. Every verb that opens a set takes it:
+.BR verify ", " repair ", " scrub ", " extract ", " recover ", "
+.BR addrecovery ", " add ", " consolidate ", " prune ", " list ", "
+.BR info " and " explain .
+A volume found beside the set wins; the scanned directory supplies only
+what is missing.
 .TP
 .BR "repair \-\-in\-place" ", " "repair \-\-to=DIR"
 Rewrite originals, or write a repaired tree under
@@ -349,6 +458,8 @@ Keep damaged originals, or re-read and re-verify every write.
 .TP
 .BR "repair \-\-keep\-journal" ", " "repair \-\-no\-journal"
 Keep the journal after success, or disable it. These exclude each other.
+The journal is created with mode 0600 and is never written through a
+symbolic link planted under its name.
 .TP
 .B "repair \-\-replace\-journal"
 Discard an undo journal an earlier repair left behind and write a new one.
@@ -362,7 +473,10 @@ already requires
 to be repaired in place, which is an unrelated decision.
 .TP
 .BR "repair \-\-dry\-run" ", " "repair \-\-exit\-on\-change"
-Report only, or exit 1 when anything was repaired.
+Report only, or exit 1 when anything was repaired. The two combine: a dry
+run with
+.B \-\-exit\-on\-change
+exits 1 when writes would be made and 0 when they would not.
 .TP
 .BR "scrub \-\-deep" ", " "scrub \-\-rewrite" ", " "scrub \-\-rebuild\-cells"
 Re-encode the recovery data from the protected data and compare it,
@@ -373,7 +487,7 @@ Extract below
 .IR DIR .
 .TP
 .B "extract \-\-stdout"
-Write the set stream to standard output.
+Write the one entry of a single-entry set to standard output.
 .TP
 .BI "extract \-\-preserve=" LIST
 Apply the metadata classes described under create.
@@ -437,20 +551,45 @@ List and time every runnable kernel tier after differential tests.
 selects by generation number or set-ID prefix where accepted.
 .B \-\-chain
 processes every generation oldest first where accepted.
+Without
+.BR \-\-generation ,
+.BR verify ,
+.B repair
+and
+.B scrub
+already do that on a set of more than one generation, because a generation
+can neither check nor rebuild the bytes it inherits from an ancestor;
+.B \-\-chain
+is then the default and naming it changes nothing. Damage in bytes an
+ancestor owns is reported as
+.RB \(lq N
+entries damaged in data inherited from generation
+.IR G \(rq,
+and slices a later generation has superseded count as erasures against
+the older generation's verdict, which says so and points at
+.BR consolidate .
+With
+.B \-\-generation
+they stay on the one generation and say so when damage falls in inherited
+data.
 .SH LAYOUTS
 .TP
 .B sidecar
 Original files remain external. The index is
 .IB base .xpa;
 recovery volumes contain packets. Originals have outer-code protection but
-are not inner-armoured.
+are not inner-armoured; the inner code covers the critical metadata group
+alone, so
+.B \-\-armour=all
+is refused here.
 .TP
 .B split
 Bare
 .IB base .d NN
 volumes hold consecutive set-stream ranges with no header, trailer, or tail
 padding. Concatenating them numerically yields the exact stream. Index and
-recovery volumes contain packets.
+recovery volumes contain packets, and as in the sidecar layout the inner
+code covers the critical metadata group alone.
 .TP
 .B armoured
 One
@@ -490,16 +629,35 @@ no damage.
 .BR verify :
 damage found and repairable.
 .BR "repair \-\-exit\-on\-change" :
-something was repaired.
+something was repaired, or, under
+.BR \-\-dry\-run ,
+would have been.
 .TP
 .B 2
-Damage found and not repairable with the available recovery.
+Damage found and not repairable with the available recovery. This covers
+every unrepairable data condition:
+.B verify
+and
+.BR repair ,
+an
+.B extract
+whose entries cannot be reproduced, a
+.B recover
+short of recovery slices, and a
+.B recover\-prologue
+that finds no framing.
 .TP
 .B 3
 Set not found, not an xpar set, or an unsupported format version.
 .TP
 .B 4
-Usage error.
+Usage error, including a geometry or planner request that is
+self-contradictory rather than merely too large: a
+.B \-\-cell
+above the slice size, an interleave beyond
+.BR \-m ,
+.B \-\-labels
+outside the split layout, or an unusable output base.
 .TP
 .B 5
 I/O error.
@@ -510,7 +668,8 @@ Authentication failure: missing key, wrong key, or MAC mismatch.
 .B 7
 No feasible plan under
 .BR \-m ,
-or out of memory.
+or out of memory. Nothing else uses it: a request refused for its shape
+rather than for the budget exits 4.
 .TP
 .B 8
 Internal error. This is a bug.
@@ -571,8 +730,16 @@ If present, implies
 .BR \-\-reproducible .
 The value is not embedded in the set. Unless explicitly requested with
 .BR \-\-preserve ,
-timestamps and host-dependent ownership metadata are omitted and the creator
-string contains no version.
+source timestamps and ownership metadata are omitted and the creator
+string contains no version. No host name is stored under any setting.
+.TP
+.BR TMPDIR ", " TMP ", " TEMP
+The first of these that is set names the directory where
+.B verify
+stages the plaintext of an armoured archive too large for
+.BR \-m .
+With none set the stage is written beside the archive instead. It is
+removed when the verb ends.
 .SH SECURITY
 Input volumes and manifests are by default considered untrusted.  xpar validates
 packet and nested record lengths before allocation, the total allocation is also
@@ -595,8 +762,19 @@ makes it fatal.
 .B \-\-auth\-key
 authenticates metadata and content but provides neither encryption nor
 freshness.
-An authenticated archive requires the key for every operation. Public hashes
-retained without
+An authenticated archive requires the key for every verb, including
+.BR explain ;
+a missing or wrong key exits 6 everywhere.
+.PP
+Authentication only protects a set when the verifier always supplies the
+key. An attacker who does not have it cannot forge a MAC, but can strip
+the AUTH packets and re-tag the whole set, and a keyless
+.B verify
+then reports that unauthenticated set clean. Nothing inside an archive can
+oblige a reader to present a key, so the discipline has to live in the
+script that calls xpar.
+.PP
+Public hashes retained without
 .B \-\-auth\-only
 remain useful after authentication, but their containing packet cannot be
 trusted without its packet key.

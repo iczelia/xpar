@@ -66,8 +66,16 @@ bool xpar_vset_cell_covered(const xpar_vset *, u64);
 u32 xpar_vset_have_tables(const xpar_vset *);
 u32 xpar_vset_volumes(const xpar_vset *);
 u64 xpar_vset_recovery(const xpar_vset *);
+/*  Present recovery slices lost to checksum damage. */
+u64 xpar_vset_recovery_bad(const xpar_vset *);
 u64 xpar_vset_recovery_total(const xpar_vset *);
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);
+u64 xpar_vset_volumes_to_relength(const xpar_vset *);
+u64 xpar_vset_volumes_dropped(const xpar_vset *);
+bool xpar_vset_rewrite_dropped(xpar_vset *, u64 * volumes,
+                               const char ** reason);
+/*  Whether archive length or prologue copies are stale.  */
+bool xpar_vset_archive_stale(const xpar_vset *);
 bool xpar_vset_stream_intact(const xpar_vset *, int rc);
 u64 xpar_vset_inner_corrected(const xpar_vset *);
 

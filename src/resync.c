@@ -110,7 +110,8 @@ static bool rs_within(i64 delta, u64 limit) {
 }
 
 static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
-                    u32 step, u64 max_delta, rs_hit_fn hit, void * user) {
+                    u32 step, u64 max_delta, u64 * clipped,
+                    rs_hit_fn hit, void * user) {
   xpar_crc32c_roll roll;
   u8 * ring, * input;
   u64 pos, at, slot = 0;
@@ -131,8 +132,9 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
     for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
       i64 delta;
       if (!ix->unique[q] || ix->probe[q].crc != crc ||
-          !rs_delta(pos, ix->probe[q].expected, &delta) ||
-          !rs_within(delta, max_delta)) continue;
+          !rs_delta(pos, ix->probe[q].expected, &delta)) continue;
+      /*  Count matches clipped by the search window. */
+      if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
       if (!hit(user, q, pos)) goto done;
     }
   }
@@ -153,8 +155,8 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
           for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
             i64 delta;
             if (!ix->unique[q] || ix->probe[q].crc != crc ||
-                !rs_delta(pos, ix->probe[q].expected, &delta) ||
-                !rs_within(delta, max_delta)) continue;
+                !rs_delta(pos, ix->probe[q].expected, &delta)) continue;
+            if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
             if (!hit(user, q, pos)) goto done;
           }
         }
@@ -224,7 +226,7 @@ bool xpar_resync_search(xpar_file * f, u64 file_size, u64 window,
   h.limit = MIN(RS_MAX_BINS, slots - slots / 4);
   h.probe = probe;
   rs_index_init(&ix, probe, probe_count);
-  if (!rs_scan(f, file_size, window, &ix, step, max_delta,
+  if (!rs_scan(f, file_size, window, &ix, step, max_delta, &out->clipped,
                rs_hist_hit, &h)) {
     rs_index_free(&ix);  xpar_free(h.bin);  return false;
   }
@@ -264,13 +266,14 @@ u64 xpar_resync_exhaustive(xpar_file * f, u64 file_size, u64 window,
                            u64 * located) {
   rs_index ix;
   rs_exhaust x;
+  u64 clipped = 0;
   u32 i;
   for (i = 0; i < probe_count; i++) located[i] = UINT64_MAX;
   x.confirm = confirm;  x.user = user;  x.located = located;  x.confirms = 0;
   if (!probe_count || !window || window > file_size) return 0;
   if (!step) step = 1;
   rs_index_init(&ix, probe, probe_count);
-  if (!rs_scan(f, file_size, window, &ix, step, max_delta,
+  if (!rs_scan(f, file_size, window, &ix, step, max_delta, &clipped,
                rs_exhaust_hit, &x)) x.confirms = 0;
   rs_index_free(&ix);
   return x.confirms;
@@ -363,7 +366,9 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
                           o->step, o->window, &result)) return;
   out->searched = true;
 
-  if (result.dominant && !result.overflow) {
+  out->clipped = result.clipped;
+  /*  Confirm every retained candidate when no delta dominates.  */
+  if (!result.overflow) {
     for (d = 0; d < result.count; d++) {
       if (d && result.delta[d].votes < 2) break;
       for (i = 0; i < probe_count; i++) {
@@ -374,14 +379,20 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
             physical > file_size || file_size - physical < slice_size)
           continue;
         out->confirmations++;
-        if (confirm(user, i, physical)) located[i] = physical;
+        if (confirm(user, i, physical)) {
+          located[i] = physical;  out->located++;
+        }
       }
     }
-  } else if (o->mode == XPAR_RESYNC_ALWAYS && o->exhaustive) {
+  }
+  if (!out->located && o->exhaustive &&
+      (o->mode == XPAR_RESYNC_ALWAYS || o->mode == XPAR_RESYNC_AUTO)) {
     out->confirmations = xpar_resync_exhaustive(
       f, file_size, slice_size, probe, probe_count, o->step, o->window,
       confirm, user, located);
-  } else {
+    for (i = 0; i < probe_count; i++)
+      if (located[i] != UINT64_MAX) out->located++;
+  } else if (!out->located) {
     out->candidates = result.candidates;
   }
 }

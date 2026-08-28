@@ -73,10 +73,10 @@ void xpar_armg_unwrap(const u8 * body, u64 length, bool damaged,
                                         (sz) g.armoured_length : 1);
     u8 * fixed  = (u8 *) xpar_alloc_raw((sz) g.plain_length ?
                                         (sz) g.plain_length : 1);
-    u64 fd = xpar_armour_frame_disk(a), off;
+    u64 fd = xpar_armour_frame_disk(a);
     xpar_memcpy(region, g.data, (sz) g.armoured_length);
-    for (off = 0; off + fd <= g.armoured_length; off += fd)
-      xpar_armour_decode_frame(a, region + off, NULL);
+    if (fd)
+      xpar_armour_decode_frames(a, region, g.armoured_length / fd, NULL);
     xpar_armour_extract(a, fixed, g.plain_length, region);
     xpar_free(region);
     fn(user, fixed, g.plain_length);

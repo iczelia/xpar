@@ -589,6 +589,109 @@ static void test_extents(void) {
   xpar_free(list);
 }
 
+/*  Manifest alias, extent, and alignment validation.  */
+
+static xpar_entry * mf_add(xpar_manifest * m, const char * name,
+                           u16 type, u64 length) {
+  xpar_entry * e = xpar_manifest_append(m);
+  e->name = xpar_strdup(name);
+  e->name_len = (u32) xpar_strlen(name);
+  e->entry_type = type;
+  e->length = length;
+  return e;
+}
+
+static void mf_extent(xpar_entry * e, u64 off, u64 len) {
+  e->extents = (xpar_extent *) xpar_realloc(
+                 e->extents, (sz) (e->extent_count + 1) * sizeof(xpar_extent));
+  e->extents[e->extent_count].stream_offset = off;
+  e->extents[e->extent_count].length = len;
+  e->extent_count++;
+}
+
+static void mf_alias(xpar_entry * a, const xpar_entry * t,
+                     const char * target) {
+  a->extra = (u8 *) xpar_strdup(target);
+  a->extra_len = (u32) xpar_strlen(target);
+  a->length = t->length;
+  xpar_memcpy(a->content_hash, t->content_hash, 32);
+  xpar_memcpy(a->prefix_hash, t->prefix_hash, 16);
+  a->mode = t->mode;  a->attrs = t->attrs;
+  a->mtime_ns = t->mtime_ns;  a->atime_ns = t->atime_ns;
+  a->ctime_ns = t->ctime_ns;  a->btime_ns = t->btime_ns;
+}
+
+static xpar_mf_status mf_run(xpar_manifest * m, u8 align, u64 z, u64 len) {
+  xpar_mf_limits lim;
+  xpar_mf_result res;
+  xpar_mf_status s;
+  xpar_memset(&lim, 0, sizeof lim);
+  lim.stream_length = len;
+  lim.slice_size = z;
+  lim.align = align;
+  lim.posix_record_count = XPAR_ABSENT_U32;
+  s = xpar_manifest_validate(m, &lim, &res);
+  return s;
+}
+
+static void test_manifest_rules(void) {
+  xpar_manifest m;
+
+  xt_section_begin("manifest rules");
+
+  /*  Hard-link aliases must share metadata.  */
+  { xpar_entry * f, * a;
+    xpar_memset(&m, 0, sizeof m);
+    f = mf_add(&m, "f", XPAR_ENTRY_REGULAR, 100);
+    mf_extent(f, 0, 100);
+    f->mtime_ns = 1234;
+    a = mf_add(&m, "g", XPAR_ENTRY_HARDLINK, 0);
+    mf_alias(a, f, "f");
+    CHECK(mf_run(&m, XPAR_ALIGN_PACKED, 64, 100) == XPAR_MF_OK,
+          "a faithful alias validates");
+    a = &m.entry[1];
+    a->mtime_ns = 5678;
+    CHECK(mf_run(&m, XPAR_ALIGN_PACKED, 64, 100) == XPAR_MF_LINK_META,
+          "an alias with another mtime is malformed");
+    a->mtime_ns = 1234;  a->mode = 0700;  m.entry[0].mode = 0644;
+    CHECK(mf_run(&m, XPAR_ALIGN_PACKED, 64, 100) == XPAR_MF_LINK_META,
+          "an alias with another mode is malformed");
+    xpar_manifest_free(&m); }
+
+  /*  Shared extents must remain within canonical ranges.  */
+  { xpar_entry * a, * b, * c;
+    xpar_memset(&m, 0, sizeof m);
+    a = mf_add(&m, "a", XPAR_ENTRY_REGULAR, 100);
+    mf_extent(a, 0, 100);
+    b = mf_add(&m, "b", XPAR_ENTRY_REGULAR, 64);
+    mf_extent(b, 1024, 64);          /*  Canonical past a 1 KiB gap.  */
+    c = mf_add(&m, "c", XPAR_ENTRY_REGULAR, 50);
+    mf_extent(c, 10, 50);            /*  Inside a's range.  */
+    CHECK(mf_run(&m, XPAR_ALIGN_1K, 64, 1088) == XPAR_MF_OK,
+          "sharing bytes an earlier extent defined is allowed");
+    xpar_free(m.entry[2].extents);
+    m.entry[2].extents = NULL;  m.entry[2].extent_count = 0;
+    mf_extent(&m.entry[2], 90, 50);  /*  Runs into the padding.  */
+    CHECK(mf_run(&m, XPAR_ALIGN_1K, 64, 1088) == XPAR_MF_EXTENT_SHARE,
+          "sharing alignment padding is refused");
+    xpar_manifest_free(&m); }
+
+  /*  Allow trailing alignment padding, but not plain gaps.  */
+  { xpar_entry * a;
+    xpar_memset(&m, 0, sizeof m);
+    a = mf_add(&m, "a", XPAR_ENTRY_REGULAR, 100);
+    mf_extent(a, 0, 100);
+    CHECK(mf_run(&m, XPAR_ALIGN_1K, 64, 1024) == XPAR_MF_OK,
+          "trailing alignment padding closes the generation");
+    CHECK(mf_run(&m, XPAR_ALIGN_1K, 64, 2048) == XPAR_MF_STREAM_GAP,
+          "padding past the next boundary is a gap");
+    CHECK(mf_run(&m, XPAR_ALIGN_PACKED, 64, 1024) == XPAR_MF_STREAM_GAP,
+          "without an alignment mode the same tail is a gap");
+    CHECK(mf_run(&m, XPAR_ALIGN_PACKED, 64, 100) == XPAR_MF_OK,
+          "an exact end still validates");
+    xpar_manifest_free(&m); }
+}
+
 static void check_path(const char * name, xpar_path_status want,
                        u32 flags) {
   xpar_path_status got = xpar_path_check(name, (u32) xpar_strlen(name),
@@ -693,6 +796,31 @@ static void test_packets(void) {
     b.len = full;
   }
 
+  /*  Validate type bytes and reject unknown critical types.  */
+  {
+    xpar_pkt h2;
+    xpar_buf_free(&b);
+    xpar_buf_init(&b);
+    xpar_pkt_write(&b, "xyz9", 0, set_id, payload, 8, NULL);
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_OK,
+          "an unknown noncritical type is readable");
+    xpar_buf_free(&b);
+    xpar_buf_init(&b);
+    xpar_pkt_write(&b, "ZZZZ", XPAR_PF_CRITICAL, set_id, payload, 8, NULL);
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_UNSUPPORTED,
+          "an unknown critical type is refused");
+    xpar_scan_init(&sc, b.data, b.len, NULL, false);
+    seen = 0;
+    while (xpar_scan_next(&sc, &hdr, &body, &off)) seen++;
+    CHECK_U64(seen, 0, "the scan does not emit it");
+    CHECK_U64(sc.skip_unsupported, 1, "the scan counts it apart");
+    xpar_buf_free(&b);
+    xpar_buf_init(&b);
+    xpar_pkt_write(&b, "SE_D", 0, set_id, payload, 8, NULL);
+    CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_MALFORMED,
+          "a type byte outside the ASCII alphanumerics is refused");
+  }
+
   /*  Reject reserved packet flags before further parsing.  */
   {
     xpar_pkt h2;
@@ -717,6 +845,55 @@ static void test_packets(void) {
   }
 
   xpar_buf_free(&b);
+}
+
+/*  VOLH replicas must claim the same volume index.  */
+static void volh_scan(xpar_critset * cs, const xpar_buf * b) {
+  xpar_scan sc;
+  xpar_pkt hdr;
+  const u8 * body;
+  u64 off;
+  xpar_scan_init(&sc, b->data, b->len, NULL, false);
+  while (xpar_scan_next(&sc, &hdr, &body, &off))
+    xpar_critset_add(cs, &hdr, body);
+}
+
+static void test_volume_headers(void) {
+  xpar_critset cs;
+  xpar_buf b, b2;
+  xpar_volh v;
+  u8 set_id[XPAR_SET_ID_LEN];
+  xt_rng r;
+
+  xt_section_begin("volume headers");
+  xt_seed(&r, 0x0176);
+  xt_fill(&r, set_id, sizeof set_id);
+
+  /*  Keep packet backing buffers stable after insertion.  */
+  xpar_buf_init(&b);
+  xpar_buf_init(&b2);
+  xpar_memset(&v, 0, sizeof v);
+  v.volume_index = XPAR_VOL_STANDALONE;  v.volume_kind = XPAR_VOL_INDEX;
+  xpar_volh_write(&b, &v, set_id, NULL);
+  v.volume_index = 0;  v.volume_kind = XPAR_VOL_RECOVERY;
+  xpar_volh_write(&b, &v, set_id, NULL);
+  v.volume_index = 1;
+  xpar_volh_write(&b, &v, set_id, NULL);
+  /*  Two headers claiming one volume shall be byte-identical.  */
+  v.volume_index = 1;  v.volume_kind = XPAR_VOL_DATA;
+  xpar_volh_write(&b2, &v, set_id, NULL);
+
+  xpar_critset_init(&cs);
+  volh_scan(&cs, &b);
+  CHECK_U64(cs.count, 3, "one entry per volume header");
+  CHECK_U64(cs.conflicts, 0, "headers of different volumes do not conflict");
+
+  volh_scan(&cs, &b2);
+  CHECK_U64(cs.count, 3, "the repeat is not a fourth volume");
+  CHECK(cs.conflicts > 0, "two headers for one volume disagree");
+  xpar_critset_free(&cs);
+  xpar_buf_free(&b);
+  xpar_buf_free(&b2);
 }
 
 static void test_posx_bound(void) {
@@ -855,18 +1032,32 @@ static void test_reader_bounds(void) {
   xt_section_begin("reader bounds");
 
   /*  SETD: a slice holds at most XPAR_CELLS_MAX cells.  */
-  hd_setd(setd, XPAR_SLICE_MAX, XPAR_CELL_MIN);
+  hd_setd(setd, XPAR_SLICE_REFUSE, XPAR_CELL_MIN);
   CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_E_MALFORMED,
         "SETD with ceil(Z/Y) above XPAR_CELLS_MAX");
   xpar_setd_free(&sd);
 
-  { u64 y = XPAR_SLICE_MAX / XPAR_CELLS_MAX;
+  { u64 y = XPAR_SLICE_REFUSE / XPAR_CELLS_MAX;
     CHECK(y >= XPAR_CELL_MIN && y <= 0xFFFFFFFFu && y % 64 == 0,
           "the at-cap control needs a representable, legal cell size");
-    hd_setd(setd, XPAR_SLICE_MAX, (u32) y);
+    hd_setd(setd, XPAR_SLICE_REFUSE, (u32) y);
     CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_OK,
           "SETD with exactly XPAR_CELLS_MAX cells still loads");
     xpar_setd_free(&sd); }
+
+  /*  Reject slice sizes beyond the writer limit.  */
+  hd_setd(setd, XPAR_SLICE_REFUSE + 64, 0);
+  CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_E_MALFORMED,
+        "SETD with Z above XPAR_SLICE_REFUSE");
+  xpar_setd_free(&sd);
+  hd_setd(setd, XPAR_SLICE_REFUSE, 0);
+  CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_OK,
+        "SETD at exactly XPAR_SLICE_REFUSE still loads");
+  xpar_setd_free(&sd);
+  hd_setd(setd, XPAR_SLICE_MAX, 0);
+  CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_E_MALFORMED,
+        "SETD at the field's arithmetic ceiling is refused");
+  xpar_setd_free(&sd);
 
   /*  SLCR: at most XPAR_TABLE_SPLIT slices per packet.  */
   n = 16 + (XPAR_TABLE_SPLIT + 1) * 4;
@@ -955,8 +1146,10 @@ int xpar_main(int argc, char ** argv) {
   test_erasures();
   test_occindex();
   test_extents();
+  test_manifest_rules();
   test_paths();
   test_packets();
+  test_volume_headers();
   test_posx_bound();
   test_gf_tables();
   test_append_open();

@@ -355,13 +355,17 @@ step "a substituted data volume is never reported as clean"
 
 mkdir subst;  cdto subst
 
-# Renamed volumes remain discoverable.
+# Renamed volumes remain discoverable and repair restores recorded names.
 mkdir a;  cdto a
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
 rm -rf tree
 mv set.d00 renamed.bin
+run 1 "$XPAR" verify set.xpa
+run 0 "$XPAR" repair --in-place set.xpa
+exists set.d00
+same set.d00 renamed.bin
 run 0 "$XPAR" verify set.xpa
 cd ..
 
@@ -751,11 +755,11 @@ note "chained archives correct payload damage"
 #  Restore a single-generation set.
 rm -f arc.g001.xpa chain.xpa
 
-#  Uncorrectable damage must be refused.
+#  Extract must report uncorrectable post-decoding damage.
 cp pristine.xpa arc.xpa
 damage arc.xpa "rand=100000,4096"
 rm -rf out
-run 1 "$XPAR" extract --to=out arc.xpa
+run 2 "$XPAR" extract --to=out arc.xpa
 #  Withhold damaged entries but extract intact ones.
 kept=`find out -name 'f*.bin' | nlines`
 if test "$kept" -lt 3; then ok
@@ -1121,6 +1125,117 @@ equal "nothing was left staged" \
 run 0 "$XPAR" extract --to=out s.xpa
 for f in a b c; do same "out/tree/$f.bin" "keep/$f.bin"; done
 note "the archive served as its own source"
+cd ..
+
+#  What the last run() printed; xpar reports on stderr.
+said_safety() {   # said_safety <text>
+  if grep -q "$1" "$log" 2> /dev/null; then echo yes;  else echo no; fi
+}
+
+step "the undo journal is private, fresh, and never a link somebody planted"
+
+#  Journal creation must not follow links.
+mkdir -p uj && cd uj
+mkfile p.bin 300000 81
+printf 'PRECIOUS\n' > victim.txt
+cp victim.txt victim.keep
+run 0 "$XPAR" create -s 4096 -r 30 -o set p.bin
+damage p.bin rand=4096,64 rand=12288,64 rand=20480,64
+
+if ln -s victim.txt set.xparundo 2> /dev/null; then
+  run 4 "$XPAR" repair --in-place set.xpa
+  same victim.txt victim.keep
+  #  --replace-journal replaces the name; it does not write through it.
+  run 0 "$XPAR" repair --in-place --replace-journal set.xpa
+  same victim.txt victim.keep
+else
+  note "symbolic links unsupported; skipped"
+  run 0 "$XPAR" repair --in-place set.xpa
+fi
+
+#  A kept journal is a copy of protected data and belongs to its owner.
+damage p.bin rand=4096,64
+run 0 "$XPAR" repair --in-place --keep-journal set.xpa
+exists set.xparundo
+equal "the journal is owner-only" "`mode_of set.xparundo`" 600
+cd ..
+
+step "an in-place repair restores the names and metadata it recreates"
+
+#  Recreate parents and restore metadata for missing files.
+mkdir -p ip && cd ip
+mkdir -p tree/sub
+mkfile tree/sub/x.bin 100000 82
+chmod 600 tree/sub/x.bin
+cp tree/sub/x.bin keep.bin
+run 0 "$XPAR" create -R -s 4096 -r 30 -o s tree
+rm -rf tree/sub
+
+run 0 "$XPAR" repair --in-place s.xpa
+same tree/sub/x.bin keep.bin
+equal "the recorded mode came back" "`mode_of tree/sub/x.bin`" 600
+equal "no journal was left behind" \
+      "`find . -maxdepth 1 -name '*.xparundo' | nlines`" 0
+run 0 "$XPAR" verify s.xpa
+cd ..
+
+step "names the manifest fully describes are recreated, not reported clean"
+
+#  Recreate missing names that need no recovery data.
+mkdir -p nm && cd nm
+mkdir -p tree/d
+mkfile tree/f.bin 50000 83
+: > tree/empty.bin
+run 0 "$XPAR" create -R -s 4096 -r 30 -o s tree
+rm tree/empty.bin
+rmdir tree/d
+
+run 1 "$XPAR" verify s.xpa
+run 0 "$XPAR" repair --in-place s.xpa
+exists tree/empty.bin
+exists tree/d
+run 0 "$XPAR" verify s.xpa
+cd ..
+
+step "a dry run answers whether anything would change"
+
+#  --exit-on-change must work with --dry-run.
+mkdir -p dr && cd dr
+mkfile p.bin 300000 84
+run 0 "$XPAR" create -s 4096 -r 30 -o set p.bin
+run 0 "$XPAR" repair --in-place --dry-run --exit-on-change set.xpa
+damage p.bin rand=4096,64 rand=12288,64
+run 1 "$XPAR" repair --in-place --dry-run --exit-on-change set.xpa
+run 0 "$XPAR" repair --in-place --dry-run set.xpa
+cd ..
+
+step "verify says what an in-place repair of an untagged set will need"
+
+#  Warn when untagged slices require forced in-place repair.
+mkdir -p nt && cd nt
+mkfile p.bin 300000 85
+run 0 "$XPAR" create -s 4096 -r 30 --slice-tag=none -o set p.bin
+damage p.bin rand=4096,64
+run 1 "$XPAR" verify set.xpa
+equal "the -f requirement is named" "`said_safety 'in-place repair needs'`" yes
+run 4 "$XPAR" repair --in-place set.xpa
+run 0 "$XPAR" repair -f --in-place set.xpa
+cd ..
+
+step "verify stages an armoured plaintext away from read-only media"
+
+#  Use the host temp directory when environment variables are absent.
+mkdir -p rostage && cd rostage
+if perms_bite .; then
+  mkfile data.bin 2097152 67
+  run 0 "$XPAR" create -r 5% --layout=armoured -o arm data.bin
+  mkdir ro && mv arm.xpa ro/ && chmod 555 ro
+  run 0 env TMPDIR= TMP= TEMP= "$XPAR" verify -m 1M ro/arm.xpa
+  equal "nothing was staged beside the archive" "`ls ro | nlines`" 1
+  chmod 755 ro
+else
+  note "mode 555 is writable; skipping the read-only stage test"
+fi
 cd ..
 
 summary

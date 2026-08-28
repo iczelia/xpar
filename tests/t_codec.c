@@ -16,6 +16,7 @@
 
 #include "t_harness.h"
 
+#include "kernel/armour.h"
 #include "kernel/codec.h"
 #include "kernel/gf.h"
 
@@ -605,6 +606,208 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
   cc_free(&c);
 }
 
+/*  GF(2^16) streaming requires whole symbols.  */
+static void test_matrix_odd_bytes(void) {
+  static const sz odd[] = { 1, 3, 65, 4095 };
+  const sz cap = 4096;
+  u8 * d0 = (u8 *) xpar_alloc_aligned(cap, 64);
+  u8 * d1 = (u8 *) xpar_alloc_aligned(cap, 64);
+  u8 * rc = (u8 *) xpar_alloc_aligned(cap, 64);
+  const u8 * dat[2];
+  u8 * rec[1];
+  xpar_codec * k;
+  u32 i;
+  sz b;
+
+  for (b = 0; b < cap; b++) { d0[b] = (u8) (b * 7 + 1);  d1[b] = (u8) (b * 13); }
+  dat[0] = d0;  dat[1] = d1;  rec[0] = rc;
+
+  k = xpar_codec_new(XPAR_CODEC_MATRIX, 16, 2, 1);
+  for (i = 0; i < ARRAY_LEN(odd); i++) {
+    sz n = odd[i];
+    xpar_memset(rc, 0x5A, cap);
+    CHECK(xpar_codec_matrix_accumulate_many(k, 0, dat, 2, 0, rec, 1, n,
+                                            true) == XPAR_CODEC_UNSUPPORTED,
+          "GF(2^16) streaming must refuse %lu bytes", (unsigned long) n);
+    CHECK(rc[n - 1] == 0x5A,
+          "a refused GF(2^16) streaming call must not write, %lu bytes",
+          (unsigned long) n);
+    /*  One byte fewer is a whole number of symbols and must be accepted.  */
+    CHECK(xpar_codec_matrix_accumulate_many(k, 0, dat, 2, 0, rec, 1, n - 1,
+                                            true) == XPAR_CODEC_OK,
+          "GF(2^16) streaming must accept %lu bytes", (unsigned long) n - 1);
+  }
+  xpar_codec_free(k);
+
+  /*  GF(2^8) accepts odd byte counts.  */
+  k = xpar_codec_new(XPAR_CODEC_MATRIX, 8, 2, 1);
+  CHECK(xpar_codec_matrix_accumulate_many(k, 0, dat, 2, 0, rec, 1, 65,
+                                          true) == XPAR_CODEC_OK,
+        "GF(2^8) streaming must accept an odd byte count");
+  xpar_codec_free(k);
+
+  xpar_free_aligned(d0);  xpar_free_aligned(d1);  xpar_free_aligned(rc);
+}
+
+/*  Inner-code frame batching and correction limits.  */
+
+typedef struct {
+  xpar_armour_params p;
+  u32 t, wb;
+  u64 plain_len, region_len, frames;
+  u8 * plain, * ref, * work;
+} arm_case;
+
+static void arm_open(arm_case * c, u32 field, u64 depth, u32 n, u32 t,
+                     xt_rng * rng) {
+  xpar_armour * a;
+  xpar_armour_defaults(&c->p, field);
+  c->p.depth = depth;  c->p.n = n;  c->p.k = n - 2 * t;
+  c->t = t;  c->wb = field / 8;
+  a = xpar_armour_new(&c->p);
+  /*  Two and a half frames, so the last one is padded.  */
+  c->plain_len = xpar_armour_frame_plain(a) * 2 +
+                 xpar_armour_frame_plain(a) / 2;
+  c->frames = xpar_ceil_div(c->plain_len, xpar_armour_frame_plain(a));
+  c->region_len = xpar_armour_size(a, c->plain_len);
+  c->plain = (u8 *) xpar_alloc_aligned((sz) c->plain_len, 64);
+  c->ref   = (u8 *) xpar_alloc_aligned((sz) c->region_len, 64);
+  c->work  = (u8 *) xpar_alloc_aligned((sz) c->region_len, 64);
+  xt_fill(rng, c->plain, (sz) c->plain_len);
+  xpar_armour_free(a);
+}
+
+static void arm_close(arm_case * c) {
+  xpar_free_aligned(c->plain);  xpar_free_aligned(c->ref);
+  xpar_free_aligned(c->work);
+}
+
+/*  Damage `count` distinct symbols of codeword 0 in frame 0.  */
+static void arm_damage(const arm_case * c, u8 * region, u32 count) {
+  sz lane = (sz) c->p.depth * c->wb;
+  u32 i;
+  for (i = 0; i < count; i++) {
+    u8 * p = region + (sz) i * lane;   /*  Symbol i, codeword 0.  */
+    u32 q;
+    for (q = 0; q < c->wb; q++) p[q] = (u8) (p[q] ^ 0xA5u);
+  }
+}
+
+static void test_armour_tiers(xt_rng * rng) {
+  static const u64 depths[] = { 1, 2, 3, 7, 16, 31, 32, 33, 64 };
+  static const u32 fields[] = { 8, 16 };
+  int saved = xpar_armour_tier(), n = xpar_armour_tier_count(), tier;
+  int scalar = -1;
+  u32 fi, di;
+
+  for (tier = 0; tier < n; tier++)
+    if (!xpar_strcmp(xpar_armour_tier_name(tier), "scalar")) scalar = tier;
+  if (scalar < 0) { CHECK(false, "the scalar armour tier is missing");  return; }
+
+  for (fi = 0; fi < ARRAY_LEN(fields); fi++)
+    for (di = 0; di < ARRAY_LEN(depths); di++) {
+      arm_case c;
+      arm_open(&c, fields[fi], depths[di], fields[fi] == 8 ? 64 : 96, 8, rng);
+      xpar_armour_use_tier(scalar);
+      { xpar_armour * a = xpar_armour_new(&c.p);
+        xpar_armour_encode(a, c.ref, c.plain, c.plain_len);
+        xpar_armour_free(a); }
+
+      for (tier = 0; tier < n; tier++) {
+        xpar_armour * a;
+        xpar_armour_stat st;
+        char label[128];
+        u64 hist[16];
+        if (!xpar_armour_tier_usable(tier) || !xpar_armour_use_tier(tier))
+          continue;
+        a = xpar_armour_new(&c.p);
+
+        xpar_armour_encode(a, c.work, c.plain, c.plain_len);
+        xpar_snprintf(label, sizeof label,
+                      "armour GF(2^%" PRIu32 ") D=%" PRIu64 " on tier %s: "
+                      "encode", fields[fi], depths[di],
+                      xpar_armour_tier_name(tier));
+        if (!xt_bytes_equal(label, c.work, c.ref, (sz) c.region_len)) {
+          xpar_armour_free(a);  break;
+        }
+
+        /*  Clean, then exactly t errors, then t + 1.  */
+        xpar_memset(&st, 0, sizeof st);
+        st.hist = hist;  st.hist_len = (u32) ARRAY_LEN(hist);
+        xpar_memset(hist, 0, sizeof hist);
+        CHECK(xpar_armour_decode_frames(a, c.work, c.frames, &st) ==
+              XPAR_ARMOUR_CLEAN,
+              "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: a clean region "
+              "must decode clean", fields[fi], depths[di],
+              xpar_armour_tier_name(tier));
+        CHECK_U64(st.codewords, c.frames * depths[di],
+                  "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: codewords",
+                  fields[fi], depths[di], xpar_armour_tier_name(tier));
+        CHECK_U64(st.clean, st.codewords,
+                  "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: clean count",
+                  fields[fi], depths[di], xpar_armour_tier_name(tier));
+
+        arm_damage(&c, c.work, c.t);
+        xpar_memset(&st, 0, sizeof st);
+        st.hist = hist;  st.hist_len = (u32) ARRAY_LEN(hist);
+        xpar_memset(hist, 0, sizeof hist);
+        CHECK(xpar_armour_decode_frames(a, c.work, c.frames, &st) ==
+              XPAR_ARMOUR_CORRECTED,
+              "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: t errors must be "
+              "corrected", fields[fi], depths[di],
+              xpar_armour_tier_name(tier));
+        CHECK_U64(st.symbols, c.t,
+                  "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: symbols "
+                  "corrected", fields[fi], depths[di],
+                  xpar_armour_tier_name(tier));
+        xpar_snprintf(label, sizeof label,
+                      "armour GF(2^%" PRIu32 ") D=%" PRIu64 " on tier %s: "
+                      "repaired region", fields[fi], depths[di],
+                      xpar_armour_tier_name(tier));
+        xt_bytes_equal(label, c.work, c.ref, (sz) c.region_len);
+
+        arm_damage(&c, c.work, c.t + 1);
+        xpar_memset(&st, 0, sizeof st);
+        st.hist = hist;  st.hist_len = (u32) ARRAY_LEN(hist);
+        xpar_memset(hist, 0, sizeof hist);
+        CHECK(xpar_armour_decode_frames(a, c.work, c.frames, &st) ==
+              XPAR_ARMOUR_FAILED,
+              "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: t+1 errors must "
+              "be refused", fields[fi], depths[di],
+              xpar_armour_tier_name(tier));
+        CHECK_U64(st.failed, 1,
+                  "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: failed count",
+                  fields[fi], depths[di], xpar_armour_tier_name(tier));
+
+        /*  Single-frame and batch decoding must agree.  */
+        { xpar_armour_stat one;
+          u64 h1[16], f;
+          xpar_memcpy(c.work, c.ref, (sz) c.region_len);
+          arm_damage(&c, c.work, c.t);
+          xpar_memset(&one, 0, sizeof one);
+          one.hist = h1;  one.hist_len = (u32) ARRAY_LEN(h1);
+          xpar_memset(h1, 0, sizeof h1);
+          for (f = 0; f < c.frames; f++)
+            xpar_armour_decode_frame(
+              a, c.work + f * xpar_armour_frame_disk(a), &one);
+          CHECK_U64(one.symbols, c.t,
+                    "armour GF(2^%" PRIu32 ") D=%" PRIu64 " %s: frame at a "
+                    "time corrects the same", fields[fi], depths[di],
+                    xpar_armour_tier_name(tier));
+          xpar_snprintf(label, sizeof label,
+                        "armour GF(2^%" PRIu32 ") D=%" PRIu64 " on tier %s: "
+                        "frame at a time", fields[fi], depths[di],
+                        xpar_armour_tier_name(tier));
+          xt_bytes_equal(label, c.work, c.ref, (sz) c.region_len); }
+
+        xpar_armour_free(a);
+        xpar_memcpy(c.work, c.ref, (sz) c.region_len);
+      }
+      arm_close(&c);
+    }
+  xpar_armour_use_tier(saved);
+}
+
 /* Recovery remains stable when data grows within one transform axis. */
 static void test_prefix_stable(u8 kind, u8 field, u64 s, u64 grown, u64 r,
                                xt_rng * rng) {
@@ -756,6 +959,10 @@ int xpar_main(int argc, char ** argv) {
   test_matrix_streaming(8, 32, 8, &rng);
   test_matrix_streaming(8, 1, 1, &rng);
   test_matrix_streaming(16, 40, 7, &rng);
+  test_matrix_odd_bytes();
+
+  xt_section_begin("armour tiers and depths");
+  { xt_rng ar;  xt_seed(&ar, 0xA12000);  test_armour_tiers(&ar); }
 
   xt_section_begin("prefix stability");
   test_prefix_stable(XPAR_CODEC_MATRIX, 8, 8, 20, 4, &rng);

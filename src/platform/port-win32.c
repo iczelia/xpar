@@ -59,6 +59,15 @@ const char * xpar_getenv(const char * name) {
 const char * xpar_getenv(const char * name) { return getenv(name); }
 #endif
 
+/*  GetTempPath already consults TMP, TEMP and the Windows directory.  */
+const char * xpar_tmpdir(void) {
+  static char buf[MAX_PATH + 1];
+  DWORD n = GetTempPathA((DWORD) sizeof buf, buf);
+  if (!n || n > sizeof buf - 1) return ".";
+  while (n && (buf[n - 1] == '\\' || buf[n - 1] == '/')) buf[--n] = 0;
+  return n ? buf : ".";
+}
+
 #if !defined(XPAR_WIN_LEGACY)
 
 /*  Shared UTF and path conversion.  */

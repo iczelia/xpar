@@ -104,3 +104,42 @@ bool xpar_vname_is_member(const char * name, const char * stem) {
     return false;
   return xpar_scan_digits(name, &i, n) && i == n;
 }
+
+/*  A split data volume, with or without the label's extension.  */
+static bool vname_is_data(const char * name, const char * stem) {
+  sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
+  if (xpar_strncmp(name, stem, p)) return false;
+  if (xpar_vname_has_ext(name)) n -= XPAR_EXT_LEN;
+  if (n <= p) return false;
+  i = p;
+  if (name[i++] != '.') return false;
+  if (i < n && name[i] == 'g') {
+    i++;
+    if (!xpar_scan_digits(name, &i, n)) return false;
+    if (i == n || name[i++] != '.') return false;
+  }
+  if (i == n || name[i++] != 'd') return false;
+  return xpar_scan_digits(name, &i, n) && i == n;
+}
+
+bool xpar_vname_is_output(const char * path, const char * base) {
+  char * pdir, * bdir;
+  const char * leaf, * stem;
+  sz p;
+  bool same;
+  if (!path || !base || !base[0]) return false;
+  pdir = xpar_path_dir(path);  bdir = xpar_path_dir(base);
+  same = xpar_path_same(pdir, bdir);
+  xpar_free(pdir);  xpar_free(bdir);
+  if (!same) return false;
+  leaf = xpar_path_base(path);  stem = xpar_path_base(base);
+  /*  The output staging directory, but not a staged pipe input.  */
+  if (!xpar_strncmp(leaf, ".xpar-create-", 13)) return true;
+  if (xpar_vname_is_index(leaf, stem) || xpar_vname_is_member(leaf, stem) ||
+      vname_is_data(leaf, stem)) return true;
+  p = xpar_strlen(stem);
+  if (xpar_strncmp(leaf, stem, p)) return false;
+  /*  The chunk cache and the recovery spill hang off the same stem.  */
+  return !xpar_strncmp(leaf + p, ".xparidx", 8) ||
+         !xpar_strncmp(leaf + p, ".xpar-tmp", 9);
+}

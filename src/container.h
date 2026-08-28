@@ -68,6 +68,7 @@ typedef struct {
   u64 skip_length;      /*  Candidates rejected by a length constraint.  */
   u64 skip_checksum;
   u64 skip_keyed;       /*  Keyed packets no key was supplied for.  */
+  u64 skip_unsupported; /*  Unknown critical packet types.  */
   u32 step;
   bool accept_unverified_keyed;
   const xpar_key * key;
@@ -196,8 +197,10 @@ typedef struct {
   u8 * seen_cell;
 } xpar_tagset;
 
+/*  `have_crc` is false for auth-only sets, which store no SLCR table.  */
 bool        xpar_tagset_init(xpar_tagset *, u64 slice_count, u8 tag_len,
-                             u32 cells_per_slice, u64 input_bytes);
+                             u32 cells_per_slice, bool have_crc,
+                             u64 input_bytes);
 void        xpar_tagset_free(xpar_tagset *);
 xpar_status xpar_tagset_slcr(xpar_tagset *, const xpar_slcr *);
 xpar_status xpar_tagset_sltg(xpar_tagset *, const xpar_sltg *);
@@ -256,6 +259,8 @@ bool xpar_auth_key_ok(const xpar_auth *, const u8 * master);
     convenience and `*out_len` carries the true length.  */
 void xpar_text_write(xpar_buf *, const char * type, const char * text,
                      const u8 * set_id, const xpar_key *);
+
+xpar_status xpar_text_read(const u8 * body, sz n, sz * out_len);
 
 void xpar_crtr_write(xpar_buf *, const char * creator, const u8 * set_id,
                      const xpar_key *, const xpar_wropt *);
@@ -331,7 +336,13 @@ void xpar_critset_init(xpar_critset *);
 void xpar_critset_free(xpar_critset *);
 
 /*  True when the packet was new. A repeat bumps `copies`, and `conflicts`
-    when its bytes differ from the copy already held.  */
+    when its bytes differ from the copy already held.
+
+    The set keeps `body` rather than copying it, and reads it again on
+    every later add and find. It shall point into storage that outlives
+    the set and does not move: a volume image, or an ARMG plaintext the
+    caller owns. A growable buffer that is written to again after the add
+    is not such storage.  */
 bool xpar_critset_add(xpar_critset *, const xpar_pkt *, const u8 * body);
 
 const xpar_crit_pkt * xpar_critset_find(const xpar_critset *,

@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "cli.h"
+#include "container.h"
 
 /*  Apply progress policy consistently across human and JSON output.  */
 static inline bool xpar_progress_wanted(const xpar_options * o) {
@@ -25,6 +26,12 @@ static inline bool xpar_progress_wanted(const xpar_options * o) {
   if (o->progress == XPAR_PROGRESS_ON) return true;
   if (o->json) return false;
   return xpar_is_tty(xpar_stderr);
+}
+
+/*  Reject unknown critical packet types.  */
+static inline void xpar_reject_unknown_critical(const xpar_scan * s) {
+  if (s->skip_unsupported)
+    FATAL_FORMAT("This set uses an unknown critical packet type.");
 }
 
 int xpar_op_create(const xpar_options *);
@@ -43,6 +50,10 @@ int xpar_op_prune      (const xpar_options *);
 int xpar_op_undo(const xpar_options *);
 int xpar_op_recover_prologue(const xpar_options *);
 int xpar_op_benchmark(const xpar_options *);
+
+/*  Re-encode volumes containing missing recovery exponents.  */
+u64 xpar_gen_regen_recovery(const xpar_options *, u64 * volumes,
+                            const char ** reason);
 char * xpar_spool_stdin(const xpar_options *);
 char * xpar_publish_spooled_stdin(const xpar_options *, const char *);
 

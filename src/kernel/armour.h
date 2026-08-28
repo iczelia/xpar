@@ -64,12 +64,16 @@ u64 xpar_armour_size(const xpar_armour * a, u64 plain_length);
 /*  Alignment-independent correctable burst: (t*D - 1)*W bytes.  */
 u64 xpar_armour_burst(const xpar_armour * a);
 
+/*  Preferred frame batch size for inner-code kernels.  */
+u64 xpar_armour_batch(const xpar_armour * a);
+
 /*  Return g[i], the coefficient of x^i for 0 <= i <= 2t.  */
 void xpar_armour_generator(const xpar_armour * a, u32 * g);
 
 /*  Encode one prepared frame, or copy and encode a whole region.  */
 
 void xpar_armour_encode_frame(const xpar_armour * a, u8 * frame);
+/*  Encode a region in frame batches.  */
 void xpar_armour_encode(const xpar_armour * a, u8 * out,
                         const u8 * plain, u64 plain_length);
 
@@ -100,6 +104,10 @@ typedef struct {
 
 xpar_armour_status xpar_armour_decode_frame(const xpar_armour * a, u8 * frame,
                                             xpar_armour_stat * st);
+/*  Decode a frame batch.  */
+xpar_armour_status xpar_armour_decode_frames(const xpar_armour * a,
+                                             u8 * frames, u64 count,
+                                             xpar_armour_stat * st);
 
 /*  Return true when recovered plaintext passes its integrity check.  */
 typedef bool (* xpar_armour_check_fn)(const void * ctx, const u8 * plain,
@@ -118,6 +126,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
 
 typedef struct {
   const char * name;
+  u32 vbytes;   /*  Vector step; 0 for scalar.  */
   void (* taps8   )(u8 * restrict par, sz stride, u32 t2, u32 head,
                     const xpar_gf8_coef  * gen, const u8 * restrict fb, sz n);
   void (* taps16  )(u8 * restrict par, sz stride, u32 t2, u32 head,

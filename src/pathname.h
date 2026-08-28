@@ -32,10 +32,29 @@ char * xpar_path_join_n(const char * dir, const char * name, u32 n);
 
 bool xpar_path_ends_with(const char * s, const char * suffix);
 
+/*  Normalize separators and leading "./"; the caller frees the result.  */
+char * xpar_path_norm(const char * path);
+
+/*  Whether two normalized path spellings match.  */
+bool xpar_path_same(const char * a, const char * b);
+
+/*  Escaped copies live in a ring this many slots deep.  */
+#define XPAR_ESCAPE_RING 8
+
+/*  Escape control bytes as \xNN. The rotating buffer owns the result.  */
+char * xpar_name_escape(const char * s);
+
 /*  Advance `*at` over a run of decimal digits ending at `end`, failing
     when there is not at least one. Volume and generation names are
     parsed with it.  */
 bool xpar_scan_digits(const char * s, sz * at, sz end);
+
+/*  Set or get the fallback volume directory.  */
+void xpar_path_scan_set(const char * dir);
+const char * xpar_path_scan(void);
+
+/*  Resolve NAME beside DIR or under --scan; the caller frees it.  */
+char * xpar_path_vol(const char * dir, const char * name);
 
 /*  Maximum component length used by staging helpers.  */
 #define XPAR_COMPONENT_MAX 255

@@ -39,6 +39,15 @@
 #include <sys/time.h>
 
 const char * xpar_getenv(const char * name) { return getenv(name); }
+
+/*  DOS keeps no standard temporary directory beyond the environment.  */
+const char * xpar_tmpdir(void) {
+#ifdef P_tmpdir
+  return P_tmpdir;
+#else
+  return "/tmp";
+#endif
+}
 #include <time.h>
 #include <unistd.h>
 

@@ -128,6 +128,7 @@ typedef struct {
   u64  cell_bytes;       /* --cell; 0 selects automatic Y. */
   int  layout;           /*  XPAR_LAYOUT_*  */
   bool layout_given;     /*  Explicit --layout.  */
+  bool armour_given;     /*  --armour was explicit.  */
   bool slice_tag_given;  /*  Explicit --slice-tag; 8 is also the default.  */
   bool replace_journal;  /*  Replace an existing undo journal.  */
   int  codec;            /*  XPAR_CODEC_* or XPAR_CLI_AUTO.  */
@@ -175,6 +176,7 @@ typedef struct {
       owned-layout `repair --chain --to` walk. Not a command-line option.  */
   char * repair_chain_stage;
   bool chain_metadata_only; /*  Internal: do not scan recovery payloads.  */
+  bool chain_member;     /*  Processing one chain generation.  */
 
   /*  scrub.  */
   bool deep, rewrite, rebuild_cells;
@@ -214,6 +216,9 @@ typedef struct {
 
 void xpar_cli_parse(int argc, char ** argv, xpar_options * o);
 void xpar_cli_free (xpar_options * o);
+
+/*  Resolve --armour for a layout.  */
+void xpar_cli_armour_for_layout(xpar_options * o, int layout);
 
 void xpar_cli_help(xpar_verb v);   /*  XPAR_VERB_NONE: the verb list.  */
 void xpar_cli_version(void);

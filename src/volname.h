@@ -31,4 +31,7 @@ bool xpar_vname_has_ext(const char * name);
 bool xpar_vname_is_index (const char * name, const char * stem);
 bool xpar_vname_is_member(const char * name, const char * stem);
 
+/*  Whether PATH is an output associated with BASE.  */
+bool xpar_vname_is_output(const char * path, const char * base);
+
 #endif

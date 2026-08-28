@@ -55,6 +55,15 @@
 #endif
 
 const char * xpar_getenv(const char * name) { return getenv(name); }
+
+/*  Falls back to /tmp when the C library names no default.  */
+const char * xpar_tmpdir(void) {
+#ifdef P_tmpdir
+  return P_tmpdir;
+#else
+  return "/tmp";
+#endif
+}
 #if defined(__linux__)
   #include <sys/sysmacros.h>
 #endif

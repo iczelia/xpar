@@ -132,6 +132,9 @@ typedef struct {
   u64 bytes_written, writes, cells_copied, cells_decoded;
   u64 entries_repaired, links_repaired, links_missing, links_made;
   u64 opaque;                 /*  Hash fails and nothing can be written.  */
+  u64 structure_bad;          /*  Recorded type or link target differs.  */
+  u64 names_made;             /*  Empty names the manifest fully describes.  */
+  u64 rec_regen, rec_regen_vols;  /*  Recovery slices re-encoded, and where. */
   u8 * hash_bad;              /*  Per entry; owned.  */
   bool changed;
 } rp;
@@ -249,6 +252,7 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
     else
       xpar_critset_add(&r->crit, &h, body);
   }
+  xpar_reject_unknown_critical(&sc);
   if (r->verbose > 2)
     rp_note(r, "xpar: scan: %" PRIu64 " packets, %" PRIu64 " bad tags, %"
             PRIu64 " need key.\n",
@@ -439,7 +443,7 @@ static void rp_read_tags(rp * r) {
   u64 input = 0;
   for (i = 0; i < r->vol_count; i++) input += r->vol[i].size;
   if (!xpar_tagset_init(&r->tags, r->geom.slice_count,
-                        r->sd.slice_tag_len, cps, input))
+                        r->sd.slice_tag_len, cps, !r->auth_only, input))
     FATAL_FORMAT("The slice tables claim more bytes than the volumes "
                  "hold.");
   for (i = 0; i < r->crit.count; i++) {
@@ -510,7 +514,7 @@ static void rp_open_recovery(rp * r) {
         if (first + count > r->rec_total) r->rec_total = first + count;
       }
       if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
-      path = xpar_path_join(r->dir, v->name);
+      path = xpar_path_vol(r->dir, v->name);
       for (k = 0; k < r->vol_count && !seen; k++)
         if (!xpar_strcmp(r->vol[k].path, path)) seen = true;
       if (!seen && rp_vol_open(r, path))
@@ -664,7 +668,7 @@ static void rp_resync_entry(rp * r, u32 entry) {
   xpar_stat_t st;
   u64 * located;
   u64 z = r->geom.slice_size;
-  u32 n, i;
+  u32 n, i, displaced = 0;
   if (e->entry_type != XPAR_ENTRY_REGULAR || !e->extent_count ||
       r->alias[entry] || xpar_lstat(r->path[entry], &st) != 0 ||
       !st.is_regular) return;
@@ -684,6 +688,13 @@ static void rp_resync_entry(rp * r, u32 entry) {
                    r->tags.t.slice_tag != NULL;
   xpar_resync_entry(f, st.size, z, e->length, p, n, &opt,
                     rp_confirm_at, &confirm, confirm.buf, located, &got);
+  /*  Retry unresolved chain displacement exhaustively.  */
+  if (got.candidates && r->o->chain_member && !opt.exhaustive) {
+    opt.mode = XPAR_RESYNC_ALWAYS;
+    opt.exhaustive = true;
+    xpar_resync_entry(f, st.size, z, e->length, p, n, &opt,
+                      rp_confirm_at, &confirm, confirm.buf, located, &got);
+  }
 
   if (got.need_tags && r->verbose)
     rp_note(r, "xpar: %s: resync needs strong slice tags; using erasures.\n",
@@ -693,12 +704,20 @@ static void rp_resync_entry(rp * r, u32 entry) {
                " candidates; use --resync=always --resync-exhaustive.\n",
             r->path[entry], got.candidates);
   for (i = 0; i < n; i++)
-    if (located[i] != UINT64_MAX)
+    if (located[i] != UINT64_MAX) {
+      /*  Delta zero confirms a slice in place.  */
+      if (located[i] != p[i].expected) displaced++;
       xpar_resync_map_add(&r->resync[entry], p[i].expected, located[i]);
-  if (r->resync[entry].count)
+    }
+  if (got.clipped)
+    rp_note(r, "xpar: %s: %" PRIu64 " matches lie outside --resync-window; "
+               "raise it to consider them.\n", r->path[entry], got.clipped);
+  if (displaced)
     rp_note(r, "xpar: %s: found %" PRIu32 " displaced slices (%" PRIu64
-               " confirmations).\n", r->path[entry], r->resync[entry].count,
+               " confirmations).\n", r->path[entry], displaced,
             got.confirmations);
+  else if (r->resync[entry].count && r->verbose)
+    rp_note(r, "xpar: %s: resync: no displacement.\n", r->path[entry]);
   xpar_free(located);
   xpar_free(confirm.buf);  xpar_free(p);
 }
@@ -934,8 +953,6 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
     exists = xpar_lstat(r->path[i], &st) == 0;
     r->fsize[i]  = exists ? st.size : 0;
     r->fstate[i] = exists;
-    /*  Entry hashes exclude an overlong tail; journal and remove it.  */
-    if (exists && st.size > e->length) r->fstate[i] |= 2;
     if (!exists || st.size != e->length) certified = false;
     /*  Whether the entry lies in this generation is independent of whether
         it is certified, so it is settled before the cell walk, whose
@@ -960,6 +977,8 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
         p = xpar_cell_begin(&r->geom, s, c) + xpar_cell_size(&r->geom, c);
       }
     }
+    /*  Mark overlong owned entries for truncation.  */
+    if (exists && touches && st.size > e->length) r->fstate[i] |= 2;
     if (!touches) continue;
     if (certified) continue;
     /*  The entry hash strongly covers aliases; cell CRCs localise a
@@ -1012,6 +1031,40 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
     }
   }
   xpar_free(buf);  xpar_free(cell);
+}
+
+/*  Find object-kind and link-target mismatches.  */
+static void rp_scan_structure(rp * r) {
+  u32 i;
+  for (i = 0; i < r->scan_entry_count; i++) {
+    const xpar_entry * e = &r->mf.entry[i];
+    const char * want = NULL;
+    xpar_stat_t st;
+    bool bad = false;
+    if (xpar_lstat(r->path[i], &st) != 0) continue;
+    switch (e->entry_type) {
+      case XPAR_ENTRY_DIR:
+        want = "a directory";  bad = !st.is_dir;  break;
+      case XPAR_ENTRY_SYMLINK: {
+        u32 n = 0;
+        char * tgt = xpar_read_symlink(r->path[i], &n);
+        want = "a symbolic link";
+        bad = !tgt || n != e->extra_len ||
+              xpar_memcmp(tgt, e->extra, e->extra_len) != 0;
+        xpar_free(tgt);
+        break;
+      }
+      default:
+        want = "a regular file";  bad = !st.is_regular;  break;
+    }
+    if (!bad) continue;
+    r->structure_bad++;
+    /*  --to restores structure from the manifest.  */
+    if (r->o->dest != XPAR_DEST_TO)
+      rp_note(r, "xpar: %.*s: recorded as %s; the object on disk differs and "
+              "recovery cannot localise it\n",
+              (int) e->name_len, e->name, want);
+  }
 }
 
 static rp_cell * rp_add_cell(rp * r, u64 slice, u32 col) {
@@ -1438,10 +1491,14 @@ static void rp_journal(rp * r) {
   xpar_wr64(hdr + 40, payload);
   xpar_wr64(hdr + 48, (u64) xpar_wall_ns());
   xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
-  f = xpar_open(r->journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC);
+  /*  Create journals privately without following links.  */
+  f = xpar_open(r->journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
+                            XPAR_O_NOFOLLOW);
   if (!f) FATAL_IO("Cannot write undo journal '%s': %s; use --no-journal "
                    "to continue without one.", r->journal,
                    xpar_strerror(xpar_errno()));
+  if (xpar_set_mode(r->journal, 1, 0600) != 0 && r->verbose)
+    rp_note(r, "xpar: could not restrict '%s' to its owner.\n", r->journal);
   xpar_xwrite(f, hdr, sizeof hdr);
   all = xpar_crc32c(0, hdr, sizeof hdr);
   for (i = 0; i < r->wr_count; i++) {
@@ -1502,12 +1559,64 @@ static void rp_read_old(rp * r) {
   }
 }
 
+static void rp_basic_meta(rp * r, u32 idx, const char * path, bool link);
+static bool rp_foreign(const rp * r, u32 i);
+
+/*  Whether a missing manifest entry can be recreated without recovery.  */
+static bool rp_recreatable(const rp * r, u32 i) {
+  const xpar_entry * e = &r->mf.entry[i];
+  xpar_stat_t st;
+  if (xpar_lstat(r->path[i], &st) == 0) return false;
+  if (e->entry_type == XPAR_ENTRY_HARDLINK) return false;
+  if (e->entry_type == XPAR_ENTRY_REGULAR &&
+      (e->length || rp_foreign(r, i))) return false;
+  return true;
+}
+
+/*  Count recreatable names without writing.  */
+static u64 rp_missing_names(const rp * r) {
+  u64 n = 0;
+  u32 i;
+  for (i = 0; i < r->scan_entry_count; i++) if (rp_recreatable(r, i)) n++;
+  return n;
+}
+
+static void rp_restore_missing(rp * r) {
+  u32 i;
+  for (i = 0; i < r->scan_entry_count; i++) {
+    const xpar_entry * e = &r->mf.entry[i];
+    char * dir;
+    if (!rp_recreatable(r, i)) continue;
+    dir = xpar_path_dir(r->path[i]);
+    xpar_mkdir_p(dir, 0777);
+    xpar_free(dir);
+    if (e->entry_type == XPAR_ENTRY_DIR) {
+      if (xpar_mkdir_p(r->path[i], 0777) != 0) continue;
+    } else if (e->entry_type == XPAR_ENTRY_SYMLINK) {
+      char * tgt = xpar_strndup((const char *) e->extra, e->extra_len);
+      int ok = xpar_symlink(tgt, r->path[i]);
+      xpar_free(tgt);
+      if (ok != 0) continue;
+    } else {
+      xpar_file * f = xpar_open(r->path[i], XPAR_O_WRONLY | XPAR_O_CREAT |
+                                            XPAR_O_EXCL | XPAR_O_NOFOLLOW);
+      if (!f) continue;
+      xpar_xclose(f);
+    }
+    rp_basic_meta(r, i, r->path[i],
+                  e->entry_type == XPAR_ENTRY_SYMLINK);
+    r->writes++;  r->names_made++;
+  }
+}
+
 static void rp_apply(rp * r) {
   u32 i;
   bool warned = false;
+  rp_restore_missing(r);
   for (i = 0; i < r->wr_count;) {
     u32 entry = r->wr[i].entry, j;
     xpar_file * f;
+    bool made = false;
     if (r->wr[i].link) {
       /*  Do not create the missing path before linking it.  */
       char * d = xpar_path_dir(r->path[entry]);
@@ -1525,11 +1634,22 @@ static void rp_apply(rp * r) {
     }
     f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_NOFOLLOW);
     if (!f) {
+      /*  Recreate missing parent directories.  */
+      char * d = xpar_path_dir(r->path[entry]);
+      xpar_mkdir_p(d, 0777);
+      xpar_free(d);
       f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_CREAT |
                                          XPAR_O_NOFOLLOW);
-      if (!f) FATAL_IO("Cannot open '%s' for repair: %s. The journal is "
-                       "intact; nothing has been written.", r->path[entry],
-                       xpar_strerror(xpar_errno()));
+      if (!f) {
+        /*  Remove an unused journal.  */
+        if (!r->writes && !r->o->no_journal && !r->o->keep_journal) {
+          xpar_remove(r->journal);
+          xpar_fsync_dir(r->journal);
+        }
+        FATAL_IO("Cannot open '%s' for repair: %s.", r->path[entry],
+                 xpar_strerror(xpar_errno()));
+      }
+      made = true;
     }
     if (!xpar_lock_supported() && !warned) {
       warned = true;
@@ -1540,6 +1660,7 @@ static void rp_apply(rp * r) {
                r->path[entry]);
     for (j = i; j < r->wr_count && r->wr[j].entry == entry; j++) {
       rp_write * w = &r->wr[j];
+      (void) made;
       if (w->trunc) {
         if (xpar_ftruncate(f, w->off) != 0)
           FATAL_IO("Cannot remove the %" PRIu64
@@ -1561,6 +1682,8 @@ static void rp_apply(rp * r) {
       FATAL_IO("Cannot flush '%s' after repair.", r->path[entry]);
     if (xpar_lock_supported()) xpar_unlock(f);
     xpar_xclose(f);
+    /*  Restore metadata lost to the umask.  */
+    if (made) rp_basic_meta(r, entry, r->path[entry], false);
     i = j;
   }
   rp_close_files(r);
@@ -1746,6 +1869,18 @@ static void rp_find_aliases(rp * r) {
     xpar_free(lk); }
 }
 
+/*  Whether the entry has no extents in this generation.  */
+static bool rp_foreign(const rp * r, u32 i) {
+  const xpar_entry * e = &r->mf.entry[i];
+  u64 lo = r->geom.stream_base, hi = lo + r->geom.stream_length;
+  u32 k;
+  if (!e->extent_count) return false;
+  for (k = 0; k < e->extent_count; k++)
+    if (e->extents[k].stream_offset >= lo &&
+        e->extents[k].stream_offset < hi) return false;
+  return true;
+}
+
 static void rp_entry_state_alloc(rp * r) {
   u32 i;
   u32 n = r->mf.count ? r->mf.count : 1;
@@ -1765,7 +1900,7 @@ static void rp_entry_state_alloc(rp * r) {
     if (xpar_lstat(r->path[i], &st) == 0 && st.is_regular) {
       r->fstate[i] = 1;
       r->fsize[i] = st.size;
-      if (st.size > e->length) r->fstate[i] |= 2;
+      if (st.size > e->length && !rp_foreign(r, i)) r->fstate[i] |= 2;
     }
   }
 }
@@ -1905,7 +2040,9 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
     }
   }
 
-  if ((r->o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32) {
+  /*  Do not follow symlinks to set their targets' modes. */
+  if ((r->o->preserve & XPAR_PRES_MODE) && !link &&
+      e->mode != XPAR_ABSENT_U32) {
     u32 mode = e->mode & XPAR_MODE_PERM;
     if (!(r->o->preserve & XPAR_PRES_SETID)) {
       mode &= ~(u32) (XPAR_MODE_SETUID | XPAR_MODE_SETGID |
@@ -2190,6 +2327,8 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "links_repaired", r->links_repaired);
     xpar_json_u64(&r->js, "links_relinked", r->links_made);
     xpar_json_u64(&r->js, "entries_opaque", r->opaque);
+    xpar_json_u64(&r->js, "names_recreated", r->names_made);
+    xpar_json_u64(&r->js, "recovery_regenerated", r->rec_regen);
     xpar_json_end(&r->js);
     xpar_json_summary(&r->js, status, code);
   } else if (!r->quiet) {
@@ -2201,7 +2340,15 @@ static void rp_report(rp * r, const char * status, int code) {
                    ? "xpar: restored %" PRIu64 " overlong entr%s.\n"
                    : "xpar: found %" PRIu64 " overlong entr%s.\n",
               r->overlong, r->overlong == 1 ? "y" : "ies");
-    if (!r->cell_count && !r->overlong && !r->links_made)
+    if (r->names_made)
+      rp_note(r, "xpar: recreated %" PRIu64 " missing name%s from the "
+              "manifest.\n", r->names_made, PLURAL(r->names_made));
+    if (r->rec_regen)
+      rp_note(r, "xpar: %" PRIu64 " recovery slice%s regenerated in %" PRIu64
+              " volume%s\n", r->rec_regen, PLURAL(r->rec_regen),
+              r->rec_regen_vols, PLURAL(r->rec_regen_vols));
+    if (!r->cell_count && !r->overlong && !r->links_made && !r->opaque &&
+        !r->names_made && !r->rec_regen)
       rp_note(r, "xpar: no damage found.\n");
     else if (r->cell_count)
       rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %"
@@ -2266,12 +2413,15 @@ static bool owned_open(owned_vol * v, const char * path) {
   v->map = xpar_map(path);
   if (v->map.valid) { v->data = v->map.map; v->len = v->map.size; return true; }
   f = xpar_open(path, XPAR_O_RDONLY);
-  if (!f) return false;
+  if (!f) { xpar_free(v->path); v->path = NULL; return false; }
   n = xpar_size(f);
-  if (n < 0 || (u64) n > (u64) (sz) -1) { xpar_close(f); return false; }
+  if (n < 0 || (u64) n > (u64) (sz) -1) {
+    xpar_close(f); xpar_free(v->path); v->path = NULL; return false;
+  }
   v->heap = (u8 *) xpar_alloc_raw(n ? (sz) n : 1);
   if (n && xpar_read(f, v->heap, (sz) n) != (sz) n) {
-    xpar_close(f); xpar_free(v->heap); v->heap = NULL; return false;
+    xpar_close(f); xpar_free(v->heap); v->heap = NULL;
+    xpar_free(v->path); v->path = NULL; return false;
   }
   xpar_close(f); v->data = v->heap; v->len = (u64) n; return true;
 }
@@ -2489,17 +2639,34 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
   for (u32 q = 0; q < l->count; q++)
     if (l->vol[q].kind == XPAR_VOL_RECOVERY)
       rtop = MAX(rtop, l->vol[q].recovery_first + l->vol[q].byte_length);
-  if (!rtop || last - first > rtop ||
-      !xpar_codec_supports_axis(sd->codec, sd->field_log2, g->slice_count,
-                                rtop, sd->recovery_axis_log2))
+  if (!rtop) {
+    if (reason) *reason = "this set carries no recovery slices";
     return false;
+  }
+  if (last - first > rtop) {
+    /*  The caller consumes this before the next call.  */
+    static char shortfall[96];
+    if (reason) {
+      xpar_snprintf(shortfall, sizeof shortfall,
+                    "too few recovery slices: %" PRIu64 " needed, %" PRIu64
+                    " exist, %" PRIu64 " short",
+                    last - first, rtop, last - first - rtop);
+      *reason = shortfall;
+    }
+    return false;
+  }
+  if (!xpar_codec_supports_axis(sd->codec, sd->field_log2, g->slice_count,
+                                rtop, sd->recovery_axis_log2)) {
+    if (reason) *reason = "this codec has no plan for that recovery axis";
+    return false;
+  }
 
   rec = (const u8 **) xpar_calloc((sz) rtop, sizeof(u8 *));
   rpresent = (u8 *) xpar_calloc((sz) rtop, 1);
   rv = (owned_vol *) xpar_calloc(l->count ? l->count : 1, sizeof(*rv));
   for (u32 q = 0; q < l->count; q++)
     if (l->vol[q].kind == XPAR_VOL_RECOVERY && l->vol[q].name) {
-      char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
+      char * path = xpar_path_vol(xpar_vset_dir(s), l->vol[q].name);
       if (owned_open(&rv[rv_count], path)) {
         owned_scan_recovery(s, &rv[rv_count], rec, rtop);
         rv_count++;
@@ -2511,7 +2678,14 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
     if (rpresent[i]) available++;
   }
   if (available < last - first) {
-    if (reason) *reason = "too few intact recovery slices";
+    static char shortfall[96];
+    if (reason) {
+      xpar_snprintf(shortfall, sizeof shortfall,
+                    "too few intact recovery slices: %" PRIu64 " needed, %"
+                    PRIu64 " readable, %" PRIu64 " short",
+                    last - first, available, last - first - available);
+      *reason = shortfall;
+    }
     ok = false; goto no_codec;
   }
 
@@ -2680,7 +2854,11 @@ typedef struct {
   u64  cells_bad;
   u64  slices_rebuilt;
   u64  bytes_rebuilt;
-  u64  volumes_rewritten;
+  u64  volumes_rebuilt;      /*  Data volumes written back in place.  */
+  u64  volumes_rewritten;    /*  Damaged volumes replaced by a substitute.  */
+  u64  volumes_relengthed;   /*  Same-name volumes trimmed or extended.  */
+  u64  recovery_regen;       /*  Recovery slices re-encoded from the data.  */
+  u64  recovery_volumes;     /*  Recovery volumes rewritten to carry them.  */
   bool inner_corrected;
 } owned_acct;
 
@@ -2730,7 +2908,8 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
   for (i = 0; i < g->slice_count; i++)
     if (slot[i] != UINT64_MAX) acct->bytes_rebuilt += xpar_slice_bytes(g, i);
   if (!touched) {
-    if (armoured && xpar_vset_inner_corrected(s)) {
+    if (armoured && (xpar_vset_inner_corrected(s) ||
+                     xpar_vset_archive_stale(s))) {
       if (o->dest == XPAR_DEST_BACKUP) owned_backup_path(arm_path);
       xpar_garm_write_patched(arm_path, &ap, arm_plain, arm_len, strm_off,
                               g->stream_length, NULL, NULL,
@@ -2863,7 +3042,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
       owned_backup_path(arm_path);
     } else for (u32 q = 0; q < l->count; q++)
         if (l->vol[q].kind == XPAR_VOL_DATA && l->vol[q].name) {
-          char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
+          char * path = xpar_path_vol(xpar_vset_dir(s), l->vol[q].name);
           owned_backup_path(path); xpar_free(path);
         }
   }
@@ -2878,6 +3057,18 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
       owned_publish_split_stage(s, stage, slot[i] * g->slice_size,
                                 i * g->slice_size,
                                 xpar_slice_bytes(g, i), io, chunk);
+    /*  Count every volume receiving rebuilt slices.  */
+    if (l) for (u32 q = 0; q < l->count; q++) {
+      if (l->vol[q].kind != XPAR_VOL_DATA) continue;
+      for (i = 0; i < g->slice_count; i++) {
+        u64 at = i * g->slice_size;
+        if (slot[i] == UINT64_MAX) continue;
+        if (at + xpar_slice_bytes(g, i) > l->vol[q].stream_offset &&
+            at < l->vol[q].stream_offset + l->vol[q].byte_length) {
+          acct->volumes_rebuilt++;  break;
+        }
+      }
+    }
   }
   xpar_xclose(stage);
   xpar_remove(stage_path);
@@ -3179,7 +3370,7 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
     rv = (owned_vol *) xpar_calloc(l->count ? l->count : 1, sizeof(*rv));
     for (u32 q = 0; q < l->count; q++)
       if (l->vol[q].kind == XPAR_VOL_RECOVERY) {
-      char * path = xpar_path_join(xpar_vset_dir(s), l->vol[q].name);
+      char * path = xpar_path_vol(xpar_vset_dir(s), l->vol[q].name);
       if (owned_open(&rv[rv_count], path)) {
         owned_scan_recovery(s, &rv[rv_count], rec, rtop); rv_count++;
       }
@@ -3193,9 +3384,10 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
   if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
       o->dest != XPAR_DEST_TO) {
     const char * why = NULL;
-    acct->volumes_rewritten = xpar_vset_volumes_to_rewrite(s);
+    acct->volumes_rewritten  = xpar_vset_volumes_to_rewrite(s);
+    acct->volumes_relengthed = xpar_vset_volumes_to_relength(s);
     if (!xpar_vset_rewrite_substituted(s, &why)) {
-      acct->volumes_rewritten = 0;
+      acct->volumes_rewritten = acct->volumes_relengthed = 0;
       if (!o->quiet)
         xpar_fprintf(xpar_stderr,
                      "xpar: could not rewrite a data volume: %s\n",
@@ -3208,6 +3400,37 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
   return out;
 }
 
+/*  Regenerate missing recovery slices from repaired data.  */
+static u64 repair_regen_recovery(const xpar_options * o, u64 * volumes) {
+  const char * why = NULL;
+  u64 done;
+  if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
+  done = xpar_gen_regen_recovery(o, volumes, &why);
+  if (!done && why && !o->quiet)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: recovery slices could not be regenerated: %s\n", why);
+  return done;
+}
+
+/*  Rewrite stale volumes from intact packet replicas.  */
+static void repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
+  const char * why = NULL;
+  u64 n = 0;
+  if (o->dry_run || o->dest == XPAR_DEST_TO) return;
+  if (!xpar_vset_volumes_dropped(s)) return;
+  if (!xpar_vset_rewrite_dropped(s, &n, &why)) {
+    /*  Recovery regeneration handles missing RCVS packets separately.  */
+    if (!o->quiet && !xpar_vset_recovery_bad(s))
+      xpar_fprintf(xpar_stderr,
+                   "xpar: could not rewrite a stale volume: %s\n",
+                   why ? why : "unknown error");
+    return;
+  }
+  if (n && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: rewrote %" PRIu64 " volume%s from "
+                 "intact packet replicas\n", n, PLURAL(n));
+}
+
 int xpar_op_repair(const xpar_options * o) {
   rp r;
   u32 i, chunk;
@@ -3215,8 +3438,20 @@ int xpar_op_repair(const xpar_options * o) {
   xpar_progress_t pg;
   xpar_plan pl;
   int rc = XPAR_EXIT_OK;
+  xpar_vset * owned = NULL;
+  bool walk = o->chain;
 
-  if (o->chain) {
+  /*  Repair unselected ancestry oldest first.  */
+  if (!walk && !o->gen_count) {
+    owned = xpar_vset_open(o);
+    if (xpar_vset_setd(owned)->generation) {
+      xpar_vset_close(owned);
+      owned = NULL;
+      walk = true;
+    }
+  }
+
+  if (walk) {
     xpar_chain c;
     xpar_options metadata = *o;
     xpar_json chain_js;
@@ -3254,13 +3489,12 @@ int xpar_op_repair(const xpar_options * o) {
       g = order[q];
       xpar_gchain_genref(&c, g, &ref, id);
       one.chain = false;
+      one.chain_member = true;
       one.json = false;
       if (o->json) one.quiet = true;
       one.gens = &ref;
       one.gen_count = 1;
       one.repair_head_set = true;
-      one.resync = XPAR_RESYNC_ALWAYS;
-      one.resync_exhaustive = true;
       {
         xpar_genref ignored;
         xpar_gchain_genref(&c, selected, &ignored, head_id);
@@ -3294,7 +3528,8 @@ int xpar_op_repair(const xpar_options * o) {
       }
       if (one_rc > worst) worst = one_rc;
       xpar_free(step_dir);
-      if (one_rc >= XPAR_EXIT_UNREPAIRABLE) break;
+      /*  A staged chain cannot continue past a failed generation.  */
+      if (chain_stage && one_rc >= XPAR_EXIT_UNREPAIRABLE) break;
     }
     if (chain_stage)
       owned_chain_stage_remove(&c, order, walked, selected, chain_stage);
@@ -3307,8 +3542,9 @@ int xpar_op_repair(const xpar_options * o) {
   }
 
   {
-    xpar_vset * owned = xpar_vset_open(o);
-    const xpar_setd * osd = xpar_vset_setd(owned);
+    const xpar_setd * osd;
+    if (!owned) owned = xpar_vset_open(o);
+    osd = xpar_vset_setd(owned);
     if (osd->layout != XPAR_LAYOUT_SIDECAR) {
       xpar_json owned_js;
       owned_acct acct;
@@ -3341,8 +3577,12 @@ int xpar_op_repair(const xpar_options * o) {
         return xpar_op_extract(&ex);
       }
       out = repair_owned(o, owned, before, &acct);
+      if (out == XPAR_EXIT_OK) repair_rewrite_dropped(o, owned);
       xpar_vset_close(owned);
       if (out == XPAR_EXIT_OK && o->dest != XPAR_DEST_TO) {
+        acct.recovery_regen =
+          repair_regen_recovery(o, &acct.recovery_volumes);
+        if (acct.recovery_regen) changed = true;
         owned = xpar_vset_open(o);
         out = xpar_vset_check(owned, o, NULL);
         xpar_vset_close(owned);
@@ -3358,7 +3598,12 @@ int xpar_op_repair(const xpar_options * o) {
         xpar_json_u64(&owned_js, "cells_damaged", acct.cells_bad);
         xpar_json_u64(&owned_js, "slices_rebuilt", acct.slices_rebuilt);
         xpar_json_u64(&owned_js, "bytes_rebuilt", acct.bytes_rebuilt);
+        xpar_json_u64(&owned_js, "volumes_rebuilt", acct.volumes_rebuilt);
         xpar_json_u64(&owned_js, "volumes_rewritten", acct.volumes_rewritten);
+        xpar_json_u64(&owned_js, "volumes_relengthed",
+                      acct.volumes_relengthed);
+        xpar_json_u64(&owned_js, "recovery_regenerated",
+                      acct.recovery_regen);
         xpar_json_bool(&owned_js, "inner_corrected", acct.inner_corrected);
         xpar_json_end(&owned_js);
         xpar_json_summary(&owned_js,
@@ -3369,23 +3614,35 @@ int xpar_op_repair(const xpar_options * o) {
       }
       if (!o->quiet && out != XPAR_EXIT_OK)
         xpar_fprintf(xpar_stderr, "xpar: owned-layout repair: unrepairable\n");
-      else if (!o->quiet && !acct.slices_rebuilt && !acct.volumes_rewritten &&
-               !acct.inner_corrected)
+      else if (!o->quiet && !acct.slices_rebuilt && !acct.volumes_rebuilt &&
+               !acct.volumes_rewritten && !acct.volumes_relengthed &&
+               !acct.recovery_regen && !acct.inner_corrected)
         xpar_fprintf(xpar_stderr,
                      "xpar: owned-layout repair: no repair needed\n");
       else if (!o->quiet)
         xpar_fprintf(xpar_stderr,
                      "xpar: owned-layout repair: %" PRIu64 " cell%s damaged, %"
                      PRIu64 " slice%s rebuilt, %" PRIu64 " byte%s; %" PRIu64
-                     " data volume%s rewritten%s.\n",
+                     " data volume%s rebuilt, %" PRIu64
+                     " rewritten from a substitute, %" PRIu64
+                     " restored to its recorded length%s.\n",
                      acct.cells_bad, PLURAL(acct.cells_bad),
                      acct.slices_rebuilt, PLURAL(acct.slices_rebuilt),
                      acct.bytes_rebuilt, PLURAL(acct.bytes_rebuilt),
-                     acct.volumes_rewritten, PLURAL(acct.volumes_rewritten),
+                     acct.volumes_rebuilt, PLURAL(acct.volumes_rebuilt),
+                     acct.volumes_rewritten,
+                     acct.volumes_relengthed,
                      acct.inner_corrected
                        ? "; the inner code corrected the archive" : "");
+      if (!o->quiet && acct.recovery_regen)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: %" PRIu64 " recovery slice%s regenerated in %"
+                     PRIu64 " volume%s\n",
+                     acct.recovery_regen, PLURAL(acct.recovery_regen),
+                     acct.recovery_volumes, PLURAL(acct.recovery_volumes));
       return out;
     }
+    repair_rewrite_dropped(o, owned);
     xpar_vset_close(owned);
   }
 
@@ -3450,6 +3707,7 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->json) xpar_progress_sink(&pg, xpar_json_progress_sink, &r.js);
   rp_scan_stream(&r, &pg);
   rp_scan_entries(&r, &pg);
+  rp_scan_structure(&r);
   rp_classify(&r);
   xpar_progress_end(&pg);
   rp_close_files(&r);
@@ -3482,9 +3740,15 @@ int xpar_op_repair(const xpar_options * o) {
     /*  Hash failures may be repairable even when no cell is marked.  */
     for (i = 0; i < r.mf.count; i++)
       if (r.hash_bad[i] && !r.alias[i]) { unclean = true;  break; }
-    if (!r.cell_count && !unclean && !r.links_missing) {
+    if (rp_missing_names(&r)) unclean = true;
+    if (!r.cell_count && !unclean && !r.links_missing &&
+        !r.structure_bad) {
+      bool regen;
+      r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
+      regen = r.rec_regen != 0;
       rp_report(&r, "clean", XPAR_EXIT_OK);
       rp_free(&r);
+      if (regen && o->exit_on_change) return XPAR_EXIT_REPAIRABLE;
       return XPAR_EXIT_OK;
     }
   }
@@ -3528,6 +3792,8 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->repair_head_set) rp_select_head_output(&r);
 
   rp_build_writes(&r);
+  /*  --to restores structural damage from the manifest.  */
+  if (o->dest != XPAR_DEST_TO) r.opaque += r.structure_bad;
   if (r.opaque) {
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
@@ -3561,7 +3827,9 @@ int xpar_op_repair(const xpar_options * o) {
             total);
     rp_report(&r, "dry-run", XPAR_EXIT_OK);
     rp_free(&r);
-    return XPAR_EXIT_OK;
+    /*  Preserve --exit-on-change in dry runs.  */
+    return o->exit_on_change && r.wr_count ? XPAR_EXIT_REPAIRABLE
+                                           : XPAR_EXIT_OK;
   }
 
   /*  Nothing may change protected data before the journal is durable.  */
@@ -3575,21 +3843,31 @@ int xpar_op_repair(const xpar_options * o) {
     xpar_free(r.journal);
     r.journal = j;
   }
-  /*  Replacing a journal requires its own option, not -f.  */
+  /*  Only --replace-journal replaces an existing journal path.  */
   { xpar_stat_t st;
-    if (!o->no_journal && !o->replace_journal &&
-        xpar_lstat(r.journal, &st) == 0 &&
-        st.size >= XPAR_UNDO_HDR + XPAR_UNDO_FOOT)
-      FATAL("Undo journal '%s' exists; run xpar undo or pass "
-            "--replace-journal.", r.journal);
+    if (!o->no_journal && xpar_lstat(r.journal, &st) == 0) {
+      if (!o->replace_journal)
+        FATAL("Undo journal '%s' exists; run xpar undo or pass "
+              "--replace-journal.", r.journal);
+      if (xpar_remove(r.journal) != 0)
+        FATAL_IO("Cannot replace undo journal '%s': %s.", r.journal,
+                 xpar_strerror(xpar_errno()));
+    }
   }
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);
   rp_apply(&r);
   if (!rp_reverify(&r)) rc = XPAR_EXIT_UNREPAIRABLE;
-  if (rc == XPAR_EXIT_OK && !o->keep_journal && !o->no_journal)
+  /*  Remove journals after success or when nothing was written.  */
+  if ((rc == XPAR_EXIT_OK || !r.writes) &&
+      !o->keep_journal && !o->no_journal) {
     xpar_remove(r.journal);
-  r.changed = r.writes > 0;
+    /*  Make journal removal durable.  */
+    xpar_fsync_dir(r.journal);
+  }
+  if (rc == XPAR_EXIT_OK)
+    r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
+  r.changed = r.writes > 0 || r.rec_regen > 0;
 
   rp_report(&r, rc == XPAR_EXIT_OK ? "repaired" : "unrepairable", rc);
   rp_free(&r);

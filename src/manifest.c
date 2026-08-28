@@ -23,6 +23,7 @@
 #include "cli.h"
 #include "common.h"
 #include "port-fs.h"
+#include "volname.h"
 
 static void * dup_bytes(const void * p, u32 n) {
   u8 * q = (u8 *) xpar_alloc_raw((sz) n + 1);
@@ -721,7 +722,8 @@ static void check_emit_name(const walker * w, const char * name, u32 len,
                             const char * disk) {
   xpar_path_status s = xpar_path_check(name, len, w->o->path_flags);
   if (s != XPAR_PATH_OK)
-    FATAL("Cannot store '%s': %s.", disk, xpar_path_reason(s));
+    FATAL("Cannot store '%s': %s.", xpar_name_escape(disk),
+          xpar_path_reason(s));
 }
 
 static void note_stat(walker * w, u32 idx, const xpar_stat_t * st) {
@@ -757,7 +759,7 @@ static void emit_symlink(xpar_entry * e, const char * path) {
   if (!buf) FATAL_PERROR(path);
   ts = xpar_symlink_target_check((const u8 *) buf, n);
   if (ts != XPAR_PATH_OK)
-    FATAL("Cannot store the target of '%s': %s.", path,
+    FATAL("Cannot store the target of '%s': %s.", xpar_name_escape(path),
           xpar_path_reason(ts));
   e->entry_type = XPAR_ENTRY_SYMLINK;
   e->extra      = (u8 *) buf;
@@ -771,14 +773,15 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   pathbuf * path = disk;
   bool excluded = false, keep;
   if (depth > 256)
-    FATAL("Directory nesting past 256 levels at '%s'.", disk->p);
+    FATAL("Directory nesting past 256 levels at '%s'.",
+          xpar_name_escape(disk->p));
   if (xpar_lstat(disk->p, &st) != 0) FATAL_PERROR(disk->p);
   xpar_memset(&real, 0, sizeof(real));
   if (st.is_symlink && w->o->follow_symlinks) {
     pb_set(&real, disk->p, disk->len);
     if (!follow_link(&real, &st)) {
       xpar_fprintf(xpar_stderr, "xpar: skipping '%s': dangling link.\n",
-                   disk->p);
+                   xpar_name_escape(disk->p));
       xpar_free(real.p);
       return;
     }
@@ -786,6 +789,16 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   }
 
   keep = !name_len || selected(w->o, name, &excluded);
+
+  /*  Exclude this set's outputs.  */
+  if (w->o->self_base &&
+      (xpar_vname_is_output(disk->p, w->o->self_base) ||
+       (path != disk && xpar_vname_is_output(path->p, w->o->self_base)))) {
+    xpar_fprintf(xpar_stderr, "xpar: skipping '%s': this set's own output.\n",
+                 xpar_name_escape(disk->p));
+    xpar_free(real.p);
+    return;
+  }
 
   if (st.is_dir) {
     /*  A nameless root is one the path rules cannot express, such as
@@ -799,13 +812,14 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
     if (w->o->recurse && (!excluded || w->o->include_count))
       walk_dir(w, path, name, name_len, depth);
   } else if (!name_len) {
-    FATAL("Input '%s' resolves to no storable name.", path->p);
+    FATAL("Input '%s' resolves to no storable name.",
+          xpar_name_escape(path->p));
   } else if (!keep) {
     /*  A filtered special file is silent just like a filtered regular one.  */
   } else if (!st.is_regular && !st.is_symlink) {
     xpar_fprintf(xpar_stderr,
                  "xpar: skipping '%s': not a file, directory or link.\n",
-                 path->p);
+                 xpar_name_escape(path->p));
   } else {
     xpar_entry * e = emit_entry(w, name, name_len, path->p, &st);
     if (st.is_symlink) emit_symlink(e, path->p);
@@ -1201,7 +1215,7 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
   u8 * cache = NULL;
   u64 * cache_offset = NULL;
   u64 cache_size = 0;
-  u64 H = o->stream_base;
+  u64 H = o->stream_base, packed_end;
   u32 i;
   m->stream_base   = o->stream_base;
   m->align         = o->align;
@@ -1251,6 +1265,13 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
         break;
     }
   }
+  /*  Pad aligned generations with unowned zeros.  */
+  packed_end = H;
+  if (o->align != XPAR_ALIGN_PACKED) {
+    u64 q = o->align == XPAR_ALIGN_SLICE ? o->slice_size
+                                         : (u64) XPAR_BLAKE3_CHUNK_LEN;
+    if (q) H = o->stream_base + xpar_align_up(H - o->stream_base, q);
+  }
   m->stream_length = H - o->stream_base;
   pack_links(m, &ix);
 
@@ -1266,7 +1287,7 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
     xpar_memset(&chunks, 0, sizeof chunks);
   }
   if (cache) {
-    u64 used = H - o->stream_base;
+    u64 used = packed_end - o->stream_base;
     cache = (u8 *) xpar_realloc(cache, (sz) (used ? used : 1));
     *o->stream_cache_out = cache;
     *o->stream_cache_length_out = used;
@@ -1298,6 +1319,11 @@ const char * xpar_mf_reason(xpar_mf_status s) {
     case XPAR_MF_LINK_CHAIN:    return "hard link names a non-regular entry";
     case XPAR_MF_LINK_SELF:     return "hard link names itself";
     case XPAR_MF_LINK_CONTENT:  return "hard link content identity disagrees";
+    case XPAR_MF_LINK_META:
+      return "a hard-link alias disagrees with its canonical entry's "
+             "metadata";
+    case XPAR_MF_EXTENT_SHARE:  return "shared extent lies outside the "
+                                       "bytes already defined";
     case XPAR_MF_POSIX_INDEX:   return "posix_index out of range";
   }
   return "malformed manifest";
@@ -1360,11 +1386,46 @@ static xpar_mf_status check_entry(const xpar_manifest * m,
         return XPAR_MF_LINK_CHAIN;
       if (!alias_content_matches(e, &m->entry[t]))
         return XPAR_MF_LINK_CONTENT;
-      if (!alias_meta_matches(e, &m->entry[t])) out->link_meta_mismatch++;
+      if (!alias_meta_matches(e, &m->entry[t])) {
+        out->link_meta_mismatch++;
+        out->other = (u32) t;
+        return XPAR_MF_LINK_META;
+      }
       return XPAR_MF_OK;
     }
     default: return XPAR_MF_TYPE;
   }
+}
+
+/*  C_g: sorted union of canonical ranges seen so far.  */
+
+typedef struct { u64 * lo, * hi;  u32 count, cap; } cover;
+
+static void cover_add(cover * c, u64 lo, u64 hi) {
+  if (c->count && c->hi[c->count - 1] == lo) {
+    c->hi[c->count - 1] = hi;  return;
+  }
+  if (c->count == c->cap) {
+    c->cap = c->cap ? c->cap * 2 : 8;
+    c->lo = (u64 *) xpar_realloc(c->lo, (sz) c->cap * sizeof(u64));
+    c->hi = (u64 *) xpar_realloc(c->hi, (sz) c->cap * sizeof(u64));
+  }
+  c->lo[c->count] = lo;  c->hi[c->count] = hi;  c->count++;
+}
+
+/*  Check that a shared extent lies within C_g.  */
+static bool cover_holds(const cover * c, u64 lo, u64 hi) {
+  u32 a = 0, b = c->count;
+  while (a < b) {
+    u32 mid = a + (b - a) / 2;
+    if (c->lo[mid] <= lo) a = mid + 1;  else b = mid;
+  }
+  return a && hi <= c->hi[a - 1];
+}
+
+static void cover_free(cover * c) {
+  xpar_free(c->lo);  xpar_free(c->hi);
+  xpar_memset(c, 0, sizeof *c);
 }
 
 static bool ancestor_ok(const xpar_mf_limits * lim, u64 off, u64 len) {
@@ -1390,8 +1451,10 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
   xpar_nameidx ix;
   xpar_mf_status s = XPAR_MF_OK;
   u64 H = lim->stream_base, own_end;
+  cover cov;
   u32 i, k;
   xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(&cov, 0, sizeof cov);
   if (lim->stream_length > UINT64_MAX - lim->stream_base) {
     out->status = XPAR_MF_EXTENT_OVF;
     return out->status;
@@ -1447,16 +1510,21 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
         continue;
       }
       if (off + len > own_end) { s = XPAR_MF_EXTENT_RANGE;  goto done; }
-      if (off == H) { H = off + len;  continue; }
+      if (off == H) { cover_add(&cov, off, off + len);  H = off + len;
+                      continue; }
       if (off < H) {
-        if (off + len <= H) continue;
-        s = XPAR_MF_EXTENT_SPLIT;  goto done;
+        if (off + len > H) { s = XPAR_MF_EXTENT_SPLIT;  goto done; }
+        if (!cover_holds(&cov, off, off + len)) {
+          s = XPAR_MF_EXTENT_SHARE;  goto done;
+        }
+        continue;
       }
       {
         u64 q = lim->align == XPAR_ALIGN_SLICE ? lim->slice_size
               : lim->align == XPAR_ALIGN_1K ? XPAR_BLAKE3_CHUNK_LEN : 0;
         u64 pad = q ? (H - lim->stream_base) % q : 0;
         if (pad && q - pad <= UINT64_MAX - H && off == H + (q - pad)) {
+          cover_add(&cov, off, off + len);
           H = off + len;  continue;
         }
       }
@@ -1468,8 +1536,15 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
     }
   }
   out->entry = 0;  out->extent = 0;
-  if (H != own_end) s = XPAR_MF_STREAM_GAP;
+  if (H != own_end) {
+    /*  Allow trailing alignment padding in L.  */
+    u64 q = lim->align == XPAR_ALIGN_SLICE ? lim->slice_size
+          : lim->align == XPAR_ALIGN_1K ? XPAR_BLAKE3_CHUNK_LEN : 0;
+    u64 pad = q ? (H - lim->stream_base) % q : 0;
+    if (!pad || own_end - H != q - pad) s = XPAR_MF_STREAM_GAP;
+  }
 done:
+  cover_free(&cov);
   out->high_water = H;
   out->status = s;
   return s;

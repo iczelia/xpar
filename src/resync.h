@@ -39,6 +39,7 @@ typedef struct {
   xpar_resync_delta delta[XPAR_RESYNC_DELTAS];
   u32 count;
   u64 candidates;
+  u64 clipped;                /*  Matches refused by the delta limit.  */
   bool dominant;
   bool overflow;
 } xpar_resync_result;
@@ -89,6 +90,8 @@ typedef struct {
   bool need_tags;
   u64  confirmations;
   u64  candidates;
+  u64  located;               /*  Probes placed by a confirmed match.  */
+  u64  clipped;               /*  Matches outside the search window.  */
 } xpar_resync_outcome;
 
 /*  Fill located with physical offsets or UINT64_MAX; scratch is one slice.  */

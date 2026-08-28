@@ -160,6 +160,7 @@ typedef struct {
   u32 exclude_count;
   char * const * include; /*  Explicit includes override excludes.  */
   u32 include_count;
+  const char * self_base; /*  Output base to skip.  */
   bool recurse;
   bool follow_symlinks;
   bool reproducible;
@@ -217,7 +218,9 @@ typedef enum {
   XPAR_MF_LINK_CHAIN,     /*  Alias names a non-regular entry.  */
   XPAR_MF_LINK_SELF,
   XPAR_MF_LINK_CONTENT,   /*  Length or content certificates disagree.  */
-  XPAR_MF_POSIX_INDEX
+  XPAR_MF_POSIX_INDEX,
+  XPAR_MF_LINK_META,      /*  mode, times or attrs differ from canonical.  */
+  XPAR_MF_EXTENT_SHARE    /*  Shared extent is not contained in C_g.  */
 } xpar_mf_status;
 
 const char * xpar_mf_reason(xpar_mf_status s);

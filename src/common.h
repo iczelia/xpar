@@ -19,12 +19,12 @@
 
 #include "platform/port.h"
 
-/*  Fatal errors.  */
-#define FATAL_CODE(code, fmt, ...)                                            \
-  do {                                                                        \
-    xpar_fprintf(xpar_stderr, "xpar: " fmt "\n", ##__VA_ARGS__);              \
-    xpar_exit(code);                                                          \
-  } while (0)
+/*  Fatal errors go to stderr and, when enabled, one JSON record.  */
+void xpar_fatal(int code, const char * fmt, ...) XPAR_PRINTF(2, 3)
+                                                 XPAR_NORETURN;
+void xpar_json_fatal(int code, const char * fmt, ...) XPAR_PRINTF(2, 3);
+
+#define FATAL_CODE(code, fmt, ...) xpar_fatal(code, fmt, ##__VA_ARGS__)
 
 #define FATAL(fmt, ...)        FATAL_CODE(XPAR_EXIT_USAGE, fmt, ##__VA_ARGS__)
 #define FATAL_IO(fmt, ...)     FATAL_CODE(XPAR_EXIT_IO, fmt, ##__VA_ARGS__)
@@ -42,11 +42,7 @@
   } while (0)
 
 #define FATAL_PERROR(who)                                                     \
-  do {                                                                        \
-    xpar_fprintf(xpar_stderr, "xpar: %s: %s\n", (who),                        \
-                 xpar_strerror(xpar_errno()));                                \
-    xpar_exit(XPAR_EXIT_IO);                                                  \
-  } while (0)
+  FATAL_CODE(XPAR_EXIT_IO, "%s: %s", (who), xpar_strerror(xpar_errno()))
 
 #define xpar_assert(x)                                                        \
   do {                                                                        \

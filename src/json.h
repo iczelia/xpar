@@ -51,4 +51,7 @@ void xpar_json_summary (xpar_json *, const char * status, int exit_code);
 /*  Canonical damage status for an exit code.  */
 const char * xpar_status_word(int exit_code);
 
+/*  Enable JSON fatal-error output.  */
+void xpar_json_fatal_enable(bool on);
+
 #endif

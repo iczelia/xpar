@@ -14,6 +14,7 @@
 
 #include "container.h"
 #include "manifest.h"
+#include "slice.h"
 
 /*  Checked arithmetic for untrusted lengths and offsets.  */
 
@@ -94,6 +95,30 @@ static void pkt_tag(const u8 * p, u64 len, bool body, const xpar_key * key,
   xpar_blake3_final(&h, out8, 8);
 }
 
+/*  Every type byte is an ASCII letter or digit.  */
+static bool type_chars_ok(const char * t) {
+  int i;
+  for (i = 0; i < 4; i++) {
+    u8 c = (u8) t[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+          (c >= 'a' && c <= 'z'))) return false;
+  }
+  return true;
+}
+
+/*  Known 2.0 types; unknown noncritical types are skippable.  */
+static bool type_known(const char * t) {
+  static const char * const known[] = {
+    XPAR_T_VOLH, XPAR_T_SETD, XPAR_T_FILE, XPAR_T_POSX, XPAR_T_SLCR,
+    XPAR_T_SLTG, XPAR_T_SLCL, XPAR_T_RCVS, XPAR_T_LAYT, XPAR_T_AUTH,
+    XPAR_T_ARMG, XPAR_T_STRM, XPAR_T_CRTR, XPAR_T_CMNT
+  };
+  sz i;
+  for (i = 0; i < ARRAY_LEN(known); i++)
+    if (!xpar_memcmp(t, known[i], 4)) return true;
+  return false;
+}
+
 /*  Require at most seven zero padding bytes.  */
 static bool pad_ok(const u8 * body, u64 used, u64 n) {
   if (used > n || n - used >= XPAR_PKT_ALIGN) return false;
@@ -134,6 +159,11 @@ xpar_status xpar_pkt_read(const u8 * p, u64 avail, const xpar_key * key,
 
   pkt_tag(p, len, body, (out->flags & XPAR_PF_KEYED) ? key : NULL, want);
   if (!xpar_ct_equal(want, out->checksum, 8))  return XPAR_E_CHECKSUM;
+
+  /*  Validate types after tags to classify noise as checksum damage.  */
+  if (!type_chars_ok(out->type))               return XPAR_E_MALFORMED;
+  if ((out->flags & XPAR_PF_CRITICAL) && !type_known(out->type))
+    return XPAR_E_UNSUPPORTED;
   return XPAR_OK;
 }
 
@@ -155,9 +185,10 @@ bool xpar_scan_next(xpar_scan * s, xpar_pkt * hdr, const u8 ** body,
     st = xpar_pkt_read(s->buf + s->pos, s->size - s->pos, s->key, hdr);
     if (st == XPAR_E_NEEDKEY && s->accept_unverified_keyed) st = XPAR_OK;
     if (st != XPAR_OK) {
-      if      (st == XPAR_E_NEEDKEY)  s->skip_keyed++;
-      else if (st == XPAR_E_CHECKSUM) s->skip_checksum++;
-      else                            s->skip_length++;
+      if      (st == XPAR_E_NEEDKEY)     s->skip_keyed++;
+      else if (st == XPAR_E_CHECKSUM)    s->skip_checksum++;
+      else if (st == XPAR_E_UNSUPPORTED) s->skip_unsupported++;
+      else                               s->skip_length++;
       /*  "XPAR2PKT" has no proper border, so no second magic can begin
           inside the eight bytes just matched. Advancing 8 therefore loses
           no candidate even while resyncing at STEP 1.  */
@@ -320,7 +351,7 @@ static xpar_status setd_body(const u8 * body, sz n, xpar_setd * out) {
   }
 
   if (out->slice_size < XPAR_SLICE_MIN ||
-      out->slice_size > XPAR_SLICE_MAX)              return XPAR_E_MALFORMED;
+      out->slice_size > XPAR_SLICE_REFUSE)           return XPAR_E_MALFORMED;
   if (out->data_slice_count > (((u64) 1 << out->field_log2) - 1))
     return XPAR_E_MALFORMED;
   if (out->data_slice_count) {
@@ -548,6 +579,11 @@ void xpar_entry_write(xpar_buf * out, const xpar_entry * e,
   xpar_free(ex);
 }
 
+/*  A Text field: UTF-8 and free of NUL bytes.  */
+static bool text_ok(const u8 * p, u32 n) {
+  return !xpar_has_nul(p, n) && xpar_utf8_valid(p, n);
+}
+
 static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
                             sz * used) {
   u32 ol, gl, xc, j;  sz p = 16;
@@ -565,13 +601,13 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
 
   if (ol > avail - p) return XPAR_E_MALFORMED;
   if (ol) {
-    if (xpar_has_nul(b + p, ol)) return XPAR_E_MALFORMED;
+    if (!text_ok(b + p, ol)) return XPAR_E_MALFORMED;
     r->owner = dup_str(b + p, ol);
     p += ol;
   }
   if (gl > avail - p) return XPAR_E_MALFORMED;
   if (gl) {
-    if (xpar_has_nul(b + p, gl)) return XPAR_E_MALFORMED;
+    if (!text_ok(b + p, gl)) return XPAR_E_MALFORMED;
     r->group = dup_str(b + p, gl);
     p += gl;
   }
@@ -588,7 +624,7 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
       nl = xpar_rd16(b + p);  vl = xpar_rd16(b + p + 2);  p += 4;
       if (nl < 1) return XPAR_E_MALFORMED;
       if (nl > avail - p) return XPAR_E_MALFORMED;
-      if (xpar_has_nul(b + p, nl)) return XPAR_E_MALFORMED;
+      if (!text_ok(b + p, nl)) return XPAR_E_MALFORMED;
       if (prev && bytes_cmp(prev, prev_n, b + p, nl) >= 0)
         return XPAR_E_MALFORMED;
       prev = b + p;  prev_n = nl;
@@ -898,14 +934,16 @@ void xpar_slcl_write_all(xpar_buf * out, const u32 * crc, u64 slices,
 }
 
 bool xpar_tagset_init(xpar_tagset * s, u64 slices, u8 tag_len, u32 cps,
-                      u64 input_bytes) {
+                      bool have_crc, u64 input_bytes) {
   u64 per, total;
   xpar_memset(s, 0, sizeof *s);
   s->t.slice_count     = slices;
   s->t.tag_len         = tag_len;
   s->t.cells_per_slice = cps;
   if (!slices) return true;
-  if (!add64(4 + tag_len, (u64) cps * 4, &per)) return false;
+  if (!add64(have_crc ? 4u + tag_len : tag_len, (u64) cps * 4, &per))
+    return false;
+  if (!per) return false;
   if (!mul64(slices, per, &total)) return false;
   if (total > input_bytes) return false;
   if (total > (u64) (sz) -1 / 2) return false;
@@ -1331,6 +1369,15 @@ bool xpar_auth_key_ok(const xpar_auth * a, const u8 * master) {
   return xpar_ct_equal(want, a->key_check, 16);
 }
 
+/*  Remove zero padding, then validate UTF-8 and NUL absence.  */
+xpar_status xpar_text_read(const u8 * body, sz n, sz * out_len) {
+  sz len = n;
+  while (len && !body[len - 1]) len--;
+  *out_len = len;
+  if (len > 0xFFFFFFFFu) return XPAR_E_MALFORMED;
+  return text_ok(body, (u32) len) ? XPAR_OK : XPAR_E_MALFORMED;
+}
+
 void xpar_text_write(xpar_buf * out, const char * type, const char * text,
                      const u8 * set_id, const xpar_key * key) {
   sz n = text ? xpar_strlen(text) : 0;
@@ -1475,6 +1522,7 @@ static u64 file_disc(const u8 * body) {
     only after the body has been proved long enough to hold it, so a short
     body simply discriminates as zero rather than reading past the end.  */
 static u64 crit_disc(const char * t, const u8 * body, u64 n) {
+  if (!xpar_memcmp(t, XPAR_T_VOLH, 4) && n >= 4) return xpar_rd32(body);
   if (!xpar_memcmp(t, XPAR_T_FILE, 4) && n >= 16) return file_disc(body);
   if (!xpar_memcmp(t, XPAR_T_SLCR, 4) && n >= 8) return xpar_rd64(body);
   if (!xpar_memcmp(t, XPAR_T_SLTG, 4) && n >= 8) return xpar_rd64(body);
@@ -1551,8 +1599,9 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
         continue;
       }
       s->pkt[slot].copies++;  s->copies++;
-      /*  CRTR is per-volume provenance and may differ across copies.  */
-      if (xpar_pkt_is(hdr, XPAR_T_CRTR)) return false;
+      /*  Per-volume text may differ.  */
+      if (xpar_pkt_is(hdr, XPAR_T_CRTR) ||
+          xpar_pkt_is(hdr, XPAR_T_CMNT)) return false;
       if (s->pkt[slot].body_len != n ||
           xpar_memcmp(s->pkt[slot].body, body, (sz) n) != 0) {
         s->pkt[slot].conflicts++;  s->conflicts++;

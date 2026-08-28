@@ -95,10 +95,10 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         if (!o) {
           if (amb)
             yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
-                          len, long_opt);
+                          (int) len, long_opt);
           else
             yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
-                          len, long_opt);
+                          (int) len, long_opt);
           return 0;
         }
         if (o->type == no_argument) {
@@ -172,10 +172,10 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         if (!o) {
           if (amb)
             yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
-                          len, long_opt);
+                          (int) len, long_opt);
           else
             yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
-                          len, long_opt);
+                          (int) len, long_opt);
           return 0;
         }
         res->args[res->argc].opt = o->opt;
@@ -238,10 +238,10 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       if (!o) {
         if (amb)
           yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
-                        opt_char, len, long_opt);
+                        opt_char, (int) len, long_opt);
         else
           yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
-                        opt_char, len, long_opt);
+                        opt_char, (int) len, long_opt);
         return 0;
       }
       if (o->type == no_argument) {
@@ -283,10 +283,10 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       if (!o) {
         if (amb)
           yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
-                        opt_char, len, long_opt);
+                        opt_char, (int) len, long_opt);
         else
           yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
-                        opt_char, len, long_opt);
+                        opt_char, (int) len, long_opt);
         return 0;
       }
       res->args[res->argc].opt = o->opt;

@@ -106,6 +106,71 @@ xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,
   return XPAR_GEOM_OK;
 }
 
+/*  Does S + R fit once R is re-derived at this Z?  */
+static bool geom_fits(const xpar_geom_req * req, u64 z,
+                      xpar_recovery_fn derive, void * ctx, u64 * out_r) {
+  u64 s = req->stream_length ? xpar_ceil_div(req->stream_length, z) : 0;
+  u64 r = derive ? derive(ctx, s, z) : req->recovery;
+  *out_r = r;
+  return s <= max_slices(req->field_log2, r);
+}
+
+xpar_geom_status xpar_geom_solve(const xpar_geom_req * req,
+                                 xpar_recovery_fn derive, void * ctx,
+                                 xpar_geom * out, u64 * recovery) {
+  xpar_geom_req q = *req;
+  xpar_geom_status gs;
+  u64 r = 0, lo, hi;
+
+  *recovery = 0;
+  q.recovery = 0;
+  gs = xpar_geom_choose(&q, out);
+  if (gs != XPAR_GEOM_OK) return gs;
+  if (!out->slice_count) return XPAR_GEOM_OK;
+
+  /*  Keep the initial geometry when the derived R fits.  */
+  if (geom_fits(req, out->slice_size, derive, ctx, &r)) {
+    *recovery = r;
+    return XPAR_GEOM_OK;
+  }
+  /*  Explicit -s or -b fixes Z.  */
+  if (req->slice_size || req->slice_count) return XPAR_GEOM_FIELD;
+
+  lo = out->slice_size;
+  hi = XPAR_SLICE_REFUSE;
+  if (lo >= hi || !geom_fits(req, hi, derive, ctx, &r))
+    return XPAR_GEOM_FIELD;
+  /*  Find the smallest feasible Z on the 64-byte grid.  */
+  while (lo + 64 < hi) {
+    u64 mid = lo + (((hi - lo) / 2) & ~(u64) 63);
+    if (mid <= lo) break;
+    if (geom_fits(req, mid, derive, ctx, &r)) hi = mid;  else lo = mid;
+  }
+  geom_fits(req, hi, derive, ctx, &r);
+  q.slice_size  = hi;
+  q.slice_count = 0;
+  q.recovery    = r;
+  gs = xpar_geom_choose(&q, out);
+  if (gs == XPAR_GEOM_OK) *recovery = r;
+  return gs;
+}
+
+void xpar_geom_reach(const xpar_geom_req * req, u64 * slices, u64 * recovery) {
+  u64 field = (u64) 1 << req->field_log2, z = req->slice_size, s;
+  *slices = 0;  *recovery = 0;
+  if (!z && req->slice_count) {
+    xpar_geom_req q = *req;
+    xpar_geom g;
+    q.recovery = 0;
+    if (xpar_geom_choose(&q, &g) != XPAR_GEOM_OK) return;
+    z = g.slice_size;
+  }
+  if (!z) z = XPAR_SLICE_REFUSE;
+  s = req->stream_length ? xpar_ceil_div(req->stream_length, z) : 0;
+  *slices = s;
+  *recovery = s < field ? MIN(field - s, field - 1) : 0;
+}
+
 u32 xpar_cell_choose(u64 slice_size, u32 want, u32 armour_frame) {
   u64 y;
   if (slice_size < XPAR_CELL_MIN) return 0;

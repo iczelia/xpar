@@ -65,12 +65,76 @@ bool xpar_path_ends_with(const char * s, const char * suffix) {
   return n >= m && xpar_strcmp(s + n - m, suffix) == 0;
 }
 
+char * xpar_path_norm(const char * path) {
+  sz n = xpar_strlen(path), i = 0, j = 0;
+  char * out = (char *) xpar_alloc_raw(n + 2);
+  /*  Remove leading "./" and repeated separators.  */
+  while (path[i] == '.' && xpar_path_sep(path[i + 1])) {
+    i += 2;
+    while (xpar_path_sep(path[i])) i++;
+  }
+  for (; i < n; i++) {
+    if (xpar_path_sep(path[i]) && j && xpar_path_sep(out[j - 1])) continue;
+    out[j++] = path[i];
+  }
+  while (j > 1 && xpar_path_sep(out[j - 1])) j--;
+  if (!j) out[j++] = '.';
+  out[j] = 0;
+  return out;
+}
+
+bool xpar_path_same(const char * a, const char * b) {
+  char * x = xpar_path_norm(a), * y = xpar_path_norm(b);
+  bool eq = xpar_strcmp(x, y) == 0;
+  xpar_free(x);  xpar_free(y);
+  return eq;
+}
+
+/*  Escape control bytes; results live in a rotating buffer.  */
+char * xpar_name_escape(const char * s) {
+  static char * ring[XPAR_ESCAPE_RING];
+  static u32 at = 0;
+  sz n = s ? xpar_strlen(s) : 0, i, j = 0;
+  char * out = (char *) xpar_alloc_raw(4 * n + 1);
+  static const char d[] = "0123456789ABCDEF";
+  for (i = 0; i < n; i++) {
+    u8 b = (u8) s[i];
+    if (b >= 0x20 && b != 0x7F) { out[j++] = (char) b;  continue; }
+    out[j++] = '\\';  out[j++] = 'x';
+    out[j++] = d[b >> 4];  out[j++] = d[b & 15];
+  }
+  out[j] = 0;
+  xpar_free(ring[at]);
+  ring[at] = out;
+  at = (at + 1) % XPAR_ESCAPE_RING;
+  return out;
+}
+
 bool xpar_scan_digits(const char * s, sz * at, sz end) {
   sz i = *at;
   if (i == end || s[i] < '0' || s[i] > '9') return false;
   while (i < end && s[i] >= '0' && s[i] <= '9') i++;
   *at = i;
   return true;
+}
+
+static const char * scan_root;
+
+void xpar_path_scan_set(const char * dir) { scan_root = dir; }
+const char * xpar_path_scan(void) { return scan_root; }
+
+static bool path_is_file(const char * p) {
+  xpar_stat_t st;
+  return xpar_lstat(p, &st) == 0 && !st.is_dir;
+}
+
+char * xpar_path_vol(const char * dir, const char * name) {
+  char * p = xpar_path_join(dir, name), * q;
+  if (!scan_root || path_is_file(p)) return p;
+  q = xpar_path_join(scan_root, name);
+  if (path_is_file(q)) { xpar_free(p);  return q; }
+  xpar_free(q);
+  return p;
 }
 
 /*  Trim the final component to leave room for the staging suffix.  */

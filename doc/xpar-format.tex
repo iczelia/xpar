@@ -114,15 +114,35 @@ conforming command interface. The commands are:
 \item \verb|add| - writes a child generation.
 \item \verb|extract| - creates the effective manifest at a destination.
 \item \verb|repair| - reconstructs damaged data. The option \option{to} names a
-separate destination.
+separate destination, \option{in-place} rewrites the originals and
+\option{backup} keeps the damaged copy beside each rewritten file.
 \item \verb|list| - reports stored metadata.
 \item \verb|verify| - validates a set without extracting it.
+\item \verb|scrub| - makes the complete algebraic pass over a set, including
+the inner code of any armour.
+\item \verb|info| - reports geometry, codec, layout, provenance and the repair
+plan.
+\item \verb|explain| - prints a recovery procedure that needs no xpar.
+\item \verb|recover| - regenerates one volume of a set from the others.
+\item \verb|addrecovery| - adds recovery slices to an existing generation.
+\item \verb|consolidate| - collapses a chain of generations into one.
+\item \verb|prune| - removes older generations from a chain.
+\item \verb|undo| - replays the journal an in-place repair left, as specified
+in Clause~\ref{undo-journal}.
+\item \verb|recover-prologue| - reconstructs a destroyed armoured prologue by
+search.
 \end{itemize}
 
 \specp The option \verb|-f| authorises otherwise restricted metadata and
-replacement operations. \option{json} requests the stated event records,
-\option{resync} enables byte-granular salvage scanning, and
-\option{require=links} makes hard-link fallback an error. \option{auth-key} names
+replacement operations. \option{json} requests the stated event records and
+\option{require=links} makes hard-link fallback an error. Byte-granular
+salvage scanning is selected by \option{resync=off}, \option{resync=auto},
+which is the default and scans only where the aligned pass came up short, and
+\option{resync=always}; \option{resync-step}, \option{resync-window} and
+\option{resync-exhaustive} bound the displacement search that goes with it.
+\option{scan=DIR} adds a directory to the search for a set's volumes,
+\option{generation=G} selects one generation by number or by a prefix of its
+set id, and \option{chain} covers every generation of a chain. \option{auth-key} names
 the key file that selects authenticated output and \option{auth-only} withholds
 the unkeyed verification hashes, \option{reproducible} selects the deterministic writer
 profile, and \option{dedup=none}, \option{dedup=file} and \option{dedup=chunk}
@@ -190,12 +210,15 @@ rows and denotes nothing outside it.
 \specp Let $L$ be the generation stream length, $Z$ the slice size,
 $S=\lceil L/Z\rceil$ the data-slice count and $R$ the recovery-slice count.
 The final data slice shall be zero-filled to $Z$ bytes for integrity
-calculations and coding; the padding shall not be part of the stream. A
-metadata-only generation has $L=S=0$ and has no slice or recovery
-packets. Otherwise, $Z\ge64$, $Z\bmod64=0$, $S\ge1$, and
-$(S-1)Z<L\le SZ$.\footnote{$Z$ is constrained to a multiple of 64 so that a
-slice divides evenly in both fields and under every permitted
-\texttt{cell\_bytes}, which is itself a multiple of 64} The logical bytes of
+calculations and coding; the padding shall not be part of the stream. The
+slice size is bounded in every generation: $64\le Z\le2^{30}$ and
+$Z\bmod64=0$, whatever $L$ is.\footnote{$Z$ is constrained to a multiple of 64
+so that a slice divides evenly in both fields and under every permitted
+\texttt{cell\_bytes}, which is itself a multiple of 64; the upper bound is the
+practical one, since no writer exceeds it and accepting more lets a two
+kilobyte descriptor ask a reader to sweep a terabyte of implied zeros} A
+metadata-only generation has $L=S=0$ and has no slice or recovery packets.
+Otherwise, $S\ge1$ and $(S-1)Z<L\le SZ$. The logical bytes of
 slice $i$ of generation $g$ occupy
 \[
  [\mathtt{stream\_base}_g+iZ,
@@ -685,7 +708,7 @@ descriptor}{SETD: set descriptor}}\label{setd-set-descriptor}
 
 \specp The body consists of $80+16F$ bytes:
 \begin{verbatim}
-  0   8      u64le   slice_size Z            multiple of 64; 64 <= Z <= 2^40
+  0   8      u64le   slice_size Z            multiple of 64; 64 <= Z <= 2^30
   8   8      u64le   data_slice_count S      <= 2^field_log2 - 1; 0 only in a
                                              stream-empty generation
   16  8      u64le   stream_length L         if S >= 1: (S-1)*Z < L <= S*Z
@@ -1001,8 +1024,10 @@ treat a violation as a malformed packet:
     N_g(x)=b_g+a_g\left\lceil\frac{x-b_g}{a_g}\right\rceil .
   \]
   An extent that refers to an ancestor generation $h$ is subject to the
-  preceding constraints, and its complete range shall be contained in $C_h$. It
-  does not change $H_g$ or $C_g$. For every other extent, one of the following
+  preceding constraints, and a writer shall place its complete range inside
+  $C_h$. A reader validates it against $h$'s stream range; it is not required
+  to rebuild $C_h$, which would mean walking every ancestor's manifest to
+  validate one entry. It does not change $H_g$ or $C_g$. For every other extent, one of the following
   shall hold:
 
   \begin{itemize}
@@ -1391,8 +1416,8 @@ corresponding volume or armoured archive and shall satisfy the naming rules in
 Clause~\ref{file-naming}. Inactive fields shall be zero. A data entry's
 \verb|stream_offset| is relative to this generation's stream range.
 
-\specp For sidecar and split layouts, each packet-bearing volume shall
-correspond to one LAYT entry. The standalone index volume has
+\specp For sidecar and split layouts, each packet-bearing volume other than a
+label volume shall correspond to one LAYT entry. The standalone index volume has
 $\mathtt{VOLH.volume\_index}=\mathtt{0xFFFFFFFF}$ and
 $\mathtt{volume\_kind}=0$; it corresponds to the unique index entry. Every
 other packet-bearing volume shall use the zero-based array index of its LAYT
@@ -1418,6 +1443,12 @@ In this layout, $R$ is the number of those RCVS packets. The VOLH in the
 decoded plaintext shall have \verb|volume_index| equal to \verb|0xFFFFFFFF| and
 \verb|volume_kind| equal to 0.
 
+\specp The two \verb|vflags| requirements above bind writers. A version 2.0
+reader shall take the layout from \verb|SETD.layout| and shall ignore the value
+of bit 0, since the bit adds nothing the descriptor does not already say. Bits 1
+through 7 are reserved, and a reader shall reject a LAYT entry that sets any of
+them.
+
 \specp Before reading an entry, a reader shall verify that its 32-byte fixed
 part, its \verb|name_len| bytes and its padding all lie within the remaining
 LAYT body. After reading $V$ entries, only zero padding may remain.
@@ -1433,8 +1464,21 @@ data-volume entry; its STRM packet contains the stream.
 \specp A split-layout data volume shall contain exactly the \verb|byte_length|
 stream bytes beginning at its LAYT \verb|stream_offset|. It shall contain no
 packet header or other framing, since the file is then usable as the data
-itself and needs no unwrapping step. A version 2.0 writer shall therefore not
-emit a VOLH packet whose \verb|volume_kind| is 1.
+itself and needs no unwrapping step.
+
+\specp A writer may accompany each split-layout data volume with a
+\textit{label volume}: a packet-bearing file whose name is the data volume's
+name with \verb|.xpa| appended. It holds a VOLH, a copy of the critical group
+and a CRTR packet, in the order of Clause~\ref{packet-order-within-a-volume},
+and no RCVS packet. Its \verb|VOLH.volume_kind| is 1 and its
+\verb|VOLH.volume_index| is the array index of the LAYT entry of the data
+volume it describes. This is the only place a VOLH with \verb|volume_kind| 1
+occurs: the data volume itself stays bare, and the label carries the metadata
+that would otherwise be lost with the index volume. A label volume has no LAYT
+entry of its own; a reader finds it from the name of the data entry it labels
+and shall not mistake it for the data volume. A reader shall accept a set whose
+label volumes are absent, since they replicate what the index volume already
+holds.
 
 \specp Number the $D$ split-layout data volumes from 0 through $D-1$ in
 ascending order of \verb|stream_offset|. The ordinal of a data volume is $j$ in
@@ -1557,7 +1601,7 @@ group.
 \subsection{File naming}\label{file-naming}
 \begin{longtable}{@{}p{.20\linewidth}p{.29\linewidth}p{.43\linewidth}@{}}
 \toprule
-Layout & POSIX / Windows & DOS 8.3 \\
+Layout & POSIX / Windows & DOS 8.3 (informative) \\
 \midrule
 \endhead
 \bottomrule
@@ -1569,6 +1613,9 @@ recovery volume, first exponent $f$, count $c$ &
 data volume $j$ (split) &
 \verb|base.d<j>| & \verb|BASE.D00| through
 \verb|BASE.D99| \\
+label volume of data volume $j$ &
+\verb|base.d<j>.xpa| & \verb|BASE.D<nn>| with the label written in place of
+the bare data volume \\
 armoured archive & \verb|base.xpa| & \verb|BASE.XPA| \\
 \end{longtable}
 
@@ -1599,7 +1646,13 @@ data volume (split) & \verb|base.d<j>| &
 \verb|base.g<g>.d<j>| \\
 \end{longtable}
 
-\specp On DOS, \verb|BASE| is formed by converting ASCII lowercase letters in
+\specp \textit{The rest of this clause is informative.} The names above are
+the only ones this specification requires, and a conforming reader identifies a
+volume by its LAYT entry rather than by the shape of its name. An
+implementation whose host cannot hold a long name may map the names as follows;
+version 2.0 of this implementation does not, and always writes the long forms.
+
+\specp \verb|BASE| is formed by converting ASCII lowercase letters in
 the requested base name to uppercase, replacing every byte other than an ASCII
 letter, digit or underscore with an underscore, and then truncating to four
 characters or padding on the right with underscores to four characters. The
@@ -1613,15 +1666,16 @@ data-volume index $j$. For generation $g\ge1$, the index volume uses
 \verb|G|. A split-layout data volume in that generation uses
 \verb|BASG<g>.D<nn>|. An armoured archive uses the same \verb|BASE.XPA| for
 generation 0 and \verb|BASE.XG<g>| for a later generation; a generation is
-either armoured or packet-bearing, never both, so the two never collide. When emitting DOS names, the
-\verb|create| and \verb|add| operations shall reject a generation number
-greater than 9, more than 100 recovery volumes, more than 100 data volumes, or
-a truncated base name that collides with another required
-name.\footnote{eight characters don't stretch any further; the operation fails
-where the user can see it rather than inventing a second truncation rule} A DOS
-build shall also accept the POSIX names above when the host file system makes
-those names available. If a required volume cannot be opened, the
-implementation shall report its expected name.
+either armoured or packet-bearing, never both, so the two never collide.
+
+\specp An implementation that emits these names has to refuse the cases they
+cannot express: a generation number greater than 9, more than 100 recovery
+volumes, more than 100 data volumes, or a truncated base name that collides
+with another required name.\footnote{eight characters don't stretch any
+further; the operation fails where the user can see it rather than inventing a
+second truncation rule} It should also accept the long names above when the
+host file system makes them available, and it should report the expected name
+of any volume it cannot open.
 
 \subsection{Volume identification}\label{volume-identification}
 
@@ -1643,6 +1697,65 @@ anything else & candidate bare data volume; identify by
 \verb|vol_tag| are authoritative regardless of its first eight bytes. A data
 volume holds stream bytes and may begin with the magic of some other format,
 or with the xpar magic itself.
+
+\section{The undo journal}\label{undo-journal}
+
+\specp A repair that rewrites the originals in place records what it
+overwrote, so that the change can be reversed. The journal is not part of a
+set: it holds no recovery data, it is never read to interpret a set, and a set
+whose journal is missing is unaffected. It is specified here because two
+programs have to agree on its bytes.
+
+\specp The journal of generation 0 is named \verb|<set>.xparundo|; for
+generation $g$ it is \verb|<set>.g<g>.xparundo| with the width of
+Clause~\ref{file-naming}. A writer shall create it exclusively, without
+following a symbolic link, shall restrict it to its owner where the host
+permits, and shall flush both the file and its directory entry before the
+first protected write.
+
+\specp The file is a 64-byte header, then \verb|record_count| records, then a
+24-byte footer. Every integer is little-endian and every CRC is CRC-32C.
+\begin{verbatim}
+  header (64 bytes):
+  0   8   u8[8]   magic            = "XPARUNDO"
+  8   4   u32le   version          = 1
+  12  4           reserved         MBZ
+  16  16  u8[16]  set_id           the generation this journal belongs to
+  32  8   u64le   record_count
+  40  8   u64le   payload          sum of the records' length fields
+  48  8   u64le   written_ns       wall clock, nanoseconds
+  56  4           reserved         MBZ
+  60  4   u32le   header_crc       CRC-32C of bytes [0,60)
+
+  record (40 bytes, then its two variable parts):
+  0   4   u32le   path_len         >= 1
+  4   4   u32le   rflags           bit 0: the file did not exist before
+  8   8   u64le   offset           where the repair wrote
+  16  8   u64le   length           how many bytes it replaced
+  24  8   u64le   original_size    the file's size before the repair
+  32  4   u32le   old_crc          CRC-32C of the bytes kept here
+  36  4   u32le   record_crc       CRC-32C of bytes [0,36)
+  40  path_len  u8[]  path, no NUL byte
+  ...  length   u8[]  the bytes the repair overwrote
+  ... pad to 8
+
+  footer (24 bytes):
+  0   8   u8[8]   magic            = "XPARUNDN"
+  8   8   u64le   record_count     equals the header's
+  16  4   u32le   journal_crc      CRC-32C of every byte before the footer
+  20  4           reserved         MBZ
+\end{verbatim}
+
+\specp A reader shall reject a journal whose magic, version, header CRC or
+reserved fields do not hold, and shall reject a record whose framing does not
+fit within the bytes before the footer. A journal without a valid footer is
+\textit{incomplete}: it was still being written when the repair stopped, which
+is before any protected byte was overwritten, so there is nothing to undo and a
+reader shall report that rather than replay it. Replay resolves each record's
+path against the effective manifest, opens that file without following a
+symbolic link, writes the recorded bytes back at \verb|offset|, restores
+\verb|original_size| when the length changed, and removes rather than truncates
+a file whose \verb|rflags| bit 0 is set.
 
 \chapter{Armouring}\label{armouring}
 
@@ -2022,9 +2135,10 @@ is specified, key-file contents. Setting \verb|SOURCE_DATE_EPOCH| shall imply
   before manifest indices are assigned.
 \item
   \textbf{LAYT order} - LAYT shall contain the index entry first, followed by
-  data entries in ascending \verb|stream_offset| and recovery entries in
-  ascending \verb|recovery_first|. This order determines each non-index
-  \verb|VOLH.volume_index|.
+  the recovery entries in ascending \verb|recovery_first| and then the data
+  entries in ascending \verb|stream_offset|. This order determines each
+  non-index \verb|VOLH.volume_index|. The order is a writer requirement only:
+  a reader shall select entries by \verb|kind| and shall accept any order.
 \item
   \textbf{Packet order} - it shall be that specified in
   Clause~\ref{packet-order-within-a-volume}.

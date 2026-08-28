@@ -386,6 +386,8 @@ xpar_codec_status xpar_codec_matrix_accumulate_many(
       recovery_first > cd->r ||
       recovery_count > cd->r - recovery_first)
     return XPAR_CODEC_UNSUPPORTED;
+  /*  GF(2^16) requires whole two-byte symbols.  */
+  if (cd->f16 && (bytes & 1)) return XPAR_CODEC_UNSUPPORTED;
   if (!bytes || !data_count || !recovery_count) return XPAR_CODEC_OK;
   if (clear)
     for (j = 0; j < recovery_count; j++) xpar_memset(recovery[j], 0, bytes);

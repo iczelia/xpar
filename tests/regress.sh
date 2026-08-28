@@ -522,16 +522,26 @@ shift_by 4096
 run_any "1 2" "$XPAR" repair --in-place --resync=off s.xpa
 differs p.bin pristine.bin
 
-#  Two displacements must be reported as ambiguous.
+#  Confirm multiple strong displacement candidates.
 cp pristine.bin p.bin
 dd if=/dev/zero of=pad1.bin bs=1 count=3 status=none
 dd if=/dev/zero of=pad2.bin bs=1 count=9999 status=none
 dd if=pristine.bin of=head.bin bs=1 count=400000 status=none
 dd if=pristine.bin of=tail.bin bs=1 skip=400000 status=none
 cat pad1.bin head.bin pad2.bin tail.bin > p.bin
-"$XPAR" repair -v --in-place s.xpa > "$log" 2>&1
-if grep -q "no dominant displacement" "$log"; then ok
-else bad "ambiguous displacement was not reported"; fi
+run_any "0 1" "$XPAR" verify s.xpa
+run 0 "$XPAR" repair -v --in-place s.xpa
+same p.bin pristine.bin
+if grep -q "no dominant displacement" "$log"; then
+  bad "the default gave up on an ambiguous displacement it can resolve"
+else ok; fi
+
+#  A file that never moved must not be reported as displaced.
+cp pristine.bin p.bin
+run 0 "$XPAR" verify --resync=always s.xpa
+if grep -q "displaced slices" "$log"; then
+  bad "an undisplaced file was reported as displaced"
+else ok; fi
 cdto ..
 
 step "asking for no recovery means the same thing to create and to add"
@@ -829,10 +839,12 @@ corrects() {
   cp s.xpa clean.bin
   got=0
   n=1
+  #  Recovery-volume replicas keep the set readable past this boundary.
   while test "$n" -le `expr $want + 4`; do
     cp clean.bin s.xpa
     damage s.xpa rand=600,$n > "$log" 2>&1
-    "$XPAR" verify s.xpa > "$log" 2>&1 || break
+    "$XPAR" verify s.xpa > "$log" 2>&1
+    grep -q '0 past the inner code' "$log" || break
     got=$n
     n=`expr $n + 1`
   done
@@ -882,7 +894,8 @@ equal "dry run changed nothing" "`files`" "$snapshot"
 run 4 "$XPAR" prune --before=1 set.xpa
 equal "refusal changed nothing" "`files`" "$snapshot"
 equal "chain length after refusal" "`gens`" 2
-run 0 "$XPAR" verify set.xpa
+#  Generation 0 cannot recover superseded bytes.
+run 2 "$XPAR" verify set.xpa
 
 #  --force accepts the loss, and what survives has to remain coherent.
 run 0 "$XPAR" prune -f --before=1 set.xpa
@@ -890,6 +903,618 @@ equal "chain collapsed to one generation" "`gens`" 1
 run 0 "$XPAR" verify set.xpa
 #  A sidecar set protects the files in place, so the survivor is on disk.
 same tree/a.bin pristine.bin
+cdto ..
+
+#  What the last run() or attempt() printed; xpar reports on stderr.
+said() {   # said <text>
+  if grep -q "$1" "$log" 2> /dev/null; then echo yes;  else echo no; fi
+}
+
+step "an unselected multi-generation set covers the whole ancestry"
+
+#  Default verification must cover inherited bytes.
+mkdir -p ch1 && cdto ch1
+mkfile a.bin 400000 41
+mkfile b.bin 200000 42
+run 0 "$XPAR" create -s 4096 -r 20 -o set a.bin
+run 0 "$XPAR" add -s 4096 -r 20 set.xpa a.bin b.bin
+cp a.bin pristine.bin
+
+#  Ten slices is well inside generation 0's twenty recovery slices.
+damage a.bin rand=12288,64 rand=40960,64 rand=69632,64 rand=98304,64 \
+             rand=126976,64 rand=155648,64 rand=184320,64 rand=212992,64 \
+             rand=241664,64 rand=270336,64
+
+run 1 "$XPAR" verify set.xpa
+equal "the newer pass names the owning generation" \
+      "`said 'inherited from generation 0'`" yes
+equal "no checksum-invisible verdict" "`said 'checksum-invisible'`" no
+run 0 "$XPAR" repair --in-place set.xpa
+same a.bin pristine.bin
+run 0 "$XPAR" verify set.xpa
+cdto ..
+
+step "inherited damage past the owner's budget stays unrepairable"
+
+#  Use the worst ancestry verdict and preserve undecodable files.
+mkdir -p ch2 && cdto ch2
+mkfile a.bin 400000 43
+mkfile b.bin 200000 44
+run 0 "$XPAR" create -s 4096 -r 8 -o set a.bin
+run 0 "$XPAR" add -s 4096 -r 20 set.xpa a.bin b.bin
+
+damage a.bin rand=4096,64 rand=12288,64 rand=20480,64 rand=28672,64 \
+             rand=36864,64 rand=45056,64 rand=53248,64 rand=61440,64 \
+             rand=69632,64 rand=77824,64 rand=86016,64 rand=94208,64
+cp a.bin damaged.bin
+
+run 2 "$XPAR" verify set.xpa
+run 2 "$XPAR" repair --in-place set.xpa
+same a.bin damaged.bin
+cdto ..
+
+step "a chain pass never truncates an entry a later generation owns"
+
+#  A generation must not repair bytes it does not own.
+mkdir -p ch3 && cdto ch3
+mkfile a.bin 200000 45
+mkfile b.bin 60000 46
+run 0 "$XPAR" create -s 4096 -r 20 -o set a.bin
+run 0 "$XPAR" add -s 4096 -r 20 set.xpa a.bin b.bin
+cp b.bin pristine.bin
+
+#  Insert a run so every slice after it is displaced and the file is long.
+dd if=b.bin of=part1 bs=1000 count=30 2> /dev/null
+dd if=b.bin of=part2 bs=1000 skip=30 2> /dev/null
+mkfile pad 333 47
+cat part1 pad part2 > b.bin
+rm -f part1 part2 pad
+
+run 0 "$XPAR" repair --in-place set.xpa
+same b.bin pristine.bin
+run 0 "$XPAR" verify set.xpa
+cdto ..
+
+step "superseded bytes count as erasures in the verdict that reports them"
+
+#  Treat superseded ancestor cells as erasures.
+mkdir -p ch4 && cdto ch4
+mkfile a.bin 400000 48
+mkfile b.bin 200000 49
+run 0 "$XPAR" create -s 4096 -r 20 -o set a.bin b.bin
+mkfile b.bin 200000 50
+run 0 "$XPAR" add -s 4096 -r 20 set.xpa a.bin b.bin
+
+run 2 "$XPAR" verify set.xpa
+equal "the cause is named" "`said 'count as erasures'`" yes
+run 2 "$XPAR" repair --in-place --dry-run set.xpa
+cdto ..
+
+step "repair never reports a clean tree while damage stands unlocalised"
+
+#  Detect object-kind mismatches without cell evidence.
+mkdir -p ch5 && cdto ch5
+mkdir tree
+mkfile tree/d.bin 200000 51
+if ln -s d.bin tree/rel.lnk 2> /dev/null; then
+  run 0 "$XPAR" create -r 10% -o set -R tree
+  rm tree/rel.lnk
+  mkfile tree/rel.lnk 100 52
+  run 2 "$XPAR" verify set.xpa
+  run 2 "$XPAR" repair --in-place set.xpa
+  equal "no clean verdict was printed" "`said 'no damage found'`" no
+  mkdir out
+  run 0 "$XPAR" repair --to out set.xpa
+  equal "--to rebuilt the link" \
+        "`test -L out/tree/rel.lnk && echo yes || echo no`" yes
+else
+  note "symbolic links unsupported; skipped"
+fi
+cdto ..
+
+step "-r delivers the redundancy it was asked for across the field bound"
+
+#  Re-derive R whenever geometry changes.
+mkdir -p rr && cdto rr
+mkfile data.bin 1048576
+
+#  GF(2^8) reaches the S+R limit with a small fixture.
+check_recovery() {   # check_recovery <set> <wanted bytes> <what>
+  read_geometry "$1"
+  _got=`expr $R \* $Z`
+  _slack=`expr $Z + $2 / 50`
+  if test "$_got" -ge `expr $2 - $_slack` &&
+     test "$_got" -le `expr $2 + $_slack`; then ok
+  else bad "$3: $_got recovery bytes, wanted about $2 (Z $Z, S $S, R $R)"
+  fi
+}
+
+run 0 "$XPAR" create --field=8 -r 50% -o half data.bin
+check_recovery half.xpa 524288 "-r 50%"
+run 0 "$XPAR" verify half.xpa
+
+run 0 "$XPAR" create --field=8 -r 2x -o twice data.bin
+check_recovery twice.xpa 2097152 "-r 2x"
+run 0 "$XPAR" verify twice.xpa
+
+run 0 "$XPAR" create --field=8 -r 4M -o abs data.bin
+check_recovery abs.xpa 4194304 "-r 4M"
+run 0 "$XPAR" verify abs.xpa
+
+#  A count is exact, so Z moves and R does not.
+run 0 "$XPAR" create --field=8 -r 200 -o cnt data.bin
+read_geometry cnt.xpa
+equal "-r 200 kept the count" "$R" 200
+
+#  Field overflow is a usage error that reports the limit.
+run 4 "$XPAR" create --field=8 -r 1000x -o over data.bin
+if grep -q 'Field limit' "$log"; then ok
+else bad "the refusal does not state the reach the field still allows"; fi
+cdto ..
+
+step "a split volume of the wrong length is damaged, not absent"
+
+#  A length mismatch must not discard the whole volume.
+mkdir -p sl && cdto sl
+mkfile f.bin 1048576 61
+run 0 "$XPAR" create -r 20% -s 4K --layout=split --volumes=4 -o d f.bin
+
+save_volumes() { rm -rf keepvol && mkdir keepvol && cp d.d0* keepvol/; }
+restore_volumes() { cp keepvol/d.d0* .; }
+save_volumes
+
+#  Erasures must stay proportional to the bytes actually lost.
+resized() {   # resized <what>
+  run 1 "$XPAR" verify d.xpa
+  if grep -q "unrepairable" "$log"; then
+    bad "$1: a resized volume was treated as an absent one"
+  else ok; fi
+  run 0 "$XPAR" repair --in-place d.xpa
+  cat d.d0* > joined.bin
+  same joined.bin f.bin
+  rm -f joined.bin
+  restore_volumes
+}
+
+#  Shorter by one byte, by a whole slice, and longer by one byte.
+"$DAMAGE" d.d01 "truncate=`expr \`cat d.d01 | nbytes\` - 1`" > /dev/null ||
+  hard_error "cannot shorten d.d01"
+resized "one byte short"
+"$DAMAGE" d.d01 "truncate=`expr \`cat d.d01 | nbytes\` - 4096`" > /dev/null ||
+  hard_error "cannot shorten d.d01 by a slice"
+resized "one slice short"
+"$DAMAGE" d.d01 extend=1 > /dev/null || hard_error "cannot extend d.d01"
+resized "one byte long"
+cdto ..
+
+step "a missing split volume is not substituted by a same-length one"
+
+#  Do not substitute a same-sized volume without matching certificates.
+mkdir -p sw && cdto sw
+mkfile p.bin 3000000 62
+mkdir set && mv p.bin set/p.bin && cp set/p.bin whole.bin
+cdto set
+run 0 "$XPAR" create -s 64K --cell=16K -r 25% --layout=split --volumes=4 \
+    -o disc p.bin
+rm -f p.bin disc.d00
+run 1 "$XPAR" verify disc.xpa
+if grep -q "is missing; using" "$log"; then
+  bad "a same-length volume was accepted as a substitute"
+else ok; fi
+run 0 "$XPAR" repair --in-place disc.xpa
+exists disc.d00
+cat disc.d0* > joined.bin
+same joined.bin ../whole.bin
+cdto ../..
+
+step "a renamed split volume is restored under its recorded name"
+
+#  Repair must restore the recorded name after substitution.
+mkdir -p sr && cdto sr
+mkfile p.bin 3000000 65
+mkdir set && mv p.bin set/p.bin && cp set/p.bin whole.bin
+cdto set
+run 0 "$XPAR" create -s 64K --cell=16K -r 25% --layout=split --volumes=4 \
+    -o disc p.bin
+rm -f p.bin
+mv disc.d01 other.bin
+run 1 "$XPAR" verify disc.xpa
+if grep -q "restored under its recorded name" "$log"; then ok
+else bad "verify called an incomplete layout clean"; fi
+run 0 "$XPAR" repair --in-place disc.xpa
+exists disc.d01
+#  The user's own copy is read, never moved or removed.
+exists other.bin
+cat disc.d0* > joined.bin
+same joined.bin ../whole.bin
+rm -f joined.bin
+run 0 "$XPAR" verify disc.xpa
+if grep -q "is missing; using" "$log"; then
+  bad "the substitution survived the repair"
+else ok; fi
+cdto ../..
+
+step "extract reads a damaged split volume rather than calling it missing"
+
+#  Extract must distinguish damaged volumes from missing ones.
+mkdir -p xd && cdto xd
+mkdir tree
+mkfile tree/a.bin 200000 63
+mkfile tree/b.bin 300000 64
+run 0 "$XPAR" create --layout=split --volumes=3 -o s -R tree
+damage s.d00 flip=1000,1
+run 1 "$XPAR" verify s.xpa
+rm -rf out
+attempt "$XPAR" extract --to=out s.xpa
+if test "$status" -eq 4; then
+  bad "extract called a present volume missing"
+else ok; fi
+if grep -q "is missing" "$log"; then
+  bad "extract reported a present volume as missing"
+else ok; fi
+#  The undamaged entry still has to come out.
+same out/tree/b.bin tree/b.bin
+cdto ..
+
+step "a set never protects, or overwrites, its own volumes"
+
+#  Never include a set's own outputs as inputs.
+mkdir -p own && cdto own
+mkfile a.bin 100000 71
+run 0 "$XPAR" create -r 20% -o bk -R .
+run 0 "$XPAR" create -f -r 20% -o bk -R .
+run 0 "$XPAR" verify bk.xpa
+#  The report goes outside the tree so it is not an input itself.
+"$XPAR" info --json bk.xpa > "$work/own.json" 2> "$log"
+equal "only the input is stored" "`json_num "$work/own.json" files set`" 1
+#  A generation walks the same directory and must not ingest it either.
+mkfile b.bin 1000 72
+run 0 "$XPAR" add -r 20% bk.xpa -R .
+"$XPAR" info --json bk.xpa > "$work/own.json" 2> "$log"
+equal "the generation stored only the new input" \
+      "`json_num "$work/own.json" files set`" 2
+run 0 "$XPAR" verify bk.xpa
+cdto ..
+
+step "the recovery spill never writes through a planted name"
+
+#  Spill creation must not follow planted links.
+mkdir -p spill && cdto spill
+mkfile data.bin 16777216 73
+echo VICTIM > victim.txt
+cp victim.txt victim.orig
+: > out.xpar-tmp-plain
+if ln -s victim.txt out.xpar-tmp 2> /dev/null; then linked=yes; else linked=no; fi
+run 0 "$XPAR" create -o out -r 30% -m 4M -s 64K data.bin
+same victim.txt victim.orig
+exists out.xpar-tmp-plain
+if test "$linked" = no || test -L out.xpar-tmp; then ok
+else bad "the planted symlink was replaced"; fi
+run 0 "$XPAR" verify out.xpa
+cdto ..
+
+step "an input that protects nothing is refused, not written"
+
+#  Refuse inputs that produce no protected entries.
+mkdir -p nothing && cdto nothing
+mkdir sub
+mkfile sub/x.bin 1000 74
+run 4 "$XPAR" create -o setB sub
+if test -e setB.xpa; then bad "a refused create still wrote a set"; else ok; fi
+run 0 "$XPAR" create -o setB -R sub
+run 0 "$XPAR" verify setB.xpa
+if mkfifo p1 2> /dev/null; then
+  run 4 "$XPAR" create -o e1 p1
+  run 4 "$XPAR" create -o e2 --no-verify-after p1
+  if test -e e1.xpa || test -e e2.xpa; then
+    bad "a set with no entry was published"
+  else ok; fi
+else
+  note "this host has no FIFOs; the empty-manifest case is untested"
+fi
+cdto ..
+
+step "a name in a diagnostic cannot drive the terminal"
+
+#  Escape control bytes in diagnostic names.
+mkdir -p ctrl && cdto ctrl
+esc=`printf 'a\033[31mb'`
+run 3 "$XPAR" verify "$esc"
+if grep -q 'x1B' "$log"; then ok
+else bad "the control byte was not escaped"; fi
+if grep -q "`printf '\033'`" "$log"; then
+  bad "a raw escape byte reached the diagnostic"
+else ok; fi
+cdto ..
+
+step "an empty -o is a usage error"
+
+#  Refuse an empty output name.
+mkdir -p emptyo && cdto emptyo
+mkfile f.bin 1000 75
+run 4 "$XPAR" create -o '' f.bin
+run 4 "$XPAR" create --output= f.bin
+if test -e f.bin.xpa; then bad "an empty -o still named the set"; else ok; fi
+run 0 "$XPAR" create -o s f.bin
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "--scan=DIR finds volumes that are not beside the set"
+
+#  All set-reading verbs must honor --scan.
+mkdir -p scan1 && cdto scan1
+mkfile f.bin 300000 91
+cp f.bin pristine.bin
+run 0 "$XPAR" create -r 30% -o disc f.bin
+read_geometry disc.xpa
+mkdir far
+mv disc.v*.xpa far/
+#  Without --scan the recovery is gone, and with it every slice is back.
+run 0 "$XPAR" verify disc.xpa
+if grep -q "not on disk" "$log"; then ok
+else bad "the moved recovery volumes were not reported missing"; fi
+run 0 "$XPAR" verify --scan=far disc.xpa
+if grep -q "not on disk" "$log"; then
+  bad "--scan did not find the volumes in far/"
+else ok; fi
+"$XPAR" verify --json --scan=far disc.xpa > got.json 2> "$log"
+equal "recovery seen through --scan" \
+      "`json_num got.json recovery_available summary`" "$R"
+#  Every verb that opens a set has to take it, not just verify.
+run 0 "$XPAR" scrub --scan=far disc.xpa
+run 0 "$XPAR" info  --scan=far disc.xpa
+run 0 "$XPAR" list  --scan=far disc.xpa
+#  And repair must actually use what it finds.
+damage f.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED cell=3,0 cell=5,0
+run 1 "$XPAR" verify --scan=far disc.xpa
+run 0 "$XPAR" repair --scan=far --in-place disc.xpa
+same f.bin pristine.bin
+run 0 "$XPAR" verify --scan=far disc.xpa
+#  A chain walk consults it as well, generation index volumes included.
+mkfile g.bin 100000 92
+run 0 "$XPAR" add -r 30% disc.xpa g.bin
+mv disc.g001*.xpa far/
+run 0 "$XPAR" verify --chain --scan=far disc.xpa
+run 0 "$XPAR" list --chain --scan=far disc.xpa
+cdto ..
+
+step "add and consolidate keep the redundancy the chain already has"
+
+#  Inherit redundancy when -r is omitted.
+mkdir -p inh1 && cdto inh1
+mkdir tree
+mkfile tree/a.bin 200000 93
+mkfile tree/b.bin 200000 94
+run 0 "$XPAR" create -r 20% -R -o s tree
+read_geometry s.xpa
+base_r=$R;  base_s=$S
+mkfile tree/c.bin 200000 95
+run 0 "$XPAR" add s.xpa -R tree
+run 0 "$XPAR" verify --chain s.xpa
+#  R/S of the new generation must match the old ratio, not 5%.
+"$XPAR" info --json --generation=1 s.xpa > g1.json 2> "$log"
+new_r=`json_num g1.json recovery set`
+new_s=`json_num g1.json slices   set`
+if test -n "$new_r" && test -n "$new_s" &&
+   test "`expr $new_r \* $base_s`" -ge "`expr $base_r \* $new_s`"; then ok
+else bad "add thinned the set: was $base_r/$base_s, now $new_r/$new_s"; fi
+run 0 "$XPAR" consolidate --replace s.xpa
+run 0 "$XPAR" verify s.xpa
+read_geometry s.xpa
+if test "`expr $R \* $base_s`" -ge "`expr $base_r \* $S`"; then ok
+else bad "consolidate thinned the set: was $base_r/$base_s, now $R/$S"; fi
+cdto ..
+
+step "an output base may not end in a generation suffix"
+
+#  Reject output bases that collide with generation names.
+mkdir -p gname && cdto gname
+mkfile a.bin 50000 96
+mkfile b.bin 50000 97
+run 0 "$XPAR" create -o backup a.bin
+run 4 "$XPAR" create -o backup.g001 b.bin
+run 4 "$XPAR" create -o other.g12 b.bin
+if test -e backup.g001.xpa; then
+  bad "the colliding set was written anyway"
+else ok; fi
+run 0 "$XPAR" verify backup.xpa
+run 4 "$XPAR" add -o q.g001 backup.xpa b.bin
+run 4 "$XPAR" consolidate -o w.g007 backup.xpa
+#  A base that merely contains a 'g' is fine.
+run 0 "$XPAR" create -o plain.gz b.bin
+#  A forked chain has to name its branches, or --generation is unusable.
+run 0 "$XPAR" create -o other b.bin
+cp other.xpa backup.g002.xpa
+run 4 "$XPAR" verify backup.xpa
+branch=`sed -n 's/.*--generation=\([0-9a-f][0-9a-f]*\).*/\1/p' "$log" | head -1`
+if test -n "$branch"; then ok
+else bad "the forked diagnostic named no branch to select"; fi
+run 0 "$XPAR" verify --generation="$branch" backup.xpa
+cdto ..
+
+
+step "split gen-1 volume damage repairs byte-identically"
+
+#  Repair split volumes with nonzero stream bases.
+mkdir -p sg && cdto sg
+mkfile f1.bin 300000 41
+mkfile f2.bin 250000 42
+cp f1.bin f1.keep
+cp f2.bin f2.keep
+run 0 "$XPAR" create --layout=split --volumes=2 -r 25% -o d f1.bin
+run 0 "$XPAR" add -r 25% d.xpa f1.bin f2.bin
+cp d.g001.d00 d.g001.d00.keep
+rm -f f1.bin f2.bin
+dv=`find . -maxdepth 1 -name 'd.g001.d00' | head -1`
+test -n "$dv" || hard_error "gen-1 data volume not found"
+damage "$dv" rand=1000,2000
+#  Drop one gen-1 recovery volume so the codec must actually decode.
+rv=`find . -maxdepth 1 -name 'd.g001.v*' | sort | head -1`
+test -n "$rv" || hard_error "gen-1 recovery volume not found"
+rm -f "$rv"
+run 0 "$XPAR" repair --in-place d.xpa
+run 0 "$XPAR" verify d.xpa
+same d.g001.d00 d.g001.d00.keep
+rm -rf out
+run 0 "$XPAR" extract --to out d.xpa
+same out/f1.bin f1.keep
+same out/f2.bin f2.keep
+cdto ..
+
+step "an unknown critical packet is refused by every reader"
+
+#  Every reader must reject unknown critical packets.
+mkdir -p uc && cdto uc
+mkfile p.bin 200000 51
+run 0 "$XPAR" create -r 20% -o s p.bin
+cp s.xpa s.clean
+for verb in list info explain scrub; do
+  cp s.clean s.xpa
+  "$FORGE" s.xpa ZZZZ 00112233 1 > "$log" 2>&1 || hard_error "forge failed"
+  run 3 "$XPAR" $verb s.xpa
+done
+cp s.clean s.xpa
+"$FORGE" s.xpa ZZZZ 00112233 1 > "$log" 2>&1 || hard_error "forge failed"
+run 3 "$XPAR" extract --to uout s.xpa
+cp s.clean s.xpa
+"$FORGE" s.xpa ZZZZ 00112233 1 > "$log" 2>&1 || hard_error "forge failed"
+run 3 "$XPAR" repair --in-place s.xpa
+#  A non-critical unknown packet is skipped everywhere.
+cp s.clean s.xpa
+"$FORGE" s.xpa ZZZZ 00112233 0 > "$log" 2>&1 || hard_error "forge failed"
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" list s.xpa
+cdto ..
+
+step "repair rewrites a stale volume from intact packet replicas"
+
+#  Rewrite corrupt critical packets from replicas.
+mkdir -p rr && cdto rr
+mkfile p.bin 500000 61
+run 0 "$XPAR" create --armour=none -r 20% -o s p.bin
+cp s.xpa s.keep
+off=`"$DAMAGE" s.xpa find=SETD | head -1`
+test -n "$off" || hard_error "no SETD in index"
+#  Corrupt one byte of the index copy of SETD; the recovery volumes keep
+#  intact replicas.
+damage s.xpa "rand=`expr $off + 4`,1"
+run 0 "$XPAR" verify s.xpa
+grep -q 'replicas were used' "$log" || bad "verify did not report replica use"
+run 0 "$XPAR" repair --in-place s.xpa
+run 0 "$XPAR" verify s.xpa
+if grep -q 'replicas were used' "$log"; then
+  bad "verify still reports a stale volume after repair"
+else ok; fi
+same s.xpa s.keep
+cdto ..
+
+step "the default armour still armours the metadata group"
+
+#  Sidecar and split layouts support metadata armour only.
+mkdir -p am && cdto am
+mkfile p.bin 100000 71
+run 4 "$XPAR" create --armour=all -r 10% -o a p.bin
+run 4 "$XPAR" create --layout=split --volumes=2 --armour=all -r 10% -o b p.bin
+run 0 "$XPAR" create --layout=armoured --armour=all -r 10% -o c p.bin
+run 0 "$XPAR" create --armour=metadata -r 10% -o d p.bin
+run 0 "$XPAR" create -r 10% -o e p.bin
+#  Both the explicit metadata request and the default produce a readable
+#  metadata-armoured set.
+run 0 "$XPAR" verify d.xpa
+run 0 "$XPAR" verify e.xpa
+#  --armour-t stays valid on these layouts; it tunes the metadata armour.
+run 0 "$XPAR" create --armour-t=24 -r 10% -o f p.bin
+cdto ..
+
+step "a same-name short volume is reported as relengthed, not substituted"
+
+#  Report in-place length restoration separately from substitution.
+mkdir -p rl && cdto rl
+mkfile p.bin 400000 81
+run 0 "$XPAR" create --layout=split --volumes=2 --armour=none -r 20% -o s p.bin
+dv=`find . -maxdepth 1 -name 's.d00' | head -1`
+test -n "$dv" || hard_error "split data volume not found"
+"$DAMAGE" "$dv" extend=4096 > /dev/null || hard_error "extend failed"
+capture rlout "$XPAR" repair --in-place s.xpa
+grep -q 'restored to its recorded length' "$log" ||
+  grep -q 'restored to its recorded length' rlout ||
+  bad "repair did not report a length restore"
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "repair regenerates recovery slices that no longer verify"
+
+#  Re-encode recovery slices that have no replica.
+mkdir -p rg && cdto rg
+mkfile p.bin 500000 61
+run 0 "$XPAR" create -r 20% --armour=none -o y p.bin
+mkdir keep && cp y.xpa y.v*.xpa keep/
+#  The widest volume of the ladder is the last one.
+vol=
+for v in y.v*.xpa; do vol=$v; done
+test -n "$vol" || hard_error "no recovery volume"
+off=`"$DAMAGE" "$vol" find=RCVS | head -1`
+test -n "$off" || hard_error "no RCVS in $vol"
+damage "$vol" "rand=`expr $off + 64`,128"
+
+"$XPAR" verify y.xpa > /dev/null 2> vw.txt
+grep -q 'failed their checksum' vw.txt ||
+  bad "verify does not warn about the damaged recovery slice"
+grep -q 'xpar repair' vw.txt ||
+  bad "the warning does not name xpar repair as the remedy"
+#  The option the old warning advertised never existed.
+run 4 "$XPAR" scrub --repair y.xpa
+run 1 "$XPAR" scrub --rewrite -f y.xpa
+grep -q 'does not rebuild recovery slices' "$log" ||
+  bad "scrub --rewrite does not point at repair"
+
+run 0 "$XPAR" repair --in-place y.xpa
+grep -q 'recovery slice' "$log" || bad "repair did not report regeneration"
+for v in y.xpa y.v*.xpa; do same "$v" "keep/$v"; done
+"$XPAR" verify y.xpa > /dev/null 2> va.txt
+if grep -q 'protection is reduced' va.txt; then
+  bad "verify still reports reduced protection after repair"
+else ok; fi
+
+#  The volume that carries the slice tables is regenerated the same way.
+first=
+for v in y.v*.xpa; do first=$v;  break; done
+off=`"$DAMAGE" "$first" find=RCVS | head -1`
+damage "$first" "rand=`expr $off + 64`,128"
+run 0 "$XPAR" repair --in-place y.xpa
+same "$first" "keep/$first"
+run 0 "$XPAR" verify y.xpa
+
+#  A recovery volume that is gone altogether comes back the same way.
+rm -f "$vol"
+run 0 "$XPAR" repair --in-place y.xpa
+same "$vol" "keep/$vol"
+run 0 "$XPAR" verify y.xpa
+
+#  recover --volume must agree with repair, and must not clobber silently.
+off=`"$DAMAGE" "$vol" find=RCVS | head -1`
+damage "$vol" "rand=`expr $off + 64`,128"
+run 4 "$XPAR" recover --volume="$vol" y.xpa
+run 0 "$XPAR" recover -f --volume="$vol" y.xpa
+same "$vol" "keep/$vol"
+cdto ..
+
+step "split repair regenerates recovery slices too"
+
+#  The owned layouts take a different path through repair than sidecar.
+mkdir -p rgs && cdto rgs
+mkfile p.bin 500000 63
+run 0 "$XPAR" create -r 20% --layout=split --armour=none -o y p.bin
+mkdir keep && cp y.xpa y.d00 y.v*.xpa keep/
+vol=
+for v in y.v*.xpa; do vol=$v; done
+off=`"$DAMAGE" "$vol" find=RCVS | head -1`
+test -n "$off" || hard_error "no RCVS in $vol"
+damage "$vol" "rand=`expr $off + 64`,128"
+run 0 "$XPAR" repair --in-place y.xpa
+grep -q 'recovery slice' "$log" || bad "split repair did not regenerate"
+for v in y.xpa y.d00 y.v*.xpa; do same "$v" "keep/$v"; done
+run 0 "$XPAR" verify y.xpa
 cdto ..
 
 summary

@@ -15,6 +15,7 @@
 /*  Argument parsing, validation, and help.  */
 
 #include "cli.h"
+#include "json.h"
 #include "manifest.h"
 #include "pathname.h"
 #include "slice.h"
@@ -394,6 +395,7 @@ static const yarg_options t_repair[] = {
   { O_RESYNC_STEP,    required_argument, "resync-step"       },
   { O_RESYNC_WINDOW,  required_argument, "resync-window"     },
   { O_RESYNC_EXH,     no_argument,       "resync-exhaustive" },
+  { O_SCAN,           required_argument, "scan"              },
   { O_GENERATION,     required_argument, "generation"        },
   { O_CHAIN,          no_argument,       "chain"             },
   { 0,                no_argument,       NULL                }
@@ -403,6 +405,7 @@ static const yarg_options t_scrub[] = {
   { O_DEEP,          no_argument,       "deep"          },
   { O_REWRITE,       no_argument,       "rewrite"       },
   { O_REBUILD_CELLS, no_argument,       "rebuild-cells" },
+  { O_SCAN,          required_argument, "scan"          },
   { O_GENERATION,    required_argument, "generation"    },
   { O_CHAIN,         no_argument,       "chain"         },
   { 0,               no_argument,       NULL            }
@@ -415,6 +418,7 @@ static const yarg_options t_extract[] = {
   { O_OWNER_MAP,  required_argument, "owner-map"  },
   { O_REQUIRE,    required_argument, "require"    },
   { O_STRICT_NAMES, no_argument,     "strict-names" },
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { 0,            no_argument,       NULL         }
 };
@@ -422,12 +426,14 @@ static const yarg_options t_extract[] = {
 static const yarg_options t_recover[] = {
   { O_VOLUME,     required_argument, "volume"     },
   { O_TO,         required_argument, "to"         },
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { 0,            no_argument,       NULL         }
 };
 
 static const yarg_options t_addrecovery[] = {
   { 'r',          required_argument, "recovery"   },
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { 0,            no_argument,       NULL         }
 };
@@ -437,23 +443,27 @@ static const yarg_options t_add[] = {
   { O_VERIFY_UNCHANGED, no_argument,       "verify-unchanged" },
   { O_ALLOW_MISSING,    no_argument,       "allow-missing"    },
   { O_DEDUP_SCOPE,      required_argument, "dedup-scope"      },
+  { O_SCAN,             required_argument, "scan"             },
   { 0,                  no_argument,       NULL               }
 };
 
 static const yarg_options t_consolidate[] = {
   { O_REPLACE, no_argument, "replace" },
+  { O_SCAN,    required_argument, "scan" },
   { O_DRY_RUN, no_argument, "dry-run" },
   { 0,         no_argument, NULL      }
 };
 
 static const yarg_options t_prune[] = {
   { O_BEFORE,     required_argument, "before"     },
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { O_DRY_RUN,    no_argument,       "dry-run"    },
   { 0,            no_argument,       NULL         }
 };
 
 static const yarg_options t_list[] = {
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { O_CHAIN,      no_argument,       "chain"      },
   { O_LINKS,      no_argument,       "links"      },
@@ -463,12 +473,14 @@ static const yarg_options t_list[] = {
 
 static const yarg_options t_info[] = {
   { O_DEPS,       no_argument,       "deps"       },
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { O_CHAIN,      no_argument,       "chain"      },
   { 0,            no_argument,       NULL         }
 };
 
 static const yarg_options t_explain[] = {
+  { O_SCAN,       required_argument, "scan"       },
   { O_GENERATION, required_argument, "generation" },
   { 0,            no_argument,       NULL         }
 };
@@ -554,7 +566,7 @@ static const char help_global[] =
   "      --progress       Progress on stderr, at most one line a second\n"
   "      --no-progress    Never report progress\n"
   "      --color=WHEN     auto (default), always, never\n"
-  "      --reproducible   Leave the clock and the host out of the set\n"
+  "      --reproducible   Omit source times and the version from the set\n"
   "      --simd=TIER      Force a SIMD tier; 'auto' is the default\n"
   "      --auth-key=FILE  Authenticate a set with the key in FILE\n"
   "  -h, --help           This message, or a verb's own options\n"
@@ -603,10 +615,11 @@ static const char * const verb_opts[] = {
   "      --field=W              auto (default), 8, 16\n"
   "      --align=WHICH          none (default), slice, 1k\n"
   "      --slice-tag=W          none, 8 (default), 16\n"
-  "      --armour=WHICH         none, metadata, all (default)\n"
+  "      --armour=WHICH         none, metadata (default outside\n"
+  "                             --layout=armoured), all (armoured only)\n"
   "      --armour-field=W       auto (default), 8, 16\n"
   "      --armour-t=N           Symbols corrected per inner codeword\n"
-  "      --armour-pct=P         Inner-code overhead, 0 < P <= 50\n"
+  "      --armour-pct=P         Inner-code overhead 2t/k, 0 < P <= 50\n"
   "      --burst=SIZE           Burst to tolerate; excludes --depth\n"
   "      --depth=D              Interleave depth (default 1)\n"
   "      --volumes=WHICH        ladder (default), equal, or a count\n"
@@ -635,7 +648,7 @@ static const char * const verb_opts[] = {
   "      --resync-exhaustive    Confirm every candidate; expensive\n"
   "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first\n",
+  "      --chain                Every generation, oldest first (default)\n",
   /*  repair  */
   "      --in-place             Rewrite the originals\n"
   "      --to=DIR               Write the repaired tree into DIR\n"
@@ -645,19 +658,21 @@ static const char * const verb_opts[] = {
   "      --no-journal           Do not write one; excludes the above\n"
   "      --replace-journal      Overwrite a journal an earlier repair left\n"
   "      --dry-run              Report what would change\n"
-  "      --exit-on-change       Exit 1 when anything was repaired\n"
+  "      --exit-on-change       Exit 1 if anything was or would be repaired\n"
   "      --resync=WHICH         off, auto (default), always\n"
   "      --resync-step=N        Sample every Nth offset\n"
   "      --resync-window=SIZE   Displacement searched either way\n"
   "      --resync-exhaustive    Confirm every candidate; expensive\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first\n",
+  "      --chain                Every generation, oldest first (default)\n",
   /*  scrub  */
   "      --deep                 Re-encode recovery and compare it\n"
   "      --rewrite              Write back what the pass corrected\n"
   "      --rebuild-cells        Rebuild the cell CRC table\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first\n",
+  "      --chain                Every generation, oldest first (default)\n",
   /*  extract  */
   "      --to=DIR               Extract into DIR\n"
   "      --stdout               Write the stream to stdout\n"
@@ -665,38 +680,47 @@ static const char * const verb_opts[] = {
   "      --owner-map=WHICH      name (default), numeric\n"
   "      --require=LIST         Turn a degradation into an error\n"
   "      --strict-names         Apply Windows and DOS naming rules\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  recover  */
   "      --volume=WHICH         Volume number, or its name\n"
   "      --to=DIR               Write the volume into DIR\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  addrecovery  */
   "  -r, --recovery=SPEC        count | N% | SIZE | Nx\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  add  */
   "      --rescan=WHICH         stat (default), hash, none\n"
   "      --verify-unchanged     Alias for --rescan=hash\n"
   "      --allow-missing        Do not stop on a vanished entry\n"
   "      --dedup-scope=WHICH    generation (default), chain\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "  ... and everything create accepts.\n",
   /*  consolidate  */
   "      --replace              Remove the collapsed generations\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --dry-run              Report what would change\n"
   "  ... and everything create accepts.\n",
   /*  prune  */
   "      --before=G             Remove every generation before G\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Remove G; repeatable\n"
   "      --dry-run              Report what would change\n",
   /*  list  */
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n"
   "      --chain                Every generation, oldest first\n"
   "      --links                Group hard-link aliases by target\n"
   "      --dedup                Show extents and reference counts\n",
   /*  info  */
   "      --deps                 Per-generation dependency table\n"
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n"
   "      --chain                Every generation, oldest first\n",
   /*  explain  */
+  "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  undo  */
   "",
@@ -813,11 +837,33 @@ static void push_vol_once(xpar_setref * s, char * path) {
   push_vol(s, path);
 }
 
+/*  Resolved set basename, or NULL for a directory-only input.  */
+static const char * setref_leaf(const xpar_setref * s) {
+  const char * leaf = s->base;
+  sz i;
+  if (!s->base) return NULL;
+  for (i = 0; s->base[i]; i++)
+    if (xpar_path_sep(s->base[i])) leaf = s->base + i + 1;
+  return leaf;
+}
+
+static bool vol_is_index(const xpar_setref * s, const char * path) {
+  const char * leaf = setref_leaf(s);
+  return leaf && xpar_vname_is_index(xpar_path_base(path), leaf);
+}
+
+/*  Put the index volume first, then sort recovery siblings bytewise.  */
+static int vol_cmp(const xpar_setref * s, const char * a, const char * b) {
+  bool ai = vol_is_index(s, a), bi = vol_is_index(s, b);
+  if (ai != bi) return ai ? -1 : 1;
+  return xpar_strcmp(a, b);
+}
+
 static void sort_vols(xpar_setref * s) {
   for (u32 i = 1; i < s->count; i++) {
     char * v = s->vol[i];
     u32 j = i;
-    while (j && xpar_strcmp(s->vol[j - 1], v) > 0) {
+    while (j && vol_cmp(s, s->vol[j - 1], v) > 0) {
       s->vol[j] = s->vol[j - 1];  j--;
     }
     s->vol[j] = v;
@@ -862,12 +908,21 @@ static void strip_volume_suffix(char * base) {
   if (i == n) base[dot - 1] = '\0';
 }
 
+static void gather_from(xpar_setref * s, const char * dir, const char * leaf) {
+  xpar_dir * d = xpar_opendir(*dir ? dir : ".");
+  const xpar_dirent * e;
+  if (!d) return;
+  while ((e = xpar_readdir(d)) != NULL)
+    if (!e->is_dir && (xpar_vname_is_index(e->name, leaf) ||
+                       xpar_vname_is_member(e->name, leaf)))
+      push_vol_once(s, join_path(dir, e->name));
+  xpar_closedir(d);
+}
+
 static void gather_chain_siblings(xpar_setref * s) {
   const char * leaf = s->base;
   sz dlen = 0;
   char * dir;
-  xpar_dir * d;
-  const xpar_dirent * e;
   sz i;
   for (i = 0; s->base[i]; i++)
     if (xpar_path_sep(s->base[i])) {
@@ -876,13 +931,9 @@ static void gather_chain_siblings(xpar_setref * s) {
     }
   dir = dlen ? xpar_strndup(s->base, dlen) : dup_str("");
   FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", dir != NULL);
-  d = xpar_opendir(*dir ? dir : ".");
-  if (d) {
-    while ((e = xpar_readdir(d)) != NULL)
-      if (!e->is_dir && xpar_vname_is_index(e->name, leaf))
-        push_vol_once(s, join_path(dir, e->name));
-    xpar_closedir(d);
-  }
+  gather_from(s, dir, leaf);
+  /*  Also gather matching volumes from --scan.  */
+  if (xpar_path_scan()) gather_from(s, xpar_path_scan(), leaf);
   xpar_free(dir);
 }
 
@@ -901,7 +952,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     xpar_closedir(d);
     sort_vols(out);
     FATAL_UNLESS("Directory '%s' holds no " XPAR_EXT " file.",
-                 out->count > 0, arg);
+                 out->count > 0, xpar_name_escape(arg));
   } else if (is_file(arg)) {
     if (xpar_vname_has_ext(arg)) {
       char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
@@ -923,10 +974,12 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
                             out->base != NULL);
         }
       } else xpar_free(b);
-      if (!out->count)
+      if (!out->count) {
+        char * safe = xpar_name_escape(arg);
         FATAL_FORMAT("No xpar set guards '%s': neither '%s" XPAR_EXT
                      "' nor the same name with its extension replaced by '"
-                     XPAR_EXT "' is here.", arg, arg);
+                     XPAR_EXT "' is here.", safe, safe);
+      }
     }
   } else {
     /*  A base name: `base` means `base.xpa`.  */
@@ -935,7 +988,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     else {
       xpar_free(a);
       FATAL_FORMAT("No xpar set found for '%s'; use 'xpar --help' to list "
-                   "verbs.", arg);
+                   "verbs.", xpar_name_escape(arg));
     }
   }
   if (out->base) gather_chain_siblings(out);
@@ -990,7 +1043,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case 'm': o->memory = need_size(nm, v);
               FATAL_UNLESS("Option -m expects a positive size.", o->memory);
               break;
-    case O_JSON:         o->json = true;  break;
+    case O_JSON:         o->json = true;  xpar_json_fatal_enable(true);
+                         break;
     case O_PROGRESS:     o->progress = XPAR_PROGRESS_ON;   break;
     case O_NO_PROGRESS:  o->progress = XPAR_PROGRESS_OFF;  break;
     case O_COLOR:        o->color = need_word(nm, v, w_color);  break;
@@ -999,7 +1053,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       xpar_free(o->simd);  o->simd = dup_str(v ? v : "");
       break;
 
-    case 'o': xpar_free(o->output);  o->output = dup_str(v ? v : "");  break;
+    case 'o': FATAL_UNLESS("Option -o expects an output base name.", v && *v);
+              xpar_free(o->output);  o->output = dup_str(v);  break;
     case 'r':
       FATAL_UNLESS("Option %s expects a count, a percentage, a size or a "
                    "multiple, as in 100, 15%%, 2.5M or 1x.",
@@ -1043,7 +1098,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       o->slice_tag_given = true;
       break;
     }
-    case O_ARMOUR:       o->armour = need_word(nm, v, w_armour);  break;
+    case O_ARMOUR:       o->armour = need_word(nm, v, w_armour);
+                         o->armour_given = true;  break;
     case O_ARMOUR_FIELD: o->armour_field = word_field(nm, v);  break;
     case O_ARMOUR_T:  o->armour_t = (u32) need_range(nm, v, 1, 32767);  break;
     case O_ARMOUR_PCT: {
@@ -1207,11 +1263,23 @@ static void positionals(xpar_options * o, char ** pos, int n) {
                  n == first, xpar_verb_name(o->verb), n);
 }
 
+/*  Resolve armour defaults and constraints for LAYOUT.  */
+void xpar_cli_armour_for_layout(xpar_options * o, int layout) {
+  if (layout == XPAR_LAYOUT_ARMOURED) return;
+  FATAL_UNLESS("--armour=all requires --layout=armoured; use "
+               "--armour=metadata or --armour=none with other layouts.",
+               !(o->armour_given && o->armour == XPAR_ARMOUR_ALL));
+  if (!o->armour_given) o->armour = XPAR_ARMOUR_METADATA;
+}
+
 static void validate(xpar_options * o, u32 pres_lit) {
   FATAL_UNLESS("Options -s and -b are mutually exclusive.",
                !(o->slice_size && o->slices));
   FATAL_UNLESS("Options --armour-t and --armour-pct are mutually exclusive.",
                !(o->armour_t && o->armour_pct > 0.0));
+  /*  Generation verbs may resolve this after loading the chain.  */
+  if (o->verb == XPAR_VERB_CREATE || o->layout_given)
+    xpar_cli_armour_for_layout(o, o->layout);
   FATAL_UNLESS("Options --burst and --depth are mutually exclusive.",
                !(o->burst && o->depth));
   FATAL_UNLESS("Options --keep-journal and --no-journal contradict each "
@@ -1292,6 +1360,28 @@ static void validate(xpar_options * o, u32 pres_lit) {
                  o->verb != XPAR_VERB_VERIFY && o->verb != XPAR_VERB_REPAIR &&
                  o->verb != XPAR_VERB_SCRUB && o->verb != XPAR_VERB_RECOVER,
                  xpar_verb_name(o->verb));
+
+  if (o->verb == XPAR_VERB_CREATE && !o->recurse)
+    for (u32 i = 0; i < o->path_count; i++)
+      FATAL_UNLESS("'%s' is a directory; use -R to descend.",
+                   !is_dir(o->paths[i]), xpar_name_escape(o->paths[i]));
+
+  FATAL_UNLESS("--labels needs --layout=split; the other layouts have no "
+               "data volumes to label.",
+               !o->labels || o->verb != XPAR_VERB_CREATE ||
+               o->layout == XPAR_LAYOUT_SPLIT);
+}
+
+/*  Whether ARG can use the `xpar <set>` shorthand.  */
+static bool names_a_set(const char * arg) {
+  char * a;
+  bool ok;
+  if (!arg || !*arg) return false;
+  if (is_file(arg) || is_dir(arg)) return true;
+  a = cat_str(arg, XPAR_EXT);
+  ok = is_file(a);
+  xpar_free(a);
+  return ok;
 }
 
 /* Diagnose verbs placed after options. */
@@ -1340,6 +1430,9 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     xpar_fprintf(xpar_stderr, "xpar: %s", r->res->error);
     xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes.\n",
                xpar_stderr);
+    for (int a = 1; a < argc; a++)
+      if (!xpar_strcmp(argv[a], "--json")) xpar_json_fatal_enable(true);
+    xpar_json_fatal(XPAR_EXIT_USAGE, "%s", r->res->error);
     xpar_exit(XPAR_EXIT_USAGE);
   }
   o->verb = r->verb ? (xpar_verb) r->verb->verb : XPAR_VERB_NONE;
@@ -1356,6 +1449,9 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   if (o->verb == XPAR_VERB_NONE) {
     FATAL_UNLESS("A verb is required; 'xpar --help' lists them.",
                  r->res->pos_argc > 0);
+    FATAL_UNLESS("Unknown verb '%s'; 'xpar --help' lists them.",
+                 names_a_set(r->res->pos_args[0]),
+                 xpar_name_escape(r->res->pos_args[0]));
     FATAL_UNLESS("Only a single set argument may stand in for a verb; "
                  "'xpar --help' lists them.", r->res->pos_argc == 1);
     o->verb = XPAR_VERB_VERIFY;
@@ -1370,6 +1466,17 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   validate(o, pres_lit);
   yarg_verb_destroy(r);
 
+  if (o->output && o->output[0] &&
+      (o->verb == XPAR_VERB_CREATE || o->verb == XPAR_VERB_ADD ||
+       o->verb == XPAR_VERB_CONSOLIDATE)) {
+    const char * leaf = xpar_path_base(o->output);
+    sz n = xpar_strlen(leaf), i = n;
+    while (i && leaf[i - 1] >= '0' && leaf[i - 1] <= '9') i--;
+    FATAL_UNLESS("Output base '%s' conflicts with generated .gNNN names.",
+                 !(i < n && i >= 2 && leaf[i - 1] == 'g' &&
+                   leaf[i - 2] == '.'), o->output);
+  }
+  xpar_path_scan_set(o->scan_dir);
   if (takes_set(o->verb)) xpar_cli_resolve_set(o->set, &o->set_ref);
   if (o->verb == XPAR_VERB_RECOVER_PROLOGUE) xpar_v1_refuse_if_v1(o->set);
 }
@@ -1384,6 +1491,7 @@ void xpar_cli_free(xpar_options * o) {
   xpar_free(o->set);         xpar_free(o->output);
   xpar_free(o->simd);
   xpar_free(o->base_dir);    xpar_free(o->auth_key);
+  xpar_path_scan_set(NULL);
   xpar_free(o->spool_dir);   xpar_free(o->scan_dir);
   xpar_free(o->stdin_name);
   xpar_free(o->to_dir);      xpar_free(o->volume_name);

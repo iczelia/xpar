@@ -251,13 +251,31 @@ static bool arm_prologue_valid(const u8 * p, sz len,
                                   (u8) ap.symbol_bits, ap.n, ap.k,
                                   ap.depth, out->plain_length))
     return false;
-  if (out->armoured_length > (u64) len - ARM_HDR_LEN ||
-      out->armoured_length != (u64) len - ARM_HDR_LEN)
-    return false;
+  /*  The outer code handles a short tail; a long tail is junk.  */
+  (void) len;
+  if (!out->armoured_length) return false;
   if (out->stream_offset > out->plain_length ||
       out->stream_length > out->plain_length - out->stream_offset)
     return false;
   return true;
+}
+
+/*  Recognize whole-file armour from any valid prologue copy.  */
+bool xpar_garm_is_archive(const u8 * file, sz len) {
+  if (len < ARM_HDR_LEN) return false;
+  for (u32 j = 0; j < 3; j++)
+    if (!xpar_memcmp(file + (sz) j * ARM_COPY_LEN, "XPAR2ARM", 8))
+      return true;
+  return false;
+}
+
+/*  How many of the three stored prologue copies still check out.  */
+u32 xpar_garm_prologue_copies(const u8 * file, sz len) {
+  u32 n = 0;
+  if (len < ARM_HDR_LEN) return 0;
+  for (u32 j = 0; j < 3; j++)
+    if (arm_checksum_ok(file + (sz) j * ARM_COPY_LEN)) n++;
+  return n;
 }
 
 /*  The format's prologue procedure, in its three stages: the stored
@@ -464,6 +482,9 @@ static void chain_scan(xpar_chain * c, xpar_chain_vol * v, const u8 * buf,
     if (xpar_pkt_is(&hdr, XPAR_T_VOLH)) continue;
     xpar_critset_add(&c->crit, &hdr, body);
   }
+  xpar_reject_unknown_critical(&sc);
+  /*  Authentication failures are not format errors.  */
+  if (c->key_loaded) c->auth_failed += sc.skip_checksum + sc.skip_keyed;
   if (!nested) {
     u64 pos = 0, blen = 0;
     while (xpar_verify_next_armg(buf, len,
@@ -537,52 +558,69 @@ static void chain_strip_gen(char * stem) {
   stem[n - 5] = 0;
 }
 
+/*  Volumes of one set named `stem`, from one shelf.  */
+static void chain_gather_dir(const xpar_options * o, xpar_chain * c,
+                             const char * dir, const char * stem) {
+  xpar_dir * d = xpar_opendir(*dir ? dir : ".");
+  const xpar_dirent * e;
+  if (!d) return;
+  while ((e = xpar_readdir(d)) != NULL)
+    if (!e->is_dir &&
+        (o->chain_metadata_only
+           ? xpar_vname_is_index(e->name, stem)
+           : xpar_vname_is_member(e->name, stem)))
+      chain_add_vol(c, xpar_path_join(dir, e->name));
+  xpar_closedir(d);
+}
+
 static void chain_gather(const xpar_options * o, xpar_chain * c) {
   For(u32, i, o->set_ref.count,
       chain_add_vol(c, xpar_strdup(o->set_ref.vol[i])))
 
   if (o->set_ref.base) {
-    char * dir;  char * stem;  xpar_dir * d;
+    char * dir;  char * stem;
     gen_split_path(o->set_ref.base, &dir, &stem);
     chain_strip_gen(stem);
     c->base = xpar_path_join(dir, stem);
     c->dir  = xpar_strdup(dir);
-    d = xpar_opendir(*dir ? dir : ".");
-    if (d) {
-      const xpar_dirent * e;
-      while ((e = xpar_readdir(d)) != NULL)
-        if (!e->is_dir &&
-            (o->chain_metadata_only
-               ? xpar_vname_is_index(e->name, stem)
-               : xpar_vname_is_member(e->name, stem)))
-          chain_add_vol(c, xpar_path_join(dir, e->name));
-      xpar_closedir(d);
-    }
+    chain_gather_dir(o, c, dir, stem);
+    /*  Gather matching volumes from --scan.  */
+    if (o->scan_dir) chain_gather_dir(o, c, o->scan_dir, stem);
     xpar_free(dir);  xpar_free(stem);
   } else if (o->set_ref.dir) {
     c->dir = xpar_strdup(o->set_ref.dir);
   }
 
-  if (o->scan_dir) {
+  /*  A directory-only reference has no stem to filter by.  */
+  if (o->scan_dir && !o->set_ref.base) {
     xpar_dir * d = xpar_opendir(o->scan_dir);
     if (d) {
       const xpar_dirent * e;
-      char * pfx;
-      xpar_asprintf(&pfx, "%s/", o->scan_dir);
       while ((e = xpar_readdir(d)) != NULL)
-        if (!e->is_dir && xpar_path_ends_with(e->name, XPAR_EXT))
-          chain_add_vol(c, xpar_path_join(pfx, e->name));
-      xpar_free(pfx);
+        if (!e->is_dir && xpar_vname_has_ext(e->name))
+          chain_add_vol(c, xpar_path_join(o->scan_dir, e->name));
       xpar_closedir(d);
     }
   }
+}
+
+/*  Report authentication failures before derivative format errors.  */
+static void chain_auth_or_die(const xpar_chain * c) {
+  if (!c->key_loaded || !c->auth_failed) return;
+  FATAL_CODE(XPAR_EXIT_AUTH,
+             "%" PRIu64 " packet%s failed authentication; wrong key or "
+             "tampered data.",
+             c->auth_failed, c->auth_failed == 1 ? "" : "s");
 }
 
 static void chain_link(xpar_chain * c) {
   u32 i, j, n = 0, heads = 0;
   for (i = 0; i < c->crit.count; i++)
     if (xpar_pkt_is(&c->crit.pkt[i].hdr, XPAR_T_SETD)) n++;
-  if (!n) FATAL_FORMAT("No set descriptor found; this is not an xpar 2 set.");
+  if (!n) {
+    chain_auth_or_die(c);
+    FATAL_FORMAT("No set descriptor found; this is not an xpar 2 set.");
+  }
 
   c->gen = (xpar_chain_gen *) xpar_calloc(n, sizeof(xpar_chain_gen));
   for (i = 0; i < c->crit.count; i++) {
@@ -607,7 +645,10 @@ static void chain_link(xpar_chain * c) {
     g->parent = XPAR_GEN_NONE;
     c->gen_count++;
   }
-  if (!c->gen_count) FATAL_FORMAT("Every set descriptor is malformed.");
+  if (!c->gen_count) {
+    chain_auth_or_die(c);
+    FATAL_FORMAT("Every set descriptor is malformed.");
+  }
 
   /*  Insertion sort by generation number: a chain is short and the order
       is what every later walk assumes.  */
@@ -775,11 +816,29 @@ static void gen_chain_integrity(const xpar_options * o, const xpar_chain * c,
   if (!o->slice_tag_given) eff->slice_tag = sd->slice_tag_len;
 }
 
+/*  Print prefixes accepted by --generation.  */
+static void gen_list_branches(const xpar_chain * c) {
+  u32 i, j;
+  for (i = 0; i < c->gen_count; i++) {
+    char id[XPAR_SET_ID_LEN * 2 + 1];
+    bool named = false;
+    for (j = 0; j < c->gen_count; j++)
+      if (c->gen[j].parent == i) { named = true;  break; }
+    if (named) continue;
+    xpar_hex(id, c->gen[i].set_id, XPAR_SET_ID_LEN);
+    xpar_fprintf(xpar_stderr,
+                 "xpar:   branch head generation %" PRIu32 ": --generation=%s\n",
+                 c->gen[i].sd.generation, id);
+  }
+}
+
 u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   u32 i, found = XPAR_GEN_NONE, matches = 0;
   if (!g) {
-    if (c->forked)
+    if (c->forked) {
+      gen_list_branches(c);
       FATAL("This chain has forked; select a branch with --generation.");
+    }
     return c->head;
   }
   if (g->by_id) {
@@ -845,10 +904,12 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     const xpar_crit_pkt * p = chain_file_pkt(c, g, sd->file_id[i], &h);
     xpar_entry * e;
     xpar_status st;
-    if (!p)
+    if (!p) {
+      chain_auth_or_die(c);
       FATAL_FORMAT("Generation %" PRIu32
                    " names a manifest entry no generation "
                    "owns; the chain is incomplete.", sd->generation);
+    }
     e  = xpar_manifest_append(m);
     st = xpar_entry_read(p->body, (sz) p->body_len,
                          c->gen[h].sd.posix_record_count, e);
@@ -903,11 +964,6 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
     if (xpar_manifest_validate(m, &lim, &res) != XPAR_MF_OK)
       FATAL_FORMAT("Manifest entry %" PRIu32 " is invalid: %s.", res.entry,
                    xpar_mf_reason(res.status));
-    if (res.link_meta_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32
-                   " hard-link aliases disagree with "
-                   "their canonical metadata; canonical values will be "
-                   "used.\n", res.link_meta_mismatch);
     xpar_free(anc);
   }
   {
@@ -942,15 +998,16 @@ void xpar_gchain_manifest(const xpar_chain * c, u32 g, xpar_manifest * m,
       e->posix_index = t->posix_index;
       own[i] = own[target];
     }
-    if (posix_mismatch)
-      xpar_fprintf(xpar_stderr, "xpar: %" PRIu32
-                   " hard-link aliases disagree with "
-                   "their canonical POSX metadata; canonical values will "
-                   "be used.\n", posix_mismatch);
     for (i = 0; i < c->gen_count; i++)
       xpar_gchain_posix_free(tab[i], tabn[i]);
     xpar_free(tab);  xpar_free(tabn);
     xpar_nameidx_free(&ix);
+    /*  Hard-link aliases must share one POSX record.  */
+    if (posix_mismatch)
+      FATAL_FORMAT("%" PRIu32 " hard-link alias%s disagree%s with the "
+                   "canonical entry's POSX record.", posix_mismatch,
+                   posix_mismatch == 1 ? "" : "es",
+                   posix_mismatch == 1 ? "s" : "");
   }
   *owner = own;
 }
@@ -999,6 +1056,49 @@ i64 xpar_gchain_gen_of(const xpar_chain * c, u64 off, u64 len) {
     if (off >= lo && off < hi && len <= hi - off) return (i64) i;
   }
   return -1;
+}
+
+/*  Count generation slices no longer reached by MANIFEST.  */
+void xpar_gchain_superseded(const xpar_chain * c, const xpar_manifest * m,
+                            u64 * out) {
+  u32 g, i, k;
+  for (g = 0; g < c->gen_count; g++) {
+    u64 z = c->gen[g].sd.slice_size;
+    u64 s = c->gen[g].sd.data_slice_count;
+    u64 base = c->gen[g].sd.stream_base;
+    u64 span = c->gen[g].sd.stream_length, q, used = 0;
+    u8 * live;
+    out[g] = 0;
+    if (!z || !s || !span) continue;
+    live = (u8 *) xpar_calloc((sz) s, 1);
+    for (i = 0; i < m->count; i++)
+      for (k = 0; k < m->entry[i].extent_count; k++) {
+        u64 off = m->entry[i].extents[k].stream_offset;
+        u64 len = m->entry[i].extents[k].length, lo, hi;
+        if (!len || off + len <= base || off >= base + span) continue;
+        lo = off > base ? off - base : 0;
+        hi = MIN(off + len - base, span);
+        for (q = lo / z; q <= (hi - 1) / z && q < s; q++) live[q] = 1;
+      }
+    for (q = 0; q < s; q++) if (live[q]) used++;
+    out[g] = s - used;
+    xpar_free(live);
+  }
+}
+
+/*  Entries of MANIFEST whose bytes still live in generation G.  */
+u64 xpar_gchain_users(const xpar_chain * c, const xpar_manifest * m, u32 g) {
+  u64 users = 0;
+  u32 i, k;
+  for (i = 0; i < m->count; i++) {
+    bool hit = false;
+    for (k = 0; k < m->entry[i].extent_count && !hit; k++)
+      if (xpar_gchain_gen_of(c, m->entry[i].extents[k].stream_offset,
+                             m->entry[i].extents[k].length) == (i64) g)
+        hit = true;
+    if (hit) users++;
+  }
+  return users;
 }
 
 void xpar_gchain_deps(const xpar_chain * c, const xpar_manifest * m,
@@ -1132,6 +1232,110 @@ typedef struct {
   u8  field_log2, codec, axis;
 } gen_plan;
 
+/*  Report stale consolidate staging directories.  */
+static void gen_report_stale_stage(const xpar_options * o, const char * base) {
+  char * dir = xpar_path_dir(base);
+  xpar_dir * d = xpar_opendir(*dir ? dir : ".");
+  const xpar_dirent * e;
+  if (d) {
+    while ((e = xpar_readdir(d)) != NULL) {
+      char * p;
+      if (!e->is_dir || xpar_strncmp(e->name, ".xpar-consolidate-", 18))
+        continue;
+      p = xpar_path_join(dir, e->name);
+      xpar_fprintf(xpar_stderr,
+                   "xpar: an earlier consolidate left the staging tree '%s' "
+                   "behind; nothing in this set depends on it, so it can be "
+                   "removed.\n", p);
+      xpar_free(p);
+    }
+    xpar_closedir(d);
+  }
+  xpar_free(dir);
+}
+
+/*  Return the redundancy recorded by a generation's layout.  */
+static u64 gen_gen_recovery(const xpar_chain * c, u32 g) {
+  u64 top = c->gen[g].recovery_top;
+  if (c->gen[g].layt_body) {
+    xpar_layt l;
+    if (xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, &l) ==
+        XPAR_OK) {
+      u64 n = 0;
+      u32 i;
+      for (i = 0; i < l.count; i++)
+        if (l.vol[i].kind == XPAR_VOL_RECOVERY) n += l.vol[i].byte_length;
+      xpar_layt_free(&l);
+      if (n > top) top = n;
+    }
+  }
+  return top;
+}
+
+/*  The redundancy one generation actually carries, as a percentage of S.  */
+static f64 gen_gen_ratio(const xpar_chain * c, u32 g) {
+  u64 s = c->gen[g].sd.data_slice_count, r = gen_gen_recovery(c, g);
+  return s && r ? 100.0 * (f64) r / (f64) s : 0.0;
+}
+
+/*  Inherit the selected generation's redundancy when -r is omitted.  */
+static bool gen_inherit_recovery(xpar_options * eff, const xpar_chain * c,
+                                 u32 g, f64 * ratio) {
+  *ratio = gen_gen_ratio(c, g);
+  if (eff->recovery.kind != XPAR_R_NONE || *ratio <= 0.0) return false;
+  eff->recovery.kind   = XPAR_R_PERCENT;
+  eff->recovery.factor = *ratio;
+  eff->recovery.count  = 0;
+  return true;
+}
+
+/*  Report recovery spent on superseded ancestor slices.  */
+static void gen_report_superseded(const xpar_options * o,
+                                  const xpar_chain * c,
+                                  const xpar_manifest * m, u32 head) {
+  u64 * sup;
+  u32 g, at, walked = 0;
+  u8 * anc;
+  if (o->quiet) return;
+  sup = (u64 *) xpar_calloc(c->gen_count, sizeof(u64));
+  anc = (u8 *) xpar_calloc(c->gen_count, 1);
+  for (at = head; at != XPAR_GEN_NONE && walked++ < c->gen_count;
+       at = c->gen[at].parent) anc[at] = 1;
+  xpar_gchain_superseded(c, m, sup);
+  for (g = 0; g < c->gen_count; g++) {
+    u64 rec = gen_gen_recovery(c, g), users;
+    if (!anc[g] || !sup[g]) continue;
+    users = xpar_gchain_users(c, m, g);
+    if (!users) continue;
+    if (sup[g] >= rec)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: warning: generation %" PRIu32 ": %" PRIu64 " of %"
+                   PRIu64 " recovery slices are consumed by superseded data; "
+                   "its %" PRIu64 " inherited entr%s no longer repairable; "
+                   "run `xpar consolidate` to restore protection.\n",
+                   c->gen[g].sd.generation, sup[g], rec, users,
+                   users == 1 ? "y is" : "ies are");
+    else
+      xpar_fprintf(xpar_stderr,
+                   "xpar: warning: generation %" PRIu32 ": %" PRIu64 " of %"
+                   PRIu64 " recovery slices are consumed by superseded data; "
+                   "only %" PRIu64 " remain for its %" PRIu64 " inherited "
+                   "entr%s.\n",
+                   c->gen[g].sd.generation, sup[g], rec, rec - sup[g], users,
+                   users == 1 ? "y" : "ies");
+  }
+  xpar_free(sup);  xpar_free(anc);
+}
+
+/*  Say so when the new generation protects less than the old one did.  */
+static void gen_warn_thinner(const xpar_options * o, f64 was, u64 r, u64 s) {
+  f64 now = s ? 100.0 * (f64) r / (f64) s : 0.0;
+  if (o->quiet || !s || was <= 0.0 || now >= was - 0.05) return;
+  xpar_fprintf(xpar_stderr,
+               "xpar: warning: redundancy falls from %.1f%% to %.1f%%; pass "
+               "-r to keep the old ratio.\n", was, now);
+}
+
 
 /*  Auto selects matrix coding for stable, field-wide recovery rows. Honour
     explicit FFT requests where their capacity rules allow.  */
@@ -1208,16 +1412,30 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
   }
 
   /*  Matrix uses the whole field axis; FFT records its power-of-two
-      recovery bracket.  */
+      recovery bracket. Either way --max-recovery is a promise about how
+      far `addrecovery` may later grow, so it has to fit here.  */
+  maxr = gen_resolve_r(&o->max_recovery, p->geom.slice_count,
+                       p->geom.slice_size);
+  if (maxr < r) maxr = r;
   if (p->codec == XPAR_CODEC_MATRIX) {
+    if (maxr && !xpar_codec_supports(p->codec, p->field_log2,
+                                     p->geom.slice_count, maxr)) {
+      if (o->field == XPAR_CLI_AUTO && p->field_log2 == 8 &&
+          xpar_codec_supports(p->codec, 16, p->geom.slice_count, maxr))
+        p->field_log2 = 16;
+      else
+        FATAL_CODE(XPAR_EXIT_NOPLAN,
+                   "--max-recovery=%" PRIu64 " does not fit beside S=%" PRIu64
+                   " in GF(2^%" PRIu8 ").",
+                   maxr, p->geom.slice_count, p->field_log2);
+    }
     p->axis = p->field_log2;
   } else if (p->codec == XPAR_CODEC_FFT_LOW) {
-    p->axis = (u8) xpar_log2_floor(
-                         xpar_next_pow2(p->geom.slice_count));
+    u64 m = xpar_next_pow2(p->geom.slice_count);
+    if (maxr > m) m = xpar_next_pow2(maxr);
+    p->axis = (u8) xpar_log2_floor(m);
   } else {
     u64 m = xpar_next_pow2(r ? r : 1);
-    maxr = gen_resolve_r(&o->max_recovery, p->geom.slice_count,
-                         p->geom.slice_size);
     if (maxr > m) {
       u64 wide = xpar_next_pow2(maxr);
       if (!xpar_codec_supports(p->codec, p->field_log2, p->geom.slice_count,
@@ -1456,7 +1674,9 @@ static void gen_armour_params(const xpar_options * o,
   xpar_armour_defaults(p, o->armour_field == 16 ? 16 : 8);
   if (o->armour_t) t = o->armour_t;
   else if (o->armour_pct > 0.0)
-    t = (u32) (o->armour_pct / 100.0 * (f64) p->n / 2.0 + 0.5);
+    /*  P is overhead over the data, so 2t/(n - 2t) = P/100.  */
+    t = (u32) (o->armour_pct * (f64) p->n / (100.0 + o->armour_pct)
+               / 2.0 + 0.5);
   if (!t) t = 1;
   if (t > (p->n - 1) / 2) t = (p->n - 1) / 2;
   p->k = p->n - 2 * t;
@@ -2339,8 +2559,9 @@ static void gen_write_set(gen_write_req * rq) {
   } else {
     gen_layt_build(&layt, vol, nvol);
   }
+  /*  Bit 0 identifies the armoured index entry.  */
   for (i = 0; i < layt.count; i++)
-    layt.vol[i].vflags = o->armour != XPAR_ARMOUR_NONE ||
+    layt.vol[i].vflags = layt.vol[i].kind == XPAR_VOL_INDEX &&
                          o->layout == XPAR_LAYOUT_ARMOURED;
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     /*  Spread the remainder across the leading volumes.  */
@@ -2837,6 +3058,14 @@ static void dmap_add(gen_dmap * d, const xpar_manifest * m, u32 i) {
 
 /*  Preserve inherited extents; append new bytes at the monotone high-water
     mark in manifest order.  */
+/*  Whether every byte an entry names lives in the generation being built.  */
+static bool gen_extents_local(const xpar_entry * e, u64 base) {
+  u32 k;
+  for (k = 0; k < e->extent_count; k++)
+    if (e->extents[k].stream_offset < base) return false;
+  return true;
+}
+
 static void gen_repack(gen_merge * g, const xpar_options * o,
                        const char * cache_path, const u8 * ancestor_id,
                        u64 base, xpar_chunk_index * cache_out) {
@@ -2890,8 +3119,9 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
     xpar_extent x;
     if (e->entry_type == XPAR_ENTRY_REGULAR) g->m.entry_bytes += e->length;
     if (!g->owned[i] || g->reuse[i]) {
-      /*  Retained extents remain deduplication candidates.  */
-      dmap_add(&dmap, &g->m, i);
+      /*  Honor dedup scope for retained extents.  */
+      if (o->dedup_scope == XPAR_SCOPE_CHAIN || gen_extents_local(e, base))
+        dmap_add(&dmap, &g->m, i);
       continue;
     }
     if (e->entry_type != XPAR_ENTRY_REGULAR || !e->length) {
@@ -2932,6 +3162,12 @@ static void gen_repack(gen_merge * g, const xpar_options * o,
     dmap_add(&dmap, &g->m, i);
   }
   dmap_free(&dmap);
+  /*  Pad the generation to the selected alignment.  */
+  { u64 q = o->align == XPAR_ALIGN_SLICE ? g->m.slice_size
+          : o->align == XPAR_ALIGN_1K ? (u64) XPAR_BLAKE3_CHUNK_LEN : 0;
+    if (q) H = base + xpar_align_up(H - base, q); }
+  /*  Slice-tag tables read alignment from the manifest.  */
+  g->m.align         = (u8) o->align;
   g->m.stream_length = H - base;
   g->m.dedup_level   = g->m.alias_extents ? (u8) o->dedup : XPAR_DEDUP_NONE;
   if (have_chunks && cache_out) {
@@ -3195,6 +3431,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
   xpar_gchain_load(o, &c);
   gen_require_write_key(&c, "addrecovery");
   g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
+  { xpar_options probe = *o;
+    xpar_cli_armour_for_layout(&probe, c.gen[g].sd.layout); }
   xpar_gchain_genref(&c, g, &verify_ref, verify_id);
   have = c.gen[g].recovery_top;
   axis = xpar_setd_recovery_limit(&c.gen[g].sd);
@@ -3232,16 +3470,17 @@ int xpar_op_addrecovery(const xpar_options * o) {
   if (want > axis) {
     if (c.gen[g].sd.codec == XPAR_CODEC_FFT)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Generation %" PRIu32 "'s FFT recovery limit is %" PRIu64 " slices, not "
-                 "%" PRIu64 ". Re-encode with `xpar consolidate "
-                 "--max-recovery=%" PRIu64 "`.",
+                 "Generation %" PRIu32 " allows at most %" PRIu64
+                 " FFT recovery slices, not %" PRIu64 ". Re-encode with "
+                 "`xpar consolidate --max-recovery=%" PRIu64 "`.",
                  c.gen[g].sd.generation, axis,
                  want, want);
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "Generation %" PRIu32 "'s recovery axis holds %" PRIu64 " slices and %" PRIu64 " was "
-               "asked for; exponents must stay inside the axis.",
+               "Generation %" PRIu32 " allows at most %" PRIu64
+               " recovery slices, not %" PRIu64 ". Re-encode with "
+               "`xpar consolidate --max-recovery=%" PRIu64 "`.",
                c.gen[g].sd.generation, axis,
-               want);
+               want, want);
   }
   if (!xpar_codec_supports_axis(c.gen[g].sd.codec,
                                 c.gen[g].sd.field_log2,
@@ -3544,7 +3783,10 @@ int xpar_op_add(const xpar_options * caller) {
   u32 * owner = NULL;
   u32 head, i, ia = 0, ib = 0, caps;
   u32 added = 0, changed = 0, kept = 0, dropped = 0;
-  bool warn_posix = false;
+  bool warn_posix = false, inherited_r;
+  /*  Older-generation references follow --dedup-scope.  */
+  bool chain_dedup;
+  f64 old_ratio = 0.0;
   char idbuf[XPAR_SET_ID_LEN * 2 + 1];
   char * input_cache = NULL, * output_cache = NULL, * stage_cache = NULL;
   char * stdin_stage = NULL, * stdin_final = NULL;
@@ -3561,6 +3803,10 @@ int xpar_op_add(const xpar_options * caller) {
                "this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   eff.layout = gen_chain_layout(o, &c, head, true);
+  xpar_cli_armour_for_layout(&eff, eff.layout);
+  inherited_r = gen_inherit_recovery(&eff, &c, head, &old_ratio);
+  chain_dedup = o->dedup != XPAR_DEDUP_NONE &&
+                o->dedup_scope == XPAR_SCOPE_CHAIN;
   gen_chain_integrity(o, &c, head, &eff);
 
   for (i = head; i != XPAR_GEN_NONE; i = c.gen[i].parent)
@@ -3583,7 +3829,7 @@ int xpar_op_add(const xpar_options * caller) {
   xpar_gchain_manifest(&c, head, &inh, &owner);
   /*  Share one ancestor-content index across all lookups.  */
   xpar_memset(&inh_map, 0, sizeof inh_map);
-  if (o->dedup != XPAR_DEDUP_NONE) {
+  if (chain_dedup) {
     u32 q;
     dmap_init(&inh_map, inh.count);
     for (q = 0; q < inh.count; q++) dmap_add(&inh_map, &inh, q);
@@ -3631,6 +3877,7 @@ int xpar_op_add(const xpar_options * caller) {
     wo.recurse         = o->recurse;
     wo.follow_symlinks = o->follow_symlinks;
     wo.reproducible    = o->reproducible;
+    wo.self_base       = o->set_ref.base;
     /*  A secure spool has a random private basename. Selection is defined
         over --stdin-name, not that implementation detail, and is therefore
         applied immediately after the manifest entry is renamed.  */
@@ -3891,18 +4138,29 @@ int xpar_op_add(const xpar_options * caller) {
   }
 
   xpar_hex(idbuf, rq.set_id, XPAR_SET_ID_LEN);
-  if (!o->quiet)
+  if (!o->quiet) {
     xpar_fprintf(xpar_stderr,
                  "xpar: generation %" PRIu32 ", set %s: %" PRIu32 " %s "
                  "(%" PRIu32 " added, %" PRIu32 " changed, %" PRIu32 " inherited, %" PRIu32 " dropped), "
                  "%" PRIu64 " new stream bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " "
-                 "volume%s.\n", rq.generation, idbuf, g.m.count,
+                 "volume%s%s.\n", rq.generation, idbuf, g.m.count,
                  g.m.count == 1 ? "entry" : "entries", added,
                  changed, kept, dropped,
                  g.m.stream_length,
                  rq.plan.recovery,
                  PLURAL(rq.plan.recovery), rq.volumes - 1,
-                 PLURAL(rq.volumes - 1));
+                 PLURAL(rq.volumes - 1),
+                 inherited_r ? " at the redundancy this chain already had"
+                             : "");
+    if (inherited_r)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: -r was not given, so generation %" PRIu32
+                   "'s %.1f%% was inherited.\n",
+                   c.gen[head].sd.generation, old_ratio);
+  }
+  gen_warn_thinner(o, old_ratio, rq.plan.recovery,
+                   rq.plan.geom.slice_count);
+  gen_report_superseded(o, &c, &g.m, head);
   gen_json_result(o, "add", rq.set_id, rq.generation, "ok", XPAR_EXIT_OK);
 
   for (i = 0; i < c.gen_count; i++)
@@ -4650,7 +4908,8 @@ int xpar_op_consolidate(const xpar_options * caller) {
   bool owned_layout;
   char * stage_tree = NULL;
   u64 live = 0, total = 0;
-  bool warn_posix = false;
+  bool warn_posix = false, inherited_r;
+  f64 old_ratio = 0.0;
   const char * base;
   char * stage_base = NULL, * cache_path = NULL, * stage_cache = NULL;
   xpar_chunk_index chunk_cache;
@@ -4665,7 +4924,10 @@ int xpar_op_consolidate(const xpar_options * caller) {
                "mode; this chain retains public verification hashes.");
   head = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
   eff.layout = gen_chain_layout(o, &c, head, false);
+  xpar_cli_armour_for_layout(&eff, eff.layout);
+  inherited_r = gen_inherit_recovery(&eff, &c, head, &old_ratio);
   owned_layout = c.gen[head].sd.layout != XPAR_LAYOUT_SIDECAR;
+  if (!o->quiet && c.base) gen_report_stale_stage(o, c.base);
   base = o->output ? o->output : c.base;
   if (!base) FATAL("This set has no base name; pass --output.");
   if (!o->output && !o->replace)
@@ -4813,14 +5075,28 @@ int xpar_op_consolidate(const xpar_options * caller) {
                    cache_path);
     xpar_remove(stage_cache);
   }
-  if (!o->quiet)
+  if (!o->quiet) {
     xpar_fprintf(xpar_stderr,
                  "xpar: collapsed %" PRIu32 " generations into one: %" PRIu32 " %s, "
-                 "%" PRIu64 " stream bytes, %" PRIu64 " recovery slice%s.\n", c.gen_count,
+                 "%" PRIu64 " stream bytes, %" PRIu64 " recovery slice%s "
+                 "(R was %" PRIu64 " at %.1f%%, now %" PRIu64 " at %.1f%%).\n",
+                 c.gen_count,
                  m.count, m.count == 1 ? "entry" : "entries",
                  m.stream_length,
                  rq.plan.recovery,
-                 PLURAL(rq.plan.recovery));
+                 PLURAL(rq.plan.recovery),
+                 gen_gen_recovery(&c, head), old_ratio,
+                 rq.plan.recovery,
+                 rq.plan.geom.slice_count
+                   ? 100.0 * (f64) rq.plan.recovery /
+                     (f64) rq.plan.geom.slice_count : 0.0);
+    if (inherited_r)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: -r was not given, so the chain's %.1f%% was "
+                   "inherited.\n", old_ratio);
+  }
+  gen_warn_thinner(o, old_ratio, rq.plan.recovery,
+                   rq.plan.geom.slice_count);
 
 done:
   gen_json_result(o, "consolidate",
@@ -4841,6 +5117,203 @@ done:
 
 /*  recover.  */
 
+/*  Lay out one index or recovery volume from freshly encoded tables, so
+    that `recover` and `repair` publish exactly the same bytes.  */
+static void gen_recovery_volume(xpar_buf * out, const xpar_chain * c, u32 g,
+                                const xpar_layt * layt, u32 target,
+                                const gen_plan * pl, gen_tables * t,
+                                u8 * rec_scratch) {
+  xpar_volh vh;
+  u64 e;
+  xpar_buf_init(out);
+  xpar_memset(&vh, 0, sizeof vh);
+  vh.volume_index = layt->vol[target].kind == XPAR_VOL_INDEX
+                      ? XPAR_VOL_STANDALONE : target;
+  vh.volume_kind  = layt->vol[target].kind;
+  xpar_volh_write(out, &vh, c->gen[g].set_id, gen_chain_key(c));
+  {
+    xpar_buf group;
+    u64 payload = layt->vol[target].byte_length * pl->geom.slice_size;
+    u64 crit_bytes;
+    u32 rec_count = 0, rec_index = 0, q;
+    xpar_armour_params ap;
+    bool armoured, carry;
+    xpar_buf_init(&group);
+    gen_group_stored(&group, c, g, layt,
+                     layt->vol[target].kind == XPAR_VOL_INDEX
+                       ? XPAR_VOL_STANDALONE : target, c->gen[g].set_id);
+    /*  Recover armour parameters from the set, not CLI defaults.  */
+    armoured = xpar_gchain_crit_armour(c, g, &ap);
+    /*  Replication uses stored size and the recovery-volume index.  */
+    crit_bytes = group.len;
+    if (armoured) {
+      xpar_buf probe;
+      xpar_buf_init(&probe);
+      gen_armour_pack_ap(&probe, &ap, group.data, group.len, c->gen[g].set_id,
+                         gen_chain_key(c));
+      crit_bytes = probe.len;
+      xpar_buf_free(&probe);
+    }
+    for (q = 0; q < layt->count; q++) {
+      if (layt->vol[q].kind != XPAR_VOL_RECOVERY) continue;
+      if (q < target) rec_index++;
+      rec_count++;
+    }
+    carry = layt->vol[target].kind == XPAR_VOL_INDEX ||
+            xpar_replicate_here(crit_bytes, payload, rec_index, rec_count);
+    if (carry) {
+      if (armoured)
+        gen_armour_pack_ap(out, &ap, group.data, group.len, c->gen[g].set_id,
+                           gen_chain_key(c));
+      else
+        xpar_buf_put(out, group.data, group.len);
+    }
+    xpar_buf_free(&group);
+  }
+  if (layt->vol[target].kind == XPAR_VOL_INDEX || target == 1) {
+    if (t->slice_tag)
+      xpar_sltg_write_all(out, t->slice_tag, pl->geom.slice_count, t->tag_len,
+                          c->gen[g].set_id, gen_chain_key(c));
+    if (t->cell_crc)
+      xpar_slcl_write_all(out, t->cell_crc, pl->geom.slice_count,
+                          pl->geom.cell_bytes, pl->geom.cells_per_slice,
+                          c->gen[g].set_id, gen_chain_key(c));
+  }
+  for (e = layt->vol[target].recovery_first;
+       e < layt->vol[target].recovery_first + layt->vol[target].byte_length;
+       e++) {
+    const u8 * rec = gen_rec_get(t, e, rec_scratch);
+    xpar_rcvs_write(out, e, rec, (sz) pl->geom.slice_size,
+                    c->gen[g].set_id, gen_chain_key(c));
+  }
+  gen_crtr_stored(out, c, g, c->gen[g].set_id);
+}
+
+/*  Re-encode volumes containing missing recovery exponents.  */
+u64 xpar_gen_regen_recovery(const xpar_options * o, u64 * volumes,
+                            const char ** reason) {
+  xpar_chain c;
+  xpar_manifest m;
+  xpar_layt layt;
+  gen_plan p;
+  gen_tables t;
+  gen_addrec_file * staged;
+  char ** paths;
+  u32 * owner = NULL;
+  u32 * hit;
+  u32 g, i, hits = 0;
+  u64 r_total = 0, slices = 0, e;
+  u8 * want;
+  u8 * rec_scratch = NULL;
+  xpar_vset * src;
+  int src_rc;
+
+  if (reason) *reason = NULL;
+  if (volumes) *volumes = 0;
+  xpar_gchain_load(o, &c);
+  g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
+  if (c.gen[g].sd.layout == XPAR_LAYOUT_ARMOURED || !c.gen[g].layt_body ||
+      xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) !=
+        XPAR_OK) {
+    /*  These layouts name no separate recovery volumes.  */
+    xpar_gchain_free(&c);
+    return 0;
+  }
+  gen_require_write_key(&c, "repair");
+
+  for (i = 0; i < layt.count; i++)
+    if (layt.vol[i].kind == XPAR_VOL_RECOVERY)
+      r_total = MAX(r_total, layt.vol[i].recovery_first +
+                             layt.vol[i].byte_length);
+  if (!r_total) { xpar_layt_free(&layt);  xpar_gchain_free(&c);  return 0; }
+
+  /*  Rebuild exponents with no surviving RCVS packet.  */
+  src = xpar_vset_open(o);
+  want = (u8 *) xpar_calloc((sz) r_total, 1);
+  for (e = 0; e < r_total; e++) {
+    u64 n;
+    want[e] = !xpar_vset_rcvs(src, e, &n);
+  }
+  /*  Rebuild each affected volume in full.  */
+  hit = (u32 *) xpar_calloc(layt.count ? layt.count : 1, sizeof(u32));
+  for (i = 0; i < layt.count; i++) {
+    const xpar_vol * v = &layt.vol[i];
+    if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
+    for (e = v->recovery_first; e < v->recovery_first + v->byte_length; e++)
+      if (want[e]) { hit[hits++] = i;  break; }
+  }
+  xpar_free(want);
+  if (!hits) {
+    xpar_vset_close(src);
+    xpar_free(hit);  xpar_layt_free(&layt);  xpar_gchain_free(&c);
+    return 0;
+  }
+
+  gen_manifest_on_disk(&c, g, o, &m, &owner);
+  xpar_memset(&p, 0, sizeof p);
+  if (!xpar_geom_from_setd(&c.gen[g].sd, &p.geom))
+    FATAL_FORMAT("Generation %" PRIu32 "'s geometry is malformed.",
+                 c.gen[g].sd.generation);
+  p.recovery   = r_total;
+  p.encode_r   = r_total;
+  p.field_log2 = c.gen[g].sd.field_log2;
+  p.codec      = c.gen[g].sd.codec;
+  p.axis       = c.gen[g].sd.recovery_axis_log2;
+
+  /*  Never derive parity from damaged data.  */
+  src_rc = xpar_vset_check(src, o, NULL);
+  if (!xpar_vset_stream_intact(src, src_rc)) {
+    if (reason) *reason = "the protected data is not intact";
+    xpar_vset_close(src);
+    xpar_free(hit);  xpar_free(owner);  xpar_manifest_free(&m);
+    xpar_layt_free(&layt);  xpar_gchain_free(&c);
+    return 0;
+  }
+  gen_encode(&m, &p, c.gen[g].sd.slice_tag_len, o->memory,
+             c.base ? c.base : o->set, gen_chain_key(&c), gen_read_vset,
+             src, &t, NULL);
+  gen_require_source_tables(src, &t, &p);
+  xpar_vset_close(src);
+  if (t.rec_spill) rec_scratch = (u8 *) xpar_alloc_raw((sz) t.rec_z);
+
+  /*  Stage all volumes before publishing.  */
+  staged = (gen_addrec_file *) xpar_calloc(hits, sizeof(*staged));
+  paths  = (char **) xpar_calloc(hits, sizeof(char *));
+  for (i = 0; i < hits; i++) {
+    const xpar_vol * v = &layt.vol[hit[i]];
+    xpar_buf out;
+    gen_recovery_volume(&out, &c, g, &layt, hit[i], &p, &t, rec_scratch);
+    paths[i] = xpar_path_join(c.dir, v->name);
+    staged[i].stage = gen_stage_whole(paths[i], out.data, out.len);
+    staged[i].final = paths[i];
+    staged[i].replace = true;
+    if (!xpar_verify_written_volume(staged[i].stage, gen_chain_key(&c),
+                                    c.gen[g].set_id, hit[i], v->kind,
+                                    v->recovery_first, v->byte_length,
+                                    p.geom.slice_size)) {
+      gen_addrec_discard(staged, i + 1);
+      FATAL_CODE(XPAR_EXIT_INTERNAL,
+                 "internal: a regenerated recovery volume did not pass its "
+                 "strict packet read-back. Nothing was published.");
+    }
+    xpar_buf_free(&out);
+    slices += v->byte_length;
+  }
+  gen_addrec_publish(staged, hits);
+  for (i = 0; i < hits; i++) xpar_free(paths[i]);
+  xpar_free(paths);
+  if (volumes) *volumes = hits;
+
+  xpar_free(hit);
+  gen_tables_free(&t);
+  xpar_free(rec_scratch);
+  xpar_free(owner);
+  xpar_manifest_free(&m);
+  xpar_layt_free(&layt);
+  xpar_gchain_free(&c);
+  return slices;
+}
+
 int xpar_op_recover(const xpar_options * o) {
   xpar_chain c;
   xpar_manifest m;
@@ -4849,9 +5322,8 @@ int xpar_op_recover(const xpar_options * o) {
   gen_tables t;
   u32 * owner = NULL;
   u32 g, i, target = 0xFFFFFFFFu;
-  u64 r_total = 0, e;
+  u64 r_total = 0;
   xpar_buf out;
-  xpar_volh vh;
   char * path;
   u8 * rec_scratch = NULL;
   xpar_vset * source_set;
@@ -5007,68 +5479,7 @@ int xpar_op_recover(const xpar_options * o) {
   xpar_vset_close(source_set);
   if (t.rec_spill) rec_scratch = (u8 *) xpar_alloc_raw((sz) t.rec_z);
 
-  xpar_buf_init(&out);
-  xpar_memset(&vh, 0, sizeof vh);
-  vh.volume_index = layt.vol[target].kind == XPAR_VOL_INDEX
-                      ? XPAR_VOL_STANDALONE : target;
-  vh.volume_kind  = layt.vol[target].kind;
-  xpar_volh_write(&out, &vh, c.gen[g].set_id, gen_chain_key(&c));
-  {
-    xpar_buf group;
-    u64 payload = layt.vol[target].byte_length * p.geom.slice_size;
-    u64 crit_bytes;
-    u32 rec_count = 0, rec_index = 0, q;
-    xpar_armour_params ap;
-    bool armoured, carry;
-    xpar_buf_init(&group);
-    gen_group_stored(&group, &c, g, &layt,
-                     layt.vol[target].kind == XPAR_VOL_INDEX
-                       ? XPAR_VOL_STANDALONE : target, c.gen[g].set_id);
-    /*  Recover armour parameters from the set, not CLI defaults.  */
-    armoured = xpar_gchain_crit_armour(&c, g, &ap);
-    /*  Replication uses stored size and the recovery-volume index.  */
-    crit_bytes = group.len;
-    if (armoured) {
-      xpar_buf probe;
-      xpar_buf_init(&probe);
-      gen_armour_pack_ap(&probe, &ap, group.data, group.len, c.gen[g].set_id,
-                         gen_chain_key(&c));
-      crit_bytes = probe.len;
-      xpar_buf_free(&probe);
-    }
-    for (q = 0; q < layt.count; q++) {
-      if (layt.vol[q].kind != XPAR_VOL_RECOVERY) continue;
-      if (q < target) rec_index++;
-      rec_count++;
-    }
-    carry = layt.vol[target].kind == XPAR_VOL_INDEX ||
-            xpar_replicate_here(crit_bytes, payload, rec_index, rec_count);
-    if (carry) {
-      if (armoured)
-        gen_armour_pack_ap(&out, &ap, group.data, group.len, c.gen[g].set_id,
-                           gen_chain_key(&c));
-      else
-        xpar_buf_put(&out, group.data, group.len);
-    }
-    xpar_buf_free(&group);
-  }
-  if (layt.vol[target].kind == XPAR_VOL_INDEX || target == 1) {
-    if (t.slice_tag)
-      xpar_sltg_write_all(&out, t.slice_tag, p.geom.slice_count, t.tag_len,
-                          c.gen[g].set_id, gen_chain_key(&c));
-    if (t.cell_crc)
-      xpar_slcl_write_all(&out, t.cell_crc, p.geom.slice_count,
-                          p.geom.cell_bytes, p.geom.cells_per_slice,
-                          c.gen[g].set_id, gen_chain_key(&c));
-  }
-  for (e = layt.vol[target].recovery_first;
-       e < layt.vol[target].recovery_first + layt.vol[target].byte_length;
-       e++) {
-    const u8 * rec = gen_rec_get(&t, e, rec_scratch);
-    xpar_rcvs_write(&out, e, rec, (sz) p.geom.slice_size,
-                    c.gen[g].set_id, gen_chain_key(&c));
-  }
-  gen_crtr_stored(&out, &c, g, c.gen[g].set_id);
+  gen_recovery_volume(&out, &c, g, &layt, target, &p, &t, rec_scratch);
 
   if (o->to_dir && xpar_strlen(o->to_dir))
     xpar_asprintf(&path, "%s/%s", o->to_dir, layt.vol[target].name);
@@ -5373,7 +5784,7 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   xpar_key key;
   u8 master[XPAR_BLAKE3_KEY_LEN];
   bool key_loaded = false;
-  int bits, bit_order[2] = { 8, 16 }, bi, found = 0;
+  int bits, bit_order[2] = { 8, 16 }, bi, found = 0, which = -1;
   u32 t;
   u64 d;
   u8 * frame = NULL;
@@ -5391,6 +5802,14 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   region = (u64) n - ARM_HDR_LEN;
   xpar_memset(&pr, 0, sizeof pr);
 
+  /*  Search parameters only when no stored prologue decodes.  */
+  if (xpar_garm_prologue(f, n, &pr, &which)) {
+    found = 1;
+    if (!o->quiet)
+      xpar_fprintf(xpar_stderr, "xpar: prologue copy %d of 3 verifies.\n",
+                   which + 1);
+  }
+
   /*  Try symbol widths whose frame size divides the input first; syndromes
       remain the authority.  */
   if (region >= 2ull * 65535 && region % (2ull * 65535) == 0) {
@@ -5402,6 +5821,8 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   for (bi = 0; bi < 2 && !found; bi++) {
     u32 di;
     bits = bit_order[bi];
+    if (o->verbose)
+      xpar_fprintf(xpar_stderr, "xpar: searching GF(2^%d) framings.\n", bits);
     for (di = 0; di < 82 && !found; di++) {
       u32 nmax, ncand;
       u64 symbols;
@@ -5426,28 +5847,41 @@ int xpar_op_recover_prologue(const xpar_options * o) {
           a = xpar_armour_new(&ap);
           frame = (u8 *) xpar_realloc(frame, (sz) fx);
           xpar_memcpy(frame, f + ARM_HDR_LEN, (sz) fx);
-          if (xpar_armour_decode_frame(a, frame, NULL) ==
-              XPAR_ARMOUR_CLEAN) {
+          if (xpar_armour_decode_frame(a, frame, NULL) !=
+              XPAR_ARMOUR_FAILED) {
             u64 frames = region / fx;
-            u64 q;
+            u64 q, probe_frames = MIN(frames, (u64) 8);
             bool all_clean = true;
             /*  A short false framing can occasionally satisfy one syndrome
                check because the actual region is itself coded. Require the
-               candidate to frame every byte before accepting it.  */
-            for (q = 1; q < frames && all_clean; q++) {
+               candidate to frame every byte before accepting it; a bounded
+               prefix throws most false framings out first. Correctable
+               damage is still a decode, so CLEAN is not the bar.  */
+            for (q = 1; q < probe_frames && all_clean; q++) {
               xpar_memcpy(frame, f + ARM_HDR_LEN + q * fx, (sz) fx);
-              if (xpar_armour_decode_frame(a, frame, NULL) !=
-                  XPAR_ARMOUR_CLEAN) all_clean = false;
+              if (xpar_armour_decode_frame(a, frame, NULL) ==
+                  XPAR_ARMOUR_FAILED) all_clean = false;
+            }
+            for (q = probe_frames; q < frames && all_clean; q++) {
+              xpar_memcpy(frame, f + ARM_HDR_LEN + q * fx, (sz) fx);
+              if (xpar_armour_decode_frame(a, frame, NULL) ==
+                  XPAR_ARMOUR_FAILED) all_clean = false;
             }
             if (all_clean) {
               u64 maxplain = frames * d * ap.k * (ap.symbol_bits / 8);
+              u64 rlen = frames * fx;
               u8 * probe = (u8 *) xpar_alloc_raw((sz) maxplain);
+              u8 * fixed = (u8 *) xpar_alloc_raw((sz) rlen);
               xpar_scan ps;
               xpar_pkt ph;
               const u8 * pb;
               u64 po;
               bool have_setd = false, have_strm = false;
-              xpar_armour_extract(a, probe, maxplain, f + ARM_HDR_LEN);
+              /*  Confirm packets in the corrected plaintext.  */
+              xpar_memcpy(fixed, f + ARM_HDR_LEN, (sz) rlen);
+              xpar_armour_decode_frames(a, fixed, frames, NULL);
+              xpar_armour_extract(a, probe, maxplain, fixed);
+              xpar_free(fixed);
               /*  Framing recovery must not depend on whether a supplied key
                  is right. The authenticated preflight below distinguishes
                  missing and wrong credentials with exit 6.  */
@@ -5673,6 +6107,22 @@ static u32 bm_check_gf(const xpar_gf_kernels * k, const char * tier) {
     xpar_memcpy(b, d0, n);  xpar_gf8_mac_ref(b, src, n, c8);
     bad += bm_cmp(tier, "mac8", a, b, n);
 
+    /*  Check paired matrix-kernel slots.  */
+    {
+      u8 c8b = (u8) (1 + (bm_next(&r) & 0xFE));
+      xpar_gf8_coef pm[2];
+      u8 * pd[2];
+      xpar_gf8_prepare(&pm[0], c8);
+      xpar_gf8_prepare(&pm[1], c8b);
+      xpar_memcpy(a, d0, n);   xpar_memcpy(a2, d0, n);
+      pd[0] = a;  pd[1] = a2;
+      k->mac8x2(pd, src, n, pm);
+      xpar_memcpy(b, d0, n);   xpar_gf8_mac_ref(b, src, n, c8);
+      xpar_memcpy(b2, d0, n);  xpar_gf8_mac_ref(b2, src, n, c8b);
+      bad += bm_cmp(tier, "mac8x2 lo", a, b, n);
+      bad += bm_cmp(tier, "mac8x2 hi", a2, b2, n);
+    }
+
     k->mul8(a, src, n, &m8);
     xpar_gf8_mul_ref(b, src, n, c8);
     bad += bm_cmp(tier, "mul8", a, b, n);
@@ -5703,6 +6153,21 @@ static u32 bm_check_gf(const xpar_gf_kernels * k, const char * tier) {
     xpar_memcpy(a, d0, n2);  k->mac16(a, src, n2, &m16);
     xpar_memcpy(b, d0, n2);  xpar_gf16_mac_ref(b, src, n2, c16);
     bad += bm_cmp(tier, "mac16", a, b, n2);
+
+    {
+      u16 c16b = (u16) (1 + (bm_next(&r) & 0xFFFE));
+      xpar_gf16_coef pm[2];
+      u8 * pd[2];
+      xpar_gf16_prepare(&pm[0], c16);
+      xpar_gf16_prepare(&pm[1], c16b);
+      xpar_memcpy(a, d0, n2);   xpar_memcpy(a2, d0, n2);
+      pd[0] = a;  pd[1] = a2;
+      k->mac16x2(pd, src, n2, pm);
+      xpar_memcpy(b, d0, n2);   xpar_gf16_mac_ref(b, src, n2, c16);
+      xpar_memcpy(b2, d0, n2);  xpar_gf16_mac_ref(b2, src, n2, c16b);
+      bad += bm_cmp(tier, "mac16x2 lo", a, b, n2);
+      bad += bm_cmp(tier, "mac16x2 hi", a2, b2, n2);
+    }
 
     k->mul16(a, src, n2, &m16);
     xpar_gf16_mul_ref(b, src, n2, c16);

@@ -69,8 +69,9 @@ extern const u8  xpar_gf8_cantor[8];
 extern const u16 xpar_gf16_cantor[16];
 
 /*  Prepared coefficients contain both shuffle tables and affine matrices.
-    Callers prepare once and reuse across regions.  Every tier's fields are
-    filled, so a coefficient remains valid after dispatch changes.  */
+    Callers prepare once and reuse across regions.  Preparation reads the
+    active tier, so a cached coefficient must be prepared after the tier is
+    chosen and rebuilt if the tier changes.  */
 
 typedef struct {
   u64 affine;    /*  The 8x8 GF(2) matrix of `x -> x * c`, GFNI order.  */
@@ -89,7 +90,8 @@ typedef struct {
   u8  tab[8][16];
   /*  AVX-512 VBMI indexes a whole 64-byte register. Three input groups
       of 6, 6 and 4 bits therefore replace the four nibble groups; each
-      pair is the low and high output byte of the GF(2^16) product.  */
+      pair is the low and high output byte of the GF(2^16) product.
+      Filled only while vbmi512 is the active tier; gf.c says why.  */
   u8  tab6[6][64];
   u16 c;
 } xpar_gf16_coef;

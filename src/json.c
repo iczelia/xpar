@@ -206,3 +206,51 @@ void xpar_json_summary(xpar_json * j, const char * status, int exit_code) {
   xpar_json_i64(j, "exit", exit_code);
   xpar_json_end(j);
 }
+
+/*  Mirror fatal errors to JSON when enabled.  */
+static bool json_fatal_on;
+
+void xpar_json_fatal_enable(bool on) { json_fatal_on = on; }
+
+static void json_fatal_text(int code, const char * msg) {
+  xpar_json j;
+  if (!json_fatal_on) return;
+  /*  Prevent recursion while emitting the record.  */
+  json_fatal_on = false;
+  xpar_json_init(&j, xpar_stdout, true);
+  xpar_json_begin(&j, "summary");
+  xpar_json_str(&j, "status", "error");
+  xpar_json_i64(&j, "exit", code);
+  xpar_json_str(&j, "message", msg);
+  xpar_json_end(&j);
+}
+
+/*  Strip trailing diagnostic newlines.  */
+static void json_trim(char * s) {
+  sz n = 0;
+  while (s[n]) n++;
+  while (n && (s[n - 1] == '\n' || s[n - 1] == '\r')) s[--n] = 0;
+}
+
+void xpar_json_fatal(int code, const char * fmt, ...) {
+  char msg[4096];
+  va_list ap;
+  if (!json_fatal_on) return;
+  va_start(ap, fmt);
+  xpar_vsnprintf(msg, sizeof msg, fmt, ap);
+  va_end(ap);
+  json_trim(msg);
+  json_fatal_text(code, msg);
+}
+
+void xpar_fatal(int code, const char * fmt, ...) {
+  char msg[4096];
+  va_list ap;
+  va_start(ap, fmt);
+  xpar_vsnprintf(msg, sizeof msg, fmt, ap);
+  va_end(ap);
+  json_trim(msg);
+  xpar_fprintf(xpar_stderr, "xpar: %s\n", msg);
+  json_fatal_text(code, msg);
+  xpar_exit(code);
+}

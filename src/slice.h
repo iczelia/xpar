@@ -71,6 +71,17 @@ xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,
                                   xpar_geom * out);
 const char * xpar_geom_reason(xpar_geom_status s);
 
+/*  Derive R for a candidate geometry.  */
+typedef u64 (* xpar_recovery_fn)(void * ctx, u64 slice_count, u64 slice_size);
+
+/*  Resolve Z, S, and R within the field limit.  */
+xpar_geom_status xpar_geom_solve(const xpar_geom_req * req,
+                                 xpar_recovery_fn derive, void * ctx,
+                                 xpar_geom * out, u64 * recovery);
+
+/*  Return the maximum feasible S and R.  */
+void xpar_geom_reach(const xpar_geom_req * req, u64 * slices, u64 * recovery);
+
 u32 xpar_cell_choose(u64 slice_size, u32 want, u32 armour_frame);
 
 /*  Fill in slice_count, cell_bytes and cells_per_slice from a Z, an L

@@ -141,8 +141,7 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
     return;
   }
 
-  /*  Iterate n' = min(n, ceil(bytes/W) + 2t) with 2t = round(p*n').
-      The fixed bound prevents malformed percentages from looping.  */
+  /*  Solve n' = min(n, ceil(bytes/W) + 2t), with 2t = round(p*k').  */
   n = p->n;
   t2 = o->armour_t ? 2 * o->armour_t : 2;
   {
@@ -151,7 +150,7 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
       u64 need = xpar_ceil_div(object_bytes, w) + t2;
       u32 n2 = need < (u64) n ? (u32) need : n;
       u32 t3 = o->armour_t ? 2 * o->armour_t
-                           : (u32) (pct * (f64) n2 / 100.0 + 0.5);
+                           : (u32) (pct * (f64) n2 / (100.0 + pct) + 0.5);
       if (t3 < 2) t3 = 2;
       t3 &= ~1u;
       if (t3 >= n2) t3 = (n2 - 1) & ~1u;
@@ -181,6 +180,30 @@ static void armour_depth(const xpar_options * o, u64 budget,
   if (d > XPAR_ARMG_DEPTH_MAX) d = XPAR_ARMG_DEPTH_MAX;
   while (d > 1 && 2 * d * p->n * w > budget / 4) d /= 2;
   p->depth = d;
+}
+
+/*  The burst a depth delivers: a burst spans at most (t*D - 1)*W bytes.  */
+static u64 armour_burst(const xpar_armour_params * p) {
+  u64 w = p->symbol_bits / 8, t = (p->n - p->k) / 2;
+  return t && p->depth ? (t * p->depth - 1) * w : 0;
+}
+
+/*  Reject explicit depths or bursts that exceed memory.  */
+static void armour_depth_or_die(const xpar_options * o, u64 budget,
+                                xpar_armour_params * p) {
+  xpar_armour_params want = *p;
+  u64 need;
+  armour_depth(o, budget, p);
+  if (!o->burst && !o->depth) return;
+  armour_depth(o, UINT64_MAX, &want);
+  if (want.depth <= p->depth) return;
+  need = 8 * want.depth * want.n * (want.symbol_bits / 8);
+  if (o->depth)
+    FATAL("--depth %" PRIu32 " needs -m %" PRIu64
+          "; current memory allows %" PRIu64 ".", o->depth, need, p->depth);
+  FATAL("--burst %" PRIu64 " needs -m %" PRIu64
+        "; current memory allows %" PRIu64 ".", o->burst, need,
+        armour_burst(p));
 }
 
 /*  Resolve logical stream bytes through canonical occurrences. Bytes past
@@ -321,9 +344,17 @@ static void rs_open(recstore * rs, u64 count, u64 z, u64 budget,
     rs->mem = (u8 *) xpar_alloc_raw((sz) (count * z));
     return;
   }
-  xpar_asprintf(&rs->path, "%s.xpar-tmp", base);
-  rs->spill = xpar_open(rs->path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_TRUNC);
-  if (!rs->spill) FATAL_PERROR(rs->path);
+  /*  Create private spill files without following links.  */
+  {
+    char * stem;
+    xpar_asprintf(&stem, "%s.xpar-tmp-", base);
+    rs->spill = xpar_stage_open(stem, XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
+                                &rs->path);
+    xpar_free(stem);
+  }
+  if (!rs->spill)
+    FATAL_IO("Cannot create a recovery spill file beside '%s': %s.", base,
+             xpar_strerror(xpar_errno()));
 }
 
 static void rs_put(recstore * rs, u64 idx, u64 off, const u8 * p, u64 n) {
@@ -814,6 +845,39 @@ static u64 resolve_recovery(const xpar_rspec * rs, u64 s, u64 z, u64 floor) {
   return r;
 }
 
+/*  What -r asks for, carried through the geometry search.  */
+typedef struct {
+  const xpar_rspec * rs;
+  u64 floor;
+} rdemand;
+
+static u64 demand_recovery(void * arg, u64 s, u64 z) {
+  const rdemand * d = (const rdemand *) arg;
+  return resolve_recovery(d->rs, s, z, d->floor);
+}
+
+/*  Report the nearest field-feasible geometry.  */
+static void geometry_refused(const xpar_options * o, const xpar_geom_req * gr,
+                             xpar_geom_status gs) {
+  u64 field = (u64) 1 << gr->field_log2, s = 0, r = 0, z;
+  f64 mult;
+  if (gs != XPAR_GEOM_FIELD) FATAL("%s.", xpar_geom_reason(gs));
+  xpar_geom_reach(gr, &s, &r);
+  if (s >= field) {
+    z = (xpar_ceil_div(gr->stream_length, field - 1) + 63) & ~(u64) 63;
+    FATAL("S=%" PRIu64 " exceeds the field limit of %" PRIu64
+          "; use -s %" PRIu64 " or larger, or -b %" PRIu64 " or smaller.",
+          s, field, z, field - 1);
+  }
+  if (o->slice_size || o->slices)
+    FATAL("Field limit: S+R <= %" PRIu64 "; S=%" PRIu64 " leaves R=%"
+          PRIu64 ". Reduce -r or omit -s/-b.", field, s, r);
+  mult = s ? (f64) r / (f64) s : 0.0;
+  FATAL("Field limit S+R<=%" PRIu64 ": %" PRIu64 " bytes allow S=%" PRIu64
+        " and R=%" PRIu64 " (%.2fx, %.0f%%). Reduce -r or split the set.",
+        field, gr->stream_length, s, r, mult, mult * 100.0);
+}
+
 /*  Direct pipe input accumulates fixed Cauchy rows while publishing the
     final data object. The pipe is neither replayed nor copied to scratch.  */
 
@@ -839,10 +903,20 @@ static char * create_output_stage(const char * base) {
   return path;
 }
 
+/*  Discard unpublished staging except irreplaceable piped input.  */
+static bool publish_discard(char * const * from, u32 total, u32 extra,
+                            const char * stage_dir) {
+  u32 i;
+  if (extra) return false;
+  for (i = 0; i < total; i++) (void) xpar_remove(from[i]);
+  return xpar_rmdir(stage_dir) == 0;
+}
+
 static void publish_outputs(const xpar_options * o, char * const * stage,
                             char * const * final, u32 count, u32 label_first,
                             u32 labels, const char * extra_from,
-                            const char * extra_to, const char * stage_dir) {
+                            const char * extra_to, const char * stage_dir,
+                            const xpar_manifest * m) {
   u32 extra = extra_from && extra_to;
   u32 total = count + labels + extra, at = 0, i, published = 0;
   char ** from = (char **) xpar_calloc(total, sizeof(char *));
@@ -865,11 +939,26 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   }
   from[at] = xpar_strdup(stage[0]);
   to[at] = xpar_strdup(final[0]);
+  /*  Do not overwrite protected inputs.  */
+  for (i = 0; m && i < total; i++) {
+    u32 j;
+    for (j = 0; j < m->count; j++)
+      if (m->source[j] && xpar_path_same(m->source[j], to[i])) {
+        publish_discard(from, total, extra, stage_dir);
+        FATAL("Output '%s' is also an input of this set; nothing was "
+              "published.", to[i]);
+      }
+  }
   for (i = 0; i < total; i++) {
     xpar_asprintf(&backup[i], "%s/.backup-%" PRIu32, stage_dir, i);
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
-    if (!o->force) { collision = true;  goto rollback_old; }
+    if (!o->force) {
+      if (publish_discard(from, total, extra, stage_dir))
+        FATAL("'%s' exists; -f overwrites it.", to[i]);
+      FATAL("'%s' exists; -f overwrites it; the staged set remains in '%s'.",
+            to[i], stage_dir);
+    }
   }
   /* Recheck shared outputs and preserve rollback on refusal. */
   for (i = 0; i < total; i++) {
@@ -1225,6 +1314,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   xpar_layt layt;
   xpar_crit cr;
   u64 budget, crit_bytes = 0, plan_z = 0;
+  rdemand dem;
   u32 nvol = 0, data_n = 0, name_count, i;
   int wf, wc;
   char ** names = NULL, ** write_names = NULL;
@@ -1265,6 +1355,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   /*  Per-file alignment needs a provisional Z from the scanned lengths;
       recompute geometry from the packed stream afterwards.  */
   build_walk(o, &w, o->slice_size);
+  w.self_base = c.base;
   if (o->dedup == XPAR_DEDUP_CHUNK) w.chunk_cache_out = &c.chunk_cache;
   else if (!o->auth_only) {
     u64 cache_budget = o->memory ? o->memory : xpar_plan_default_memory();
@@ -1279,6 +1370,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     e->name = xpar_strdup(o->stdin_name);
     e->name_len = (u32) xpar_strlen(o->stdin_name);
   }
+  FATAL_UNLESS("Nothing to protect; all inputs were skipped or filtered.",
+               c.m.count > 0);
   check_reachable(&c);
   if (o->align == XPAR_ALIGN_SLICE && !o->slice_size) {
     u64 sum = 0;
@@ -1295,14 +1388,15 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       xpar_file_id(&c.m.entry[i], c.key.k_file, c.m.entry[i].file_id);
   xpar_occindex_build(&c.m, &c.ix);
 
-  /*  Resolve R after S; the field bound depends on both.  */
+  /*  Settle Z, S, and geometry-dependent R together.  */
   xpar_memset(&gr, 0, sizeof gr);
   gr.stream_length = c.m.stream_length;
   gr.slice_size    = o->slice_size;
   gr.slice_count   = o->slices;
   gr.field_log2    = o->field == 8 ? 8 : 16;
-  gs = xpar_geom_choose(&gr, &c.geom);
-  if (gs != XPAR_GEOM_OK) FATAL("%s.", xpar_geom_reason(gs));
+  dem.rs = &o->recovery;  dem.floor = o->min_recovery;
+  gs = xpar_geom_solve(&gr, demand_recovery, &dem, &c.geom, &c.recovery);
+  if (gs != XPAR_GEOM_OK) geometry_refused(o, &gr, gs);
   if (o->align == XPAR_ALIGN_1K) {
     FATAL_UNLESS("--align=1k needs slice tags; choose --slice-tag=8 or 16.",
                  c.tag_len != 0);
@@ -1311,18 +1405,16 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       FATAL_UNLESS("--align=1k needs a power-of-two slice size of at least "
                    "1 KiB; the explicit geometry does not provide one.",
                    !o->slice_size && !o->slices);
-      plan_z = xpar_next_pow2(MAX(c.geom.slice_size,
-                                  (u64) XPAR_BLAKE3_CHUNK_LEN));
-      gr.slice_size = plan_z;
+      /*  A larger Z cannot increase S+R.  */
+      gr.slice_size = xpar_next_pow2(MAX(c.geom.slice_size,
+                                         (u64) XPAR_BLAKE3_CHUNK_LEN));
       gr.slice_count = 0;
-      gs = xpar_geom_choose(&gr, &c.geom);
-      if (gs != XPAR_GEOM_OK) FATAL("%s.", xpar_geom_reason(gs));
+      gs = xpar_geom_solve(&gr, demand_recovery, &dem, &c.geom,
+                           &c.recovery);
+      if (gs != XPAR_GEOM_OK) geometry_refused(o, &gr, gs);
     }
   }
-  c.recovery = c.geom.slice_count
-                 ? resolve_recovery(&o->recovery, c.geom.slice_count,
-                                    c.geom.slice_size, o->min_recovery)
-                 : 0;
+  plan_z = c.geom.slice_size;
 
   budget = o->memory;
 
@@ -1331,7 +1423,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->layout == XPAR_LAYOUT_ARMOURED) {
     const char * bad;
     armour_params(o, c.geom.stream_length, false, &c.region_ap);
-    armour_depth(o, budget ? budget : ((u64) 1 << 30), &c.region_ap);
+    armour_depth_or_die(o, budget ? budget : ((u64) 1 << 30), &c.region_ap);
     bad = xpar_armour_check(&c.region_ap);
     if (bad) FATAL("%s", bad);
   }
@@ -1359,12 +1451,15 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     xpar_plan_explain_no_fit(&pr, why, sizeof why);
     FATAL_CODE(XPAR_EXIT_NOPLAN, "No plan fits: %s.", why);
   }
+  if (ps == XPAR_PLAN_BAD_GEOMETRY) geometry_refused(o, &gr, XPAR_GEOM_FIELD);
   if (ps != XPAR_PLAN_OK)
-    /*  Format limits are usage errors, not planning failures.  */
-    FATAL_CODE(ps == XPAR_PLAN_TOO_MANY_CELLS ? XPAR_EXIT_USAGE
-                                              : XPAR_EXIT_NOPLAN,
-               "%s.", xpar_plan_reason(ps));
+    FATAL("%s.", xpar_plan_reason(ps));
   c.geom = c.plan.geom;
+  FATAL_UNLESS("--cell %" PRIu64 " exceeds the slice size of %" PRIu64
+               " bytes; lower --cell or raise -s.",
+               !o->cell_bytes || c.geom.slice_size < XPAR_CELL_MIN ||
+               o->cell_bytes <= c.geom.slice_size,
+               o->cell_bytes, c.geom.slice_size);
   if (!budget) budget = c.plan.mem_total;
 
   if (c.stream_cache) {
@@ -1551,15 +1646,16 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     }
 
   xpar_memset(&layt, 0, sizeof layt);
+  layt.this_volume = XPAR_VOL_STANDALONE;
   layt.count = o->layout == XPAR_LAYOUT_ARMOURED
                  ? 1 : nvol + 1 + data_n;
   layt.vol = (xpar_vol *) xpar_calloc(layt.count, sizeof(xpar_vol));
   layt.vol[0].kind   = XPAR_VOL_INDEX;
-  layt.vol[0].vflags = c.arm != NULL;
+  /*  Bit 0 identifies the armoured index.  */
+  layt.vol[0].vflags = o->layout == XPAR_LAYOUT_ARMOURED;
   layt.vol[0].name   = xpar_strdup(xpar_path_base(names[0]));
   for (i = 0; i < nvol && o->layout != XPAR_LAYOUT_ARMOURED; i++) {
     layt.vol[i + 1].kind           = XPAR_VOL_RECOVERY;
-    layt.vol[i + 1].vflags         = c.arm != NULL;
     layt.vol[i + 1].recovery_first = (u32) span[i].first;
     layt.vol[i + 1].byte_length    = span[i].count;
     layt.vol[i + 1].name           =
@@ -1599,7 +1695,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   {
     xpar_buf probe;
     xpar_buf_init(&probe);
-    layt.this_volume = XPAR_VOL_STANDALONE;
     emit_crit(&c, &probe, &cr);
     crit_bytes = probe.len;
     xpar_buf_free(&probe);
@@ -1638,7 +1733,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     ap = c.region_ap;
     ra = xpar_armour_new(&ap);
     xpar_buf_init(&head);
-    layt.this_volume = XPAR_VOL_STANDALONE;
     emit_head(&c, &head, &cr, XPAR_VOL_STANDALONE, XPAR_VOL_INDEX, false,
               true);
     xpar_strm_write_header(&head, c.geom.stream_length, c.set_id,
@@ -1705,7 +1799,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   } else {
     xpar_buf b;
     xpar_buf_init(&b);
-    layt.this_volume = XPAR_VOL_STANDALONE;
     emit_head(&c, &b, &cr, XPAR_VOL_STANDALONE, XPAR_VOL_INDEX, true, true);
     xpar_crtr_write(&b, "xpar " PACKAGE_VERSION, c.set_id, create_key(&c),
                     &c.wr);
@@ -1718,7 +1811,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       bool copy = xpar_replicate_here(crit_bytes, payload, i, nvol);
       u8 * scratch;
       xpar_buf_init(&b);
-      layt.this_volume = i + 1;
       emit_head(&c, &b, &cr, i + 1, XPAR_VOL_RECOVERY, i == 0, copy);
       f = xpar_open(write_names[i + 1], XPAR_O_WRONLY | XPAR_O_CREAT |
                                         XPAR_O_TRUNC);
@@ -1778,7 +1870,6 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
           xpar_buf lb;
           label = xpar_vname_label(write_names[li]);
           xpar_buf_init(&lb);
-          layt.this_volume = li;
           emit_head(&c, &lb, &cr, li, XPAR_VOL_DATA, false, true);
           xpar_crtr_write(&lb, "xpar " PACKAGE_VERSION, c.set_id,
                           create_key(&c), &c.wr);
@@ -1799,20 +1890,27 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   publish_outputs(o, write_names, names, name_count, nvol + 1,
                   o->labels && o->layout == XPAR_LAYOUT_SPLIT ? data_n : 0,
                   pipe_stage, ready ? ready->final_path : NULL,
-                  output_stage);
+                  output_stage, &c.m);
   publish_chunk_cache(&c);
 
-  if (!o->quiet && !o->json)
+  if (!o->quiet && !o->json) {
+    char burst[64];
+    burst[0] = 0;
+    if (o->burst && o->layout == XPAR_LAYOUT_ARMOURED)
+      xpar_snprintf(burst, sizeof burst,
+                    ", burst tolerance %" PRIu64 " bytes",
+                    armour_burst(&c.region_ap));
     xpar_fprintf(xpar_stderr, "xpar: %s: %" PRIu32 " %s, %" PRIu64
                  " slice%s of %" PRIu64 " "
-                 "bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " volume%s\n", c.base,
+                 "bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " volume%s%s\n", c.base,
                  c.m.count,
                  c.m.count == 1 ? "entry" : "entries",
                  c.geom.slice_count,
                  PLURAL(c.geom.slice_count),
                  c.geom.slice_size,
                  c.recovery, PLURAL(c.recovery),
-                 nvol, PLURAL(nvol));
+                 nvol, PLURAL(nvol), burst);
+  }
   if (o->json) xpar_json_summary(&c.js, "ok", XPAR_EXIT_OK);
 
   rs_close(rsp);
