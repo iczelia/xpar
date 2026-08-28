@@ -69,13 +69,10 @@ static inline u32 xpar_crc_clmul(u32 v, u32 k) {
   return (u32) _mm_crc32_u64(0, (u64) _mm_cvtsi128_si64(r) << 1);
 }
 
-/*  A CPU can have SSE4.2 and not PCLMULQDQ (Nehalem), and both live in
-    this translation unit, so the recombine is chosen at run time rather
-    than by the build flags. Once per twenty-four kilobytes.  */
+/*  Select at run time: SSE4.2 need not include PCLMUL, and --simd may
+    narrow the available features.  */
 static int xpar_crc_clmul_ok(void) {
-  static int ok = -1;
-  if (ok < 0) ok = (xpar_cpu_features() & XPAR_CPU_PCLMUL) != 0;
-  return ok;
+  return (xpar_cpu_features() & XPAR_CPU_PCLMUL) != 0;
 }
 
 static u32 xpar_crc_join_long(u32 a, u32 b, u32 c) {

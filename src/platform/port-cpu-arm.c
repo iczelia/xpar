@@ -87,8 +87,7 @@ u32 xpar_cpu_probe(void) {
   return f;
 }
 
-/*  Cumulative, like the x86 ladder: the crc tier is NEON plus the CRC32
-    extension, so forcing it leaves the NEON kernels reachable.  */
+/*  Optional tiers retain NEON; SVE and CRC32 are independent.  */
 const xpar_cpu_tier xpar_cpu_tier_table[] = {
   { "scalar",   0                                   },
 #if defined(HAVE_NEON)
@@ -98,7 +97,7 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
   { "clmul-neon", XPAR_CPU_NEON                      },
 #endif
 #if defined(HAVE_SVE)
-  { "sve",        XPAR_CPU_SVE                      },
+  { "sve",        XPAR_CPU_NEON | XPAR_CPU_SVE      },
 #endif
 #if defined(HAVE_ARM_CRC32)
   { "neon-crc", XPAR_CPU_NEON | XPAR_CPU_ARMCRC     },
