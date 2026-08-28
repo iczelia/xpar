@@ -242,10 +242,9 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
   xpar_armour_stat st;
   u8 * region, * plain;
   u64 fd, frames, i;
-  int copy = -1;
   bool ok;
   if (size < 8 || xpar_memcmp(buf, "XPAR2ARM", 8) ||
-      !xpar_garm_prologue(buf, (sz) size, &pr, &copy)) return;
+      !xpar_garm_prologue(buf, (sz) size, &pr, NULL)) return;
   if (pr.armoured_length > size - 384) { c->failed++; return; }
   p.symbol_bits = pr.symbol_bits; p.poly = pr.poly;
   p.n = pr.n; p.k = pr.k; p.fcr = pr.fcr; p.prim = pr.prim;
@@ -652,6 +651,10 @@ static void report(const scrub * c, int rc) {
                c->rcvs_count,
                c->rcvs_present,
                c->pkt_bad);
+  if (c->pkt_short)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: recovery: %" PRIu64 " packets had invalid lengths\n",
+                 c->pkt_short);
   if (c->regions) {
     xpar_fprintf(xpar_stderr,
                  "xpar: inner code: %" PRIu64 " regions, %" PRIu64 " codewords, %" PRIu64 " "
@@ -739,6 +742,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     xpar_json_u64(js, "recovery_named", c.rcvs_count);
     xpar_json_u64(js, "recovery_present", c.rcvs_present);
     xpar_json_u64(js, "packets_bad", c.pkt_bad);
+    xpar_json_u64(js, "packets_short", c.pkt_short);
     xpar_json_u64(js, "codewords", c.codewords);
     xpar_json_u64(js, "codewords_clean", c.clean);
     xpar_json_u64(js, "codewords_corrected", c.corrected);

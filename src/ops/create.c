@@ -710,13 +710,8 @@ static void emit_json_set(ctx * c) {
   xpar_json_u64(&c->js, "slices", c->geom.slice_count);
   xpar_json_u64(&c->js, "recovery", c->recovery);
   xpar_json_u64(&c->js, "field", c->plan.field_log2);
-  xpar_json_str(&c->js, "codec",
-                c->plan.codec == XPAR_CODEC_FFT_LOW ? "fft-low"
-              : c->plan.codec == XPAR_CODEC_FFT ? "fft" : "matrix");
-  xpar_json_str(&c->js, "layout",
-                c->o->layout == XPAR_LAYOUT_SIDECAR ? "sidecar"
-                  : (c->o->layout == XPAR_LAYOUT_SPLIT ? "split"
-                                                       : "armoured"));
+  xpar_json_str(&c->js, "codec", xpar_codec_name(c->plan.codec));
+  xpar_json_str(&c->js, "layout", xpar_layout_name((u8) c->o->layout));
   xpar_json_u64(&c->js, "files", c->m.count);
   xpar_json_end(&c->js);
 }
@@ -739,14 +734,7 @@ static void emit_json_files(ctx * c) {
 static void build_walk(const xpar_options * o, xpar_walk_opts * w, u64 z) {
   u64 budget = o->memory;
   xpar_walk_opts_default(w);
-  if (!budget) {
-    u64 phys = xpar_physical_memory();
-    u64 cap = sizeof(void *) >= 8 ? ((u64) 1 << 30)
-                                 : ((u64) 512 << 20);
-    budget = phys ? phys / 4 : cap;
-    if (budget > cap) budget = cap;
-    if (budget < ((u64) 1 << 20)) budget = (u64) 1 << 20;
-  }
+  if (!budget) budget = xpar_plan_default_memory();
   w->dedup     = (u8) o->dedup;
   w->align     = (u8) o->align;
   w->slice_size      = z;
@@ -1082,14 +1070,7 @@ static int create_from_pipe_spooled(const xpar_options * o) {
 }
 
 static u64 create_pipe_budget(const xpar_options * o) {
-  u64 phys, cap, budget = o->memory;
-  if (budget) return budget;
-  phys = xpar_physical_memory();
-  cap = sizeof(void *) >= 8 ? ((u64) 1 << 30) : ((u64) 512 << 20);
-  budget = phys ? phys / 4 : cap;
-  if (budget > cap) budget = cap;
-  if (budget < ((u64) 1 << 20)) budget = (u64) 1 << 20;
-  return budget;
+  return o->memory ? o->memory : xpar_plan_default_memory();
 }
 
 static u64 create_pipe_recovery(const xpar_options * o, u64 z) {

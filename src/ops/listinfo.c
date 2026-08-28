@@ -130,20 +130,6 @@ static char li_type(const xpar_entry * e) {
   return 'f';
 }
 
-static const char * li_codec(u8 c) {
-  return c == XPAR_CODEC_FFT_LOW ? "fft-low"
-       : c == XPAR_CODEC_FFT ? "fft" : "matrix";
-}
-
-static const char * li_layout(u8 l) {
-  switch (l) {
-    case XPAR_LAYOUT_SPLIT:    return "split";
-    case XPAR_LAYOUT_ARMOURED: return "armoured";
-    default: break;
-  }
-  return "sidecar";
-}
-
 /*  Count extent references with one manifest-wide hash table.  */
 
 typedef struct { u64 off, len, refs; } li_ref;
@@ -502,8 +488,8 @@ int xpar_op_info(const xpar_options * o) {
         xpar_json_u64(&js, "stream_length", gs->stream_length);
         xpar_json_u64(&js, "recovery", c.gen[g].recovery_count);
         xpar_json_u64(&js, "field", gs->field_log2);
-        xpar_json_str(&js, "codec", li_codec(gs->codec));
-        xpar_json_str(&js, "layout", li_layout(gs->layout));
+        xpar_json_str(&js, "codec", xpar_codec_name(gs->codec));
+        xpar_json_str(&js, "layout", xpar_layout_name(gs->layout));
         xpar_json_u64(&js, "files", gs->file_count);
         xpar_json_end(&js);
       }
@@ -552,8 +538,8 @@ int xpar_op_info(const xpar_options * o) {
                   (u64) 1 << sd->recovery_axis_log2);
     xpar_json_u64(&js, "recovery_limit", xpar_setd_recovery_limit(sd));
     xpar_json_u64(&js, "field", sd->field_log2);
-    xpar_json_str(&js, "codec", li_codec(sd->codec));
-    xpar_json_str(&js, "layout", li_layout(sd->layout));
+    xpar_json_str(&js, "codec", xpar_codec_name(sd->codec));
+    xpar_json_str(&js, "layout", xpar_layout_name(sd->layout));
     xpar_json_u64(&js, "cell_bytes", sd->cell_bytes);
     xpar_json_u64(&js, "slice_tag_len", sd->slice_tag_len);
     xpar_json_u64(&js, "files", sd->file_count);
@@ -569,7 +555,7 @@ int xpar_op_info(const xpar_options * o) {
                "  format     : %d.%d, layout %s%s\n"
                "  generation : %" PRIu32 " of %" PRIu32 "%s\n",
                idbuf, XPAR_FORMAT_MAJOR, XPAR_FORMAT_MINOR,
-               li_layout(sd->layout),
+               xpar_layout_name(sd->layout),
                sd->required_features ? ", with unimplemented required "
                                        "features" : "",
                sd->generation, c.gen_count,
@@ -596,13 +582,13 @@ int xpar_op_info(const xpar_options * o) {
   if (sd->codec == XPAR_CODEC_FFT_LOW)
     xpar_fprintf(xpar_stdout,
                  "  codec      : %s over GF(2^%" PRIu8 "), data axis 2^%" PRIu8 "; up to "
-                 "%" PRIu64 " recovery slices\n", li_codec(sd->codec),
+                 "%" PRIu64 " recovery slices\n", xpar_codec_name(sd->codec),
                  sd->field_log2, sd->recovery_axis_log2,
                  xpar_setd_recovery_limit(sd));
   else
     xpar_fprintf(xpar_stdout,
                  "  codec      : %s over GF(2^%" PRIu8 "), recovery axis 2^%" PRIu8 " = "
-                 "%" PRIu64 " slices\n", li_codec(sd->codec), sd->field_log2,
+                 "%" PRIu64 " slices\n", xpar_codec_name(sd->codec), sd->field_log2,
                  sd->recovery_axis_log2,
                  xpar_setd_recovery_limit(sd));
   xpar_fprintf(xpar_stdout,

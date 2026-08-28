@@ -759,14 +759,6 @@ static void gen_require_write_key(const xpar_chain * c, const char * verb) {
                "%s requires --auth-key=FILE for this set.", verb);
 }
 
-static const char * gen_layout_name(int l) {
-  switch (l) {
-    case XPAR_LAYOUT_SPLIT:    return "split";
-    case XPAR_LAYOUT_ARMOURED: return "armoured";
-    default: break;
-  }
-  return "sidecar";
-}
 
 /*  Existing chains inherit their layout. Only consolidate may change it.  */
 static int gen_chain_layout(const xpar_options * o, const xpar_chain * c,
@@ -776,7 +768,7 @@ static int gen_chain_layout(const xpar_options * o, const xpar_chain * c,
   if (extending && o->layout != chain)
     FATAL("This chain uses layout '%s'; omit --layout or consolidate to "
           "change it.",
-          gen_layout_name(chain));
+          xpar_layout_name((u8) chain));
   return o->layout;
 }
 
@@ -1146,10 +1138,6 @@ typedef struct {
   u8  field_log2, codec, axis;
 } gen_plan;
 
-static const char * gen_codec_name(u8 c) {
-  return c == XPAR_CODEC_FFT_LOW ? "fft-low"
-       : c == XPAR_CODEC_FFT ? "fft" : "matrix";
-}
 
 /*  Auto selects matrix coding for stable, field-wide recovery rows. Honour
     explicit FFT requests where their capacity rules allow.  */
@@ -1220,7 +1208,7 @@ static void gen_choose(const xpar_options * o, u64 stream_length,
       FATAL_CODE(XPAR_EXIT_NOPLAN,
                  "The %s codec cannot express S=%" PRIu64 ", R=%" PRIu64 " over GF(2^%" PRIu8 "). "
                  "Try --codec=matrix.",
-                 gen_codec_name(p->codec),
+                 xpar_codec_name(p->codec),
                  p->geom.slice_count,
                  r, p->field_log2);
   }
@@ -1261,7 +1249,6 @@ typedef struct {
   xpar_file * rec_spill;
   char * rec_path;
   u64 rec_z;
-  u64   rec_count;
 } gen_tables;
 
 static void gen_tables_free(gen_tables * t) {
@@ -1327,7 +1314,6 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
     tag_sd.required_features = XPAR_FEAT_B3_SUBTREE;
   t->tag_len = tag_len;
   t->rec_z = Z;
-  t->rec_count = R;
   if (!S) return;
 
   if (Y && K && S > (u64) -1 / K)
@@ -3275,7 +3261,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
                                 c.gen[g].sd.recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
                "The %s codec cannot express S=%" PRIu64 " with R=%" PRIu64 " over "
-               "GF(2^%" PRIu8 ").", gen_codec_name(c.gen[g].sd.codec),
+               "GF(2^%" PRIu8 ").", xpar_codec_name(c.gen[g].sd.codec),
                c.gen[g].sd.data_slice_count,
                want, c.gen[g].sd.field_log2);
 

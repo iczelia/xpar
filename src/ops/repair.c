@@ -289,7 +289,6 @@ static void rp_authenticate(rp * r) {
 
 static void rp_key_preflight(rp * r) {
   u32 i;
-  bool found = false;
   if (!r->key_loaded) return;
   r->key_loaded = false;
   for (i = 0; i < r->vol_count; i++)
@@ -302,7 +301,6 @@ static void rp_key_preflight(rp * r) {
     const xpar_crit_pkt * p = &r->crit.pkt[i];
     if (!xpar_pkt_is(&p->hdr, XPAR_T_AUTH) ||
         xpar_auth_read(p->body, (sz) p->body_len, &a) != XPAR_OK) continue;
-    found = true;
     if (!xpar_auth_key_ok(&a, r->master))
       FATAL_CODE(XPAR_EXIT_AUTH,
                  "The authentication key is wrong for this set.");
@@ -314,7 +312,7 @@ static void rp_key_preflight(rp * r) {
   xpar_critset_free(&r->crit);
   xpar_critset_init(&r->crit);
   r->key_loaded = true;
-  (void) found;  /*  No AUTH means the supplied key is unused.  */
+  /*  Without AUTH, defer key validation to packet and slice tags.  */
 }
 
 /*  Resolve chain heads and generation selectors from SETD identities, not
@@ -3233,9 +3231,7 @@ int xpar_op_repair(const xpar_options * o) {
         xpar_json_u64(&chain_js, "slice_size", c.gen[g].sd.slice_size);
         xpar_json_u64(&chain_js, "slices", c.gen[g].sd.data_slice_count);
         xpar_json_str(&chain_js, "layout",
-          c.gen[g].sd.layout == XPAR_LAYOUT_SPLIT ? "split" :
-          c.gen[g].sd.layout == XPAR_LAYOUT_ARMOURED ? "armoured" :
-                                                       "sidecar");
+                      xpar_layout_name(c.gen[g].sd.layout));
         xpar_json_end(&chain_js);
       }
       one_rc = xpar_op_repair(&one);

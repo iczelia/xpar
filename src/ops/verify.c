@@ -275,10 +275,9 @@ static void open_armoured_image(xpar_vset * s, xpar_vimg * v) {
   xpar_armour * a;
   u8 * plain;
   xpar_armour_status ast;
-  int copy = -1;
   FATAL_UNLESS("The armoured prologue of '%s' cannot be recovered; run "
                "`xpar recover-prologue`.",
-               xpar_garm_prologue(v->data, (sz) v->size, &pr, &copy),
+               xpar_garm_prologue(v->data, (sz) v->size, &pr, NULL),
                v->path);
   ap.symbol_bits = pr.symbol_bits;  ap.poly = pr.poly;
   ap.n = pr.n;  ap.k = pr.k;  ap.fcr = pr.fcr;  ap.prim = pr.prim;
@@ -2752,13 +2751,8 @@ void xpar_vset_json_set(const xpar_vset * s, xpar_json * js) {
   xpar_json_u64(js, "slices", s->geom.slice_count);
   xpar_json_u64(js, "recovery", s->recovery);
   xpar_json_u64(js, "field", s->setd.field_log2);
-  xpar_json_str(js, "codec",
-                s->setd.codec == XPAR_CODEC_FFT_LOW ? "fft-low" :
-                s->setd.codec == XPAR_CODEC_FFT     ? "fft" : "matrix");
-  xpar_json_str(js, "layout",
-                s->setd.layout == XPAR_LAYOUT_SPLIT ? "split" :
-                s->setd.layout == XPAR_LAYOUT_ARMOURED ? "armoured" :
-                                                        "sidecar");
+  xpar_json_str(js, "codec", xpar_codec_name(s->setd.codec));
+  xpar_json_str(js, "layout", xpar_layout_name(s->setd.layout));
   xpar_json_u64(js, "files", s->setd.file_count);
   xpar_json_u64(js, "generation", s->setd.generation);
   xpar_json_end(js);
