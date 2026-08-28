@@ -47,6 +47,20 @@ jobs:
           name: xpar-compat-${{ github.sha }}
           path: compat
 
+      #  Reference bytes for cross-architecture reproducibility checks.
+      - name: Write the reproducibility reference
+        run: |
+          make -j4 tests/mkdata
+          ./contrib/repro-digest.sh ./xpar ./tests/mkdata repro-work \
+            > repro-reference.txt
+          cat repro-reference.txt
+
+      - name: Upload the reproducibility reference
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpar-repro-${{ github.sha }}
+          path: repro-reference.txt
+
   #  Linux compiler, SIMD, thread, and sanitizer matrix.
   linux:
     name: Linux ${{ matrix.cc }} ${{ matrix.simd }} ${{ matrix.threads }} ${{ matrix.san }}
@@ -95,6 +109,106 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
+
+  #  Exercise allocation overflow guards on a 32-bit host.
+  linux-i386:
+    name: Linux i386 (32-bit)
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+      - name: Download the reproducibility reference
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-repro-${{ github.sha }}
+
+      - name: Install the 32-bit toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: ./configure --host=i686-pc-linux-gnu CC="gcc -m32"
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Confirm the binary is 32-bit
+        run: |
+          file xpar
+          file xpar | grep -q 'ELF 32-bit' \
+            || { echo "not a 32-bit build"; exit 1; }
+
+      - name: Test suite
+        run: VERBOSE=1 make -j4 check
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      #  Reproducible output must be independent of pointer width.
+      - name: Reproducible output matches the reference
+        run: |
+          make -j4 tests/mkdata
+          ./contrib/repro-digest.sh ./xpar ./tests/mkdata repro-work \
+            > repro-i386.txt
+          diff -u repro-reference.txt repro-i386.txt || {
+            echo "a --reproducible set differs from the 64-bit bytes";
+            exit 1;
+          }
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
+
+  #  Run the full suite through each dispatchable SIMD tier.
+  linux-simd-sweep:
+    name: Linux SIMD sweep
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source package artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
+
+      - name: Extract source package
+        run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: ./configure --enable-simd
+
+      - name: Make
+        run: make -j4 all
+
+      - name: Suite once per tier
+        run: make check-simd
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
 
@@ -443,6 +557,10 @@ jobs:
         with:
           name: xpar-compat-${{ github.sha }}
           path: compat
+      - name: Download the reproducibility reference
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-repro-${{ github.sha }}
 
       - name: Install the cross-toolchain and qemu-user
         run: |
@@ -486,6 +604,17 @@ jobs:
             chmod +x "qw/$n"
           done
           ./qw/xpar --version
+
+      #  Catch endianness and struct-layout dependencies.
+      - name: Reproducible output matches the reference
+        run: |
+          ./contrib/repro-digest.sh ./qw/xpar ./qw/mkdata repro-work \
+            > repro-${{ matrix.target.arch }}.txt
+          cat repro-${{ matrix.target.arch }}.txt
+          diff -u repro-reference.txt repro-${{ matrix.target.arch }}.txt || {
+            echo "a --reproducible set differs from the x86-64 bytes";
+            exit 1;
+          }
 
       #  LOG_COMPILER wraps scripts; launchers wrap their helper binaries.
       - name: Test suite under qemu

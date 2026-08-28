@@ -286,6 +286,7 @@ bench_timeit_LDADD    =
 EXTRA_DIST = \
   bootstrap README.md \
   contrib/check-win95-pe.sh contrib/ci-check.sh \
+  contrib/repro-digest.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
   contrib/dos/run-check.sh contrib/dos/run2.c \
@@ -297,14 +298,36 @@ EXTRA_DIST = \
 
 VENDORED = src/yarg.h
 
-.PHONY: docs doc-check format-check vectors vectors-check fuzz \
-        sanitizer-check win95-check check-full check-torture \
-        bench-tools bench
+.PHONY: docs win95-check check-full check-torture check-simd \
+        print-distfiles bench-tools bench
 docs: doc/xpar-format.pdf
+
+##  Print the files included in the distribution tarball.
+print-distfiles:
+	@for f in $(DISTFILES) $(DIST_COMMON) $(am__DIST_COMMON) \
+	          $(ACLOCAL_M4); do \
+	  case $$f in \
+	    $(srcdir)/*)     echo "$${f#$(srcdir)/}" ;; \
+	    $(top_srcdir)/*) echo "$${f#$(top_srcdir)/}" ;; \
+	    *)               echo "$$f" ;; \
+	  esac; \
+	done
 
 ## Wider test matrices for nightly and release builds.
 check-full:
 	$(MAKE) check XPAR_TEST_LEVEL=full
+
+##  Run the suite once per dispatchable SIMD tier.
+check-simd: xpar$(EXEEXT)
+	@tiers=`./xpar$(EXEEXT) benchmark --tiers 2>&1 | \
+	          sed -n 's/^xpar: benchmark: gf tier \([a-z0-9-]*\)  *ok$$/\1/p'`; \
+	if test -z "$$tiers"; then \
+	  echo "check-simd: no dispatchable SIMD tiers";  exit 1; \
+	fi; \
+	for t in $$tiers; do \
+	  echo "== SIMD tier $$t"; \
+	  XPAR_SIMD=$$t $(MAKE) check || exit 1; \
+	done
 
 check-torture:
 	$(MAKE) check XPAR_TEST_LEVEL=torture

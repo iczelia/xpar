@@ -137,4 +137,27 @@ for pair in "HAVE_SSSE3 ssse3" "HAVE_SSE42 sse42" "HAVE_AVX2 avx2" \
   else bad "$m is defined but libxpar_$a.a was not built"; fi
 done
 
+step "every tracked source is one the tarball ships"
+
+#  Catch tracked files omitted from distribution metadata.
+if ! command -v git > /dev/null 2>&1; then
+  note "git is not installed; skipped"
+elif ! ( cd "$abs_top_srcdir" && git rev-parse --git-dir ) > /dev/null 2>&1
+then
+  note "not a git checkout; skipped"
+else
+  #  DISTFILES is make dist's authoritative file list.
+  make -C "$abs_top_builddir" -s print-distfiles > distfiles.txt 2>&1 ||
+    hard_error "print-distfiles failed"
+  missing=
+  for f in `cd "$abs_top_srcdir" && git ls-files`; do
+    case $f in
+      .github/*|attic/*|*.gitignore) continue ;;
+    esac
+    grep -qx "$f" distfiles.txt || missing="$missing $f"
+  done
+  if test -z "$missing"; then ok
+  else bad "tracked but not distributed:$missing"; fi
+fi
+
 summary

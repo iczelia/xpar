@@ -83,7 +83,8 @@ int xpar_main(int argc, char ** argv) {
   xpar_crc32c_init();
 
   xpar_cli_parse(argc, argv, &o);
-  apply_simd(o.simd);
+  /*  XPAR_SIMD forces a tier process-wide; --simd takes precedence.  */
+  apply_simd(o.simd ? o.simd : xpar_getenv("XPAR_SIMD"));
 
   for (i = 0; i < ARRAY_LEN(dispatch); i++)
     if (dispatch[i].verb == o.verb) {
