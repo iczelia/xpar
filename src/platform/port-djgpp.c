@@ -354,41 +354,11 @@ bool xpar_is_rotational(const char * path) {
   return false;
 }
 
-void * xpar_memcpy (void * d, const void * s, sz n) { return memcpy(d, s, n); }
-void * xpar_memmove(void * d, const void * s, sz n) { return memmove(d, s, n); }
-void * xpar_memset (void * d, int c, sz n)          { return memset(d, c, n); }
-int    xpar_memcmp (const void * a, const void * b, sz n) {
-  return memcmp(a, b, n);
-}
-sz     xpar_strlen (const char * s)                 { return strlen(s); }
-int    xpar_strcmp (const char * a, const char * b) { return strcmp(a, b); }
-int    xpar_strncmp(const char * a, const char * b, sz n) {
-  return strncmp(a, b, n);
+
+void xpar_port_write_text(xpar_file * f, const char * s, sz n) {
+  xpar_write(f, s, n);
 }
 
-int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
-  char stack[1024];
-  va_list ap2;
-  int n;
-  va_copy(ap2, ap);
-  n = xpar_vsnprintf(stack, sizeof stack, fmt, ap);
-  if (n < (int) sizeof stack) {
-    va_end(ap2);
-    xpar_write(f, stack, (sz) n);
-    return n;
-  }
-  { char * big = xpar_alloc_raw((sz) n + 1);
-    xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
-    va_end(ap2);
-    xpar_write(f, big, (sz) n);
-    xpar_free(big); }
-  return n;
-}
-
-int xpar_fputs(const char * s, xpar_file * f) {
-  sz n = strlen(s);
-  return (int) xpar_write(f, s, n);
-}
 
 void xpar_exit(int code) {
   exit(code);

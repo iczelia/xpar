@@ -16,7 +16,49 @@
     written against the rest of port.h and never against a system header,
     so a new port implements the primitives and inherits all of this.  */
 
+#include <string.h>
+
 #include "common.h"
+
+/*  Shared C-library wrappers.  */
+void * xpar_memcpy (void * d, const void * s, sz n) { return memcpy(d, s, n); }
+void * xpar_memmove(void * d, const void * s, sz n) { return memmove(d, s, n); }
+void * xpar_memset (void * d, int c, sz n)          { return memset(d, c, n); }
+int    xpar_memcmp (const void * a, const void * b, sz n) {
+  return memcmp(a, b, n);
+}
+sz     xpar_strlen (const char * s)                 { return strlen(s); }
+int    xpar_strcmp (const char * a, const char * b) { return strcmp(a, b); }
+int    xpar_strncmp(const char * a, const char * b, sz n) {
+  return strncmp(a, b, n);
+}
+
+/*  Format on the stack when possible, then use the backend text sink.  */
+int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
+  char stack[1024];
+  va_list ap2;
+  int n;
+  va_copy(ap2, ap);
+  n = xpar_vsnprintf(stack, sizeof stack, fmt, ap);
+  if (n < 0) { va_end(ap2);  return -1; }
+  if ((sz) n < sizeof stack) {
+    va_end(ap2);
+    xpar_port_write_text(f, stack, (sz) n);
+    return n;
+  }
+  { char * big = (char *) xpar_alloc_raw((sz) n + 1);
+    xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
+    va_end(ap2);
+    xpar_port_write_text(f, big, (sz) n);
+    xpar_free(big); }
+  return n;
+}
+
+int xpar_fputs(const char * s, xpar_file * f) {
+  sz n = xpar_strlen(s);
+  xpar_port_write_text(f, s, n);
+  return (int) n;
+}
 
 char * xpar_strdup(const char * s) {
   sz n = xpar_strlen(s) + 1;

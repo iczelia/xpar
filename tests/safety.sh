@@ -18,18 +18,11 @@
 
 . "${srcdir:-.}/lib.sh" 2> /dev/null || . "`dirname "$0"`/lib.sh"
 
-# never_false_success <status> <file> <pristine> <what>
-never_false_success() {
-  if test "$1" -ne 0; then ok;  return 0; fi
-  if cmp -s "$2" "$3"; then ok
-  else bad "$4: exited 0 with bytes that are not the original"; fi
-}
-
 # A forgery the stored checksums cannot see.
 
 step "a CRC-preserving forgery is not mistaken for intact data"
 
-mkdir forge;  cd forge || hard_error cd
+mkdir forge;  cdto forge
 mkfile data.bin 2097152
 cp data.bin pristine.bin
 run 0 "$XPAR" create -s 1M -r 2 --dedup=none --align=none -o set data.bin
@@ -73,8 +66,7 @@ grep -q 'strong tag' "$log" && ok || {
 cp pristine.bin data.bin
 "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -k forge cell=1,5 ||
   hard_error "forge failed"
-"$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 cell=1,9 ||
-  hard_error "damage failed"
+damage data.bin -Z "$Z" -Y "$Y" -n 96 cell=1,9
 "$XPAR" verify --json set.xpa > v.json 2> "$log"
 equal "the visible cell is the only one condemned" \
       "`json_num v.json cells_bad summary`" 1
@@ -93,13 +85,13 @@ cd ..
 
 step "an alias-local difference is still reported as repairable"
 
-mkdir alias;  cd alias || hard_error cd
+mkdir alias;  cdto alias
 mkdir tree
 mkfile tree/a.bin 1048576
 cp tree/a.bin tree/b.bin
 cp -R tree tree.orig
 run 0 "$XPAR" create -R --dedup=file -s 256K -r 3 -o set tree
-"$DAMAGE" tree/b.bin "rand=100,64" || hard_error "damage failed"
+damage tree/b.bin "rand=100,64"
 "$XPAR" verify --json set.xpa > v.json 2> "$log"
 equal "entries blamed on an alias" \
       "`json_num v.json entries_alias_only summary`" 1
@@ -114,7 +106,7 @@ cd ..
 
 step "damaged metadata is never trusted"
 
-mkdir meta;  cd meta || hard_error cd
+mkdir meta;  cdto meta
 mkfile data.bin 8388608
 cp data.bin pristine.bin
 # Small slices make checksum tables large enough to damage directly.
@@ -134,8 +126,7 @@ while test "$spot" -lt "$spots"; do
   cp index.orig set.xpa
   at=`expr \( $size \* $spot \) / $spots`
   test "$at" -lt `expr $size - 64` || at=`expr $size - 64`
-  "$DAMAGE" set.xpa "seed=`expr $XPAR_TEST_SEED + $spot`" "rand=$at,48" ||
-    hard_error "damage failed"
+  damage set.xpa "seed=`expr $XPAR_TEST_SEED + $spot`" "rand=$at,48"
 
   # attempt() rejects internal errors and crashes.
   attempt "$XPAR" verify set.xpa
@@ -160,7 +151,7 @@ cd ..
 
 step "damaged recovery is not decoded from"
 
-mkdir rec;  cd rec || hard_error cd
+mkdir rec;  cdto rec
 mkfile data.bin 4194304
 cp data.bin pristine.bin
 run 0 "$XPAR" create -s 512K -r 4 --dedup=none --volumes=equal -o set data.bin
@@ -179,8 +170,8 @@ else
   i=0
   while test "$i" -lt "$R"; do ops="$ops cell=$i,0";  i=`expr $i + 1`; done
   # shellcheck disable=SC2086
-  "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 $ops || hard_error "damage failed"
-  "$DAMAGE" "$victim" "rand=512,16384" || hard_error "damage failed"
+  damage data.bin -Z "$Z" -Y "$Y" -n 96 $ops
+  damage "$victim" "rand=512,16384"
   attempt "$XPAR" repair --in-place set.xpa
   never_false_success "$status" data.bin pristine.bin \
                       "repair against damaged recovery"
@@ -189,7 +180,7 @@ else
   #  scrub --deep recomputes the recovery, so it has to say so.
   cp pristine.bin data.bin
   for v in $vols; do cp "$v.orig" "$v"; done
-  "$DAMAGE" "$victim" "rand=512,16384" || hard_error "damage failed"
+  damage "$victim" "rand=512,16384"
   attempt "$XPAR" scrub --deep set.xpa
   if test "$status" -eq 0; then
     bad "scrub --deep called a set clean whose recovery does not recompute"
@@ -201,7 +192,7 @@ cd ..
 
 step "a file of the wrong length is never called intact"
 
-mkdir shape;  cd shape || hard_error cd
+mkdir shape;  cdto shape
 mkfile data.bin 2097152
 cp data.bin pristine.bin
 run 0 "$XPAR" create -s 256K -r 6 --dedup=none -o set data.bin
@@ -233,11 +224,11 @@ cd ..
 
 step "a dry run changes no bytes"
 
-mkdir dry;  cd dry || hard_error cd
+mkdir dry;  cdto dry
 mkfile data.bin 1048576
 cp data.bin pristine.bin
 run 0 "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin
-"$DAMAGE" data.bin "rand=4096,512" || hard_error "damage failed"
+damage data.bin "rand=4096,512"
 cp data.bin damaged.bin
 run_any "0 1" "$XPAR" repair --dry-run set.xpa
 same data.bin damaged.bin
@@ -249,7 +240,7 @@ cd ..
 
 step "a volume from another set is refused"
 
-mkdir cross;  cd cross || hard_error cd
+mkdir cross;  cdto cross
 mkdir a b
 ( cd a && mkfile data.bin 1048576 1111 )
 ( cd b && mkfile data.bin 1048576 2222 )
@@ -263,8 +254,8 @@ if test -z "$avol"; then
   note "no separate recovery volumes to swap"
 else
   cp "b/$avol" "a/$avol"
-  ( cd a && "$DAMAGE" data.bin "rand=8192,256" ) || hard_error "damage failed"
-  cd a || hard_error cd
+  ( cd a && damage data.bin "rand=8192,256" )
+  cdto a
   attempt "$XPAR" repair --in-place set.xpa
   never_false_success "$status" data.bin pristine.bin \
                       "repair with a foreign recovery volume"
@@ -277,7 +268,7 @@ cd ..
 
 step "an authenticated set classifies damage the same way"
 
-mkdir auth;  cd auth || hard_error cd
+mkdir auth;  cdto auth
 mkfile key.bin 32 4242
 mkdir tree
 mkfile tree/a.bin 1048576 11
@@ -290,7 +281,7 @@ run 0 "$XPAR" verify --auth-key=key.bin set.xpa
 # A missing key is an authentication failure, not a clean result.
 run 6 "$XPAR" verify set.xpa
 
-"$DAMAGE" tree/a.bin "rand=70000,64" || hard_error "damage failed"
+damage tree/a.bin "rand=70000,64"
 "$XPAR" verify --auth-key=key.bin --json set.xpa > v.json 2> "$log"
 equal "damage a cell explains" "`json_num v.json entries_opaque summary`" 0
 if test "`json_num v.json cells_bad summary`" -ge 1; then ok
@@ -330,7 +321,7 @@ done
 
 step "a chain refuses to change layout under it"
 
-mkdir mixed;  cd mixed || hard_error cd
+mkdir mixed;  cdto mixed
 mkdir tree
 mkfile tree/a.bin 262144
 run 0 "$XPAR" create -s 32K -r 4 --layout=armoured -o set -R tree
@@ -342,7 +333,7 @@ cd ..
 
 step "consolidate keeps the chain's layout"
 
-mkdir flat;  cd flat || hard_error cd
+mkdir flat;  cdto flat
 mkdir tree
 mkfile tree/a.bin 262144
 cp -r tree tree.orig
@@ -362,10 +353,10 @@ cd ..
 
 step "a substituted data volume is never reported as clean"
 
-mkdir subst;  cd subst || hard_error cd
+mkdir subst;  cdto subst
 
 # Renamed volumes remain discoverable.
-mkdir a;  cd a || hard_error cd
+mkdir a;  cdto a
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
@@ -375,13 +366,13 @@ run 0 "$XPAR" verify set.xpa
 cd ..
 
 # An intact substitute must not make a damaged named volume clean.
-mkdir b;  cd b || hard_error cd
+mkdir b;  cdto b
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
 rm -rf tree
 cp set.d00 spare.bin
-"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+damage set.d00 "rand=4096,512"
 differs set.d00 spare.bin
 run 1 "$XPAR" verify set.xpa
 run 0 "$XPAR" repair --in-place set.xpa
@@ -392,13 +383,13 @@ cd ..
 
 # Every other verb has to cope with that state too: the stream is whole, so
 # nothing may report an internal error over a volume that wants rewriting.
-mkdir e;  cd e || hard_error cd
+mkdir e;  cdto e
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
 rm -rf tree
 cp set.d00 spare.bin
-"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+damage set.d00 "rand=4096,512"
 mkdir ex rv
 run 0 "$XPAR" list set.xpa
 run 0 "$XPAR" info set.xpa
@@ -411,13 +402,13 @@ note "no verb mistook a rewritable volume for a broken stream"
 cd ..
 
 # --to extracts the tree without rewriting the set.
-mkdir d;  cd d || hard_error cd
+mkdir d;  cdto d
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
 rm -rf tree
 cp set.d00 spare.bin
-"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+damage set.d00 "rand=4096,512"
 cp set.d00 damaged.bin
 run 0 "$XPAR" repair --to=out set.xpa
 exists out/tree/a.bin
@@ -426,12 +417,12 @@ note "--to wrote the tree and left the damaged volume where it was"
 cd ..
 
 # Repair a damaged volume without a substitute.
-mkdir c;  cd c || hard_error cd
+mkdir c;  cdto c
 mkdir tree;  mkfile tree/a.bin 262144
 "$XPAR" create -s 32K -r 6 --layout=split -o set -R tree > "$log" 2>&1 ||
   hard_error "create failed"
 rm -rf tree
-"$DAMAGE" set.d00 "rand=4096,512" || hard_error "damage failed"
+damage set.d00 "rand=4096,512"
 run 1 "$XPAR" verify set.xpa
 run 0 "$XPAR" repair --in-place set.xpa
 run 0 "$XPAR" verify set.xpa
@@ -442,7 +433,7 @@ cd ..
 
 step "a set can always find the data it just stored"
 
-mkdir reach;  cd reach || hard_error cd
+mkdir reach;  cdto reach
 mkdir -p sub a/b/c away
 mkfile sub/data.bin 131072
 mkfile a/b/c/f.bin 65536 2222
@@ -484,7 +475,7 @@ cd ..
 
 step "undo journals restore every file state exactly"
 
-mkdir shortread;  cd shortread || hard_error cd
+mkdir shortread;  cdto shortread
 
 # Start each case with a fresh set.
 jrt() {
@@ -527,7 +518,7 @@ cd ..
 
 # Undo restores the damaged bytes.
 jrt plain
-"$DAMAGE" tree/a.bin "rand=4096,512" || hard_error "damage failed"
+damage tree/a.bin "rand=4096,512"
 cp tree/a.bin damaged.keep
 run 0 "$XPAR" repair --in-place --keep-journal s.xpa
 same tree/a.bin keep/a.bin
@@ -547,7 +538,7 @@ cd ..
 
 step "a missing entry does not abandon the rest of the tree"
 
-mkdir missing;  cd missing || hard_error cd
+mkdir missing;  cdto missing
 mkdir tree
 mkfile tree/f1.bin 131072
 mkfile tree/f2.bin 131072 2222
@@ -558,8 +549,8 @@ run 0 "$XPAR" create -r 400% -s 16K -o base -R tree
 
 damage_and_drop() {
   rm -rf tree;  cp -r keep tree
-  "$DAMAGE" tree/f1.bin "rand=4096,64" || hard_error "damage failed"
-  "$DAMAGE" tree/f4.bin "rand=8192,64" || hard_error "damage failed"
+  damage tree/f1.bin "rand=4096,64"
+  damage tree/f4.bin "rand=8192,64"
   rm -f tree/f2.bin
 }
 
@@ -587,7 +578,7 @@ cd ..
 
 step "full-length path components extract and repair"
 
-mkdir longname;  cd longname || hard_error cd
+mkdir longname;  cdto longname
 long=`awk 'BEGIN{ s = "";  while (length(s) < 255) s = s "z";  print s }'`
 mkdir tree
 #  Probe the longest path used below.
@@ -603,7 +594,7 @@ if test "$long_ok" = yes; then
   run 0 "$XPAR" extract --to=out arc.xpa
   same "out/tree/$long" "keep/$long"
   run 0 "$XPAR" create -r 300% -s 16K -o base -R tree
-  "$DAMAGE" "tree/$long" "rand=4096,64" || hard_error "damage failed"
+  damage "tree/$long" "rand=4096,64"
   run 0 "$XPAR" repair --to=rout base.xpa
   same "rout/tree/$long" "keep/$long"
   run 0 "$XPAR" repair --in-place base.xpa
@@ -619,7 +610,7 @@ cd ..
 
 step "Windows naming rules reject backslashes"
 
-mkdir winrules;  cd winrules || hard_error cd
+mkdir winrules;  cdto winrules
 mkdir tree
 if can_hold 'tree/back\slash.bin'; then
   printf 'x' > 'tree/back\slash.bin'
@@ -637,7 +628,7 @@ cd ..
 
 step "--reproducible preserves permissions"
 
-mkdir repro;  cd repro || hard_error cd
+mkdir repro;  cdto repro
 mkdir tree
 mkfile tree/secret.bin 8192
 mkfile tree/script.sh 8192 2222
@@ -680,7 +671,7 @@ cd ..
 
 step "--spool cannot consume an input path"
 
-mkdir spool;  cd spool || hard_error cd
+mkdir spool;  cdto spool
 mkdir photos docs staging
 mkfile photos/p.bin 8192
 mkfile docs/d.bin 8192 2222
@@ -706,7 +697,7 @@ cd ..
 
 step "valid POSX tables load"
 
-mkdir posx;  cd posx || hard_error cd
+mkdir posx;  cdto posx
 mkdir tree
 mkfile tree/a.bin 16384
 run 0 "$XPAR" create -r 300% -s 4K --preserve=+owner -o s -R tree
@@ -722,7 +713,7 @@ cd ..
 
 step "a correctable armoured archive extracts without repair"
 
-mkdir inner;  cd inner || hard_error cd
+mkdir inner;  cdto inner
 mkdir tree
 mkfile tree/f1.bin 70000
 mkfile tree/f2.bin 70000 2222
@@ -734,7 +725,7 @@ cp arc.xpa pristine.xpa
 #  Damage correctable payload regions at several offsets.
 for off in 20000 100000 300000; do
   cp pristine.xpa arc.xpa
-  "$DAMAGE" arc.xpa "rand=$off,64" || hard_error "damage failed"
+  damage arc.xpa "rand=$off,64"
   run 0 "$XPAR" verify arc.xpa
   rm -rf out
   run 0 "$XPAR" extract --to=out arc.xpa
@@ -751,7 +742,7 @@ cp tree/f4.bin keep/f4.bin
 cp pristine.xpa arc.xpa
 run 0 "$XPAR" add -r 300% -s 4K arc.xpa -R tree
 cp arc.xpa chain.xpa
-"$DAMAGE" arc.xpa "rand=20000,64" || hard_error "damage failed"
+damage arc.xpa "rand=20000,64"
 run 0 "$XPAR" verify arc.xpa
 rm -rf out
 run 0 "$XPAR" extract --to=out arc.xpa
@@ -762,7 +753,7 @@ rm -f arc.g001.xpa chain.xpa
 
 #  Uncorrectable damage must be refused.
 cp pristine.xpa arc.xpa
-"$DAMAGE" arc.xpa "rand=100000,4096" || hard_error "damage failed"
+damage arc.xpa "rand=100000,4096"
 rm -rf out
 run 1 "$XPAR" extract --to=out arc.xpa
 #  Withhold damaged entries but extract intact ones.
@@ -778,7 +769,7 @@ cd ..
 
 step "an overlong file is repaired by every destination"
 
-mkdir overlong;  cd overlong || hard_error cd
+mkdir overlong;  cdto overlong
 mkfile data.bin 200000
 cp data.bin pristine.bin
 run 0 "$XPAR" create -r 300% -s 4K -o set data.bin
@@ -817,10 +808,10 @@ cd ..
 
 step "undo accepts the set under a different spelling"
 
-mkdir spell;  cd spell || hard_error cd
+mkdir spell;  cdto spell
 mkfile data.bin 200000
 run 0 "$XPAR" create -r 300% -s 4K -o base data.bin
-"$DAMAGE" data.bin "rand=4096,64" || hard_error "damage failed"
+damage data.bin "rand=4096,64"
 cp data.bin damaged.bin
 
 #  Absolute at repair time, relative at undo time.
@@ -838,7 +829,7 @@ same data.bin damaged.bin
 run 0 "$XPAR" repair --in-place --keep-journal base.xpa
 cd ..
 run 3 "$XPAR" undo spell/base.xpa
-cd spell || hard_error cd
+cdto spell
 note "alternate spellings accepted; other directories refused"
 cd ..
 
@@ -846,7 +837,7 @@ cd ..
 
 step "create protects files that only resemble xpar 1.x"
 
-mkdir v1look;  cd v1look || hard_error cd
+mkdir v1look;  cdto v1look
 printf 'XPAS this is a text file\n' > notes.txt
 printf 'XPAL and so is this\n'      > other.txt
 run 0 "$XPAR" create -r 300% -s 4K -o out notes.txt other.txt
@@ -861,7 +852,7 @@ cd ..
 
 step "case-folded duplicates are found wherever they sort"
 
-mkdir fold;  cd fold || hard_error cd
+mkdir fold;  cdto fold
 mkdir tree
 if folds_case tree; then
   #  Colliding names cannot coexist here.
@@ -881,7 +872,7 @@ cd ..
 
 step "extracted modes are never wider than recorded"
 
-mkdir modes;  cd modes || hard_error cd
+mkdir modes;  cdto modes
 mkdir tree
 mkfile tree/secret.bin 65536
 mkfile tree/public.bin 65536 2222
@@ -904,13 +895,13 @@ cd ..
 
 step "a tagless set still gets journal-collision protection"
 
-mkdir tagless;  cd tagless || hard_error cd
+mkdir tagless;  cdto tagless
 mkfile data.bin 200000
 run 0 "$XPAR" create -r 300% -s 4K --slice-tag=none -o b data.bin
-"$DAMAGE" data.bin "rand=4096,64" || hard_error "damage failed"
+damage data.bin "rand=4096,64"
 run 0 "$XPAR" repair --in-place -f --keep-journal b.xpa
 exists b.xparundo
-"$DAMAGE" data.bin "rand=8192,64" || hard_error "damage failed"
+damage data.bin "rand=8192,64"
 run 4 "$XPAR" repair --in-place -f --keep-journal b.xpa
 run 0 "$XPAR" repair --in-place -f --keep-journal --replace-journal b.xpa
 note "-f does not replace journals"
@@ -920,7 +911,7 @@ cd ..
 
 step "add keeps the chain's integrity settings"
 
-mkdir strength;  cd strength || hard_error cd
+mkdir strength;  cdto strength
 mkdir tree
 mkfile tree/f1.bin 131072
 run 0 "$XPAR" create -r 20% -s 4K --field=16 --slice-tag=16 -o s -R tree
@@ -948,12 +939,12 @@ cd ..
 
 step "extract says when it read a substitute volume"
 
-mkdir subst2;  cd subst2 || hard_error cd
+mkdir subst2;  cdto subst2
 mkdir tree
 mkfile tree/a.bin 400000
 run 0 "$XPAR" create -r 100% -s 4K --layout=split -o sp -R tree
 cp sp.d00 spare.bin
-"$DAMAGE" sp.d00 "rand=1000,4096" || hard_error "damage failed"
+damage sp.d00 "rand=1000,4096"
 "$XPAR" extract --to=out sp.xpa > /dev/null 2> "$log" || hard_error "extract failed"
 same out/tree/a.bin tree/a.bin
 equal "the substitution was reported" \
@@ -962,7 +953,7 @@ cd ..
 
 step "the spec's cell bound is enforced"
 
-mkdir cells;  cd cells || hard_error cd
+mkdir cells;  cdto cells
 mkfile big.bin 4194304
 #  One cell past the bound is refused by name, and the cell rule is decided
 #  before any memory plan, so this holds at any -m.
@@ -996,7 +987,7 @@ cd ..
 
 step "explain reads only what it needs"
 
-mkdir explain;  cd explain || hard_error cd
+mkdir explain;  cdto explain
 mkdir tree
 mkfile tree/a.bin 262144
 run 0 "$XPAR" create -r 20% -s 4K --layout=armoured -o a -R tree
@@ -1018,7 +1009,7 @@ cd ..
 
 step "list shows control bytes rather than obeying them"
 
-mkdir ansi;  cd ansi || hard_error cd
+mkdir ansi;  cdto ansi
 mkdir tree
 mkfile tree/a.bin 4096
 esc=`printf '\033'`
@@ -1041,7 +1032,7 @@ cd ..
 
 step "a damaged cell table does not make a set unrepairable"
 
-mkdir celltab;  cd celltab || hard_error cd
+mkdir celltab;  cdto celltab
 mkdir tree
 mkfile tree/a.bin 400000
 mkfile tree/b.bin 400000 2222
@@ -1052,8 +1043,8 @@ slcl=`packet_body_at s.xpa SLCL`
 if test -z "$slcl"; then
   hard_error "a set created with --cell=4096 has no SLCL packet"
 fi
-"$DAMAGE" s.xpa "flip=$slcl,1" || hard_error "damage failed"
-"$DAMAGE" tree/a.bin "rand=4096,64" || hard_error "damage failed"
+damage s.xpa "flip=$slcl,1"
+damage tree/a.bin "rand=4096,64"
 run 0 "$XPAR" repair --in-place s.xpa
 same tree/a.bin keep/a.bin
 note "slice fallback repaired without cell checksums"
@@ -1061,7 +1052,7 @@ cd ..
 
 step "option bounds are enforced at both ends"
 
-mkdir bounds;  cd bounds || hard_error cd
+mkdir bounds;  cdto bounds
 mkdir tree
 mkfile tree/a.bin 100000
 run 4 "$XPAR" create -r 20% -s 4K --dedup=chunk --dedup-chunk=1 -o d -R tree
@@ -1082,7 +1073,7 @@ cd ..
 
 step "a backslash in a name invents no directory"
 
-mkdir bslash;  cd bslash || hard_error cd
+mkdir bslash;  cdto bslash
 mkdir tree
 if can_hold 'tree/a\b.bin'; then
   printf 'x' > 'tree/a\b.bin'
@@ -1101,7 +1092,7 @@ cd ..
 
 step "every 1.x mode flag is recognised"
 
-mkdir v1flags;  cd v1flags || hard_error cd
+mkdir v1flags;  cdto v1flags
 for f in -Jse -Jsd -Jst -Jt -Je -Jd -We -Wd -Wt -Le -Ld -Lt -J -W -L; do
   "$XPAR" "$f" x.bin > out.txt 2>&1
   if grep -q '1.x mode flag' out.txt; then ok
@@ -1114,7 +1105,7 @@ cd ..
 
 step "a self-contained chain consolidates without its originals"
 
-mkdir selfc;  cd selfc || hard_error cd
+mkdir selfc;  cdto selfc
 mkdir tree
 mkfile tree/a.bin 150000
 mkfile tree/b.bin 90000 2222

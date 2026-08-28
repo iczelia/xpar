@@ -58,7 +58,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
   label=$1;  bytes=$2;  rounds=$3;  shift 3
   step "profiles: $label"
 
-  rm -rf f1;  mkdir f1;  cd f1 || hard_error cd
+  rm -rf f1;  mkdir f1;  cdto f1
   mkfile data.bin "$bytes"
   cp data.bin pristine.bin
   if ! run 0 "$XPAR" create --dedup=none --align=none -o set "$@" data.bin
@@ -102,8 +102,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
     fi
 
     # shellcheck disable=SC2086
-    "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $ops ||
-      hard_error "damage failed"
+    damage data.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $ops
 
     "$XPAR" verify --json set.xpa > v.json 2> "$log"
     equal "$what: reported depth" "`json_num v.json column_depth summary`" \
@@ -134,7 +133,7 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
   label=$1;  bytes=$2;  rounds=$3;  shift 3
   step "bursts: $label"
 
-  rm -rf f2;  mkdir f2;  cd f2 || hard_error cd
+  rm -rf f2;  mkdir f2;  cdto f2
   mkfile data.bin "$bytes"
   cp data.bin pristine.bin
   if ! run 0 "$XPAR" create --dedup=none --align=none -o set "$@" data.bin
@@ -178,7 +177,7 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
     what="round $round, $bursts bursts, depth $depth against R=$R"
 
     # shellcheck disable=SC2086
-    "$DAMAGE" data.bin seed=$XPAR_TEST_SEED $ops || hard_error "damage failed"
+    damage data.bin seed=$XPAR_TEST_SEED $ops
 
     "$XPAR" verify --json set.xpa > v.json 2> "$log"
     equal "$what: reported depth" "`json_num v.json column_depth summary`" \
@@ -199,7 +198,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   label=$1;  bytes=$2;  shift 2
   step "recovery data: $label"
 
-  rm -rf f3;  mkdir f3;  cd f3 || hard_error cd
+  rm -rf f3;  mkdir f3;  cdto f3
   mkfile data.bin "$bytes"
   cp data.bin pristine.bin
   if ! run 0 "$XPAR" create --dedup=none --align=none -o set "$@" data.bin
@@ -221,7 +220,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   #  the recovery back, so that one has to notice. Pinning both directions
   #  keeps either from drifting silently.
   victim=`echo $vols | tr ' ' '\n' | head -1`
-  "$DAMAGE" "$victim" "rand=200,4096" || hard_error "damage failed"
+  damage "$victim" "rand=200,4096"
   run 0 "$XPAR" verify set.xpa
   run_any "1 2" "$XPAR" scrub --deep set.xpa
   same data.bin pristine.bin
@@ -240,8 +239,8 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   i=0
   while test "$i" -lt "$R"; do ops="$ops cell=$i,0";  i=`expr $i + 1`; done
   # shellcheck disable=SC2086
-  "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 $ops || hard_error "damage failed"
-  "$DAMAGE" "$victim" "rand=300,8192" || hard_error "damage failed"
+  damage data.bin -Z "$Z" -Y "$Y" -n 96 $ops
+  damage "$victim" "rand=300,8192"
   attempt "$XPAR" repair --in-place set.xpa || { cd ..;  return 0; }
   if test "$status" -eq 0; then same data.bin pristine.bin
   else note "repair refused with a damaged recovery volume (status $status)"

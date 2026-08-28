@@ -107,9 +107,20 @@ explain_status() {
     6) echo "authentication failure" ;;
     7) echo "no plan fits the memory ceiling" ;;
     8) echo "INTERNAL ERROR (a bug)" ;;
-    13[0-9]|1[4-8][0-9]|19[01]) echo "CRASHED (signal `expr $1 - 128`)" ;;
+    12[89]|13[0-9]|1[4-8][0-9]|19[01])
+       echo "CRASHED (signal `expr $1 - 128`)" ;;
     *) echo "unrecognised status" ;;
   esac
+}
+
+# Inject damage or stop if the helper fails.
+damage() {   # damage <file> <op>...
+  "$DAMAGE" "$@" > /dev/null || hard_error "damage failed: $*"
+}
+
+# Enter a directory, or stop.
+cdto() {   # cdto <dir>
+  cd "$1" || hard_error "cd $1"
 }
 
 # Run a command and save its status without asserting it.

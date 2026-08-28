@@ -5770,6 +5770,8 @@ static u32 bm_check_armour(const char * tier, const xpar_armour_params * p,
   return bad;
 }
 
+#if defined(HAVE_SSE42) || defined(HAVE_ARM_CRC32)
+/*  Compare hardware CRC tiers with the scalar reference.  */
 static u32 bm_crc_one(const char * name, u32 got, u32 want, sz n) {
   if (got == want) return 0;
   xpar_fprintf(xpar_stderr, "xpar: benchmark: crc32c %s gives %08" PRIX32
@@ -5777,6 +5779,7 @@ static u32 bm_crc_one(const char * name, u32 got, u32 want, sz n) {
                name, got, n, want);
   return 1;
 }
+#endif
 
 static u32 bm_check_crc32c(void) {
   static const sz len[] = { 1, 7, 8, 63, 64, 255, 256, 1024, 8192, 24577,

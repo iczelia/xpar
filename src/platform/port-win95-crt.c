@@ -200,100 +200,14 @@ XPAR_KEEP int __cdecl __mingw_vsnprintf(char * s, size_t n,
   return xpar_vsnprintf(s, n, fmt, ap);
 }
 
-static int grow(char ** p, size_t * cap) {
-  char * q;
-  if (*cap > (size_t) -1 / 2) return 0;
-  q = HeapReAlloc(GetProcessHeap(), 0, *p, *cap * 2);
-  if (!q) return 0;
-  *p = q;  *cap *= 2;
-  return 1;
-}
 
-static int split(const char * cmd, char *** out) {
-  int argc = 0;
-  char ** argv = NULL;
-  char * buf = NULL;
-  int pass;
-  for (pass = 0; pass < 2; pass++) {
-    const char * p = cmd;
-    if (pass) {
-      argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                       (size_t) (argc + 1) * sizeof(*argv));
-      if (!argv) return -1;
-    }
-    argc = 0;
-    while (*p) {
-      size_t len = 0, cap = 0;
-      int quoted = 0;
-      while (*p == ' ' || *p == '\t') p++;
-      if (!*p) break;
-      buf = NULL;
-      if (pass) {
-        cap = 64;
-        buf = HeapAlloc(GetProcessHeap(), 0, cap);
-        if (!buf) goto fail;
-      }
-      while (*p && (quoted || (*p != ' ' && *p != '\t'))) {
-        if (*p == '\\') {
-          int slashes = 0;
-          while (*p == '\\') { slashes++;  p++; }
-          if (*p == '"') {
-            int i;
-            if (pass)
-              for (i = 0; i < slashes / 2; i++) {
-                if (len + 1 >= cap && !grow(&buf, &cap)) goto fail;
-                buf[len++] = '\\';
-              }
-            if (slashes & 1) {
-              if (pass) {
-                if (len + 1 >= cap && !grow(&buf, &cap)) goto fail;
-                buf[len++] = '"';
-              }
-              p++;
-            } else {
-              quoted = !quoted;  p++;
-            }
-          } else if (pass) {
-            int i;
-            for (i = 0; i < slashes; i++) {
-              if (len + 1 >= cap && !grow(&buf, &cap)) goto fail;
-              buf[len++] = '\\';
-            }
-          }
-        } else if (*p == '"') {
-          if (quoted && p[1] == '"') {
-            if (pass) {
-              if (len + 1 >= cap && !grow(&buf, &cap)) goto fail;
-              buf[len++] = '"';
-            }
-            p += 2;
-          } else {
-            quoted = !quoted;  p++;
-          }
-        } else {
-          if (pass) {
-            if (len + 1 >= cap && !grow(&buf, &cap)) goto fail;
-            buf[len++] = *p;
-          }
-          p++;
-        }
-      }
-      if (pass) { buf[len] = 0;  argv[argc] = buf;  buf = NULL; }
-      argc++;
-    }
-    if (pass) { *out = argv;  return argc; }
-  }
-  return -1;
-fail:
-  if (buf) HeapFree(GetProcessHeap(), 0, buf);
-  if (argv) {
-    int i;
-    for (i = 0; i < argc; i++)
-      if (argv[i]) HeapFree(GetProcessHeap(), 0, argv[i]);
-    HeapFree(GetProcessHeap(), 0, argv);
-  }
-  return -1;
-}
+#define XPAR_ARGV_CH char
+#define XPAR_ARGV_L(c) c
+#define XPAR_ARGV_FN split
+#include "port-win-argv.h"
+#undef XPAR_ARGV_CH
+#undef XPAR_ARGV_L
+#undef XPAR_ARGV_FN
 
 XPAR_KEEP XPAR_NORETURN void __cdecl xpar_entry(void) {
   char ** argv;

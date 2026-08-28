@@ -730,17 +730,6 @@ u64 xpar_physical_memory(void) {
     never correctness.  */
 bool xpar_is_rotational(const char * path) { (void) path;  return false; }
 
-void * xpar_memcpy (void * d, const void * s, sz n) { return memcpy(d, s, n); }
-void * xpar_memmove(void * d, const void * s, sz n) { return memmove(d, s, n); }
-void * xpar_memset (void * d, int c, sz n)          { return memset(d, c, n); }
-int    xpar_memcmp (const void * a, const void * b, sz n) {
-  return memcmp(a, b, n);
-}
-sz     xpar_strlen (const char * s)                 { return strlen(s); }
-int    xpar_strcmp (const char * a, const char * b) { return strcmp(a, b); }
-int    xpar_strncmp(const char * a, const char * b, sz n) {
-  return strncmp(a, b, n);
-}
 
 static void write_raw(xpar_file * f, const char * s, sz n) {
 #if defined(XPAR_WIN_LEGACY)
@@ -782,30 +771,10 @@ static void write_raw(xpar_file * f, const char * s, sz n) {
   xpar_write(f, s, n);
 }
 
-int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
-  char stack[1024];
-  va_list ap2;
-  int n;
-  va_copy(ap2, ap);
-  n = xpar_vsnprintf(stack, sizeof stack, fmt, ap);
-  if (n < (int) sizeof stack) {
-    va_end(ap2);
-    write_raw(f, stack, (sz) n);
-    return n;
-  }
-  { char * big = xpar_alloc_raw((sz) n + 1);
-    xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
-    va_end(ap2);
-    write_raw(f, big, (sz) n);
-    xpar_free(big); }
-  return n;
+void xpar_port_write_text(xpar_file * f, const char * s, sz n) {
+  write_raw(f, s, n);
 }
 
-int xpar_fputs(const char * s, xpar_file * f) {
-  sz n = xpar_strlen(s);
-  write_raw(f, s, n);
-  return (int) n;
-}
 
 void xpar_exit(int code) { ExitProcess((UINT) code); }
 
@@ -919,92 +888,14 @@ void xpar_random_bytes(void * buf, sz n) {
 
 #if !defined(XPAR_WIN_LEGACY)
 
-static int grow_w(wchar_t ** pbuf, sz * pcap) {
-  wchar_t * nb;
-  if (*pcap > ((sz) -1) / (2 * sizeof(wchar_t))) return 0;
-  nb = HeapReAlloc(GetProcessHeap(), 0, *pbuf, *pcap * 2 * sizeof(wchar_t));
-  if (!nb) return 0;
-  *pbuf = nb;  *pcap *= 2;
-  return 1;
-}
 
-static int split_cmdline(const wchar_t * cmd, wchar_t *** out) {
-  int argc = 0;
-  wchar_t ** argv = NULL, * buf = NULL;
-  for (int pass = 0; pass < 2; pass++) {
-    const wchar_t * p = cmd;
-    if (pass == 1) {
-      argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                       (sz) (argc + 1) * sizeof(wchar_t *));
-      if (!argv) return -1;
-    }
-    argc = 0;
-    while (*p) {
-      sz blen = 0, bcap = 0;
-      int in_quote = 0;
-      while (*p == L' ' || *p == L'\t') p++;
-      if (!*p) break;
-      buf = NULL;
-      if (pass == 1) {
-        bcap = 64;
-        buf = HeapAlloc(GetProcessHeap(), 0, bcap * sizeof(wchar_t));
-        if (!buf) goto fail;
-      }
-      while (*p) {
-        if (!in_quote && (*p == L' ' || *p == L'\t')) break;
-        if (*p == L'\\') {
-          int nbs = 0;
-          while (*p == L'\\') { nbs++;  p++; }
-          if (*p == L'"') {
-            if (pass == 1)
-              for (int i = 0; i < nbs / 2; i++) {
-                if (blen + 1 >= bcap && !grow_w(&buf, &bcap)) goto fail;
-                buf[blen++] = L'\\';
-              }
-            if (nbs & 1) {
-              if (pass == 1) {
-                if (blen + 1 >= bcap && !grow_w(&buf, &bcap)) goto fail;
-                buf[blen++] = L'"';
-              }
-              p++;
-            } else { in_quote = !in_quote;  p++; }
-          } else if (pass == 1) {
-            for (int i = 0; i < nbs; i++) {
-              if (blen + 1 >= bcap && !grow_w(&buf, &bcap)) goto fail;
-              buf[blen++] = L'\\';
-            }
-          }
-        } else if (*p == L'"') {
-          if (in_quote && p[1] == L'"') {
-            if (pass == 1) {
-              if (blen + 1 >= bcap && !grow_w(&buf, &bcap)) goto fail;
-              buf[blen++] = L'"';
-            }
-            p += 2;
-          } else { in_quote = !in_quote;  p++; }
-        } else {
-          if (pass == 1) {
-            if (blen + 1 >= bcap && !grow_w(&buf, &bcap)) goto fail;
-            buf[blen++] = *p;
-          }
-          p++;
-        }
-      }
-      if (pass == 1) { buf[blen] = L'\0';  argv[argc] = buf;  buf = NULL; }
-      argc++;
-    }
-    if (pass == 1) { *out = argv;  return argc; }
-  }
-  return -1;
-fail:
-  if (buf) HeapFree(GetProcessHeap(), 0, buf);
-  if (argv) {
-    for (int j = 0; j < argc; j++)
-      if (argv[j]) HeapFree(GetProcessHeap(), 0, argv[j]);
-    HeapFree(GetProcessHeap(), 0, argv);
-  }
-  return -1;
-}
+#define XPAR_ARGV_CH wchar_t
+#define XPAR_ARGV_L(c) L##c
+#define XPAR_ARGV_FN split_cmdline
+#include "port-win-argv.h"
+#undef XPAR_ARGV_CH
+#undef XPAR_ARGV_L
+#undef XPAR_ARGV_FN
 
 static int utf8_argv(int * argc_out, char *** argv_out) {
   wchar_t ** wargv;

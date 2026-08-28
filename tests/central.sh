@@ -32,8 +32,7 @@ damage_profile() {
   done
   test -n "$_ops" || return 0
   # shellcheck disable=SC2086
-  "$DAMAGE" "$_file" -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $_ops ||
-    hard_error "damage failed"
+  damage "$_file" -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $_ops
 }
 
 all_columns() {
@@ -47,7 +46,7 @@ one_config() {
   label=$1;  bytes=$2;  shift 2
   step "$label"
 
-  rm -rf c;  mkdir c;  cd c || hard_error "cd"
+  rm -rf c;  mkdir c;  cdto c
   mkfile data.bin "$bytes"
   cp data.bin pristine.bin
 
@@ -130,8 +129,7 @@ one_config() {
     i=`expr $i + 1`
   done
   # shellcheck disable=SC2086
-  "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $ops ||
-    hard_error "damage failed"
+  damage data.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $ops
   "$XPAR" verify --json set.xpa > v.json 2> "$log"
   equal "deepest column with R whole slices" \
         "`json_num v.json column_depth summary`" "$R"
@@ -140,7 +138,7 @@ one_config() {
 
   # -- A burst across a cell boundary marks both cells. -----------------
   cp pristine.bin data.bin
-  "$DAMAGE" data.bin "rand=`expr $Y - 8`,16" || hard_error "damage failed"
+  damage data.bin "rand=`expr $Y - 8`,16"
   "$XPAR" verify --json set.xpa > v.json 2> "$log"
   equal "a burst across a cell boundary" \
         "`json_num v.json cells_bad summary`" 2
@@ -151,7 +149,7 @@ one_config() {
   # -- A burst across a slice boundary is one erasure in two columns. ---
   if test "$S" -gt 1; then
     cp pristine.bin data.bin
-    "$DAMAGE" data.bin "rand=`expr $Z - 8`,16" || hard_error "damage failed"
+    damage data.bin "rand=`expr $Z - 8`,16"
     "$XPAR" verify --json set.xpa > v.json 2> "$log"
     equal "a burst across a slice boundary" \
           "`json_num v.json cells_bad summary`" 2

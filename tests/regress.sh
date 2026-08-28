@@ -36,7 +36,7 @@ step "extract --stdout must not emit unverified bytes"
 
 #  --stdout took a shortcut past the manifest validation and the entry
 #  content hash, so a corrupted stream was written out with status 0.
-mkdir -p e1 && cd e1 || hard_error "cd e1"
+mkdir -p e1 && cdto e1
 mkfile data.bin 400000
 cp data.bin pristine.bin
 run 0 "$XPAR" create -r 4 -s 8K --layout=armoured -o set data.bin
@@ -50,7 +50,7 @@ while test "$i" -lt 12; do
   ops="$ops rand=`expr 2048 + $i \* $Z \* 2`,64"
   i=`expr $i + 1`
 done
-"$DAMAGE" set.xpa $ops || hard_error "damage failed"
+damage set.xpa $ops
 
 capture out.bin "$XPAR" extract --stdout set.xpa
 if test "$status" -eq 0; then
@@ -61,11 +61,11 @@ else
   #  Refusing after emitting is the same defect wearing a status code.
   equal "the refusal emitted nothing" "`wc -c < out.bin | tr -d ' '`" 0
 fi
-cd .. || hard_error cd
+cdto ..
 
 step "extract --stdout still works on an intact set"
 
-mkdir -p e2 && cd e2 || hard_error "cd e2"
+mkdir -p e2 && cdto e2
 mkfile data.bin 400000
 cp data.bin pristine.bin
 run 0 "$XPAR" create -r 4 -s 8K --layout=armoured -o set data.bin
@@ -73,17 +73,17 @@ rm -f data.bin
 capture out.bin "$XPAR" extract --stdout set.xpa
 equal "intact extract status" "$status" 0
 same out.bin pristine.bin
-cd .. || hard_error cd
+cdto ..
 
 step "--stdout corrects with the inner code, as --to does"
 
 #  --stdout must apply lazy inner-code correction like directory extraction.
-mkdir -p e3 && cd e3 || hard_error "cd e3"
+mkdir -p e3 && cdto e3
 mkfile data.bin 400000 88
 cp data.bin pristine.bin
 run 0 "$XPAR" create -r 20% --layout=armoured -o p data.bin
 rm -f data.bin
-"$DAMAGE" p.xpa rand=50000,32 || hard_error "damage failed"
+damage p.xpa rand=50000,32
 
 rm -rf d1 && mkdir d1
 run 0 "$XPAR" extract --to=d1 p.xpa
@@ -92,14 +92,14 @@ same d1/data.bin pristine.bin
 capture out.bin "$XPAR" extract --stdout p.xpa
 equal "stdout status on correctable damage" "$status" 0
 same out.bin pristine.bin
-cd .. || hard_error cd
+cdto ..
 
 step "a substituted data volume is rewritten from chain-space offsets"
 
 #  xpar_vol.stream_offset is relative to the generation, but xpar_vset_read
 #  takes a chain-space offset. Without stream_base a generation past the
 #  first read the wrong bytes, or refused the read outright.
-mkdir -p v1 && cd v1 || hard_error "cd v1"
+mkdir -p v1 && cdto v1
 mkdir tree
 mkfile tree/a.bin 60000 11
 mkfile tree/b.bin 60000 22
@@ -117,12 +117,12 @@ equal "generation 1 starts past the origin" "`test "${base:-0}" -gt 0 &&
 #  which is what makes repair rewrite the named one.
 cp set.g001.d00 orig.d00
 cp set.g001.d00 spare.dat
-"$DAMAGE" set.g001.d00 rand=100,512 || hard_error "damage failed"
+damage set.g001.d00 rand=100,512
 
 run_any "0 1" "$XPAR" repair --in-place set.xpa
 same set.g001.d00 orig.d00
 run 0 "$XPAR" verify set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "recover reproduces a volume the writer replicated into"
 
@@ -131,7 +131,7 @@ step "recover reproduces a volume the writer replicated into"
 #  reach the same verdict as the writer: it thresholds on the armoured
 #  size, and counts recovery volumes only, which a split LAYT interleaves
 #  with data volumes. Getting either wrong drops the group silently.
-mkdir -p r1 && cd r1 || hard_error "cd r1"
+mkdir -p r1 && cdto r1
 mkdir tree
 mkfile tree/payload.bin 400000 44
 
@@ -168,12 +168,12 @@ for n in $vols; do
   same "$n" "orig-`basename $n`"
 done
 run 0 "$XPAR" verify set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "recover rebuilds a volume with the set's own inner code"
 
 #  recover must reuse the set's armour parameters, not CLI defaults.
-mkdir -p a1 && cd a1 || hard_error "cd a1"
+mkdir -p a1 && cdto a1
 mkfile payload.bin 200000 91
 for opt in --armour=none --armour-t=48 --armour-field=16 --armour-pct=5; do
   rm -f set.* orig.bin
@@ -189,12 +189,12 @@ for opt in --armour=none --armour-t=48 --armour-field=16 --armour-pct=5; do
   same "$v" orig.bin
   run 0 "$XPAR" verify set.xpa
 done
-cd .. || hard_error cd
+cdto ..
 
 step "recover thresholds replication on the size as written"
 
 #  Replication thresholds use the armoured critical-group size.
-mkdir -p a2 && cd a2 || hard_error "cd a2"
+mkdir -p a2 && cdto a2
 mkdir tree
 mkfile tree/payload.bin 400000 92
 pad=nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
@@ -228,12 +228,12 @@ for n in $vols; do
   same "$n" "orig-`basename $n`"
 done
 run 0 "$XPAR" verify set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "a superseded neighbour does not excuse damage in the same slice"
 
 #  A superseded cell must not suppress damage to live cells in its slice.
-mkdir -p s1 && cd s1 || hard_error "cd s1"
+mkdir -p s1 && cdto s1
 mkfile key.bin 32 7
 mkdir tree
 i=0
@@ -259,7 +259,7 @@ mkfile tree/f0.bin 4096 99
 run 0 "$XPAR" add -r 4 --auth-key=key.bin set.xpa -R tree
 run 0 "$XPAR" verify --chain --fast --auth-key=key.bin set.xpa
 
-"$DAMAGE" tree/f1.bin rand=100,64 || hard_error "damage failed"
+damage tree/f1.bin rand=100,64
 differs tree/f1.bin pristine.bin
 run_any "1 2" "$XPAR" verify --chain --fast --auth-key=key.bin set.xpa
 
@@ -271,13 +271,13 @@ g0=`tr '{' '\n' < v.json |
 equal "generation 0 placed the damage" "$g0" repairable
 run 0 "$XPAR" repair --chain --in-place --auth-key=key.bin set.xpa
 same tree/f1.bin pristine.bin
-cd .. || hard_error cd
+cdto ..
 
 step "a truncated file is still scanned for the cells it damaged"
 
 #  Missing or truncated aliases must mark cells even when dedup leaves the
 #  canonical stream intact.
-mkdir -p t1 && cd t1 || hard_error "cd t1"
+mkdir -p t1 && cdto t1
 mkdir tree
 mkfile tree/a.bin 120000 21
 cp tree/a.bin tree/b.bin
@@ -300,12 +300,12 @@ run 1 "$XPAR" verify set.xpa
 run 0 "$XPAR" repair --in-place set.xpa
 same tree/b.bin pristine.bin
 run 0 "$XPAR" verify set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "a crafted packet key does not run the critical-group rebuild away"
 
 #  A UINT64_MAX packet key must not wrap the rebuild cursor into a loop.
-mkdir -p f1 && cd f1 || hard_error "cd f1"
+mkdir -p f1 && cdto f1
 mkfile payload.bin 200000 31
 run 0 "$XPAR" create -r 4 -s 8K --layout=sidecar -o set payload.bin
 v=`find . -maxdepth 1 -name 'set.v*' | head -1`
@@ -340,7 +340,7 @@ if test "$capped" = yes; then
 else
   note "address-space cap unsupported; skipping runaway test"
 fi
-cd .. || hard_error cd
+cdto ..
 
 step "explain's hand-recovery recipe recovers the data"
 
@@ -366,7 +366,7 @@ for field in 8 16; do
       bad "explain printed no recipe for the GF(2^$field) archive"
     fi
   fi
-  cd .. || hard_error cd
+  cdto ..
 done
 if test "$big_frame" = yes; then ok
 else
@@ -375,7 +375,7 @@ fi
 
 step "--json --progress emits progress records, and --json alone does not"
 
-mkdir -p j1 && cd j1 || hard_error "cd j1"
+mkdir -p j1 && cdto j1
 # Use enough data to pass progress throttling.
 mkfile data.bin 40000000 51
 run 0 "$XPAR" create -r 4 -s 1M --json --progress -o set data.bin
@@ -392,12 +392,12 @@ equal "--json alone stays silent" "`grep -c '"type":"progress"' q.json`" 0
 
 "$XPAR" verify --progress set.xpa > /dev/null 2> h.txt
 equal "--progress alone stays human" "`grep -c '"type":"progress"' h.txt`" 0
-cd .. || hard_error cd
+cdto ..
 
 step "an unwritable destination exits with the I/O status"
 
 #  Exercise the distinct I/O exit status (5).
-mkdir -p w1 && cd w1 || hard_error "cd w1"
+mkdir -p w1 && cdto w1
 if perms_bite .; then
   mkfile data.bin 100000 41
   run 0 "$XPAR" create -r 20% --layout=armoured -o p data.bin
@@ -410,12 +410,12 @@ if perms_bite .; then
 else
   note "mode 555 is writable; skipping I/O test"
 fi
-cd .. || hard_error cd
+cdto ..
 
 step "a volume added later agrees with the ones already there"
 
 #  Added volumes must reuse the set's replicated CRTR packet.
-mkdir -p a4 && cd a4 || hard_error "cd a4"
+mkdir -p a4 && cdto a4
 mkfile p.bin 400000 83
 
 for later in "addrecovery --reproducible -r 12" "addrecovery -r 12"; do
@@ -436,12 +436,12 @@ rm -f "$v"
 run 0 "$XPAR" recover --volume="`basename $v`" set.xpa
 run 0 "$XPAR" info set.xpa
 run 0 "$XPAR" repair --in-place set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "creator disagreement is tolerated; other conflicts are fatal"
 
 #  CRTR provenance may differ across volumes; other replicated packets may not.
-mkdir -p a5 && cd a5 || hard_error "cd a5"
+mkdir -p a5 && cdto a5
 mkfile p.bin 200000 84
 run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set p.bin
 run 0 "$XPAR" info set.xpa
@@ -458,12 +458,12 @@ run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set q.bin
 "$FORGE" set.xpa SETD 00112233445566778899aabbccddeeff ||
   hard_error "forge failed"
 run 3 "$XPAR" info set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "addrecovery tops up every layout and the result still repairs"
 
 #  Cover critical-group reuse across every layout.
-mkdir -p a3 && cd a3 || hard_error "cd a3"
+mkdir -p a3 && cdto a3
 mkfile p.bin 400000 81
 for lay in "--layout=sidecar" "--layout=split" "--layout=armoured"; do
   rm -f set.* && cp p.bin d.bin
@@ -487,17 +487,17 @@ for lay in "--layout=sidecar" "--layout=split" "--layout=armoured"; do
   for pct in 40 52 64 76 88; do
     ops="$ops rand=`expr $bytes / 100 \* $pct`,$run_len"
   done
-  "$DAMAGE" "$tgt" $ops > "$log" 2>&1 || hard_error "damage failed"
+  damage "$tgt" $ops > "$log" 2>&1
   run 0 "$XPAR" repair --in-place set.xpa
   run 0 "$XPAR" verify set.xpa
   case "$lay" in *sidecar*) same d.bin p.bin ;; esac
 done
-cd .. || hard_error cd
+cdto ..
 
 step "displaced data is found again rather than treated as damage"
 
 #  Cover the shared misplaced-data search in verify and repair.
-mkdir -p r2 && cd r2 || hard_error "cd r2"
+mkdir -p r2 && cdto r2
 mkfile p.bin 900000 71
 cp p.bin pristine.bin
 run 0 "$XPAR" create --reproducible -r 8 -s 64K -o s p.bin
@@ -532,12 +532,12 @@ cat pad1.bin head.bin pad2.bin tail.bin > p.bin
 "$XPAR" repair -v --in-place s.xpa > "$log" 2>&1
 if grep -q "no dominant displacement" "$log"; then ok
 else bad "ambiguous displacement was not reported"; fi
-cd .. || hard_error cd
+cdto ..
 
 step "asking for no recovery means the same thing to create and to add"
 
 # Zero requests no parity; positive fractions still round up to one.
-mkdir -p j2 && cd j2 || hard_error "cd j2"
+mkdir -p j2 && cdto j2
 mkfile p.bin 200000 91
 cp p.bin pristine.bin
 
@@ -551,7 +551,7 @@ for spec in 0 0% 0x; do
 done
 
 #  It still detects damage; it simply cannot mend it.
-"$DAMAGE" p.bin rand=1000,64 || hard_error "damage failed"
+damage p.bin rand=1000,64
 run 2 "$XPAR" verify set.xpa
 run 2 "$XPAR" repair --in-place set.xpa
 
@@ -570,12 +570,12 @@ run 0 "$XPAR" create --reproducible -r 4 -s 32K -o set p.bin
 mkfile extra.bin 5000 92
 run 0 "$XPAR" add --reproducible -r 0 set.xpa p.bin extra.bin
 run 0 "$XPAR" verify --chain set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "a lost cell table can be rebuilt from the slices that survive"
 
 # Rebuild missing cell tables without scaling memory to the archive.
-mkdir -p k1 && cd k1 || hard_error "cd k1"
+mkdir -p k1 && cdto k1
 mkfile p.bin 300000 93
 cp p.bin pristine.bin
 run 0 "$XPAR" create --armour=none --reproducible -s 16K --cell=4K -r 6 \
@@ -599,7 +599,7 @@ if grep -q "no complete cell table survives" "$log"; then
 else ok; fi
 
 # The rebuilt table restores cell-level repair.
-"$DAMAGE" p.bin -Z 16384 -Y 4096 cell=3,1 || hard_error "damage failed"
+damage p.bin -Z 16384 -Y 4096 cell=3,1
 run 1 "$XPAR" verify set.xpa
 if grep -q "1 slice, 1 cell" "$log"; then ok
 else bad "the rebuilt table did not narrow the damage to one cell"; fi
@@ -614,19 +614,19 @@ run 0 "$XPAR" create --armour=none --reproducible -s 16K --cell=4K -r 6 \
 for v in set.xpa set.v*.xpa; do
   test -f "$v" && "$DAMAGE" "$v" unpacket=SLCL > /dev/null
 done
-"$DAMAGE" p.bin rand=40000,64 || hard_error "damage failed"
+damage p.bin rand=40000,64
 "$XPAR" scrub --rebuild-cells set.xpa > /dev/null 2> "$log" || :
 if grep -q "cannot seed a cell table" "$log"; then ok
 else bad "--rebuild-cells seeded a table from a slice that does not verify"; fi
 if grep -q "rebuild-cells: wrote" "$log"; then
   bad "--rebuild-cells wrote a table it could not seed"
 else ok; fi
-cd .. || hard_error cd
+cdto ..
 
 step "a verb written after its options is named as the mistake"
 
 # Diagnose verbs placed after options.
-mkdir -p k2 && cd k2 || hard_error "cd k2"
+mkdir -p k2 && cdto k2
 mkfile verify 60000 94
 run 0 "$XPAR" create --reproducible -r 2 -s 16K -o s verify
 
@@ -642,12 +642,12 @@ else bad "a verb option before the verb did not name the verb"; fi
 # Correct ordering and -- still work.
 run 0 "$XPAR" verify --json s.xpa
 run 0 "$XPAR" --json -- s.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "an authenticated set finds displaced data the same way an open one does"
 
 #  Keyed verification and repair must agree on displaced data.
-mkdir -p k3 && cd k3 || hard_error "cd k3"
+mkdir -p k3 && cdto k3
 mkfile p.bin 400000 95
 cp p.bin pristine.bin
 mkfile auth.key 40 96
@@ -665,12 +665,12 @@ else bad "a keyed set did not report displaced data"; fi
 run 0 "$XPAR" repair --in-place --auth-key=auth.key set.xpa
 same p.bin pristine.bin
 run 0 "$XPAR" verify --auth-key=auth.key set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "a lost hard-link name is damage repair can put back"
 
 #  Repair must recreate aliases that verify reports as repairable.
-mkdir -p k4 && cd k4 || hard_error "cd k4"
+mkdir -p k4 && cdto k4
 mkdir tree
 mkfile tree/a.bin 200000 98
 mkfile tree/c.bin 50000 99
@@ -691,17 +691,17 @@ if ln tree/a.bin tree/b.bin 2> /dev/null; then
 else
   note "this filesystem has no hard links; skipped"
 fi
-cd .. || hard_error cd
+cdto ..
 
 step "a summary status means the same thing in every verb"
 
 #  A verdict must use the same status with and without --chain.
-mkdir -p k5 && cd k5 || hard_error "cd k5"
+mkdir -p k5 && cdto k5
 mkfile p.bin 300000 100
 run 0 "$XPAR" create --reproducible -r 4 -s 16K -o set p.bin
 mkfile extra.bin 30000 101
 run 0 "$XPAR" add --reproducible -r 4 set.xpa p.bin extra.bin
-"$DAMAGE" p.bin rand=1000,200000 || hard_error "damage failed"
+damage p.bin rand=1000,200000
 
 word() {   # word <verb-and-flags...>
   "$XPAR" "$@" --json set.xpa 2> /dev/null |
@@ -714,12 +714,12 @@ for verb in verify scrub; do
         "${all:-y}"
   equal "$verb calls exit 2 unrepairable" "${one:-x}" unrepairable
 done
-cd .. || hard_error cd
+cdto ..
 
 step "consolidate --dry-run reports without doing the work"
 
 #  Dry runs must not extract or stage an armoured archive.
-mkdir -p k6 && cd k6 || hard_error "cd k6"
+mkdir -p k6 && cdto k6
 mkfile p.bin 2000000 102
 run 0 "$XPAR" create --layout=armoured --reproducible -r 10% -s 64K \
     -o set p.bin
@@ -737,24 +737,24 @@ equal "no staging directory remains" "${n:-0}" 0
 #  Confirm normal consolidation still works.
 run 0 "$XPAR" consolidate --output=out set.xpa
 run 0 "$XPAR" verify out.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "explain uses the resolved input name"
 
 # Use the resolved split-volume name in recipes.
-mkdir -p i1 && cd i1 || hard_error "cd i1"
+mkdir -p i1 && cdto i1
 mkfile p.bin 200000 90
 run 0 "$XPAR" create --reproducible -r 20% --layout=split -o photos p.bin
 "$XPAR" explain photos > r.txt 2> "$log"
 name=`sed -n 's/^in=//p' r.txt | head -1`
 equal "the recipe reads the resolved name" "$name" "photos.xpa"
 exists "$name"
-cd .. || hard_error cd
+cdto ..
 
 step "--deep names the missing data rather than blaming the parity"
 
 # Missing data must not be reported as bad parity.
-mkdir -p h1 && cd h1 || hard_error "cd h1"
+mkdir -p h1 && cdto h1
 mkfile p.bin 400000 89
 run 0 "$XPAR" create --reproducible -r 8 -s 32K -o set p.bin
 run 0 "$XPAR" scrub --deep set.xpa
@@ -766,12 +766,12 @@ else ok; fi
 # Match the diagnostic prefix, not its wording.
 if grep -q "^xpar: --deep: " "$log"; then ok
 else bad "--deep did not say why it could not check the parity"; fi
-cd .. || hard_error cd
+cdto ..
 
 step "the reader rejects what the format says it must"
 
 # Reject reserved fields, reserved attribute bits and invalid generators.
-mkdir -p g1 && cd g1 || hard_error "cd g1"
+mkdir -p g1 && cdto g1
 mkfile p.bin 200000 88
 run 0 "$XPAR" create --reproducible -r 4 -s 32K --armour=none -o set p.bin
 run 0 "$XPAR" info set.xpa
@@ -792,12 +792,12 @@ after=`"$XPAR" info --json set.xpa 2> "$log" | tr ',' '\n' |
          sed -n 's/.*"recovery":\([0-9][0-9]*\).*/\1/p' | head -1`
 equal "a reserved RCVS field is not accepted" "$after" "$before"
 run 0 "$XPAR" verify set.xpa
-cd .. || hard_error cd
+cdto ..
 
 step "every armour field works on every layout"
 
 # Cover every field/layout combination when parity uses defaults.
-mkdir -p f2 && cd f2 || hard_error "cd f2"
+mkdir -p f2 && cdto f2
 mkfile p.bin 200000 87
 for lay in --layout=sidecar --layout=split --layout=armoured; do
   for fld in "" --armour-field=8 --armour-field=16; do
@@ -806,13 +806,13 @@ for lay in --layout=sidecar --layout=split --layout=armoured; do
     run 0 "$XPAR" verify set.xpa
   done
 done
-cd .. || hard_error cd
+cdto ..
 
 step "the inner code corrects exactly what its parameters promise"
 
 #  At depth 1, n corrupt bytes hit n symbols in one codeword; depth D spreads
 #  them over D codewords. The outer code does not protect critical groups.
-mkdir -p c1 && cd c1 || hard_error "cd c1"
+mkdir -p c1 && cdto c1
 mkfile p.bin 200000 61
 
 # corrects <expected> <create options...>
@@ -831,7 +831,7 @@ corrects() {
   n=1
   while test "$n" -le `expr $want + 4`; do
     cp clean.bin s.xpa
-    "$DAMAGE" s.xpa rand=600,$n > "$log" 2>&1 || hard_error "damage failed"
+    damage s.xpa rand=600,$n > "$log" 2>&1
     "$XPAR" verify s.xpa > "$log" 2>&1 || break
     got=$n
     n=`expr $n + 1`
@@ -847,13 +847,13 @@ corrects 32 --armour-field=16 --armour-t=16
 corrects 80 --armour-field=16 --armour-t=40
 #  Depth D interleaves, so a burst of t*D symbols lands one per codeword.
 corrects 64 --depth=4 --armour-t=16
-cd .. || hard_error cd
+cdto ..
 
 step "prune: refuses a lossy removal, and performs a forced one"
 
 #  prune had no coverage at all, though it is destructive and its -f
 #  semantics decide whether entries survive.
-mkdir -p p1 && cd p1 || hard_error "cd p1"
+mkdir -p p1 && cdto p1
 mkdir tree
 mkfile tree/a.bin 80000 66
 run 0 "$XPAR" create -r 4 -s 8K -o set -R tree
@@ -890,6 +890,6 @@ equal "chain collapsed to one generation" "`gens`" 1
 run 0 "$XPAR" verify set.xpa
 #  A sidecar set protects the files in place, so the survivor is on disk.
 same tree/a.bin pristine.bin
-cd .. || hard_error cd
+cdto ..
 
 summary

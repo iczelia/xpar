@@ -203,6 +203,9 @@ char * xpar_strndup(const char * s, sz n);
 
 int xpar_parse_u64(const char * s, u64 * out);
 
+/*  Backend text sink; Win32 converts console output to UTF-16.  */
+void xpar_port_write_text(xpar_file *, const char * s, sz n);
+
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap);
 int xpar_snprintf (char * buf, sz cap, const char * fmt, ...)
                    XPAR_PRINTF(3, 4);
