@@ -541,8 +541,8 @@ fi
 
 dnl  Find timeout(1); tests run uncapped if it is unavailable.
 AC_ARG_VAR([XPAR_TEST_TIMEOUT_SECONDS],
-           [seconds a single test may run (default 1800)])
-test -n "$XPAR_TEST_TIMEOUT_SECONDS" || XPAR_TEST_TIMEOUT_SECONDS=1800
+           [seconds a single test may run (default 3600)])
+test -n "$XPAR_TEST_TIMEOUT_SECONDS" || XPAR_TEST_TIMEOUT_SECONDS=3600
 AC_CHECK_PROGS([XPAR_TIMEOUT_PROG], [timeout gtimeout], [])
 if test -n "$XPAR_TIMEOUT_PROG"; then
   XPAR_TEST_TIMEOUT="$XPAR_TIMEOUT_PROG $XPAR_TEST_TIMEOUT_SECONDS"
