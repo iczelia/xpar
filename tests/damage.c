@@ -311,6 +311,24 @@ static void op_extend(unsigned long long len) {
 
 static void usage(void);
 
+/* Print matching packet body offsets. */
+static void op_find(const char * type) {
+  static const char magic[8] = { 'X','P','A','R','2','P','K','T' };
+  unsigned char hdr[48];
+  unsigned long long off = 0, len;
+  unsigned int i;
+  if (strlen(type) != 4) usage();
+  while (off + 48 <= img_len) {
+    io_read(off, hdr, 48);
+    if (memcmp(hdr, magic, 8) != 0) { off += 8;  continue; }
+    for (len = 0, i = 8; i-- > 0; ) len = (len << 8) | hdr[8 + i];
+    if (len < 48 || (len & 7) != 0 || len > img_len - off) { off += 8;
+                                                             continue; }
+    if (!memcmp(hdr + 32, type, 4)) printf("%llu\n", off + 48);
+    off += len;
+  }
+}
+
 /* Clear every matching packet's magic. */
 static void op_unpacket(const char * type) {
   static const char magic[8] = { 'X','P','A','R','2','P','K','T' };
@@ -353,6 +371,7 @@ static void usage(void) {
     "  forge=OFF,LEN      rewrite a range, keeping its CRC-32C\n"
     "  crc=OFF,LEN        print a range's CRC-32C; changes nothing\n"
     "  unpacket=TYPE      clear each TYPE packet's magic; print the count\n"
+    "  find=TYPE          print each TYPE packet's body offset\n"
     "  truncate=LEN       cut the file down to LEN bytes\n"
     "  extend=LEN         append LEN pseudorandom bytes\n"
     "  cell=S,J           with -Z and -Y, damage one cell of one slice\n"
@@ -381,7 +400,15 @@ int main(int argc, char ** argv) {
       if      (s[1] == 'Z') z = strtoull(argv[++i], NULL, 0);
       else if (s[1] == 'Y') y = strtoull(argv[++i], NULL, 0);
       else if (s[1] == 'n') cell_len = strtoull(argv[++i], NULL, 0);
-      else                  cell_kind = argv[++i];
+      else {
+        cell_kind = argv[++i];
+        if (strcmp(cell_kind, "rand") && strcmp(cell_kind, "zero") &&
+            strcmp(cell_kind, "forge")) {
+          fprintf(stderr, "damage: -k %s: expected rand, zero or forge\n",
+                  cell_kind);
+          exit(2);
+        }
+      }
       continue;
     }
     if (!strncmp(s, "seed=", 5)) {
@@ -394,10 +421,21 @@ int main(int argc, char ** argv) {
     if (!strncmp(s, "extend=", 7))   { op_extend(strtoull(s + 7, NULL, 0));
                                        continue; }
     if (!strncmp(s, "unpacket=", 9)) { op_unpacket(s + 9);  continue; }
+    if (!strncmp(s, "find=", 5))     { op_find(s + 5);      continue; }
     if (!strncmp(s, "cell=", 5)) {
       unsigned long long off;
       if (!split2(s + 5, &a, &b) || !z || !y) usage();
+      if (b * y >= z) {
+        fprintf(stderr, "damage: cell=%llu,%llu outside %llu-byte slice\n",
+                a, b, z);
+        exit(2);
+      }
       off = a * z + b * y;
+      if (off >= img_len) {
+        fprintf(stderr, "damage: cell=%llu,%llu is outside %s\n",
+                a, b, img_path);
+        exit(2);
+      }
       if      (!strcmp(cell_kind, "zero"))  op_zero(off, cell_len);
       else if (!strcmp(cell_kind, "forge")) op_forge(off, y);
       else                                  op_rand(off, cell_len);

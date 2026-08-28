@@ -57,7 +57,13 @@ one_config() {
   read_geometry set.xpa
   note "Z=$Z S=$S Y=$Y K=$K R=$R L=$L"
   if test "$K" -lt 2; then
-    note "K is 1 here, so there is no column structure to test"
+    #  With no columns, test whole-slice recovery.
+    note "K is 1 here, so the erasure unit is the whole slice"
+    run 0 "$XPAR" verify set.xpa
+    damage_profile data.bin 1 0
+    run 1 "$XPAR" verify set.xpa
+    run 0 "$XPAR" repair --in-place set.xpa
+    same data.bin pristine.bin
     cd ..;  return 0
   fi
   if test "$R" -ge "$S"; then
@@ -173,6 +179,10 @@ one_config "matrix, GF(2^16), ragged tail" 2686976 \
            -s 256K -r 5 --codec=matrix --field=16
 one_config "fft, GF(2^16), Z = 1 MiB"      8388608 \
            -s 1M -r 2 --codec=fft --field=16
+
+#  Y = Z leaves no column structure.
+one_config "matrix, GF(2^8), one cell per slice" 2097152 \
+           -s 64K --cell=64K -r 3 --codec=matrix --field=8
 
 if test "$XPAR_TEST_LEVEL" != quick; then
   one_config "matrix, GF(2^8), narrow cells" 4194304 \

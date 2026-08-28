@@ -1243,12 +1243,7 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
 
 
 static void load_key(xpar_vset * s, const char * path) {
-  xpar_keyfile_status st = xpar_keyfile_load(path, &s->key, s->master);
-  if (st == XPAR_KEYFILE_OPEN) FATAL_IO("Cannot open key file '%s'.", path);
-  if (st == XPAR_KEYFILE_EMPTY)
-    FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-  if (st != XPAR_KEYFILE_OK)
-    FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.", path);
+  xpar_keyfile_load_or_die(path, &s->key, s->master);
   s->key_loaded = true;
 }
 
@@ -2745,7 +2740,6 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
 
 void xpar_vset_json_set(const xpar_vset * s, xpar_json * js) {
   xpar_json_begin(js, "set");
-  xpar_json_u64(js, "schema", XPAR_JSON_SCHEMA);
   xpar_json_hex(js, "set_id", s->set_id, XPAR_SET_ID_LEN);
   xpar_json_u64(js, "slice_size", s->geom.slice_size);
   xpar_json_u64(js, "slices", s->geom.slice_count);

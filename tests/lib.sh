@@ -204,12 +204,8 @@ folds_case() {   # folds_case <dir>
   return 1
 }
 
-# Return the first packet-body offset for TYPE.
 packet_body_at() {   # packet_body_at <file> <TYPE>
-  grep -abo 'XPAR2PKT' "$1" 2> /dev/null | cut -d: -f1 | while read _o; do
-    _t=`dd if="$1" bs=1 skip=\`expr $_o + 32\` count=4 2> /dev/null`
-    if test "$_t" = "$2"; then expr $_o + 48;  break; fi
-  done
+  "$DAMAGE" "$1" "find=$2" 2> /dev/null | head -1
 }
 
 # Test whether shell and native helpers can create a path.

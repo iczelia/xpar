@@ -93,6 +93,16 @@ static void test_helpers(void) {
   buf[7] = 0;
   CHECK(xpar_has_nul(buf, 8), "a trailing NUL must be seen");
   CHECK(xpar_ct_equal(buf, buf, 8), "constant-time compare of equal buffers");
+  {
+    u8 other[8];
+    xpar_memcpy(other, buf, 8);
+    other[0] ^= 0x01;
+    CHECK(!xpar_ct_equal(buf, other, 8), "a difference in the first byte");
+    xpar_memcpy(other, buf, 8);
+    other[7] ^= 0x80;
+    CHECK(!xpar_ct_equal(buf, other, 8), "a difference in the last byte");
+    CHECK(xpar_ct_equal(buf, other, 7), "a length that excludes it");
+  }
 }
 
 /* Independent bitwise CRC-32C oracle. */

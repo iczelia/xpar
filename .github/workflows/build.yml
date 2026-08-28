@@ -420,7 +420,7 @@ jobs:
             #  QEMU's max CPU is the only SVE runner.
             cpu: -cpu max
             cpu2: max,sve-default-vector-length=16
-            macros: HAVE_NEON HAVE_PMULL HAVE_SVE HAVE_ARM_CRC32
+            macros: HAVE_NEON HAVE_NEON_CLMUL HAVE_SVE HAVE_ARM_CRC32
             tiers: neon clmul-neon sve
             force: sve
           - arch: s390x

@@ -3224,7 +3224,6 @@ int xpar_op_repair(const xpar_options * o) {
       }
       if (o->json) {
         xpar_json_begin(&chain_js, "set");
-        xpar_json_u64(&chain_js, "schema", XPAR_JSON_SCHEMA);
         xpar_json_hex(&chain_js, "set_id", c.gen[g].set_id,
                       XPAR_SET_ID_LEN);
         xpar_json_u64(&chain_js, "generation", c.gen[g].sd.generation);
@@ -3307,9 +3306,7 @@ int xpar_op_repair(const xpar_options * o) {
         out = XPAR_EXIT_REPAIRABLE;
       if (o->json) {
         xpar_json_begin(&owned_js, "repair");
-        xpar_json_str(&owned_js, "layout",
-                      owned_layout == XPAR_LAYOUT_SPLIT ? "split" :
-                                                         "armoured");
+        xpar_json_str(&owned_js, "layout", xpar_layout_name(owned_layout));
         xpar_json_bool(&owned_js, "changed", changed);
         xpar_json_str(&owned_js, "destination",
                       o->dest == XPAR_DEST_TO ? "tree" : "set");
@@ -3353,12 +3350,7 @@ int xpar_op_repair(const xpar_options * o) {
   xpar_crc32c_init();
   xpar_critset_init(&r.crit);
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &r.key, r.master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.", o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &r.key, r.master);
     r.key_loaded = true;
   }
 

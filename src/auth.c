@@ -55,6 +55,18 @@ xpar_keyfile_status xpar_keyfile_load(const char * path, xpar_key * key,
   return XPAR_KEYFILE_OK;
 }
 
+void xpar_keyfile_load_or_die(const char * path, xpar_key * key,
+                              u8 master[XPAR_BLAKE3_KEY_LEN]) {
+  switch (xpar_keyfile_load(path, key, master)) {
+    case XPAR_KEYFILE_OK:    return;
+    case XPAR_KEYFILE_OPEN:  FATAL_PERROR(path);
+    case XPAR_KEYFILE_EMPTY: FATAL_CODE(XPAR_EXIT_AUTH,
+                                        "Key file '%s' is empty.", path);
+    default:                 FATAL_CODE(XPAR_EXIT_AUTH,
+                                        "Cannot read key file '%s'.", path);
+  }
+}
+
 void xpar_key_forget(xpar_key * key, u8 master[XPAR_BLAKE3_KEY_LEN]) {
   if (key) xpar_secure_zero(key, sizeof *key);
   if (master) xpar_secure_zero(master, XPAR_BLAKE3_KEY_LEN);

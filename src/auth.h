@@ -28,6 +28,9 @@ typedef enum {
 xpar_keyfile_status xpar_keyfile_load(const char * path, xpar_key * key,
                                       u8 master[XPAR_BLAKE3_KEY_LEN]);
 
+void xpar_keyfile_load_or_die(const char * path, xpar_key * key,
+                              u8 master[XPAR_BLAKE3_KEY_LEN]);
+
 void xpar_key_forget(xpar_key * key,
                      u8 master[XPAR_BLAKE3_KEY_LEN]);
 

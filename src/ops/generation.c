@@ -49,7 +49,6 @@ static void gen_json_result(const xpar_options * o, const char * verb,
   xpar_json_init(&js, xpar_stdout, true);
   if (set_id) {
     xpar_json_begin(&js, "set");
-    xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
     xpar_json_hex(&js, "set_id", set_id, XPAR_SET_ID_LEN);
     xpar_json_u64(&js, "generation", generation);
     xpar_json_end(&js);
@@ -690,13 +689,7 @@ void xpar_gchain_load(const xpar_options * o, xpar_chain * c) {
   xpar_memset(c, 0, sizeof *c);
   xpar_critset_init(&c->crit);
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &c->key,
-                                               c->master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.", o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &c->key, c->master);
     c->key_loaded = true;
   }
   chain_gather(o, c);
@@ -2238,13 +2231,7 @@ static void gen_write_set(gen_write_req * rq) {
   xpar_memset(master, 0, sizeof master);
   xpar_memset(&auth, 0, sizeof auth);
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &key, master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.",
-                 o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &key, master);
     keyed = true; kp = &key; tag_len = 16;
     auth.kdf_id = 0; auth.slice_tag_keyed = 1;
     auth.packet_tag_keyed = 1;
@@ -5386,13 +5373,7 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   xpar_memset(&key, 0, sizeof key);
   xpar_memset(master, 0, sizeof master);
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &key, master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.",
-                 o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &key, master);
     key_loaded = true;
   }
 

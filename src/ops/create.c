@@ -704,7 +704,6 @@ static u64 create_stream_tag(ctx * c, u64 at, u64 length) {
 static void emit_json_set(ctx * c) {
   if (!c->o->json) return;
   xpar_json_begin(&c->js, "set");
-  xpar_json_u64(&c->js, "schema", XPAR_JSON_SCHEMA);
   xpar_json_hex(&c->js, "set_id", c->set_id, XPAR_SET_ID_LEN);
   xpar_json_u64(&c->js, "slice_size", c->geom.slice_size);
   xpar_json_u64(&c->js, "slices", c->geom.slice_count);
@@ -1238,12 +1237,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   xpar_memset(&c, 0, sizeof c);
   c.o = o;
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &c.key, c.master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.", o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &c.key, c.master);
     c.keyed = true;
     c.auth.kdf_id = 0;
     c.auth.slice_tag_keyed = 1;

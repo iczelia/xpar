@@ -235,7 +235,6 @@ int xpar_op_list(const xpar_options * o) {
     xpar_hex(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
     if (o->json) {
       xpar_json_begin(&js, "set");
-      xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
       xpar_json_str(&js, "set_id", idbuf);
       xpar_json_u64(&js, "generation", c.gen[g].sd.generation);
       xpar_json_u64(&js, "files", m.count);
@@ -478,7 +477,6 @@ int xpar_op_info(const xpar_options * o) {
         const xpar_setd * gs = &c.gen[g].sd;
         xpar_hex(idbuf, c.gen[g].set_id, XPAR_SET_ID_LEN);
         xpar_json_begin(&js, "set");
-        xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
         xpar_json_str(&js, "set_id", idbuf);
         xpar_json_u64(&js, "generation", gs->generation);
         xpar_json_u64(&js, "generations", count ? count : walked);
@@ -525,7 +523,6 @@ int xpar_op_info(const xpar_options * o) {
   if (o->json) {
     xpar_json_init(&js, xpar_stdout, true);
     xpar_json_begin(&js, "set");
-    xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
     xpar_json_str(&js, "set_id", idbuf);
     xpar_json_u64(&js, "generation", sd->generation);
     xpar_json_u64(&js, "generations", c.gen_count);
@@ -850,8 +847,8 @@ int xpar_op_explain(const xpar_options * o) {
     }
     if (o->json) {
       xpar_json_begin(&js, "set");
-      xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
-      xpar_json_str(&js, "layout", "armoured");
+      xpar_json_str(&js, "layout",
+                    xpar_layout_name(XPAR_LAYOUT_ARMOURED));
       xpar_json_end(&js);
       xpar_json_begin(&js, "recipe");
       xpar_json_str(&js, "source", path);
@@ -925,9 +922,12 @@ int xpar_op_explain(const xpar_options * o) {
                                            (ag.symbol_bits / 8)),
                      frames);
       if (o->json) {
+        char idbuf[XPAR_SET_ID_LEN * 2 + 1];
+        xpar_hex(idbuf, hdr.set_id, XPAR_SET_ID_LEN);
         xpar_json_begin(&js, "set");
-        xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
-        xpar_json_str(&js, "layout", "packet-bearing");
+        xpar_json_str(&js, "set_id", idbuf);
+        /*  SETD supplies the layout after the raw volume is recovered.  */
+        xpar_json_str(&js, "volume", "packet-bearing");
         xpar_json_end(&js);
         xpar_json_begin(&js, "recipe");
         xpar_json_str(&js, "source", path);
@@ -954,8 +954,7 @@ int xpar_op_explain(const xpar_options * o) {
                      "prologue.", path);
       if (o->json) {
         xpar_json_begin(&js, "set");
-        xpar_json_u64(&js, "schema", XPAR_JSON_SCHEMA);
-        xpar_json_str(&js, "layout", "packet-bearing");
+        xpar_json_str(&js, "volume", "packet-bearing");
         xpar_json_end(&js);
         xpar_json_begin(&js, "recipe");
         xpar_json_str(&js, "source", path);

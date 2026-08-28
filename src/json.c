@@ -45,6 +45,7 @@ void xpar_json_begin(xpar_json * j, const char * type) {
   put(j, "{");
   xpar_json_str(j, "type", type);
   xpar_json_u64(j, "t", xpar_usec_now() - j->start_usec);
+  xpar_json_u64(j, "schema", XPAR_JSON_SCHEMA);
 }
 
 void xpar_json_end(xpar_json * j) {

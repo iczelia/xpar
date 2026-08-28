@@ -1049,15 +1049,14 @@ cp -r tree keep
 run 0 "$XPAR" create -r 300% -s 64K --cell=4096 -o s -R tree
 #  Corrupt the SLCL body so the reader drops the cell table.
 slcl=`packet_body_at s.xpa SLCL`
-if test -n "$slcl"; then
-  "$DAMAGE" s.xpa "flip=$slcl,1" || hard_error "damage failed"
-  "$DAMAGE" tree/a.bin "rand=4096,64" || hard_error "damage failed"
-  run 0 "$XPAR" repair --in-place s.xpa
-  same tree/a.bin keep/a.bin
-  note "slice fallback repaired without cell checksums"
-else
-  note "no SLCL packet found to damage; skipped"
+if test -z "$slcl"; then
+  hard_error "a set created with --cell=4096 has no SLCL packet"
 fi
+"$DAMAGE" s.xpa "flip=$slcl,1" || hard_error "damage failed"
+"$DAMAGE" tree/a.bin "rand=4096,64" || hard_error "damage failed"
+run 0 "$XPAR" repair --in-place s.xpa
+same tree/a.bin keep/a.bin
+note "slice fallback repaired without cell checksums"
 cd ..
 
 step "option bounds are enforced at both ends"

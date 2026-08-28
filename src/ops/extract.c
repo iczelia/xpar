@@ -913,12 +913,7 @@ int xpar_op_extract(const xpar_options * o) {
   xpar_crc32c_init();
   xpar_critset_init(&x.crit);
   if (o->auth_key) {
-    xpar_keyfile_status ks = xpar_keyfile_load(o->auth_key, &x.key, x.master);
-    if (ks == XPAR_KEYFILE_OPEN) FATAL_PERROR(o->auth_key);
-    if (ks == XPAR_KEYFILE_EMPTY)
-      FATAL_CODE(XPAR_EXIT_AUTH, "The key file is empty.");
-    if (ks != XPAR_KEYFILE_OK)
-      FATAL_CODE(XPAR_EXIT_AUTH, "Reading key file '%s' failed.", o->auth_key);
+    xpar_keyfile_load_or_die(o->auth_key, &x.key, x.master);
     x.key_loaded = true;
   }
 
