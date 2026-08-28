@@ -66,6 +66,7 @@ typedef struct {
   u8 *  data;                 /*  Owned; the coalesced replacement.  */
   u8 *  old;                  /*  Owned; what was there, for the journal.  */
   u8    trunc;                /*  Remove [off, off+len) instead.  */
+  u8    link;                 /*  Link from canon[entry] instead.  */
 } rp_write;
 
 typedef struct {
@@ -129,7 +130,9 @@ typedef struct {
   u32 fd_next;
 
   u64 bytes_written, writes, cells_copied, cells_decoded;
-  u64 entries_repaired, links_repaired;
+  u64 entries_repaired, links_repaired, links_missing, links_made;
+  u64 opaque;                 /*  Hash fails and nothing can be written.  */
+  u8 * hash_bad;              /*  Per entry; owned.  */
   bool changed;
 } rp;
 
@@ -705,7 +708,7 @@ static void rp_resync_tree(rp * r) {
   For(u32, i, r->mf.count, rp_resync_entry(r, i))
 }
 
-/*  Work cells are immutable and ordered by (slice, column).  */
+/*  Sorted by (slice, column); stable after classification.  */
 static rp_cell * rp_cell_at(rp * r, u64 slice, u32 col) {
   u64 key = slice * r->geom.cells_per_slice + col;
   u32 lo = 0, hi = r->cell_count;
@@ -1004,6 +1007,8 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
               xpar_cell_size(&r->geom, pr.col);
         }
       }
+      /*  Write construction determines whether this is repairable.  */
+      r->hash_bad[i] = 1;
     }
   }
   xpar_free(buf);  xpar_free(cell);
@@ -1205,8 +1210,7 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
   return ok;
 }
 
-/*  Accept a touched slice only when its repaired image matches the strong
-    tag. Sets without one cannot authorise in-place repair.  */
+/*  Verify repaired slices when strong tags exist; -f gates their absence.  */
 static bool rp_slice_gate(rp * r) {
   u32 i;
   u64 z = r->geom.slice_size;
@@ -1370,6 +1374,39 @@ static void rp_build_writes(rp * r) {
     }
     i = j + 1;
   }
+  /*  Recreate missing hard-link names from their canonical entries.  */
+  for (i = 0; i < r->mf.count; i++) {
+    rp_write * w;
+    xpar_stat_t st;
+    u32 t = r->canon[i];
+    if (r->mf.entry[i].entry_type != XPAR_ENTRY_HARDLINK || t == i) continue;
+    if (xpar_lstat(r->path[i], &st) == 0) continue;
+    if (xpar_lstat(r->path[t], &st) != 0 || !st.is_regular) continue;
+    if (r->wr_count == r->wr_cap) {
+      r->wr_cap = r->wr_cap ? r->wr_cap * 2 : 16;
+      r->wr = (rp_write *) xpar_realloc(r->wr,
+                                        r->wr_cap * sizeof(rp_write));
+    }
+    w = &r->wr[r->wr_count++];
+    xpar_memset(w, 0, sizeof *w);
+    /*  Record that the link name was absent so undo can remove it.  */
+    w->entry = i;  w->link = 1;
+    w->old = (u8 *) xpar_alloc_raw(1);
+  }
+
+  /*  A hash failure with no corresponding write is unrepairable.  */
+  for (i = 0; i < r->mf.count; i++) {
+    u32 w;
+    bool written = false;
+    if (!r->hash_bad[i] || r->alias[i]) continue;
+    for (w = 0; w < r->wr_count && !written; w++)
+      if (r->wr[w].entry == i) written = true;
+    if (written) continue;
+    r->opaque++;
+    rp_note(r, "xpar: %.*s: content damage cannot be located\n",
+            (int) r->mf.entry[i].name_len, r->mf.entry[i].name);
+  }
+
   /*  Journal an overlong tail before truncating it.  */
   for (i = 0; i < r->mf.count; i++) {
     rp_write * w;
@@ -1471,8 +1508,23 @@ static void rp_apply(rp * r) {
   bool warned = false;
   for (i = 0; i < r->wr_count;) {
     u32 entry = r->wr[i].entry, j;
-    xpar_file * f = xpar_open(r->path[entry],
-                              XPAR_O_RDWR | XPAR_O_NOFOLLOW);
+    xpar_file * f;
+    if (r->wr[i].link) {
+      /*  Do not create the missing path before linking it.  */
+      char * d = xpar_path_dir(r->path[entry]);
+      xpar_mkdir_p(d, 0777);
+      xpar_free(d);
+      if (xpar_link(r->path[r->canon[entry]], r->path[entry]) == 0) {
+        r->writes++;  r->links_made++;
+      }
+      else
+        rp_note(r, "xpar: cannot link '%s' to '%s': %s\n",
+                r->path[entry], r->path[r->canon[entry]],
+                xpar_strerror(xpar_errno()));
+      i++;
+      continue;
+    }
+    f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_NOFOLLOW);
     if (!f) {
       f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_CREAT |
                                          XPAR_O_NOFOLLOW);
@@ -1703,6 +1755,7 @@ static void rp_entry_state_alloc(rp * r) {
   r->canon = (u32 *) xpar_calloc(n, sizeof(u32));
   r->fsize = (u64 *) xpar_calloc(n, sizeof(u64));
   r->fstate = (u8 *) xpar_calloc(n, 1);
+  r->hash_bad = (u8 *) xpar_calloc(n, 1);
   r->resync = (xpar_resync_map *)
                 xpar_calloc(n, sizeof(xpar_resync_map));
   rp_find_aliases(r);
@@ -1727,8 +1780,10 @@ static void rp_entry_state_free(rp * r) {
   }
   xpar_free(r->path);  xpar_free(r->alias);  xpar_free(r->canon);
   xpar_free(r->fsize);  xpar_free(r->fstate);  xpar_free(r->resync);
+  xpar_free(r->hash_bad);
   r->path = NULL;  r->alias = NULL;  r->canon = NULL;
   r->fsize = NULL;  r->fstate = NULL;  r->resync = NULL;
+  r->hash_bad = NULL;
   xpar_occindex_free(&r->ox);
   xpar_nameidx_free(&r->nix);
   xpar_free(r->owner);  r->owner = NULL;
@@ -2134,17 +2189,22 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "entries_repaired", r->entries_repaired);
     xpar_json_u64(&r->js, "entries_overlong", r->overlong);
     xpar_json_u64(&r->js, "links_repaired", r->links_repaired);
+    xpar_json_u64(&r->js, "links_relinked", r->links_made);
+    xpar_json_u64(&r->js, "entries_opaque", r->opaque);
     xpar_json_end(&r->js);
     xpar_json_summary(&r->js, status, code);
   } else if (!r->quiet) {
-    if (!r->cell_count && !r->overlong)
-      rp_note(r, "xpar: no damage found.\n");
-    else if (!r->cell_count)
+    if (r->links_made)
+      rp_note(r, "xpar: relinked %" PRIu64 " hard-link name%s.\n",
+              r->links_made, r->links_made == 1 ? "" : "s");
+    if (r->overlong)
       rp_note(r, xpar_strcmp(status, "dry-run")
                    ? "xpar: restored %" PRIu64 " overlong entr%s.\n"
                    : "xpar: found %" PRIu64 " overlong entr%s.\n",
               r->overlong, r->overlong == 1 ? "y" : "ies");
-    else
+    if (!r->cell_count && !r->overlong && !r->links_made)
+      rp_note(r, "xpar: no damage found.\n");
+    else if (r->cell_count)
       rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %"
               PRIu64 " decoded; "
                  "%" PRIu64 " write%s, %" PRIu64 " bytes; %" PRIu64 " %s repaired"
@@ -2173,22 +2233,15 @@ static void rp_free(rp * r) {
   for (i = 0; i < r->wr_count; i++)
     { xpar_free(r->wr[i].data);  xpar_free(r->wr[i].old); }
   xpar_free(r->wr);
-  for (i = 0; i < r->mf.count; i++) xpar_free(r->path[i]);
-  for (i = 0; i < r->mf.count; i++) xpar_resync_map_free(&r->resync[i]);
-  xpar_free(r->path);  xpar_free(r->alias);  xpar_free(r->canon);
-  xpar_free(r->fsize);  xpar_free(r->fstate);  xpar_free(r->resync);
+  rp_entry_state_free(r);
   xpar_free(r->susp);
   xpar_free((void *) r->rec);  xpar_free(r->rec_present);
   if (r->have_layt) xpar_layt_free(&r->layt);
   xpar_erasures_free(&r->er);
   xpar_tagset_free(&r->tags);
-  xpar_occindex_free(&r->ox);
-  xpar_nameidx_free(&r->nix);
   for (i = 0; i < r->posix_gen_count; i++)
     xpar_gchain_posix_free(r->posix_tab[i], r->posix_tab_count[i]);
   xpar_free(r->posix_tab);  xpar_free(r->posix_tab_count);
-  xpar_free(r->owner);
-  xpar_manifest_free(&r->mf);
   if (r->have_setd) xpar_setd_free(&r->sd);
   xpar_critset_free(&r->crit);
   xpar_free(r->dir);  xpar_free(r->journal);
@@ -3247,11 +3300,7 @@ int xpar_op_repair(const xpar_options * o) {
     if (chain_stage)
       owned_chain_stage_remove(&c, order, walked, selected, chain_stage);
     if (o->json)
-      xpar_json_summary(&chain_js,
-                        worst == XPAR_EXIT_OK ? "clean" :
-                        worst == XPAR_EXIT_REPAIRABLE ? "repairable" :
-                                                       "failed",
-                        worst);
+      xpar_json_summary(&chain_js, xpar_status_word(worst), worst);
     xpar_free(chain_stage);
     xpar_free(order);
     xpar_gchain_free(&c);
@@ -3273,11 +3322,8 @@ int xpar_op_repair(const xpar_options * o) {
       if (o->json) xpar_vset_json_set(owned, &owned_js);
       if (o->dry_run) {
         xpar_vset_report(owned, o, before);
-        if (o->json) xpar_json_summary(&owned_js,
-                                        before == XPAR_EXIT_OK ? "clean" :
-                                        before == XPAR_EXIT_REPAIRABLE
-                                          ? "repairable" : "unrepairable",
-                                        before);
+        if (o->json)
+          xpar_json_summary(&owned_js, xpar_status_word(before), before);
         xpar_vset_close(owned);
         return before;
       }
@@ -3420,14 +3466,24 @@ int xpar_op_repair(const xpar_options * o) {
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
   }
-  { bool over = false;
+  { bool unclean = false;
     for (i = 0; i < r.mf.count; i++) {
       if (!(r.fstate[i] & 2)) continue;
-      over = true;
+      unclean = true;
       /*  Aliases share the canonical file.  */
       if (!r.alias[i]) r.overlong++;
     }
-    if (!r.cell_count && !over) {
+    /*  A missing hard-link name is damage even if all cells verify.  */
+    for (i = 0; i < r.mf.count; i++) {
+      xpar_stat_t lst;
+      if (r.mf.entry[i].entry_type != XPAR_ENTRY_HARDLINK ||
+          r.canon[i] == i) continue;
+      if (xpar_lstat(r.path[i], &lst) != 0) { r.links_missing++;  break; }
+    }
+    /*  Hash failures may be repairable even when no cell is marked.  */
+    for (i = 0; i < r.mf.count; i++)
+      if (r.hash_bad[i] && !r.alias[i]) { unclean = true;  break; }
+    if (!r.cell_count && !unclean && !r.links_missing) {
       rp_report(&r, "clean", XPAR_EXIT_OK);
       rp_free(&r);
       return XPAR_EXIT_OK;
@@ -3473,6 +3529,11 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->repair_head_set) rp_select_head_output(&r);
 
   rp_build_writes(&r);
+  if (r.opaque) {
+    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
+    rp_free(&r);
+    return XPAR_EXIT_UNREPAIRABLE;
+  }
   if (o->dest == XPAR_DEST_TO || o->dest == XPAR_DEST_BACKUP) {
     if (!o->dry_run)
       rp_write_tree(&r, o->dest == XPAR_DEST_TO ? o->to_dir : r.dir,

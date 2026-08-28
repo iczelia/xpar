@@ -644,6 +644,78 @@ run 0 "$XPAR" verify --json s.xpa
 run 0 "$XPAR" --json -- s.xpa
 cd .. || hard_error cd
 
+step "an authenticated set finds displaced data the same way an open one does"
+
+#  Keyed verification and repair must agree on displaced data.
+mkdir -p k3 && cd k3 || hard_error "cd k3"
+mkfile p.bin 400000 95
+cp p.bin pristine.bin
+mkfile auth.key 40 96
+run 0 "$XPAR" create --reproducible --auth-key=auth.key -r 20% -s 16K \
+    -o set p.bin
+
+#  Push every slice forward by prepending bytes.
+mkfile pad.bin 5000 97
+cat pad.bin pristine.bin > p.bin
+
+run 1 "$XPAR" verify --auth-key=auth.key set.xpa
+if grep -q "displaced slices" "$log"; then ok
+else bad "a keyed set did not report displaced data"; fi
+
+run 0 "$XPAR" repair --in-place --auth-key=auth.key set.xpa
+same p.bin pristine.bin
+run 0 "$XPAR" verify --auth-key=auth.key set.xpa
+cd .. || hard_error cd
+
+step "a lost hard-link name is damage repair can put back"
+
+#  Repair must recreate aliases that verify reports as repairable.
+mkdir -p k4 && cd k4 || hard_error "cd k4"
+mkdir tree
+mkfile tree/a.bin 200000 98
+mkfile tree/c.bin 50000 99
+if ln tree/a.bin tree/b.bin 2> /dev/null; then
+  run 0 "$XPAR" create --reproducible -r 20% -s 16K -o set -R tree
+  rm -f tree/b.bin
+  run 1 "$XPAR" verify set.xpa
+  run 0 "$XPAR" repair --in-place --keep-journal set.xpa
+  if grep -q "relinked 1 hard-link name" "$log"; then ok
+  else bad "repair did not put the hard-link name back"; fi
+  exists tree/b.bin
+  run 0 "$XPAR" verify set.xpa
+
+  #  The name did not exist before the repair, so undo removes it.
+  run 0 "$XPAR" undo set.xpa
+  if test -e tree/b.bin; then bad "undo left the recreated link behind"
+  else ok; fi
+else
+  note "this filesystem has no hard links; skipped"
+fi
+cd .. || hard_error cd
+
+step "a summary status means the same thing in every verb"
+
+#  A verdict must use the same status with and without --chain.
+mkdir -p k5 && cd k5 || hard_error "cd k5"
+mkfile p.bin 300000 100
+run 0 "$XPAR" create --reproducible -r 4 -s 16K -o set p.bin
+mkfile extra.bin 30000 101
+run 0 "$XPAR" add --reproducible -r 4 set.xpa p.bin extra.bin
+"$DAMAGE" p.bin rand=1000,200000 || hard_error "damage failed"
+
+word() {   # word <verb-and-flags...>
+  "$XPAR" "$@" --json set.xpa 2> /dev/null |
+    tr ',' '\n' | sed -n 's/.*"status":"\([a-z-]*\)".*/\1/p' | tail -1
+}
+for verb in verify scrub; do
+  one=`word $verb`
+  all=`word $verb --chain`
+  equal "$verb says the same word with and without --chain" "${one:-x}" \
+        "${all:-y}"
+  equal "$verb calls exit 2 unrepairable" "${one:-x}" unrepairable
+done
+cd .. || hard_error cd
+
 step "explain uses the resolved input name"
 
 # Use the resolved split-volume name in recipes.

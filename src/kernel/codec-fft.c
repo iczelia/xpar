@@ -127,14 +127,8 @@ static u32 fwht_mulmod(u32 a, u32 b, u32 bits, u32 mask) {
   return (p & mask) + (p >> bits);
 }
 
-/*  Two layers at a time, so four entries are loaded and stored once for
-    four butterflies instead of twice for two. Both fields have an even
-    number of layers, 2^w with w of 8 or 16, so nothing is left over.
-
-    Blocks starting at or past `trunc` are skipped. Their inputs are zero
-    and every later layer's blocks nest inside them, so they stay zero;
-    the first pass of a decode transforms only m + S of 2^w entries and
-    the saving is the whole of the truncation.  */
+/*  Process two layers per load. Blocks starting at `trunc` contain only
+    zero subblocks and can be skipped.  */
 static void fwht(u16 * d, u32 len, u32 trunc, u32 bits) {
   u32 mask = (1u << bits) - 1, dist = 1, dist4 = 4;
   for (; dist4 <= len; dist = dist4, dist4 <<= 2)

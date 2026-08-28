@@ -48,4 +48,7 @@ void xpar_json_progress(xpar_json *, u64 done, u64 total, u64 rate_bps);
 void xpar_json_progress_sink(void * user, u64 done, u64 total, u64 rate_bps);
 void xpar_json_summary (xpar_json *, const char * status, int exit_code);
 
+/*  Canonical damage status for an exit code.  */
+const char * xpar_status_word(int exit_code);
+
 #endif

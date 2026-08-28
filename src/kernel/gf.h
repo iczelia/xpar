@@ -36,7 +36,7 @@
 
 extern u8 xpar_gf8_exp[512];      /*  exp[i] = alpha^(i mod 255); i <= 508  */
 extern u8 xpar_gf8_log[256];
-extern u8 xpar_gf8_inv_tab[256];  /*  inv_tab[0] = 0, by convention.  */
+extern u8 xpar_gf8_inv_tab[256];  /*  Entry 0 is 0, by convention.  */
 
 /*  131,070 + 65,536 entries of u16 = 384 KiB, allocated by xpar_gf_init.  */
 extern const u16 * xpar_gf16_exp;

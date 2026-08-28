@@ -539,7 +539,7 @@ static void collect_gens(xpar_vset * s) {
     xpar_setd_free(&sd);
   }
   s->gen_count = n;
-  /*  Newest FILE owner shadows its ancestors.  */
+  /*  Newest first, making the chain head gen[0].  */
   for (i = 1; i < n; i++) {
     xpar_genid t = s->gen[i];
     u32 k = i;
@@ -937,8 +937,7 @@ static void split_score_candidate(xpar_vset * s, const xpar_vol * lv,
   }
 }
 
-/*  Return the matched full path and in-memory replacement basename. Bound
-    directory entries before hashing to preserve the DOS name limit.  */
+/*  Find a renamed split volume by tag; return its owned path and basename.  */
 static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
                                 char ** found_name) {
   char * expected = xpar_path_join(s->dir, lv->name);
@@ -1148,8 +1147,12 @@ static bool v_confirm_at(void * user, u32 at, u64 physical) {
   u64 z = c->s->geom.slice_size;
   if (physical > UINT64_MAX - z ||
       xpar_pread(c->f, c->buf, (sz) z, physical) != (sz) z) return false;
-  xpar_slice_tag(&c->s->setd, p->slice, c->buf, got,
-                 c->s->tagset.t.tag_len);
+  if (c->s->keyed)
+    xpar_slice_tag_keyed(&c->s->setd, p->slice, c->buf, c->s->key.k_slice,
+                         got, c->s->tagset.t.tag_len);
+  else
+    xpar_slice_tag(&c->s->setd, p->slice, c->buf, got,
+                   c->s->tagset.t.tag_len);
   return xpar_blake3_tag_equal(
     got, c->s->tagset.t.slice_tag + p->slice * c->s->tagset.t.tag_len,
     c->s->tagset.t.tag_len);
@@ -1209,8 +1212,7 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
   u32 n, i;
   if (map->searched) return;
   map->searched = true;
-  /*  Defer keyed resync to repair, which can verify keyed tags.  */
-  if (o->resync == XPAR_RESYNC_OFF || !f || s->keyed) return;
+  if (o->resync == XPAR_RESYNC_OFF || !f) return;
   p = v_entry_probes(s, entry, &n);
   if (!n) { xpar_free(p);  return; }
   confirm.s = s;  confirm.f = f;  confirm.probe = p;
@@ -2755,10 +2757,7 @@ void xpar_vset_json_set(const xpar_vset * s, xpar_json * js) {
 void xpar_vset_json_summary(const xpar_vset * s, xpar_json * js,
                             int rc) {
   xpar_json_begin(js, "summary");
-  xpar_json_str(js, "status",
-                rc == XPAR_EXIT_OK          ? "clean" :
-                rc == XPAR_EXIT_REPAIRABLE  ? "repairable"
-                                            : "unrepairable");
+  xpar_json_str(js, "status", xpar_status_word(rc));
   xpar_json_u64(js, "exit", (u64) rc);
   xpar_json_u64(js, "slices_checked", s->geom.slice_count);
   xpar_json_u64(js, "slices_bad", s->bad_slices);
@@ -2858,11 +2857,7 @@ int xpar_op_verify(const xpar_options * o) {
         }
         xpar_vset_close(head);
         if (o->json)
-          xpar_json_summary(&chain_js,
-                            worst == XPAR_EXIT_OK ? "clean" :
-                            worst == XPAR_EXIT_REPAIRABLE ? "repairable" :
-                                                           "unrepairable",
-                            worst);
+          xpar_json_summary(&chain_js, xpar_status_word(worst), worst);
         xpar_free(member);
         xpar_gchain_free(&c);
         return worst;

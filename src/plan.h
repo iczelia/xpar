@@ -41,7 +41,7 @@ typedef struct {
   u64  slice_count;        /*  -b; 0 likewise.  */
   u64  recovery_slices;    /*  R, already resolved from the -r grammar.  */
   u32  cell_bytes;         /*  Y; 0 lets rule (d) choose.  */
-  u32  column_chunk;       /*  --fft-chunk; 0 lets rules (a) and (b) choose.  */
+  u32  column_chunk;       /*  Codec column width; 0 lets rules (a) and (b) choose.  */
   u8   field_log2;         /*  0 for auto.  */
   u8   codec;              /*  0xFF for auto.  */
   u8   layout;             /*  XPAR_LAYOUT_*  */

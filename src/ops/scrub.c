@@ -770,7 +770,8 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     } }
   xpar_free(c.rmap);  xpar_free(c.rpath);
   xpar_free(c.rcvs);  xpar_free(c.hist);
-  xpar_vset_close(c.s);
+  /*  Chain walks close shared heads after all generations.  */
+  if (!opened) xpar_vset_close(c.s);
   return rc;
 }
 
@@ -821,15 +822,13 @@ int xpar_op_scrub(const xpar_options * o) {
       if (current != head) xpar_vset_mark_superseded(current, head);
       rc = scrub_one(&one, current, o->json ? &js : NULL, false);
       if (rc > worst) worst = rc;
+      if (current != head) xpar_vset_close(current);
     }
+    xpar_vset_close(head);
     xpar_free(member);
     xpar_gchain_free(&c);
     if (o->json)
-      xpar_json_summary(&js,
-                        worst == XPAR_EXIT_OK ? "clean" :
-                        worst == XPAR_EXIT_REPAIRABLE ? "repairable" :
-                                                       "failed",
-                        worst);
+      xpar_json_summary(&js, xpar_status_word(worst), worst);
     return worst;
   }
 }

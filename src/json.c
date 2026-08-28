@@ -186,6 +186,19 @@ void xpar_json_progress_sink(void * user, u64 done, u64 total,
   xpar_json_progress((xpar_json *) user, done, total, rate_bps);
 }
 
+const char * xpar_status_word(int exit_code) {
+  switch (exit_code) {
+    case XPAR_EXIT_OK:            return "clean";
+    case XPAR_EXIT_REPAIRABLE:    return "repairable";
+    case XPAR_EXIT_UNREPAIRABLE:  return "unrepairable";
+    case XPAR_EXIT_NOTFOUND:      return "not-found";
+    case XPAR_EXIT_USAGE:         return "usage";
+    case XPAR_EXIT_IO:            return "io-error";
+    case XPAR_EXIT_AUTH:          return "auth";
+    default:                      return "error";
+  }
+}
+
 void xpar_json_summary(xpar_json * j, const char * status, int exit_code) {
   if (!j->enabled) return;
   xpar_json_begin(j, "summary");

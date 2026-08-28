@@ -165,7 +165,7 @@ typedef struct {
   u64  s, r, z;
   u64  budget;         /*  What is left for the codec after staging.  */
   bool rotational;
-  u32  want_chunk;     /*  --fft-chunk, or 0.  */
+  u32  want_chunk;     /*  A requested column width, or 0 for none.  */
 } cand_in;
 
 typedef struct {

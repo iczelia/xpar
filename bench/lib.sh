@@ -299,7 +299,7 @@ bench_measure() {   # <setup-fn> <check-fn> <command...>
       work_ok=0
       warn "$f_experiment/$f_op repetition $rep: status $m_status\
  (expected $f_expect)"
-      sed 's/^/  | /' "$work/out.log" >&2 | head -8
+      sed 's/^/  | /' "$work/out.log" | head -8 >&2
     fi
     if test "$rep" -eq 1; then _sig0=$sig
     elif test "x$sig" != "x$_sig0"; then

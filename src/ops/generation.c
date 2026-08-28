@@ -513,8 +513,9 @@ static void chain_add_vol(xpar_chain * c, char * path) {
                         pr.plain_length, &plen,
                         c->key_loaded ? &c->key : NULL);
     if (!plain) {
-      xpar_fprintf(xpar_stderr, "xpar: '%s': the armoured region is "
-                   "shorter than its prologue says.\n", path);
+      xpar_fprintf(xpar_stderr,
+                   "xpar: '%s': uncorrectable armoured-region damage.\n",
+                   path);
       return;
     }
     chain_blob(c, plain);
@@ -1448,7 +1449,7 @@ static void gen_encode(const xpar_manifest * m, const gen_plan * p,
   xpar_free(data);
 }
 
-/*  Critical metadata uses GF(2^8), t = 16 for correctable fraction.  */
+/*  Critical metadata uses the selected armour field and t=16 by default.  */
 static void gen_armour_params(const xpar_options * o,
                               xpar_armour_params * p) {
   u32 t = 16;
@@ -5113,7 +5114,9 @@ static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
     const xpar_entry * e = &m->entry[i];
     char * allowed;
     bool same;
-    if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
+    /*  Recreated hard-link paths must also be journalled.  */
+    if (e->entry_type != XPAR_ENTRY_REGULAR &&
+        e->entry_type != XPAR_ENTRY_HARDLINK) continue;
     allowed = xpar_path_join_n(dir, e->name, e->name_len);
     same = xpar_strlen(allowed) == plen && !xpar_memcmp(allowed, path, plen);
     xpar_free(allowed);
@@ -5328,7 +5331,7 @@ int xpar_op_undo(const xpar_options * o) {
       skipped++;
     } else {
       /*  A repair that lengthened or truncated a file is undone only
-          when the length goes back too, which is what orig_size is for.  */
+          when the length goes back too.  */
       if (xpar_size(f) != (i64) orig && xpar_ftruncate(f, orig) != 0)
         xpar_fprintf(xpar_stderr, "xpar: cannot restore the length of "
                      "'%s'.\n", full);
@@ -5389,9 +5392,8 @@ int xpar_op_recover_prologue(const xpar_options * o) {
     bit_order[0] = 16; bit_order[1] = 8;
   }
 
-  /*  Try preferred power-of-two depths first, then every depth below 64.  */
-  /*  Search t descending: every true codeword also satisfies all smaller-t
-      generators, so an ascending search would always stop at one.  */
+  /*  Try depths 1..64, then powers of two. Search t downward because a
+      codeword also satisfies smaller t values.  */
   for (bi = 0; bi < 2 && !found; bi++) {
     u32 di;
     bits = bit_order[bi];

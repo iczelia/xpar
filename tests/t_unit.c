@@ -62,6 +62,7 @@ static void test_helpers(void) {
       break;
     }
   }
+  CHECK(i == xt_scale(4096), "the alignment sweep ran to the end");
 
   for (i = 0; i < xt_scale(2048); i++) {
     u64 v = ((u64) xt_next(&r) << 32) | xt_next(&r);
@@ -75,6 +76,7 @@ static void test_helpers(void) {
     if (xpar_rd64(buf) != v) { CHECK(false, "64 bit round trip failed");
                                break; }
   }
+  CHECK(i == xt_scale(2048), "the byte-order sweep ran to the end");
 
   xt_fill(&r, buf, 8);
   xpar_hex(hex, buf, 8);
@@ -240,7 +242,7 @@ static void test_geometry(void) {
   xpar_geom_req q;
   xpar_geom g;
   xt_rng r;
-  u32 i;
+  u32 i, accepted;
 
   xt_section_begin("geometry");
   xt_seed(&r, 0x4444);
@@ -278,6 +280,7 @@ static void test_geometry(void) {
   CHECK(xpar_geom_choose(&q, &g) == XPAR_GEOM_UNREACHABLE,
         "more slices than bytes must be refused");
 
+  accepted = 0;
   for (i = 0; i < xt_scale(512); i++) {
     u64 cap;
     xpar_memset(&q, 0, sizeof q);
@@ -290,6 +293,7 @@ static void test_geometry(void) {
       default: q.slice_count = 1 + xt_below(&r, 200);  break;
     }
     if (xpar_geom_choose(&q, &g) != XPAR_GEOM_OK) continue;
+    accepted++;
     cap = (u64) 1 << q.field_log2;
     if (g.slice_count != xpar_ceil_div(q.stream_length, g.slice_size)) {
       CHECK(false, "S does not tile L: L = %" PRIu64 ", Z = %" PRIu64
@@ -308,6 +312,10 @@ static void test_geometry(void) {
     }
     if (g.cell_bytes > g.slice_size) { CHECK(false, "Y exceeds Z");  break; }
   }
+  /*  Ensure the sweep exercises accepted geometries.  */
+  CHECK(accepted > xt_scale(512) / 4,
+        "the sweep accepted %" PRIu32 " of %" PRIu32 " parameter sets",
+        accepted, (u32) xt_scale(512));
 }
 
 /* Verify cell mapping and complete, non-overlapping slice coverage. */

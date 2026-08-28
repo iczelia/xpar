@@ -114,7 +114,7 @@ setup_repair() {
     return 0
   fi
   cp "$pristine" "$sdir/data.bin"
-  rm -f "$sdir"/set.g*.jrnl "$sdir"/*.journal 2>/dev/null || true
+  rm -f "$sdir"/*.xparundo 2>/dev/null || true
   # shellcheck disable=SC2086
   "$damage" "$sdir/data.bin" -Z "$g_z" -Y "$g_y" -n 96 seed=$seed \
     $damage_ops || return 1

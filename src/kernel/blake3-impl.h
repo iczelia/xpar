@@ -143,13 +143,7 @@ static void xpar_b3_one(const u8 * in, sz blocks, const u32 * key,
 
 #if defined(XPAR_BLAKE3_HAVE_SIMD)
 
-/*  The lanes read `degree` streams a kilobyte apart, which the hardware
-    prefetcher sees as that many unrelated sequences rather than one walk,
-    and which it will not follow across a page boundary. One hint per lane
-    per block is worth about a third of the throughput once the input no
-    longer fits the last-level cache. The address runs past the end of the
-    chunk and, on the last group, past the end of the buffer; a prefetch
-    of an unmapped address is architecturally a no-op.  */
+/*  Prefetch each strided lane; out-of-range hints are safe no-ops.  */
 #define XPAR_B3_AHEAD (4 * XPAR_BLAKE3_BLOCK_LEN)
 #if defined(__GNUC__) || defined(__clang__)
   #define XPAR_B3_PREFETCH(p) __builtin_prefetch((const void *) (p))

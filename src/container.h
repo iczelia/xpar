@@ -302,7 +302,7 @@ typedef struct {
   u32 posix_count;
   const u32 * slice_crc;      /*  NULL in a stream-empty generation.  */
   u64 slice_count;
-  const xpar_auth * auth;     /*  NULL unless --auth.  */
+  const xpar_auth * auth;     /*  NULL unless --auth-key.  */
   const xpar_layt * layt;
 } xpar_crit;
 
