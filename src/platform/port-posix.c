@@ -580,7 +580,12 @@ int xpar_fsync_dir(const char * path) {
 
 sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = xpar_read(f, p, n);
-  if (f->last_errno) { errno = f->last_errno;  FATAL_PERROR("read"); }
+  if (f->last_errno) {
+    errno = f->last_errno;
+    FATAL_IO("Reading %" PRIu64 " bytes on descriptor %d failed after %"
+             PRIu64 ": %s.", (u64) n, f->fd, (u64) got,
+             xpar_strerror(f->last_errno));
+  }
   return got;
 }
 
