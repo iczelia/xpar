@@ -72,6 +72,8 @@ ECHO verify-own >> E:\RESULT.TXT
 
 REM  Reject an unrepairable set.
 RUN2.EXE XPAR.EXE verify DOOMED.XPA > E:\DOOMED.TXT
+REM  ERRORLEVEL n is "n or above", so an exact 2 needs both bounds.
+IF ERRORLEVEL 3 GOTO DONE
 IF NOT ERRORLEVEL 2 GOTO DONE
 ECHO verify-unrepairable >> E:\RESULT.TXT
 
