@@ -75,14 +75,22 @@ int main(int argc, char ** argv) {
       strcat(line, argv[i]);
       if (i + 1 < (size_t) argc) strcat(line, " ");
     }
+    /*  DJGPP clock() excludes the child, so report zero elapsed time and
+        preserve the exact child status.  */
     begin = clock();
     status = system(line);
     end = clock();
     free(line);
+    if (status < 0) status = 255;
+#if defined(__DJGPP__)
+    (void) begin;  (void) end;
+    emit(out, 0, status, 0, 0, 0);
+#else
     emit(out, (unsigned long long) ((double) (end - begin) * 1000000.0 /
                                     (double) CLOCKS_PER_SEC),
          status, 0, 0, 0);
-    return status ? 1 : 0;
+#endif
+    return status;
   }
 #else
   {

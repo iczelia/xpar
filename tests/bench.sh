@@ -29,7 +29,9 @@ test -x "$TIMEIT" ||
   skip_all "bench/timeit is not built; run 'make bench-tools'"
 export TIMEIT MKDATA DAMAGE
 
+#  A missing CSV has zero bad rows.
 bad_rows() {
+  test -f "$1" || { echo 0;  return 0; }
   awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "work_ok") c = i
                      next }
            $c != 1 { n++ }
@@ -78,7 +80,7 @@ else bad "the harness exited 0 with a repetition that did no work"; fi
 
 if grep -q 'setup for repetition 2 failed' broken.log ||
    grep -q 'did different work than rep 1' broken.log ||
-   test "`bad_rows broken/results.csv 2>/dev/null || echo 0`" -gt 0; then
+   test "`bad_rows broken/results.csv`" -gt 0; then
   ok
 else
   bad "the harness did not report the broken repetition"
@@ -95,7 +97,7 @@ XPAR_BENCH_BREAK=status "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
 if test "$rc" -ne 0; then ok
 else bad "the harness accepted unexpected status 9"; fi
 
-if test "`bad_rows status/results.csv 2>/dev/null || echo 0`" -gt 0; then
+if test "`bad_rows status/results.csv`" -gt 0; then
   ok
 else bad "no failed measurement was recorded"; fi
 
