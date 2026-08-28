@@ -115,7 +115,7 @@ u32 xpar_cell_choose(u64 slice_size, u32 want, u32 armour_frame) {
     if (f <= slice_size) y = f;
   }
   y = (y + 63) & ~(u64) 63;
-  if (y > slice_size) y = slice_size & ~(u64) 63;
+  if (y > slice_size) y = slice_size;   /*  Z is already 64-byte aligned.  */
   if (y < XPAR_CELL_MIN) y = XPAR_CELL_MIN;
   if (y > slice_size) return 0;
   return (u32) y;

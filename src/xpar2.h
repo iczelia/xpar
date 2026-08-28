@@ -64,6 +64,23 @@ enum {
 enum {
   XPAR_LAYOUT_SIDECAR = 0, XPAR_LAYOUT_SPLIT = 1, XPAR_LAYOUT_ARMOURED = 2
 };
+
+/*  Output name; unknown layouts default to sidecar.  */
+static inline const char * xpar_layout_name(u8 layout) {
+  switch (layout) {
+    case XPAR_LAYOUT_SPLIT:    return "split";
+    case XPAR_LAYOUT_ARMOURED: return "armoured";
+    default:                   return "sidecar";
+  }
+}
+
+static inline const char * xpar_codec_name(u8 codec) {
+  switch (codec) {
+    case XPAR_CODEC_FFT:     return "fft";
+    case XPAR_CODEC_FFT_LOW: return "fft-low";
+    default:                 return "matrix";
+  }
+}
 enum {
   XPAR_ALIGN_PACKED = 0,
   XPAR_ALIGN_SLICE = 1,

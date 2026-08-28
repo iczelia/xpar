@@ -78,7 +78,6 @@ typedef struct {
   u64 mem_codec;
   u64 mem_readahead;
   u64 mem_stage;
-  u64 mem_dedup_index;
   u64 mem_total;
 
   u32 dedup_target_chunk;    /*  0 when dedup is off or whole-file.  */

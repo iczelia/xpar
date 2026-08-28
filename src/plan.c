@@ -122,7 +122,6 @@ static u64 fits_in(footprint_fn fp, u8 codec, u8 field, u64 s, u64 r,
   u64 lo = 64, best = 0;
   if (hi < 64) hi = 64;
   hi = floor64(hi);
-  if (!hi) return 0;
   while (lo <= hi) {
     u64 mid = floor64(lo + (hi - lo) / 2);
     if (mid < 64) mid = 64;
@@ -460,9 +459,7 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   out->dedup_target_chunk = dedup_target(out->geom.stream_length, budget,
                                          r * out->geom.slice_size,
                                          0);
-  out->mem_dedup_index = 0;
-  out->mem_total = out->mem_codec + out->mem_stage + out->mem_readahead +
-                   out->mem_dedup_index;
+  out->mem_total = out->mem_codec + out->mem_stage + out->mem_readahead;
   if (out->mem_total > budget) return XPAR_PLAN_NO_FIT;
   return XPAR_PLAN_OK;
 }

@@ -25,28 +25,27 @@
 typedef int (* xpar_op_fn)(const xpar_options *);
 
 typedef struct {
-  xpar_verb    verb;
-  xpar_op_fn   fn;
-  const char * name;
+  xpar_verb  verb;
+  xpar_op_fn fn;
 } xpar_dispatch;
 
 static const xpar_dispatch dispatch[] = {
-  { XPAR_VERB_CREATE,           xpar_op_create,           "create"      },
-  { XPAR_VERB_VERIFY,           xpar_op_verify,           "verify"      },
-  { XPAR_VERB_REPAIR,           xpar_op_repair,           "repair"      },
-  { XPAR_VERB_SCRUB,            xpar_op_scrub,            "scrub"       },
-  { XPAR_VERB_EXTRACT,          xpar_op_extract,          "extract"     },
-  { XPAR_VERB_RECOVER,          xpar_op_recover,          "recover"     },
-  { XPAR_VERB_ADDRECOVERY,      xpar_op_addrecovery,      "addrecovery" },
-  { XPAR_VERB_ADD,              xpar_op_add,              "add"         },
-  { XPAR_VERB_CONSOLIDATE,      xpar_op_consolidate,      "consolidate" },
-  { XPAR_VERB_PRUNE,            xpar_op_prune,            "prune"       },
-  { XPAR_VERB_LIST,             xpar_op_list,             "list"        },
-  { XPAR_VERB_INFO,             xpar_op_info,             "info"        },
-  { XPAR_VERB_EXPLAIN,          xpar_op_explain,          "explain"     },
-  { XPAR_VERB_UNDO,             xpar_op_undo,             "undo"        },
-  { XPAR_VERB_RECOVER_PROLOGUE, xpar_op_recover_prologue, "recover-prologue" },
-  { XPAR_VERB_BENCHMARK,        xpar_op_benchmark,        "benchmark"   }
+  { XPAR_VERB_CREATE,            xpar_op_create           },
+  { XPAR_VERB_VERIFY,            xpar_op_verify           },
+  { XPAR_VERB_REPAIR,            xpar_op_repair           },
+  { XPAR_VERB_SCRUB,             xpar_op_scrub            },
+  { XPAR_VERB_EXTRACT,           xpar_op_extract          },
+  { XPAR_VERB_RECOVER,           xpar_op_recover          },
+  { XPAR_VERB_ADDRECOVERY,       xpar_op_addrecovery      },
+  { XPAR_VERB_ADD,               xpar_op_add              },
+  { XPAR_VERB_CONSOLIDATE,       xpar_op_consolidate      },
+  { XPAR_VERB_PRUNE,             xpar_op_prune            },
+  { XPAR_VERB_LIST,              xpar_op_list             },
+  { XPAR_VERB_INFO,              xpar_op_info             },
+  { XPAR_VERB_EXPLAIN,           xpar_op_explain          },
+  { XPAR_VERB_UNDO,              xpar_op_undo             },
+  { XPAR_VERB_RECOVER_PROLOGUE,  xpar_op_recover_prologue },
+  { XPAR_VERB_BENCHMARK,         xpar_op_benchmark        }
 };
 
 static void apply_simd(const char * want) {
