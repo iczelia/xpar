@@ -1389,9 +1389,8 @@ static void rp_build_writes(rp * r) {
     }
     w = &r->wr[r->wr_count++];
     xpar_memset(w, 0, sizeof *w);
-    /*  Record that the link name was absent so undo can remove it.  */
+    /*  Record the absent name; rp_read_old allocates its empty payload.  */
     w->entry = i;  w->link = 1;
-    w->old = (u8 *) xpar_alloc_raw(1);
   }
 
   /*  A hash failure with no corresponding write is unrepairable.  */

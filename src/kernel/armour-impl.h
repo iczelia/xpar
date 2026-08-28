@@ -175,8 +175,8 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
     } while (0)
 #endif
 
-/*  Whole vector steps only; the remainder goes to the reference kernel.
-    A GF(2^16) step is a vector pair, because the deinterleave is.  */
+/*  Whole-vector steps only; the remainder uses the reference kernel.
+    SIMD starts when depth reaches ARM_VB.  */
 #define ARM_BODY8(n)   ((n) & ~(sz) (ARM_VB - 1))
 #define ARM_BODY16(n)  ((n) & ~(sz) (2 * ARM_VB - 1))
 

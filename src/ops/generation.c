@@ -4315,7 +4315,9 @@ int xpar_op_prune(const xpar_options * o) {
   xpar_gchain_manifest(&c, head, &m, &owner);
 
   for (g = 0; g < c.gen_count; g++) {
-    u64 dep = 0;
+    u64 dep = 0, vbytes;
+    /*  Dependencies matter only for removed generations.  */
+    if (!removed[g]) continue;
     for (i = 0; i < m.count; i++) {
       bool hit = owner[i] == g;
       for (k = 0; k < m.entry[i].extent_count && !hit; k++) {
@@ -4325,13 +4327,14 @@ int xpar_op_prune(const xpar_options * o) {
       }
       if (hit) dep++;
     }
-    if (!removed[g]) continue;
-    reclaim += gen_volume_bytes(&c, g);
+    /*  Avoid rescanning and restatting the generation's volumes.  */
+    vbytes = gen_volume_bytes(&c, g);
+    reclaim += vbytes;
     xpar_fprintf(gen_hout(o),
                  "  gen %-3" PRIu32 ": %" PRIu64 " bytes of stream, %" PRIu64 " bytes of volumes, "
                  "%" PRIu32 " entries owned\n", c.gen[g].sd.generation,
                  c.gen[g].sd.stream_length,
-                 gen_volume_bytes(&c, g),
+                 vbytes,
                  c.gen[g].sd.file_count);
     xpar_fprintf(gen_hout(o),
                  "           %" PRIu64 " of generation %" PRIu32 "'s %" PRIu32 " entries still depend "
@@ -4642,7 +4645,7 @@ int xpar_op_consolidate(const xpar_options * caller) {
   u32 * tabn;
   u32 * owner = NULL;
   gen_write_req rq;
-  bool * owned;
+  bool * owned = NULL;
   u32 head, i, caps, bad = 0, unreadable = 0;
   bool owned_layout;
   char * stage_tree = NULL;
@@ -4679,6 +4682,22 @@ int xpar_op_consolidate(const xpar_options * caller) {
     u32 k;
     for (k = 0; k < m.entry[i].extent_count; k++)
       live += m.entry[i].extents[k].length;
+  }
+
+  /*  Dry runs need no staging or archive extraction.  */
+  if (o->dry_run) {
+    xpar_fprintf(gen_hout(o),
+                 "  chain      : %" PRIu32 " generations, %" PRIu32 " entries\n"
+                 "  stream     : %" PRIu64 " bytes across the chain, %" PRIu64 " still "
+                 "referenced (%.1f%%)\n"
+                 "  reclaim    : %" PRIu64 " bytes of stream\n"
+                 "  cost       : read %" PRIu64 " bytes, one full encode\n",
+                 c.gen_count, m.count, total,
+                 live,
+                 total ? 100.0 * (f64) live / (f64) total : 100.0,
+                 (total - live),
+                 live);
+    goto done;
   }
 
   /*  Stage owned data for the refresh pass.  */
@@ -4720,20 +4739,6 @@ int xpar_op_consolidate(const xpar_options * caller) {
     m.source[i] = path;
   }
 
-  if (o->dry_run) {
-    xpar_fprintf(gen_hout(o),
-                 "  chain      : %" PRIu32 " generations, %" PRIu32 " entries\n"
-                 "  stream     : %" PRIu64 " bytes across the chain, %" PRIu64 " still "
-                 "referenced (%.1f%%)\n"
-                 "  reclaim    : %" PRIu64 " bytes of stream\n"
-                 "  cost       : read %" PRIu64 " bytes, one full encode\n",
-                 c.gen_count, m.count, total,
-                 live,
-                 total ? 100.0 * (f64) live / (f64) total : 100.0,
-                 (total - live),
-                 live);
-    goto done;
-  }
   /*  Missing staged entries indicate unrecoverable archive damage.  */
   if (owned_layout && unreadable)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,

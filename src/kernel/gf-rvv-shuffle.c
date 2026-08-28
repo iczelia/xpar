@@ -18,26 +18,41 @@
 
 #include <riscv_vector.h>
 
-static vuint8m1_t rv_tab(const u8 * p) {
-  sz vl = __riscv_vsetvl_e8m1(16);
-  return __riscv_vle8_v_u8m1(p, vl);
+/*  Replicate each 16-byte table so every vector lane can gather from it.  */
+static vuint8m1_t rv_tab(const u8 * p, sz vl) {
+  vuint8m1_t idx = __riscv_vand_vx_u8m1(__riscv_vid_v_u8m1(vl), 15, vl);
+  vuint8m1_t t = __riscv_vle8_v_u8m1(p, __riscv_vsetvl_e8m1(16));
+  return __riscv_vrgather_vv_u8m1(t, idx, vl);
+}
+
+/*  Base of each lane's 16-byte table copy.  */
+static vuint8m1_t rv_lane_base(sz vl) {
+  return __riscv_vand_vx_u8m1(__riscv_vid_v_u8m1(vl), 0xF0, vl);
 }
 
 /*  Cache possibly aliased tables; scalable vectors cannot be struct fields.  */
-#define RV_MUL8_VARS(id, m)                                                  \
-  const vuint8m1_t id##0 = rv_tab((m)->tab),                                 \
-                   id##1 = rv_tab((m)->tab + 16);
+#define RV_MUL8_VARS(id, m, vl)                                              \
+  const vuint8m1_t id##b = rv_lane_base(vl),                                 \
+                   id##0 = rv_tab((m)->tab, (vl)),                           \
+                   id##1 = rv_tab((m)->tab + 16, (vl));
 
-#define RV_MUL16_VARS(m)                                                     \
-  const vuint8m1_t rvu0 = rv_tab((m)->tab[0]), rvu1 = rv_tab((m)->tab[1]),   \
-                   rvu2 = rv_tab((m)->tab[2]), rvu3 = rv_tab((m)->tab[3]),   \
-                   rvu4 = rv_tab((m)->tab[4]), rvu5 = rv_tab((m)->tab[5]),   \
-                   rvu6 = rv_tab((m)->tab[6]), rvu7 = rv_tab((m)->tab[7]);
+#define RV_MUL16_VARS(m, vl)                                                 \
+  const vuint8m1_t rvub = rv_lane_base(vl),                                  \
+                   rvu0 = rv_tab((m)->tab[0], (vl)),                         \
+                   rvu1 = rv_tab((m)->tab[1], (vl)),                         \
+                   rvu2 = rv_tab((m)->tab[2], (vl)),                         \
+                   rvu3 = rv_tab((m)->tab[3], (vl)),                         \
+                   rvu4 = rv_tab((m)->tab[4], (vl)),                         \
+                   rvu5 = rv_tab((m)->tab[5], (vl)),                         \
+                   rvu6 = rv_tab((m)->tab[6], (vl)),                         \
+                   rvu7 = rv_tab((m)->tab[7], (vl));
 
 static vuint8m1_t rv_mul8_v(vuint8m1_t v, vuint8m1_t lo, vuint8m1_t hi,
-                            sz vl) {
-  vuint8m1_t mask = __riscv_vand_vx_u8m1(v, 15, vl);
-  vuint8m1_t upper = __riscv_vsrl_vx_u8m1(v, 4, vl);
+                            vuint8m1_t base, sz vl) {
+  vuint8m1_t mask = __riscv_vor_vv_u8m1(__riscv_vand_vx_u8m1(v, 15, vl),
+                                        base, vl);
+  vuint8m1_t upper = __riscv_vor_vv_u8m1(__riscv_vsrl_vx_u8m1(v, 4, vl),
+                                         base, vl);
   return __riscv_vxor_vv_u8m1(
     __riscv_vrgather_vv_u8m1(lo, mask, vl),
     __riscv_vrgather_vv_u8m1(hi, upper, vl), vl);
@@ -54,20 +69,25 @@ static vuint8m1_t rv_gather4(vuint8m1_t ta, vuint8m1_t tb, vuint8m1_t tc,
 }
 
 #define RV_MUL16(lo, hi, vl, ol, oh) do {                                    \
-  vuint8m1_t rn0 = __riscv_vand_vx_u8m1((lo), 15, (vl));                     \
-  vuint8m1_t rn1 = __riscv_vsrl_vx_u8m1((lo), 4, (vl));                      \
-  vuint8m1_t rn2 = __riscv_vand_vx_u8m1((hi), 15, (vl));                     \
-  vuint8m1_t rn3 = __riscv_vsrl_vx_u8m1((hi), 4, (vl));                      \
+  vuint8m1_t rn0 = __riscv_vor_vv_u8m1(                                      \
+                     __riscv_vand_vx_u8m1((lo), 15, (vl)), rvub, (vl));      \
+  vuint8m1_t rn1 = __riscv_vor_vv_u8m1(                                      \
+                     __riscv_vsrl_vx_u8m1((lo), 4, (vl)), rvub, (vl));       \
+  vuint8m1_t rn2 = __riscv_vor_vv_u8m1(                                      \
+                     __riscv_vand_vx_u8m1((hi), 15, (vl)), rvub, (vl));      \
+  vuint8m1_t rn3 = __riscv_vor_vv_u8m1(                                      \
+                     __riscv_vsrl_vx_u8m1((hi), 4, (vl)), rvub, (vl));       \
   (ol) = rv_gather4(rvu0, rvu2, rvu4, rvu6, rn0, rn1, rn2, rn3, (vl));       \
   (oh) = rv_gather4(rvu1, rvu3, rvu5, rvu7, rn0, rn1, rn2, rn3, (vl));       \
 } while (0)
 
 void xpar_rvv_mac8(u8 * d, const u8 * s, sz n,
                    const xpar_gf8_coef * m) {
-  RV_MUL8_VARS(rvt, m)
+  sz rvvl = __riscv_vsetvlmax_e8m1();
+  RV_MUL8_VARS(rvt, m, rvvl)
   while (n) {
-    sz vl = __riscv_vsetvl_e8m1(MIN(n, (sz) 16));
-    vuint8m1_t p = rv_mul8_v(__riscv_vle8_v_u8m1(s, vl), rvt0, rvt1, vl);
+    sz vl = __riscv_vsetvl_e8m1(n);
+    vuint8m1_t p = rv_mul8_v(__riscv_vle8_v_u8m1(s, vl), rvt0, rvt1, rvtb, vl);
     p = __riscv_vxor_vv_u8m1(p, __riscv_vle8_v_u8m1(d, vl), vl);
     __riscv_vse8_v_u8m1(d, p, vl);
     d += vl;  s += vl;  n -= vl;
@@ -76,26 +96,28 @@ void xpar_rvv_mac8(u8 * d, const u8 * s, sz n,
 
 void xpar_rvv_mac8x2(u8 * const d[2], const u8 * s, sz n,
                      const xpar_gf8_coef m[2]) {
-  RV_MUL8_VARS(rva, &m[0])
-  RV_MUL8_VARS(rvb, &m[1])
+  sz rvvl = __riscv_vsetvlmax_e8m1();
+  RV_MUL8_VARS(rva, &m[0], rvvl)
+  RV_MUL8_VARS(rvb, &m[1], rvvl)
   u8 * d0 = d[0], * d1 = d[1];
   while (n) {
-    sz vl = __riscv_vsetvl_e8m1(MIN(n, (sz) 16));
+    sz vl = __riscv_vsetvl_e8m1(n);
     vuint8m1_t v = __riscv_vle8_v_u8m1(s, vl);
     __riscv_vse8_v_u8m1(d0, __riscv_vxor_vv_u8m1(
-      rv_mul8_v(v, rva0, rva1, vl), __riscv_vle8_v_u8m1(d0, vl), vl), vl);
+      rv_mul8_v(v, rva0, rva1, rvab, vl), __riscv_vle8_v_u8m1(d0, vl), vl), vl);
     __riscv_vse8_v_u8m1(d1, __riscv_vxor_vv_u8m1(
-      rv_mul8_v(v, rvb0, rvb1, vl), __riscv_vle8_v_u8m1(d1, vl), vl), vl);
+      rv_mul8_v(v, rvb0, rvb1, rvbb, vl), __riscv_vle8_v_u8m1(d1, vl), vl), vl);
     d0 += vl;  d1 += vl;  s += vl;  n -= vl;
   }
 }
 
 void xpar_rvv_mul8(u8 * d, const u8 * s, sz n,
                    const xpar_gf8_coef * m) {
-  RV_MUL8_VARS(rvt, m)
+  sz rvvl = __riscv_vsetvlmax_e8m1();
+  RV_MUL8_VARS(rvt, m, rvvl)
   while (n) {
-    sz vl = __riscv_vsetvl_e8m1(MIN(n, (sz) 16));
-    vuint8m1_t p = rv_mul8_v(__riscv_vle8_v_u8m1(s, vl), rvt0, rvt1, vl);
+    sz vl = __riscv_vsetvl_e8m1(n);
+    vuint8m1_t p = rv_mul8_v(__riscv_vle8_v_u8m1(s, vl), rvt0, rvt1, rvtb, vl);
     __riscv_vse8_v_u8m1(d, p, vl);
     d += vl;  s += vl;  n -= vl;
   }
@@ -103,10 +125,11 @@ void xpar_rvv_mul8(u8 * d, const u8 * s, sz n,
 
 static void rv_mac16(u8 * d, const u8 * s, sz n,
                      const xpar_gf16_coef * m) {
-  RV_MUL16_VARS(m)
+  sz rvvl = __riscv_vsetvlmax_e8m1();
+  RV_MUL16_VARS(m, rvvl)
   sz symbols = n / 2;
   while (symbols) {
-    sz vl = __riscv_vsetvl_e8m1(MIN(symbols, (sz) 16));
+    sz vl = __riscv_vsetvl_e8m1(symbols);
     vuint8m1_t lo = __riscv_vlse8_v_u8m1(s, 2, vl);
     vuint8m1_t hi = __riscv_vlse8_v_u8m1(s + 1, 2, vl), ol, oh;
     RV_MUL16(lo, hi, vl, ol, oh);
@@ -127,10 +150,11 @@ static void rv_mac16x2(u8 * const d[2], const u8 * s, sz n,
 
 static void rv_mul16_region(u8 * d, const u8 * s, sz n,
                             const xpar_gf16_coef * m) {
-  RV_MUL16_VARS(m)
+  sz rvvl = __riscv_vsetvlmax_e8m1();
+  RV_MUL16_VARS(m, rvvl)
   sz symbols = n / 2;
   while (symbols) {
-    sz vl = __riscv_vsetvl_e8m1(MIN(symbols, (sz) 16));
+    sz vl = __riscv_vsetvl_e8m1(symbols);
     vuint8m1_t lo = __riscv_vlse8_v_u8m1(s, 2, vl);
     vuint8m1_t hi = __riscv_vlse8_v_u8m1(s + 1, 2, vl), ol, oh;
     RV_MUL16(lo, hi, vl, ol, oh);
@@ -162,16 +186,17 @@ void xpar_rvv_xor3(u8 * d, const u8 * a, const u8 * b, sz n) {
 
 #define RV_FFT8(name, inverse)                                               \
 void name(u8 * x, u8 * y, sz n, const xpar_gf8_coef * m) {                  \
-  RV_MUL8_VARS(rvt, m)                                                      \
+  sz rvvl = __riscv_vsetvlmax_e8m1();                                        \
+  RV_MUL8_VARS(rvt, m, rvvl)                                                 \
   while (n) {                                                               \
-    sz vl = __riscv_vsetvl_e8m1(MIN(n, (sz) 16));                           \
+    sz vl = __riscv_vsetvl_e8m1(n);                           \
     vuint8m1_t a = __riscv_vle8_v_u8m1(x, vl);                              \
     vuint8m1_t b = __riscv_vle8_v_u8m1(y, vl);                              \
     if (inverse) {                                                          \
       b = __riscv_vxor_vv_u8m1(b, a, vl);                                  \
-      a = __riscv_vxor_vv_u8m1(a, rv_mul8_v(b, rvt0, rvt1, vl), vl);        \
+      a = __riscv_vxor_vv_u8m1(a, rv_mul8_v(b, rvt0, rvt1, rvtb, vl), vl);        \
     } else {                                                                \
-      a = __riscv_vxor_vv_u8m1(a, rv_mul8_v(b, rvt0, rvt1, vl), vl);        \
+      a = __riscv_vxor_vv_u8m1(a, rv_mul8_v(b, rvt0, rvt1, rvtb, vl), vl);        \
       b = __riscv_vxor_vv_u8m1(b, a, vl);                                  \
     }                                                                       \
     __riscv_vse8_v_u8m1(x, a, vl);  __riscv_vse8_v_u8m1(y, b, vl);         \
@@ -184,10 +209,11 @@ RV_FFT8(xpar_rvv_ifft8, 1)
 
 #define RV_FFT16(name, inverse)                                              \
 static void name(u8 * x, u8 * y, sz n, const xpar_gf16_coef * m) {          \
-  RV_MUL16_VARS(m)                                                          \
+  sz rvvl = __riscv_vsetvlmax_e8m1();                                        \
+  RV_MUL16_VARS(m, rvvl)                                                     \
   sz symbols = n / 2;                                                       \
   while (symbols) {                                                         \
-    sz vl = __riscv_vsetvl_e8m1(MIN(symbols, (sz) 16));                     \
+    sz vl = __riscv_vsetvl_e8m1(symbols);                     \
     vuint8m1_t xl = __riscv_vlse8_v_u8m1(x, 2, vl);                         \
     vuint8m1_t xh = __riscv_vlse8_v_u8m1(x + 1, 2, vl);                     \
     vuint8m1_t yl = __riscv_vlse8_v_u8m1(y, 2, vl);                         \

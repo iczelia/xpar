@@ -113,8 +113,9 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
                     u32 step, u64 max_delta, rs_hit_fn hit, void * user) {
   xpar_crc32c_roll roll;
   u8 * ring, * input;
-  u64 pos, at;
-  u32 crc;
+  u64 pos, at, slot = 0;
+  /*  Wrapping counters avoid two 64-bit divisions per byte.  */
+  u32 crc, to_step = step;
   if (!ix->probe_count || !window || window > size || window > (u64) (sz) -1)
     return true;
   ring = (u8 *) xpar_alloc_raw((sz) window);
@@ -125,7 +126,7 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
   xpar_crc32c_roll_init(&roll, (sz) window);
   crc = xpar_crc32c(0, ring, (sz) window);
   pos = 0;
-  if (pos % step == 0) {
+  {
     u32 b = rs_hash32(crc) & ix->mask, q;
     for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
       i64 delta;
@@ -142,12 +143,13 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
         xpar_free(ring);  xpar_free(input);  return false;
       }
       for (i = 0; i < n; i++) {
-        u64 slot = pos % window;
         crc = xpar_crc32c_roll_step(&roll, crc, ring[slot], input[i]);
         ring[slot] = input[i];
+        if (++slot == window) slot = 0;
         pos++;
-        if (pos % step == 0) {
+        if (--to_step == 0) {
           u32 b = rs_hash32(crc) & ix->mask, q;
+          to_step = step;
           for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
             i64 delta;
             if (!ix->unique[q] || ix->probe[q].crc != crc ||

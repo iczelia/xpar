@@ -345,6 +345,17 @@ void XPAR_B3_FN(xpar_blake3_hash_many)(const u8 * const * inputs, sz count,
     out += XPAR_B3_DEG * XPAR_BLAKE3_OUT_LEN;
     if (inc) counter += XPAR_B3_DEG;
   }
+  /*  Pad partial SIMD groups with lane 0 and discard the extra outputs.  */
+  if (XPAR_B3_DEG > 1 && count > 1) {
+    const u8 * pad[XPAR_B3_DEG];
+    u8 tmp[XPAR_B3_DEG * XPAR_BLAKE3_OUT_LEN];
+    sz i;
+    for (i = 0; i < count; i++) pad[i] = inputs[i];
+    for (; i < XPAR_B3_DEG; i++) pad[i] = inputs[0];
+    xpar_b3_batch(pad, blocks, key, counter, inc, flags, first, last, tmp);
+    xpar_memcpy(out, tmp, count * XPAR_BLAKE3_OUT_LEN);
+    return;
+  }
 #endif
   while (count) {
     xpar_b3_one(inputs[0], blocks, key, counter, flags, first, last, out);

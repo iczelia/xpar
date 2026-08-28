@@ -716,6 +716,29 @@ for verb in verify scrub; do
 done
 cd .. || hard_error cd
 
+step "consolidate --dry-run reports without doing the work"
+
+#  Dry runs must not extract or stage an armoured archive.
+mkdir -p k6 && cd k6 || hard_error "cd k6"
+mkfile p.bin 2000000 102
+run 0 "$XPAR" create --layout=armoured --reproducible -r 10% -s 64K \
+    -o set p.bin
+mkfile extra.bin 100000 103
+run 0 "$XPAR" add --reproducible -r 10% set.xpa p.bin extra.bin
+
+run 0 "$XPAR" consolidate --dry-run --output=out set.xpa
+if grep -q "reclaim" "$log"; then ok
+else bad "the dry run reported no reclaim figure"; fi
+#  Nothing was written: neither the output nor a staging directory.
+if test -e out.xpa; then bad "--dry-run wrote its output"; else ok; fi
+n=`/bin/ls -a | grep -c xpar-consolidate || :`
+equal "no staging directory remains" "${n:-0}" 0
+
+#  Confirm normal consolidation still works.
+run 0 "$XPAR" consolidate --output=out set.xpa
+run 0 "$XPAR" verify out.xpa
+cd .. || hard_error cd
+
 step "explain uses the resolved input name"
 
 # Use the resolved split-volume name in recipes.

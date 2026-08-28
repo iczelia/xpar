@@ -190,7 +190,14 @@ u32 xpar_fs_caps(const char * path) {
   /*  MS-DOS-derived Windows has no reparse points, so there is nothing a
       metadata call could traverse and nofollow is satisfied by the absence
       of the hazard rather than by an implementation.  */
-  (void) path;
+  { xchar * ap = path_conv(path);
+    DWORD at;
+    if (!ap) return 0;
+    at = GetFileAttributesA(ap);
+    xpar_free(ap);
+    /*  Missing paths have no capabilities.  */
+    if (at == INVALID_FILE_ATTRIBUTES) return 0;
+  }
   c |= XPAR_FS_NOFOLLOW;
   return c;
 #else
@@ -198,6 +205,9 @@ u32 xpar_fs_caps(const char * path) {
     wchar_t root[MAX_PATH], fsname[64];
     DWORD flags = 0, maxcomp = 0;
     if (!wp) return 0;
+    if (GetFileAttributesW(wp) == INVALID_FILE_ATTRIBUTES) {
+      xpar_free(wp);  return 0;
+    }
     if (!GetVolumePathNameW(wp, root, MAX_PATH)) { xpar_free(wp);  return c; }
     xpar_free(wp);
     if (!GetVolumeInformationW(root, NULL, 0, NULL, &maxcomp, &flags,

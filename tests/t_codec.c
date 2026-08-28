@@ -305,6 +305,185 @@ static void test_decode(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng,
   cc_free(&c);
 }
 
+/*  Compare every usable kernel tier at unaligned offsets and tail lengths.  */
+
+#define KE_CAP 8192
+
+typedef struct { u8 * a, * b, * c, * d; } ke_buf;
+
+static void ke_fill(xt_rng * r, u8 * p, sz n) {
+  sz i;
+  for (i = 0; i < n; i++) p[i] = (u8) xt_next(r);
+}
+
+static bool ke_same(const u8 * x, const u8 * y, sz n, const char * what,
+                    const char * tier, sz len, sz off) {
+  if (!xpar_memcmp(x, y, n)) return true;
+  CHECK(false, "%s on %s differs at length %lu offset %lu", what, tier,
+        (unsigned long) len, (unsigned long) off);
+  return false;
+}
+
+static void test_kernel_edges(xt_rng * rng) {
+  static const sz lens[] = { 0, 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33, 47,
+                             63, 64, 65, 96, 127, 128, 129, 191, 192, 193,
+                             255, 256, 257, 511, 4095, 4096, 4097 };
+  static const sz offs[] = { 0, 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 63 };
+  int saved = xpar_gf_tier(), n = xpar_gf_tier_count(), t;
+  u8 * src = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * ref = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * got = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * ry  = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * gy  = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * seed = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * seedy = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u32 tiers_run = 0;
+
+  ke_fill(rng, src, KE_CAP + 128);
+  ke_fill(rng, seed, KE_CAP + 128);
+  ke_fill(rng, seedy, KE_CAP + 128);
+
+  for (t = 0; t < n; t++) {
+    const xpar_gf_kernels * k;
+    const char * name;
+    u32 li, oi;
+    if (!xpar_gf_tier_usable(t) || !xpar_gf_use_tier(t)) continue;
+    k = xpar_gf_active();
+    name = xpar_gf_tier_name(t);
+    tiers_run++;
+    for (li = 0; li < sizeof lens / sizeof *lens; li++) {
+      sz len = lens[li];
+      if (len > KE_CAP) continue;
+      for (oi = 0; oi < sizeof offs / sizeof *offs; oi++) {
+        sz off = offs[oi];
+        sz even = len & ~(sz) 1;
+        xpar_gf8_coef c8;
+        xpar_gf16_coef c16;
+        u8 pair8[2];
+        u16 pair16[2];
+        u8 * dref = ref + off, * dgot = got + off;
+        const u8 * ssrc = src + off;
+
+        xpar_gf8_prepare(&c8, (u8) (1 + (xt_next(rng) & 254)));
+        xpar_gf16_prepare(&c16, (u16) (1 + (xt_next(rng) & 0xFFFE)));
+        pair8[0] = (u8) (1 + (xt_next(rng) & 254));
+        pair8[1] = (u8) (1 + (xt_next(rng) & 254));
+        pair16[0] = (u16) (1 + (xt_next(rng) & 0xFFFE));
+        pair16[1] = (u16) (1 + (xt_next(rng) & 0xFFFE));
+
+        /*  dst = src * c  */
+        xpar_gf8_mul_ref(dref, ssrc, len, c8.c);
+        k->mul8(dgot, ssrc, len, &c8);
+        if (!ke_same(dref, dgot, len, "mul8", name, len, off)) return;
+        xpar_gf16_mul_ref(dref, ssrc, even, c16.c);
+        k->mul16(dgot, ssrc, even, &c16);
+        if (!ke_same(dref, dgot, even, "mul16", name, len, off)) return;
+
+        /*  dst ^= src * c  */
+        xpar_memcpy(dref, seed + off, len);
+        xpar_memcpy(dgot, seed + off, len);
+        xpar_gf8_mac_ref(dref, ssrc, len, c8.c);
+        k->mac8(dgot, ssrc, len, &c8);
+        if (!ke_same(dref, dgot, len, "mac8", name, len, off)) return;
+        xpar_memcpy(dref, seed + off, even);
+        xpar_memcpy(dgot, seed + off, even);
+        xpar_gf16_mac_ref(dref, ssrc, even, c16.c);
+        k->mac16(dgot, ssrc, even, &c16);
+        if (!ke_same(dref, dgot, even, "mac16", name, len, off)) return;
+
+        /*  The two-destination fan-outs.  */
+        { u8 * dr[2], * dg[2];
+          xpar_gf8_coef m8[2];
+          xpar_gf16_coef m16[2];
+          xpar_gf8_prepare(&m8[0], pair8[0]);
+          xpar_gf8_prepare(&m8[1], pair8[1]);
+          xpar_gf16_prepare(&m16[0], pair16[0]);
+          xpar_gf16_prepare(&m16[1], pair16[1]);
+          dr[0] = ref + off;  dr[1] = ry + off;
+          dg[0] = got + off;  dg[1] = gy + off;
+          xpar_memcpy(dr[0], seed + off, len);
+          xpar_memcpy(dr[1], seedy + off, len);
+          xpar_memcpy(dg[0], seed + off, len);
+          xpar_memcpy(dg[1], seedy + off, len);
+          xpar_gf8_mac_ref(dr[0], ssrc, len, pair8[0]);
+          xpar_gf8_mac_ref(dr[1], ssrc, len, pair8[1]);
+          k->mac8x2(dg, ssrc, len, m8);
+          if (!ke_same(dr[0], dg[0], len, "mac8x2 lane 0", name, len, off) ||
+              !ke_same(dr[1], dg[1], len, "mac8x2 lane 1", name, len, off))
+            return;
+          xpar_memcpy(dr[0], seed + off, even);
+          xpar_memcpy(dr[1], seedy + off, even);
+          xpar_memcpy(dg[0], seed + off, even);
+          xpar_memcpy(dg[1], seedy + off, even);
+          xpar_gf16_mac_ref(dr[0], ssrc, even, pair16[0]);
+          xpar_gf16_mac_ref(dr[1], ssrc, even, pair16[1]);
+          k->mac16x2(dg, ssrc, even, m16);
+          if (!ke_same(dr[0], dg[0], even, "mac16x2 lane 0", name, len, off) ||
+              !ke_same(dr[1], dg[1], even, "mac16x2 lane 1", name, len, off))
+            return;
+        }
+
+        /*  The XORs.  */
+        xpar_memcpy(dref, seed + off, len);
+        xpar_memcpy(dgot, seed + off, len);
+        xpar_xor2_ref(dref, ssrc, len);
+        k->xor2(dgot, ssrc, len);
+        if (!ke_same(dref, dgot, len, "xor2", name, len, off)) return;
+        xpar_xor3_ref(dref, ssrc, seed + off, len);
+        k->xor3(dgot, ssrc, seed + off, len);
+        if (!ke_same(dref, dgot, len, "xor3", name, len, off)) return;
+
+        /*  The butterflies, which write both operands.  */
+        xpar_memcpy(dref, seed + off, len);
+        xpar_memcpy(ry + off, seedy + off, len);
+        xpar_memcpy(dgot, seed + off, len);
+        xpar_memcpy(gy + off, seedy + off, len);
+        xpar_gf8_fft2_ref(dref, ry + off, len, c8.c);
+        k->fft8(dgot, gy + off, len, &c8);
+        if (!ke_same(dref, dgot, len, "fft8 x", name, len, off) ||
+            !ke_same(ry + off, gy + off, len, "fft8 y", name, len, off))
+          return;
+
+        xpar_memcpy(dref, seed + off, even);
+        xpar_memcpy(ry + off, seedy + off, even);
+        xpar_memcpy(dgot, seed + off, even);
+        xpar_memcpy(gy + off, seedy + off, even);
+        xpar_gf16_fft2_ref(dref, ry + off, even, c16.c);
+        k->fft16(dgot, gy + off, even, &c16);
+        if (!ke_same(dref, dgot, even, "fft16 x", name, len, off) ||
+            !ke_same(ry + off, gy + off, even, "fft16 y", name, len, off))
+          return;
+
+        xpar_memcpy(dref, seed + off, len);
+        xpar_memcpy(ry + off, seedy + off, len);
+        xpar_memcpy(dgot, seed + off, len);
+        xpar_memcpy(gy + off, seedy + off, len);
+        xpar_gf8_ifft2_ref(dref, ry + off, len, c8.c);
+        k->ifft8(dgot, gy + off, len, &c8);
+        if (!ke_same(dref, dgot, len, "ifft8 x", name, len, off) ||
+            !ke_same(ry + off, gy + off, len, "ifft8 y", name, len, off))
+          return;
+
+        xpar_memcpy(dref, seed + off, even);
+        xpar_memcpy(ry + off, seedy + off, even);
+        xpar_memcpy(dgot, seed + off, even);
+        xpar_memcpy(gy + off, seedy + off, even);
+        xpar_gf16_ifft2_ref(dref, ry + off, even, c16.c);
+        k->ifft16(dgot, gy + off, even, &c16);
+        if (!ke_same(dref, dgot, even, "ifft16 x", name, len, off) ||
+            !ke_same(ry + off, gy + off, even, "ifft16 y", name, len, off))
+          return;
+      }
+    }
+    CHECK(true, "%s passed all kernel edge cases", name);
+  }
+  xpar_gf_use_tier(saved);
+  CHECK(tiers_run > 0, "at least one GF tier was exercised");
+  xpar_free_aligned(src);  xpar_free_aligned(ref);  xpar_free_aligned(got);
+  xpar_free_aligned(ry);   xpar_free_aligned(gy);
+  xpar_free_aligned(seed); xpar_free_aligned(seedy);
+}
+
 /* Compare codec-level output across runtime tiers. */
 static void test_tiers(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng) {
   cc c;
@@ -553,6 +732,9 @@ int xpar_main(int argc, char ** argv) {
     test_decode(big_cases[i].kind, big_cases[i].field, big_cases[i].s,
                 big_cases[i].r, &rng, xt_scale(2));
   }
+
+  xt_section_begin("kernel edges");
+  { xt_rng kr;  xt_seed(&kr, 0x9E37);  test_kernel_edges(&kr); }
 
   xt_section_begin("tier agreement");
   for (i = 0; i < ARRAY_LEN(small_cases); i++) {

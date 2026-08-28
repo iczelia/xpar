@@ -194,13 +194,22 @@ int xpar_unlock(xpar_file * f) { (void) f;  return 0; }
 
 bool xpar_lock_supported(void) { return false; }
 
+/*  Emulate positional reads by seeking, then restore cursor and EOF state.  */
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
+  long saved;
+  bool saved_eof = f->at_eof;
+  sz got;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
+  saved = lseek(f->fd, 0, SEEK_CUR);
+  if (saved < 0) { f->last_errno = errno;  return 0; }
   if (lseek(f->fd, (long) off, SEEK_SET) < 0) {
     f->last_errno = errno;
     return 0;
   }
-  return xpar_read(f, buf, n);
+  got = xpar_read(f, buf, n);
+  f->at_eof = saved_eof;
+  if (lseek(f->fd, saved, SEEK_SET) < 0) f->last_errno = errno;
+  return got;
 }
 
 bool xpar_pread_batch(xpar_read_req * r, sz count) {
@@ -208,12 +217,18 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
+  long saved;
+  sz put;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
+  saved = lseek(f->fd, 0, SEEK_CUR);
+  if (saved < 0) { f->last_errno = errno;  return 0; }
   if (lseek(f->fd, (long) off, SEEK_SET) < 0) {
     f->last_errno = errno;
     return 0;
   }
-  return xpar_write(f, buf, n);
+  put = xpar_write(f, buf, n);
+  if (lseek(f->fd, saved, SEEK_SET) < 0) f->last_errno = errno;
+  return put;
 }
 
 int xpar_ftruncate(xpar_file * f, u64 length) {

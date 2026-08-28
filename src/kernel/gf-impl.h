@@ -50,6 +50,11 @@
   #define GF_NAME   "neon"
   #define GF_ISA_NEON
   #define GF_SPLIT
+#elif defined(XPAR_GF_VARIANT_VSX)
+  #define GF_SUF    vsx
+  #define GF_NAME   "vsx"
+  #define GF_ISA_VSX
+  #define GF_SPLIT
 #elif defined(XPAR_GF_VARIANT_VBMI512)
   #define GF_SUF    vbmi512
   #define GF_NAME   "vbmi512"
@@ -133,6 +138,23 @@
   #define GF_SHUF(t, i)  vqtbl1q_u8((t), (i))
   #define GF_AN4(v)      vandq_u8((v), vdupq_n_u8(0x0F))
   #define GF_SR4(v)      vshrq_n_u8((v), 4)
+#elif defined(GF_ISA_VSX)
+  #include <altivec.h>
+  /*  Duplicate the table operand; nibble indices never exceed 15.  */
+  #define GF_V           __vector unsigned char
+  #define GF_VB          16
+  #define GF_LD(p)       vec_vsx_ld(0, (const unsigned char *) (const void *) \
+                                    (p))
+  #define GF_ST(p, v)    vec_vsx_st((v), 0, (unsigned char *) (void *) (p))
+  #define GF_XOR(a, b)   vec_xor((a), (b))
+  #define GF_TAB(p)      GF_LD(p)
+  #define GF_SHUF(t, i)  vec_perm((t), (t), (i))
+  #define GF_UNPKL(a, b) ((GF_V) vec_mergeh((__vector unsigned long long) (a), \
+                                            (__vector unsigned long long) (b)))
+  #define GF_UNPKH(a, b) ((GF_V) vec_mergel((__vector unsigned long long) (a), \
+                                            (__vector unsigned long long) (b)))
+  #define GF_AN4(v)      vec_and((v), vec_splats((unsigned char) 0x0F))
+  #define GF_SR4(v)      vec_sr((v), vec_splats((unsigned char) 4))
 #endif
 
 /*  GF(2^8): the multiply.
