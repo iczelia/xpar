@@ -320,6 +320,7 @@ int xpar_close(xpar_file * f) {
 #define WIN_CHUNK 0x40000000u
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
+  f->last_err = 0;
   sz total = 0;
   char * p = (char *) buf;
   while (total < n) {
@@ -339,6 +340,7 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 }
 
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
+  f->last_err = 0;
   sz total = 0;
   const char * p = (const char *) buf;
   while (total < n) {
@@ -355,6 +357,7 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
 }
 
 int xpar_seek(xpar_file * f, i64 off, int whence) {
+  f->last_err = 0;
   DWORD method = whence == XPAR_SEEK_SET ? FILE_BEGIN
                : whence == XPAR_SEEK_CUR ? FILE_CURRENT : FILE_END;
 #if _WIN32_WINNT >= 0x0500
@@ -472,6 +475,7 @@ int xpar_unlock(xpar_file * f) {
 bool xpar_lock_supported(void) { return true; }
 
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
+  f->last_err = 0;
   sz total = 0;
   char * p = (char *) buf;
   while (total < n) {
@@ -512,6 +516,7 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
+  f->last_err = 0;
   sz total = 0;
   const char * p = (const char *) buf;
   while (total < n) {
@@ -543,6 +548,7 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
 }
 
 int xpar_ftruncate(xpar_file * f, u64 length) {
+  f->last_err = 0;
   i64 keep = xpar_tell(f);
   int r = 0;
   if (xpar_seek(f, (i64) length, XPAR_SEEK_SET) != 0) return -1;

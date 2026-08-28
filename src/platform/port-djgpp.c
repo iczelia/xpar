@@ -119,6 +119,7 @@ int xpar_close(xpar_file * f) {
 }
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
+  f->last_errno = 0;
   sz total = 0;
   u8 * p = (u8 *) buf;
   while (total < n) {
@@ -134,6 +135,7 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 }
 
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
+  f->last_errno = 0;
   sz total = 0;
   const u8 * p = (const u8 *) buf;
   while (total < n) {
@@ -196,6 +198,7 @@ bool xpar_lock_supported(void) { return false; }
 
 /*  Emulate positional reads by seeking, then restore cursor and EOF state.  */
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
+  f->last_errno = 0;
   long saved;
   bool saved_eof = f->at_eof;
   sz got;
@@ -217,6 +220,7 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
+  f->last_errno = 0;
   long saved;
   sz put;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }

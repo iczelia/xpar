@@ -194,6 +194,7 @@ int xpar_close(xpar_file * f) {
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   sz got = 0;
   u8 * p = (u8 *) buf;
+  f->last_errno = 0;
   while (got < n) {
     sz want = n - got;
     if (want > 0x10000000u) want = 0x10000000u;
@@ -212,6 +213,7 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
   sz done = 0;
   const u8 * p = (const u8 *) buf;
+  f->last_errno = 0;
   while (done < n) {
     sz want = n - done;
     if (want > 0x10000000u) want = 0x10000000u;
@@ -230,6 +232,7 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
 int xpar_seek(xpar_file * f, i64 off, int whence) {
   int w = whence == XPAR_SEEK_SET ? SEEK_SET
         : whence == XPAR_SEEK_CUR ? SEEK_CUR : SEEK_END;
+  f->last_errno = 0;
   if (off > 0 && !off_fits((u64) off)) { errno = EOVERFLOW;  return -1; }
   if (lseek(f->fd, (off_t) off, w) == (off_t) -1) {
     f->last_errno = errno;
@@ -247,6 +250,7 @@ i64 xpar_tell(xpar_file * f) {
 int xpar_flush(xpar_file * f) { (void) f;  return 0; }
 
 int xpar_fsync(xpar_file * f) {
+  f->last_errno = 0;
   if (fsync(f->fd) == 0) return 0;
   /*  A pipe, a terminal or a read-only descriptor cannot lose data that a
       later fsync would have saved, so refusing to sync one is not a
@@ -268,6 +272,7 @@ bool xpar_is_seekable(xpar_file * f) {
 }
 bool xpar_is_tty(xpar_file * f) { return isatty(f->fd) == 1; }
 bool xpar_eof   (xpar_file * f) { return f->at_eof; }
+/*  Report only the most recent operation's error.  */
 int  xpar_error (xpar_file * f) { return f->last_errno; }
 
 int xpar_lock(xpar_file * f, bool exclusive) {
@@ -321,6 +326,7 @@ static pthread_mutex_t g_ofs_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
+  f->last_errno = 0;
   sz got = 0;
   u8 * p = (u8 *) buf;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
@@ -513,6 +519,7 @@ fallback:
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
+  f->last_errno = 0;
   sz done = 0;
   const u8 * p = (const u8 *) buf;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
