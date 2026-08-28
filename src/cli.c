@@ -990,7 +990,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case 'm': o->memory = need_size(nm, v);
               FATAL_UNLESS("Option -m expects a positive size.", o->memory);
               break;
-    case O_JSON:         o->json = true;  o->human_stderr = true;  break;
+    case O_JSON:         o->json = true;  break;
     case O_PROGRESS:     o->progress = XPAR_PROGRESS_ON;   break;
     case O_NO_PROGRESS:  o->progress = XPAR_PROGRESS_OFF;  break;
     case O_COLOR:        o->color = need_word(nm, v, w_color);  break;
@@ -1359,7 +1359,6 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     FATAL_UNLESS("Only a single set argument may stand in for a verb; "
                  "'xpar --help' lists them.", r->res->pos_argc == 1);
     o->verb = XPAR_VERB_VERIFY;
-    o->bare_set = true;
   }
 
   for (k = 0; k < r->res->argc; k++)

@@ -69,7 +69,6 @@ typedef struct {
   u64 skip_checksum;
   u64 skip_keyed;       /*  Keyed packets no key was supplied for.  */
   u32 step;
-  bool implausible;     /*  Packet count exceeded size / 48; scan stopped.  */
   bool accept_unverified_keyed;
   const xpar_key * key;
 } xpar_scan;

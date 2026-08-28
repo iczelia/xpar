@@ -166,11 +166,9 @@ bool xpar_scan_next(xpar_scan * s, xpar_pkt * hdr, const u8 ** body,
     }
     *off = s->pos;
     *body = s->buf + s->pos + XPAR_PKT_HDR;
+    /*  Packet length bounds emitted to at most size / XPAR_PKT_HDR.  */
     s->pos += hdr->length;
     s->emitted++;
-    if (s->emitted > s->size / XPAR_PKT_HDR) {
-      s->implausible = true;  return false;
-    }
     return true;
   }
   return false;

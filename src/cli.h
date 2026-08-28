@@ -104,7 +104,6 @@ typedef struct {
 
 typedef struct {
   xpar_verb verb;
-  bool bare_set;         /*  From the `xpar <set-file>` shorthand.  */
 
   int  verbose;          /*  Repeat count: -vv is 2.  */
   bool quiet, force, json, reproducible;
@@ -112,7 +111,6 @@ typedef struct {
   u64  memory;           /*  0: derived from physical memory.  */
   int  progress;         /*  XPAR_PROGRESS_*  */
   int  color;            /*  XPAR_COLOR_*  */
-  bool human_stderr;     /*  --json moves human output off stdout.  */
   char * simd;           /*  --simd tier name; NULL means auto.  */
 
   char *  set;
