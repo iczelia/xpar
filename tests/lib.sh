@@ -63,9 +63,12 @@ work=`pwd`/tw-$prog.$$
 rm -rf "$work"
 mkdir "$work" || hard_error "cannot create $work"
 if test -z "${XPAR_TEST_KEEP:-}"; then
-  trap 'cd /; rm -rf "$work"' EXIT HUP INT TERM
+  trap 'cd /; rm -rf "$work"' EXIT
+  trap 'cd /; rm -rf "$work"; echo "$prog: signalled" >&2; exit 143' \
+       HUP INT TERM
 else
-  trap 'cd /; echo "$prog: kept $work" >&2' EXIT HUP INT TERM
+  trap 'cd /; echo "$prog: kept $work" >&2' EXIT
+  trap 'cd /; echo "$prog: kept $work" >&2; exit 143' HUP INT TERM
 fi
 log=$work/last.log
 cd "$work" || hard_error "cannot enter $work"
@@ -111,6 +114,12 @@ explain_status() {
        echo "CRASHED (signal `expr $1 - 128`)" ;;
     *) echo "unrecognised status" ;;
   esac
+}
+
+never_false_success() {   # <status> <file> <pristine> <what>
+  if test "$1" -ne 0; then ok;  return 0; fi
+  if cmp -s "$2" "$3"; then ok
+  else bad "$4: exited 0 with bytes that are not the original"; fi
 }
 
 # Inject damage or stop if the helper fails.

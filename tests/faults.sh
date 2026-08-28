@@ -242,9 +242,9 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   damage data.bin -Z "$Z" -Y "$Y" -n 96 $ops
   damage "$victim" "rand=300,8192"
   attempt "$XPAR" repair --in-place set.xpa || { cd ..;  return 0; }
-  if test "$status" -eq 0; then same data.bin pristine.bin
-  else note "repair refused with a damaged recovery volume (status $status)"
-       ok; fi
+  never_false_success "$status" data.bin pristine.bin \
+                      "repair against damaged recovery"
+  note "status $status with a damaged recovery volume"
 
   cd ..
 }
