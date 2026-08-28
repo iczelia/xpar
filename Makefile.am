@@ -40,6 +40,7 @@ noinst_HEADERS = \
   src/plan.h src/json.h src/pathname.h src/volname.h \
   src/ops/ops.h src/ops/chain.h src/ops/vset.h src/ops/volimg.h \
   src/ops/undo.h src/platform/port-win-path.h \
+  src/platform/port-win-argv.h \
   src/kernel/gf.h src/kernel/gf-impl.h src/kernel/gf-rvv-int.h \
   src/kernel/armour.h src/kernel/armour-impl.h \
   src/kernel/codec.h src/kernel/codec-int.h \
