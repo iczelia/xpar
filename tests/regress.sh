@@ -1797,6 +1797,43 @@ same s.g001.xpa keep/s.g001.keep
 run 0 "$XPAR" verify s.xpa
 cdto ..
 
+step "a split set's lost or renamed index volume comes back byte for byte"
+
+#  An armoured archive is its own index, so only the sidecar and the split
+#  layout can lose one on its own.
+mkdir -p splitidx && cdto splitidx
+mkfile l.bin 800000 61
+run 0 "$XPAR" create --layout=split --volumes=3 -r 20% -o lv l.bin
+rv=`ls lv.v*.xpa | head -1`
+test -n "$rv" || hard_error "the split set carries no recovery volume"
+mkdir keep
+cp lv.xpa keep/lv.keep
+rm -f lv.xpa
+run 1 "$XPAR" verify "$rv"
+grep -q "index volume 'lv.xpa' is missing" "$log" ||
+  bad "verify did not name the lost split index volume"
+run 0 "$XPAR" repair --in-place "$rv"
+exists lv.xpa
+same lv.xpa keep/lv.keep
+run 0 "$XPAR" verify lv.xpa
+cat lv.d0* > joined.bin
+same joined.bin l.bin
+
+#  A renamed index volume goes back under its recorded name, and the file
+#  someone else put there stays where it is.
+rm -f joined.bin
+mv lv.xpa other.bin
+run 1 "$XPAR" verify "$rv"
+grep -q "is missing; using 'other.bin'" "$log" ||
+  bad "verify did not adopt the renamed split index volume"
+run 0 "$XPAR" repair --in-place "$rv"
+exists other.bin
+same lv.xpa keep/lv.keep
+run 0 "$XPAR" verify lv.xpa
+cat lv.d0* > joined.bin
+same joined.bin l.bin
+cdto ..
+
 step "an unstorable manifest is refused before any output exists"
 
 #  Reject duplicate stored names before publishing.

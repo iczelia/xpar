@@ -2991,6 +2991,8 @@ typedef struct {
   u64  volumes_relengthed;   /*  Same-name volumes trimmed or extended.  */
   u64  recovery_regen;       /*  Recovery slices re-encoded from the data.  */
   u64  recovery_volumes;     /*  Recovery volumes rewritten to carry them.  */
+  u64  index_regen;          /*  Index volumes rebuilt from replicas.  */
+  u64  names_restored;       /*  Volumes put back under their name.  */
   bool inner_corrected;
 } owned_acct;
 
@@ -3771,15 +3773,23 @@ int xpar_op_repair(const xpar_options * o) {
         return xpar_op_extract(&ex);
       }
       out = repair_owned(o, owned, before, &acct);
-      if (out == XPAR_EXIT_OK) repair_rewrite_dropped(o, owned);
+      /*  Packet-bearing volumes are restored by name, as for a sidecar.  */
+      if (out == XPAR_EXIT_OK) {
+        acct.names_restored = repair_restore_names(o, owned);
+        repair_rewrite_dropped(o, owned);
+      }
       xpar_vset_close(owned);
       if (out == XPAR_EXIT_OK && o->dest != XPAR_DEST_TO) {
+        acct.index_regen = repair_regen_index(o);
         acct.recovery_regen =
           repair_regen_recovery(o, &acct.recovery_volumes);
-        if (acct.recovery_regen) changed = true;
+        if (acct.recovery_regen || acct.index_regen || acct.names_restored)
+          changed = true;
         owned = xpar_vset_open(o);
         out = xpar_vset_check(owned, o, NULL);
         xpar_vset_close(owned);
+        /*  Damage that outlived the repair is what repair could not fix.  */
+        if (out != XPAR_EXIT_OK) out = XPAR_EXIT_UNREPAIRABLE;
       }
       if (out == XPAR_EXIT_OK && changed && o->exit_on_change)
         out = XPAR_EXIT_REPAIRABLE;
@@ -3798,6 +3808,8 @@ int xpar_op_repair(const xpar_options * o) {
                       acct.volumes_relengthed);
         xpar_json_u64(&owned_js, "recovery_regenerated",
                       acct.recovery_regen);
+        xpar_json_u64(&owned_js, "index_volumes_recreated", acct.index_regen);
+        xpar_json_u64(&owned_js, "volumes_restored", acct.names_restored);
         xpar_json_bool(&owned_js, "inner_corrected", acct.inner_corrected);
         xpar_json_end(&owned_js);
         xpar_json_summary(&owned_js,
@@ -3806,15 +3818,19 @@ int xpar_op_repair(const xpar_options * o) {
                                                        "unrepairable",
                           out);
       }
-      if (!o->quiet && out != XPAR_EXIT_OK)
+      if (!o->quiet && out == XPAR_EXIT_UNREPAIRABLE)
         xpar_fprintf(xpar_stderr, "xpar: owned-layout repair: unrepairable\n");
       else if (!o->quiet && !o->chain_member && !acct.slices_rebuilt &&
                !acct.volumes_rebuilt &&
                !acct.volumes_rewritten && !acct.volumes_relengthed &&
-               !acct.recovery_regen && !acct.inner_corrected)
+               !acct.recovery_regen && !acct.index_regen &&
+               !acct.names_restored && !acct.inner_corrected)
         xpar_fprintf(xpar_stderr,
                      "xpar: owned-layout repair: no repair needed\n");
-      else if (!o->quiet)
+      /*  Index and name work is reported on its own line below.  */
+      else if (!o->quiet && (acct.slices_rebuilt || acct.volumes_rebuilt ||
+                             acct.volumes_rewritten ||
+                             acct.volumes_relengthed || acct.inner_corrected))
         xpar_fprintf(xpar_stderr,
                      "xpar: owned-layout repair: %" PRIu64 " cell%s damaged, %"
                      PRIu64 " slice%s rebuilt, %" PRIu64 " byte%s; %" PRIu64
@@ -3829,6 +3845,10 @@ int xpar_op_repair(const xpar_options * o) {
                      acct.volumes_relengthed,
                      acct.inner_corrected
                        ? "; the inner code corrected the archive" : "");
+      if (!o->quiet && acct.index_regen)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: recreated %" PRIu64 " index volume%s from packet "
+                     "replicas\n", acct.index_regen, PLURAL(acct.index_regen));
       if (!o->quiet && acct.recovery_regen)
         xpar_fprintf(xpar_stderr,
                      "xpar: %" PRIu64 " recovery slice%s regenerated in %"
