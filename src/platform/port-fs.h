@@ -113,6 +113,9 @@ int xpar_symlink(const char * target, const char * path);
 
 int xpar_link(const char * existing, const char * newpath);
 
+/*  The working directory as an absolute path, or NULL; caller frees.  */
+char * xpar_getcwd(void);
+
 int xpar_mkdir  (const char * path, u32 mode);
 int xpar_mkdir_p(const char * path, u32 mode);  /*  existing path is OK  */
 int xpar_rmdir  (const char * path);

@@ -493,9 +493,9 @@ int xpar_op_info(const xpar_options * o) {
   u32 sel, i;
   char idbuf[XPAR_SET_ID_LEN * 2 + 1], sbuf[32], sbuf2[32];
   const xpar_setd * sd;
-  xpar_armour_params ap;
-  bool whole_file = false, have_armour;
-  u64 arm_plain = 0, arm_disk = 0;
+  xpar_armour_params ap, wap, tap;
+  bool whole_file = false, have_armour, wrap_rcvs, wrap_tab;
+  u64 arm_plain = 0, arm_disk = 0, all_plain = 0, all_disk = 0;
   xpar_layt layt;
   bool have_layt = false;
   u64 crit_bytes = 0;
@@ -558,6 +558,9 @@ int xpar_op_info(const xpar_options * o) {
   xpar_hex(idbuf, c.gen[sel].set_id, XPAR_SET_ID_LEN);
   have_armour = li_armour_of(&c, sel, &ap, &whole_file, &arm_plain,
                              &arm_disk);
+  wrap_rcvs = xpar_gchain_wrap_armour(&c, sel, true, &wap);
+  wrap_tab  = xpar_gchain_wrap_armour(&c, sel, false, &tap);
+  xpar_gchain_armour_bytes(&c, sel, &all_disk, &all_plain);
   if (c.gen[sel].layt_body &&
       xpar_layt_read(c.gen[sel].layt_body, c.gen[sel].layt_len, &layt) ==
         XPAR_OK) have_layt = true;
@@ -582,6 +585,12 @@ int xpar_op_info(const xpar_options * o) {
     xpar_json_u64(&js, "cell_bytes", sd->cell_bytes);
     xpar_json_u64(&js, "slice_tag_len", sd->slice_tag_len);
     xpar_json_u64(&js, "files", sd->file_count);
+    xpar_json_str(&js, "armour",
+                  !have_armour ? "none"
+                               : (whole_file || wrap_rcvs || wrap_tab
+                                    ? "all" : "metadata"));
+    xpar_json_u64(&js, "armour_disk", whole_file ? arm_disk : all_disk);
+    xpar_json_u64(&js, "armour_plain", whole_file ? arm_plain : all_plain);
     xpar_json_end(&js);
     xpar_json_summary(&js, "ok", XPAR_EXIT_OK);
     if (have_layt) xpar_layt_free(&layt);
@@ -670,7 +679,8 @@ int xpar_op_info(const xpar_options * o) {
       xpar_fprintf(xpar_stdout,
                    "  armour     : GF(2^%" PRIu32 ") RS(%" PRIu32 ", %" PRIu32 "), "
                    "t = %" PRIu32 ", D = %" PRIu64
-                   "\n               %s; frame %" PRIu64 " bytes on disk carrying "
+                   "\n               %s\n"
+                   "               frame %" PRIu64 " bytes on disk carrying "
                    "%" PRIu64 " of plaintext\n"
                    "               correctable burst %" PRIu64 " bytes anywhere in "
                    "a frame\n"
@@ -679,11 +689,34 @@ int xpar_op_info(const xpar_options * o) {
                    ap.k, t,
                    ap.depth,
                    whole_file ? "the whole archive is armoured"
-                              : "the critical packet group is armoured",
+                              : (wrap_rcvs || wrap_tab
+                                   ? "level all: the critical group, the "
+                                     "slice tables and\n               "
+                                     "every recovery slice"
+                                   : "level metadata: the critical packet "
+                                     "group is armoured"),
                    xpar_armour_frame_disk(a),
                    xpar_armour_frame_plain(a),
                    xpar_armour_burst(a),
                    100.0 * (f64) (ap.n - ap.k) / (f64) ap.k);
+      /*  Report a distinct recovery-wrapper code.  */
+      if (wrap_rcvs && (wap.symbol_bits != ap.symbol_bits ||
+                        wap.n != ap.n || wap.k != ap.k ||
+                        wap.depth != ap.depth))
+        xpar_fprintf(xpar_stdout,
+                     "               recovery slices use GF(2^%" PRIu32 ") "
+                     "RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32
+                     ", D = %" PRIu64 "\n",
+                     wap.symbol_bits, wap.n, wap.k, (wap.n - wap.k) / 2,
+                     wap.depth);
+      /*  Report total armour overhead.  */
+      if (!whole_file && all_plain && all_disk)
+        xpar_fprintf(xpar_stdout,
+                     "               on disk %" PRIu64 " bytes for %" PRIu64
+                     " of plaintext, overhead %.3f%%\n",
+                     all_disk, all_plain,
+                     100.0 * ((f64) all_disk - (f64) all_plain) /
+                     (f64) all_plain);
       /*  Include padding in the effective overhead.  */
       if (whole_file && arm_plain && arm_disk) {
         f64 real = 100.0 * ((f64) arm_disk - (f64) arm_plain) /
@@ -1057,7 +1090,16 @@ int xpar_op_explain(const xpar_options * o) {
 
   {
     xpar_scan sc;  xpar_pkt hdr;  const u8 * body;  u64 off;
-    bool found = false, packet = false;
+    bool found = false, packet = false, wrapped = false;
+    /*  Detect wrapped --armour=all packets.  */
+    xpar_scan_init(&sc, data, len, NULL, false);
+    sc.accept_unverified_keyed = true;
+    while (xpar_scan_next(&sc, &hdr, &body, &off)) {
+      char wt[4];
+      if (!xpar_pkt_is(&hdr, XPAR_T_ARMG)) continue;
+      if (xpar_armg_wrapped_type(body, (sz) (hdr.length - XPAR_PKT_HDR), wt))
+        { wrapped = true;  break; }
+    }
     xpar_scan_init(&sc, data, len, NULL, false);
     /*  Framing can be described without authenticating packet content.  */
     sc.accept_unverified_keyed = true;
@@ -1077,19 +1119,28 @@ int xpar_op_explain(const xpar_options * o) {
                      "split layouts the\n"
                      "original files are the data, and they are never "
                      "rewritten or armoured.\n"
-                     "What is armoured is the critical metadata group, one "
-                     "ARMG packet at file\n"
-                     "offset %" PRIu64 " whose payload begins at %" PRIu64 ". The recipe "
-                     "below recovers that\n"
-                     "group as a plain packet stream, which begins with "
-                     "\"XPAR2PKT\" and holds\n"
-                     "the set descriptor, the manifest and the slice "
-                     "checksums.\n\n"
+                     "%s"
+                     "The recipe below recovers the first ARMG packet's "
+                     "plaintext, which begins\nwith \"XPAR2PKT\". That "
+                     "packet is at file offset %" PRIu64 " and its payload\n"
+                     "begins at %" PRIu64 ".\n\n"
                      "  code             RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32 " over GF(2^%" PRIu8 ")"
                      "\n  interleave D     %" PRIu64 "\n"
                      "  frame            %" PRIu64 " bytes on disk, %" PRIu64 " of "
                      "plaintext\n  frames           %" PRIu64 "\n\n",
-                     path, off,
+                     path,
+                     wrapped
+                       ? "What is armoured is the critical metadata group, "
+                         "one ARMG packet holding\nthe set descriptor, the "
+                         "manifest and the slice checksums. This volume was "
+                         "also\nwritten with --armour=all, so every SLTG, "
+                         "SLCL and RCVS packet in it is\nthe whole "
+                         "plaintext of an ARMG packet of its own, and the "
+                         "same recipe\nrecovers each of them.\n"
+                       : "What is armoured is the critical metadata group, "
+                         "one ARMG packet holding\nthe set descriptor, the "
+                         "manifest and the slice checksums.\n",
+                     off,
                      (off + XPAR_PKT_HDR + 48),
                      ag.n, ag.k,
                      ((ag.n - ag.k) / 2), ag.symbol_bits,
@@ -1108,7 +1159,8 @@ int xpar_op_explain(const xpar_options * o) {
         xpar_json_end(&js);
         xpar_json_begin(&js, "recipe");
         xpar_json_str(&js, "source", path);
-        xpar_json_str(&js, "kind", "critical-metadata");
+        xpar_json_str(&js, "kind",
+                      wrapped ? "wrapped-packet" : "critical-metadata");
         xpar_json_u64(&js, "header_bytes", off + XPAR_PKT_HDR + 48);
         xpar_json_u64(&js, "symbol_bytes", ag.symbol_bits / 8);
         xpar_json_u64(&js, "n", ag.n);  xpar_json_u64(&js, "k", ag.k);
@@ -1120,7 +1172,9 @@ int xpar_op_explain(const xpar_options * o) {
       } else {
         li_recipe(path, off + XPAR_PKT_HDR + 48, ag.symbol_bits / 8, ag.n,
                   ag.k, ag.depth, frames, 0, ag.plain_length,
-                  "this extracts the armoured critical metadata group");
+                  wrapped ? "this extracts one wrapped packet"
+                          : "this extracts the armoured critical metadata "
+                            "group");
       }
       found = true;
       break;

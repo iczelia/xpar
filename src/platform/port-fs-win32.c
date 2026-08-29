@@ -602,3 +602,14 @@ int xpar_name_of(u32 uid, char * buf, sz n) {
 int xpar_group_of(u32 gid, char * buf, sz n) {
   (void) gid;  (void) buf;  (void) n;  return -1;
 }
+
+char * xpar_getcwd(void) {
+  DWORD n = GetCurrentDirectoryA(0, NULL), got;
+  char * p;
+  if (!n) return NULL;
+  p = (char *) xpar_alloc_raw((sz) n + 1);
+  got = GetCurrentDirectoryA(n + 1, p);
+  if (!got || got > n) { xpar_free(p);  return NULL; }
+  p[got] = 0;
+  return p;
+}

@@ -147,7 +147,10 @@ rnd() {   # rnd <n> -> 0 .. n-1 in $rnd
 # Sync before each run; optionally drop caches.
 
 settle() {
+  _t0=`date +%s 2>/dev/null || echo 0`
   sync 2>/dev/null || true
+  _t1=`date +%s 2>/dev/null || echo 0`
+  sync_seconds=$((sync_seconds + _t1 - _t0))
   test "$cold" = drop || return 0
   if test -w /proc/sys/vm/drop_caches; then
     echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
@@ -168,6 +171,7 @@ bench_probe_cold() {
 }
 
 bench_open_output() {
+  sync_seconds=0
   mkdir -p "$out" || die "cannot create output directory: $out"
   out=`cd "$out" && pwd`
   work=$out/work

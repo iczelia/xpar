@@ -105,6 +105,20 @@ bool xpar_vname_is_member(const char * name, const char * stem) {
   return xpar_scan_digits(name, &i, n) && i == n;
 }
 
+i64 xpar_vname_gen_of(const char * name, const char * stem) {
+  sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
+  u64 g = 0;
+  if (!xpar_vname_is_member(name, stem)) return -1;
+  n -= XPAR_EXT_LEN;
+  if (p == n) return 0;
+  if (name[p + 1] != 'g') return 0;   /*  stem.vAA+BB: generation zero.  */
+  for (i = p + 2; i < n && name[i] >= '0' && name[i] <= '9'; i++) {
+    g = g * 10 + (u64) (name[i] - '0');
+    if (g > 0xFFFFFFFEu) return -1;
+  }
+  return (i64) g;
+}
+
 /*  A split data volume, with or without the label's extension.  */
 static bool vname_is_data(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;

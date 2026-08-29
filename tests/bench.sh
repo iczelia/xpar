@@ -42,11 +42,21 @@ usable_rows() {
   awk -F, 'NR > 1 { n++ } END { print n + 0 }' "$1"
 }
 
+#  Report per-measurement benchmark time.
+bench_timing() {
+  note "run.sh took $2 s; per-measurement timings:"
+  sed -n 's/^.*repetition \([0-9]*\): \([0-9]*\) us.*$/\1 \2/p' "$1" |
+    awk '{ printf "  | rep %s: %d ms\n", $1, $2 / 1000 }' >&2
+  grep -E "kernel tiers took|time spent in sync" "$1" | sed 's/^/  | /' >&2
+}
+
 step "a clean run reports every repetition usable"
 
 rc=0
+t0=`date +%s`
 "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" --out ok \
-  --size 16777216 --reps 2 --seed "$XPAR_TEST_SEED" > clean.log 2>&1 || rc=$?
+  --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" > clean.log 2>&1 || rc=$?
+bench_timing clean.log $((`date +%s` - t0))
 if test "$rc" -eq 0; then ok
 else bad "the harness exited $rc on a clean run"
      sed 's/^/  | /' clean.log | tail -20 >&2; fi
@@ -71,9 +81,11 @@ fi
 step "a repetition that skipped its restore is caught"
 
 rc=0
+t0=`date +%s`
 XPAR_BENCH_BREAK=repair "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
-  --out broken --size 16777216 --reps 2 --seed "$XPAR_TEST_SEED" \
+  --out broken --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" \
   > broken.log 2>&1 || rc=$?
+bench_timing broken.log $((`date +%s` - t0))
 
 if test "$rc" -ne 0; then ok
 else bad "the harness exited 0 with a repetition that did no work"; fi
@@ -90,9 +102,11 @@ fi
 step "an unexpected status fails the measurement"
 
 rc=0
+t0=`date +%s`
 XPAR_BENCH_BREAK=status "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
-  --out status --size 16777216 --reps 2 --seed "$XPAR_TEST_SEED" \
+  --out status --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" \
   > status.log 2>&1 || rc=$?
+bench_timing status.log $((`date +%s` - t0))
 
 if test "$rc" -ne 0; then ok
 else bad "the harness accepted unexpected status 9"; fi

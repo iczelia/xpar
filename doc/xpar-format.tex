@@ -119,7 +119,8 @@ separate destination, \option{in-place} rewrites the originals and
 \item \verb|list| - reports stored metadata.
 \item \verb|verify| - validates a set without extracting it.
 \item \verb|scrub| - makes the complete algebraic pass over a set, including
-the inner code of any armour.
+the inner code of any armour, and reports what it corrected in armoured
+recovery regions apart from what it corrected in metadata.
 \item \verb|info| - reports geometry, codec, layout, provenance and the repair
 plan.
 \item \verb|explain| - prints a recovery procedure that needs no xpar.
@@ -146,7 +147,11 @@ set id, and \option{chain} covers every generation of a chain. \option{auth-key}
 the key file that selects authenticated output and \option{auth-only} withholds
 the unkeyed verification hashes, \option{reproducible} selects the deterministic writer
 profile, and \option{dedup=none}, \option{dedup=file} and \option{dedup=chunk}
-select deduplication levels 0, 1 and 2 respectively.
+select deduplication levels 0, 1 and 2 respectively. \option{armour=none},
+\option{armour=metadata} and \option{armour=all} select the armour level of
+Clause~\ref{armour-levels}, and \option{armour-field}, \option{armour-t},
+\option{armour-pct}, \option{depth} and \option{burst} choose the inner
+code's parameters for every region that level covers.
 
 \specp The \option{preserve=} options name the following metadata classes:
 \option{preserve=mtime}, \option{preserve=atime}, \option{preserve=ctime},
@@ -657,14 +662,14 @@ first, at offset 0 &
 \verb|AUTH| & yes & critical group, when \option{auth-key} &
 \ref{auth-crtr-cmnt} \\
 \verb|LAYT| & yes & critical group & \ref{layt-volume-layout} \\
-\verb|ARMG| & no & contains the armoured critical group &
-\ref{armg-armoured-packet-group} \\
-\verb|SLTG| & no & index, first recovery, and armoured volumes; when required &
-\ref{slcr-sltg-and-slcl-slice-tables} \\
-\verb|SLCL| & no & index, first recovery, and armoured volumes; when required &
-\ref{slcr-sltg-and-slcl-slice-tables} \\
-\verb|RCVS| & no & recovery volumes and armoured-layout plaintext &
-\ref{rcvs-recovery-slice} \\
+\verb|ARMG| & no & contains the armoured critical group, or one wrapped
+SLTG, SLCL or RCVS packet & \ref{armg-armoured-packet-group} \\
+\verb|SLTG| & no & index, first recovery, and armoured volumes; when required;
+possibly wrapped in ARMG & \ref{slcr-sltg-and-slcl-slice-tables} \\
+\verb|SLCL| & no & index, first recovery, and armoured volumes; when required;
+possibly wrapped in ARMG & \ref{slcr-sltg-and-slcl-slice-tables} \\
+\verb|RCVS| & no & recovery volumes and armoured-layout plaintext; possibly
+wrapped in ARMG & \ref{rcvs-recovery-slice} \\
 \verb|STRM| & no & armoured-layout plaintext only &
 \ref{strm-the-protected-stream} \\
 \verb|CRTR| & no & every packet-bearing volume and armoured-layout plaintext,
@@ -1337,6 +1342,12 @@ when \verb|slice_tag_len| is nonzero and shall be absent otherwise. SLCL shall
 provide complete slice coverage when \verb|cell_bytes| is nonzero and shall be
 absent otherwise.
 
+\specp At armour level \verb|all| an SLTG or SLCL packet in a packet-bearing
+volume is the plaintext of an ARMG packet of its own, as specified in
+Clause~\ref{armg-armoured-packet-group}. Coverage, ordering and the
+complete-copy rules below are assessed on the recovered packets, so a wrapped
+copy is a copy.
+
 \specp Coverage is assessed separately for each replicated copy. The SLCR
 packets within one copy of the critical group form one SLCR table. The SLTG or
 SLCL packets in one volume form one copy of the corresponding table. A writer
@@ -1374,6 +1385,12 @@ slice}{RCVS: recovery slice}}\label{rcvs-recovery-slice}
 \specp Two recovery slices with the same $\mathtt{set\_id}$ and exponent shall
 be byte-identical. A reader encountering a mismatch shall discard the
 conflicting copies and report a format error.
+
+\specp At armour level \verb|all| an RCVS packet in a packet-bearing volume
+is the plaintext of an ARMG packet of its own, as specified in
+Clause~\ref{armg-armoured-packet-group}, and the rules of this clause apply to
+it once it has been recovered. A reader that finds recovery slices both bare
+and wrapped in one generation shall accept both.
 
 \specp For matrix coding, the exclusive exponent limit is
 $2^{\mathtt{field\_log2}}-S$. For high-rate FFT it is
@@ -1423,8 +1440,8 @@ $\mathtt{volume\_kind}=0$; it corresponds to the unique index entry. Every
 other packet-bearing volume shall use the zero-based array index of its LAYT
 entry as \verb|volume_index|, and its \verb|volume_kind| shall equal that
 entry's \verb|kind|. A recovery volume shall contain exactly one valid RCVS
-packet for each exponent in its declared half-open recovery range and no RCVS
-packet with another exponent. The recovery ranges shall be nonoverflowing,
+packet, bare or wrapped in an ARMG of its own, for each exponent in its declared
+half-open recovery range, and no RCVS packet with another exponent. The recovery ranges shall be nonoverflowing,
 pairwise disjoint, nonempty and within the codec's recovery-exponent limit. The
 first recovery volume is the one whose LAYT entry has the least
 \verb|recovery_first| value. The union of the ranges shall contain $R$
@@ -1447,7 +1464,8 @@ decoded plaintext shall have \verb|volume_index| equal to \verb|0xFFFFFFFF| and
 reader shall take the layout from \verb|SETD.layout| and shall ignore the value
 of bit 0, since the bit adds nothing the descriptor does not already say. Bits 1
 through 7 are reserved, and a reader shall reject a LAYT entry that sets any of
-them.
+them. LAYT records no armour level; the level is what
+Clause~\ref{armour-levels} says it is.
 
 \specp Before reading an entry, a reader shall verify that its 32-byte fixed
 part, its \verb|name_len| bytes and its padding all lie within the remaining
@@ -1534,7 +1552,9 @@ Clause~\ref{slcr-sltg-and-slcl-slice-tables}, in ascending \verb|first_slice|;
 
 \specp In a sidecar or split layout, a writer may protect the critical group
 with ARMG. If it does, the complete group shall be the plaintext of one ARMG
-packet as specified in Clause~\ref{armg-armoured-packet-group}.
+packet as specified in Clause~\ref{armg-armoured-packet-group}. Whether it
+also protects the slice tables and the recovery slices is the armour level of
+Clause~\ref{armour-levels}.
 
 \specp For a root set, the group contains all $F$ FILE packets. An inherited
 entry appears in \verb|SETD.file_id[]| but its FILE packet remains in the
@@ -1560,6 +1580,9 @@ volume}\label{packet-order-within-a-volume}
 VOLH; a copy of the critical group, when present; SLTG packets, when present;
 SLCL packets, when present; RCVS packets, when present; CRTR; and zero or more
 CMNT packets. The critical group may be inline or contained in an ARMG packet.
+An SLTG, SLCL or RCVS packet that is wrapped in an ARMG packet occupies the
+position its wrapped packet would occupy, and the ordering rules below apply to
+the wrapped packets rather than to their wrappers.
 The index volume shall contain the group, and the recovery volumes selected by
 Clause~\ref{replication-schedule} shall contain it. Required SLTG and SLCL
 copies shall occur in the volumes specified in
@@ -1796,6 +1819,38 @@ shown below; other values are malformed.
 packet, hence a reader decodes at most one level and the cost of a candidate is
 bounded before it starts.
 
+\specp An ARMG packet has one of two plaintexts. Either the plaintext is a
+complete critical group, as in Clause~\ref{the-critical-group}, or it is
+exactly one SLTG, SLCL or RCVS packet and nothing else; the latter is a
+\textit{wrapped packet}. In a wrapped packet the plaintext holds no padding
+of its own, so \verb|plain_length| equals the wrapped packet's own length
+field. No other plaintext is defined, and a writer shall emit no other.
+
+\specp A reader shall treat a packet recovered from an ARMG plaintext exactly
+as it would treat the same packet at the top level of the volume that carries
+the ARMG, once the recovered packet has passed its own packet check. Whether a
+packet was wrapped therefore affects no table coverage rule, no ordering rule,
+no replication rule and no exponent rule stated elsewhere in this document.
+
+\specp Since a wrapped packet occupies the plaintext from its first byte, and
+plaintext symbol $s$ is data symbol $\lfloor s/D\rfloor$ of codeword
+$s\bmod D$, the first $\min(\mathtt{plain\_length},Dku)$ plaintext bytes are
+the first bytes of the ARMG body's armoured bytes, unchanged. A reader may
+therefore read a wrapped packet's type and length without field arithmetic, and
+decode only the ARMG packets it needs.\footnote{this is what lets a reader
+skip the recovery slices when it wants only the metadata}
+
+\specp A version 2.0 reader shall apply the rules of
+Clause~\ref{extensibility-and-versioning} to a packet recovered from an ARMG
+plaintext: an unknown noncritical type is skipped without error and an unknown
+type whose \verb|CRITICAL| flag is set causes the set to be rejected, exactly
+as at the top level.
+
+\specp The ARMG packet header and the fixed 48-byte part of its body are not
+covered by the inner code. Damage to those bytes destroys the whole ARMG
+packet, which for a wrapped packet costs exactly what the wrapped packet costs
+and no more.
+
 \specp The final frame is zero-padded to $Dku$ plaintext bytes before encoding,
 and the padding is stored. The padding occupies fewer than $Dku$ bytes. For an
 ARMG packet containing a critical group, $\mathtt{symbol\_bits}$ shall be 8 and
@@ -1852,6 +1907,42 @@ characteristic-two fields.
 8 & \verb|0x1D| & 212 & 11 \\
 16 & \verb|0x2D| & 1 & 1 \\
 \end{longtable}
+
+\section{Armour levels}\label{armour-levels}
+
+\specp A generation is written at one of three armour levels, which the
+\option{armour} option selects.
+
+\begin{longtable}{@{}p{.16\linewidth}p{.78\linewidth}@{}}
+\toprule
+Level & What the inner code covers \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\verb|none| & nothing; the volume carries no ARMG packet \\
+\verb|metadata| & the critical group, as one ARMG packet per stored copy \\
+\verb|all| & the critical group, and in addition every SLTG, SLCL and RCVS
+packet the generation writes into a packet-bearing volume, each as a wrapped
+packet in an ARMG of its own \\
+\end{longtable}
+
+\specp In the armoured layout the whole archive is one protected region, so
+that layout is \verb|all| by construction and the table above does not apply
+to it. A bare split-layout data volume carries no packets and is never
+armoured, whatever the level.
+
+\specp The level is not recorded in a field. A generation is at level
+\verb|all| exactly when its packet-bearing volumes carry the wrapped forms,
+and a reader that wants to report the level shall determine it that way. A
+writer that extends a generation, whether by adding recovery slices, by
+regenerating a volume or by appending a generation to the chain, shall keep the
+level the generation already uses unless the operator asks for another one.
+
+\specp A generation at level \verb|all| is readable by any conforming version
+2.0 reader, since the wrapped forms are ordinary ARMG packets and the rules for
+them were already stated. A reader that never learned to write the wrapped
+forms may nevertheless refuse to write a volume that would contain them.
 
 \section{The armoured layout}\label{the-armoured-layout}
 
@@ -2005,7 +2096,9 @@ packet check. If those fields satisfy
 Clause~\ref{armg-armoured-packet-group}, the reader shall decode the body by
 Reed--Solomon and parse exactly \verb|plain_length| recovered bytes as a packet
 sequence. Only packets whose own framing and checksum or keyed tag are valid
-shall be emitted by this recovery attempt.
+shall be emitted by this recovery attempt, and each of them is then subject to
+the same rules as a packet found at the top level, including the unknown-type
+rules of Clause~\ref{extensibility-and-versioning}.
 
 \specp A reader shall discard an ARMG candidate whose header cannot be parsed
 and validated. It shall use a packet's length to advance the scan only after

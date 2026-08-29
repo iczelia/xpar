@@ -99,6 +99,121 @@ void xpar_armg_salvage(const u8 * buf, u64 size, const xpar_key * key,
   }
 }
 
+static void wrap_solve(const xpar_options * o, u64 object_bytes, u32 sym,
+                       xpar_armour_params * p) {
+  u32 w, t2, n;
+  u64 d = 1;
+  xpar_armour_defaults(p, sym);
+  w  = sym / 8;
+  n  = p->n;
+  t2 = p->n - p->k;
+  if (o->armour_t) t2 = 2 * o->armour_t;
+  else if (o->armour_pct > 0.0)
+    t2 = (u32) (o->armour_pct * (f64) n / (100.0 + o->armour_pct) + 0.5);
+  /*  Shorten the codeword to the packet.  */
+  { int it;
+    for (it = 0; it < 8; it++) {
+      u64 need = xpar_ceil_div(object_bytes, w) + t2;
+      u32 n2 = need < (u64) n ? (u32) need : n;
+      u32 t3 = t2;
+      if (!o->armour_t && o->armour_pct > 0.0)
+        t3 = (u32) (o->armour_pct * (f64) n2 / (100.0 + o->armour_pct) + 0.5);
+      if (t3 < 2) t3 = 2;
+      t3 &= ~1u;
+      if (t3 >= n2) t3 = (n2 - 1) & ~1u;
+      if (n2 == n && t3 == t2) break;
+      n = n2;  t2 = t3;
+    } }
+  if (t2 < 2) t2 = 2;
+  if (n < t2 + 1) n = t2 + 1;
+  if (n < 16) n = 16;
+  if (t2 >= n) t2 = (n - 1) & ~1u;
+  p->n = n;  p->k = n - t2;
+  if (o->depth) d = o->depth;
+  else if (o->burst) {
+    u64 t = t2 / 2, sym_burst = o->burst / w;
+    d = sym_burst == (u64) -1 ? (u64) -1
+                              : xpar_ceil_div(sym_burst + 1, t ? t : 1);
+  }
+  if (!d) d = 1;
+  if (d > XPAR_ARMG_DEPTH_MAX) d = XPAR_ARMG_DEPTH_MAX;
+  /*  Limit frame padding to the packet size.  */
+  while (d > 1 && d * (u64) p->k * w > object_bytes) d /= 2;
+  p->depth = d;
+}
+
+void xpar_armour_wrap_params(const xpar_options * o, u64 object_bytes,
+                             xpar_armour_params * p) {
+  xpar_armour_params wide, full;
+  u64 wide_bytes;
+  if (o->armour_field == 8 || o->armour_field == 16) {
+    wrap_solve(o, object_bytes, (u32) o->armour_field, p);
+    return;
+  }
+  /*  Use GF(2^16) only when its padding is negligible.  */
+  wrap_solve(o, object_bytes, 8, p);
+  wrap_solve(o, object_bytes, 16, &wide);
+  xpar_armour_defaults(&full, 16);
+  wide_bytes = xpar_armg_length((u8) wide.symbol_bits, wide.n, wide.k,
+                                wide.depth, object_bytes);
+  if (object_bytes >= (u64) full.k * 2 && wide_bytes &&
+      wide_bytes - object_bytes <= object_bytes / 50) *p = wide;
+}
+
+void xpar_armg_wrap_with(xpar_buf * out, const xpar_armour * a,
+                         const void * plain, sz plain_len,
+                         const u8 * set_id, const xpar_key * key) {
+  const xpar_armour_params * ap = xpar_armour_params_of(a);
+  xpar_armg g;
+  u8 * enc;
+  xpar_memset(&g, 0, sizeof g);
+  g.symbol_bits     = (u8) ap->symbol_bits;
+  g.poly            = ap->poly;
+  g.n               = ap->n;
+  g.k               = ap->k;
+  g.fcr             = ap->fcr;
+  g.prim            = ap->prim;
+  g.depth           = ap->depth;
+  g.plain_length    = plain_len;
+  g.armoured_length = xpar_armour_size(a, plain_len);
+  enc = (u8 *) xpar_calloc((sz) g.armoured_length ? (sz) g.armoured_length
+                                                  : 1, 1);
+  xpar_armour_encode(a, enc, (const u8 *) plain, plain_len);
+  xpar_armg_write(out, &g, enc, set_id, key);
+  xpar_free(enc);
+}
+
+void xpar_armg_wrap(xpar_buf * out, const xpar_options * o,
+                    const void * plain, sz plain_len,
+                    const u8 * set_id, const xpar_key * key) {
+  xpar_armour_params ap;
+  xpar_armour * a;
+  const char * why;
+  xpar_armour_wrap_params(o, plain_len, &ap);
+  why = xpar_armour_check(&ap);
+  if (why) FATAL("Invalid armour parameters: %s", why);
+  xpar_gf_init();
+  a = xpar_armour_new(&ap);
+  xpar_armg_wrap_with(out, a, plain, plain_len, set_id, key);
+  xpar_armour_free(a);
+}
+
+void xpar_armg_wrap_each(xpar_buf * out, const xpar_options * o,
+                         const u8 * pkts, sz len, const u8 * set_id,
+                         const xpar_key * key) {
+  sz at = 0;
+  while (at + XPAR_PKT_HDR <= len) {
+    u64 n = xpar_rd64(pkts + at + 8);
+    FATAL_UNLESS("internal: a packet buffer to be armoured is malformed.",
+                 n >= XPAR_PKT_HDR && !(n % XPAR_PKT_ALIGN) &&
+                 n <= (u64) (len - at));
+    xpar_armg_wrap(out, o, pkts + at, (sz) n, set_id, key);
+    at += (sz) n;
+  }
+  FATAL_UNLESS("internal: a packet buffer to be armoured is malformed.",
+               at == len);
+}
+
 void xpar_armsink_init(xpar_armsink * s, const xpar_armour * a,
                        xpar_file * f) {
   s->armour = a;  s->file = f;

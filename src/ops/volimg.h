@@ -40,6 +40,23 @@ void xpar_armg_unwrap(const u8 * body, u64 length, bool damaged,
 void xpar_armg_salvage(const u8 * buf, u64 size, const xpar_key *,
                        xpar_armg_plain_fn, void * user);
 
+/*  Choose inner-code parameters for one wrapped packet.  */
+void xpar_armour_wrap_params(const xpar_options *, u64 object_bytes,
+                             xpar_armour_params *);
+
+/*  Wrap one packet; `_with` reuses the caller's codec.  */
+void xpar_armg_wrap_with(xpar_buf * out, const xpar_armour *,
+                         const void * plain, sz plain_len,
+                         const u8 * set_id, const xpar_key *);
+void xpar_armg_wrap(xpar_buf * out, const xpar_options *,
+                    const void * plain, sz plain_len,
+                    const u8 * set_id, const xpar_key *);
+
+/*  Wrap every packet in a buffer separately.  */
+void xpar_armg_wrap_each(xpar_buf * out, const xpar_options *,
+                         const u8 * pkts, sz len,
+                         const u8 * set_id, const xpar_key *);
+
 typedef struct {
   const xpar_armour * armour;
   xpar_file * file;

@@ -894,8 +894,13 @@ equal "dry run changed nothing" "`files`" "$snapshot"
 run 4 "$XPAR" prune --before=1 set.xpa
 equal "refusal changed nothing" "`files`" "$snapshot"
 equal "chain length after refusal" "`gens`" 2
-#  Generation 0 cannot recover superseded bytes.
-run 2 "$XPAR" verify set.xpa
+#  Generation 0 cannot recover its superseded bytes, but nothing is
+#  damaged, so the verdict is clean and the warning carries the news.
+run 0 "$XPAR" verify set.xpa
+if grep -q 'count as erasures' "$log"
+then ok
+else bad "verify did not report generation 0's superseded slices"
+fi
 
 #  --force accepts the loss, and what survives has to remain coherent.
 run 0 "$XPAR" prune -f --before=1 set.xpa
@@ -977,7 +982,9 @@ cdto ..
 
 step "superseded bytes count as erasures in the verdict that reports them"
 
-#  Treat superseded ancestor cells as erasures.
+#  Superseded ancestor cells are erasures for the decoder, so they are
+#  reported and they deepen a column; with nothing damaged there is
+#  nothing to decode and the verdict stays clean.
 mkdir -p ch4 && cdto ch4
 mkfile a.bin 400000 48
 mkfile b.bin 200000 49
@@ -985,8 +992,12 @@ run 0 "$XPAR" create -s 4096 -r 20 -o set a.bin b.bin
 mkfile b.bin 200000 50
 run 0 "$XPAR" add -s 4096 -r 20 set.xpa a.bin b.bin
 
-run 2 "$XPAR" verify set.xpa
+run 0 "$XPAR" verify set.xpa
 equal "the cause is named" "`said 'count as erasures'`" yes
+
+#  Real damage has to be localised against that depth, and cannot be.
+damage a.bin rand=1000,64
+run 2 "$XPAR" verify set.xpa
 run 2 "$XPAR" repair --in-place --dry-run set.xpa
 cdto ..
 
@@ -1410,20 +1421,174 @@ cdto ..
 
 step "the default armour still armours the metadata group"
 
-#  Sidecar and split layouts support metadata armour only.
+#  Every layout accepts each armour level; non-archive default is metadata.
 mkdir -p am && cdto am
 mkfile p.bin 100000 71
-run 4 "$XPAR" create --armour=all -r 10% -o a p.bin
-run 4 "$XPAR" create --layout=split --volumes=2 --armour=all -r 10% -o b p.bin
+run 0 "$XPAR" create --armour=all -r 10% -o a p.bin
+run 0 "$XPAR" create --layout=split --volumes=2 --armour=all -r 10% -o b p.bin
 run 0 "$XPAR" create --layout=armoured --armour=all -r 10% -o c p.bin
 run 0 "$XPAR" create --armour=metadata -r 10% -o d p.bin
 run 0 "$XPAR" create -r 10% -o e p.bin
 #  Both the explicit metadata request and the default produce a readable
 #  metadata-armoured set.
+run 0 "$XPAR" verify a.xpa
+run 0 "$XPAR" verify b.xpa
 run 0 "$XPAR" verify d.xpa
 run 0 "$XPAR" verify e.xpa
-#  --armour-t stays valid on these layouts; it tunes the metadata armour.
+#  --armour-t stays valid on these layouts; it tunes the inner code.
 run 0 "$XPAR" create --armour-t=24 -r 10% -o f p.bin
+
+#  Info reports the armour level found on disk.
+capture ia "$XPAR" info a.xpa
+equal "info reports level all" "`grep -c 'level all' ia`" 1
+capture id "$XPAR" info d.xpa
+equal "info reports level metadata" "`grep -c 'level metadata' id`" 1
+capture ie "$XPAR" info e.xpa
+equal "the default is metadata" "`grep -c 'level metadata' ie`" 1
+cdto ..
+
+#  How many RCVS, SLTG and SLCL packets a set leaves outside an ARMG.
+bare_packets() {   # bare_packets <volume glob>
+  _n=0
+  for _v in $1; do
+    for _t in RCVS SLTG SLCL; do
+      _n=`expr $_n + \`"$DAMAGE" "$_v" find=$_t | nlines\``
+    done
+  done
+  echo "$_n"
+}
+
+step "--armour=all wraps every recovery slice and table packet"
+
+#  --armour=all wraps every RCVS; metadata armour leaves them bare.
+mkdir -p aw && cdto aw
+mkfile p.bin 400000 73
+run 0 "$XPAR" create -r 20% -s 8K --slice-tag=16 --cell=4K --armour=all \
+                     -o a p.bin
+run 0 "$XPAR" create -r 20% -s 8K --slice-tag=16 --cell=4K -o m p.bin
+equal "an --armour=all set leaves nothing bare" \
+      "`bare_packets 'a.xpa a.v*'`" 0
+if test "`bare_packets 'm.xpa m.v*'`" -gt 0; then ok
+else bad "the metadata set was expected to store those packets bare"; fi
+cdto ..
+
+step "rot inside an --armour=all recovery volume costs no slices"
+
+#  Damage one symbol per codeword, within t=16.
+mkdir -p ai1 && cdto ai1
+mkfile d.bin 1000000 74
+cp d.bin pristine.bin
+run 0 "$XPAR" create -r 20% -s 8K --armour=all -o s d.bin
+v=`find . -maxdepth 1 -name 's.v*' | sort | tail -1`
+test -n "$v" || hard_error "no recovery volume was written"
+ops=""
+for off in `"$DAMAGE" "$v" find=ARMG`; do
+  ops="$ops flip=`expr $off + 150`,1 flip=`expr $off + 1500`,1"
+done
+test -n "$ops" || hard_error "the recovery volume carries no ARMG packet"
+damage "$v" $ops
+#  Damage the data as well, within the outer code's budget.
+damage d.bin rand=100000,4096 rand=300000,4096
+run 1 "$XPAR" verify s.xpa
+equal "verify reports the inner corrections" \
+      "`grep -c 'armoured regions:' "$log"`" 1
+if grep -q 'recovery slices failed their checksum' "$log"; then
+  bad "single-byte rot still cost recovery slices under --armour=all"
+else
+  ok
+fi
+run 0 "$XPAR" repair --in-place s.xpa
+equal "repair regenerated no recovery slices" \
+      "`grep -c 'recovery slice.* regenerated' "$log"`" 0
+same d.bin pristine.bin
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "the same rot costs slices when only the metadata is armoured"
+
+#  The contrast that makes the level worth having.
+mkdir -p ai2 && cdto ai2
+mkfile d.bin 1000000 74
+cp d.bin pristine.bin
+run 0 "$XPAR" create -r 20% -s 8K -o s d.bin
+v=`find . -maxdepth 1 -name 's.v*' | sort | tail -1`
+test -n "$v" || hard_error "no recovery volume was written"
+ops=""
+for off in `"$DAMAGE" "$v" find=RCVS`; do
+  ops="$ops flip=`expr $off + 150`,1"
+done
+test -n "$ops" || hard_error "the recovery volume carries no RCVS packet"
+damage "$v" $ops
+damage d.bin rand=100000,4096 rand=300000,4096
+run 1 "$XPAR" verify s.xpa
+equal "the unarmoured slices were lost" \
+      "`grep -c 'recovery slices failed their checksum' "$log"`" 1
+run 0 "$XPAR" repair --in-place s.xpa
+equal "repair had to regenerate them" \
+      "`grep -c 'recovery slices regenerated' "$log"`" 1
+same d.bin pristine.bin
+cdto ..
+
+step "wrapped slice tables survive the same rot"
+
+#  --armour=all also protects SLTG and SLCL.
+mkdir -p ai3 && cdto ai3
+mkfile d.bin 900000 76
+run 0 "$XPAR" create -r 20% -s 8K --slice-tag=16 --cell=4K --armour=all \
+                     -o s d.bin
+ops=""
+n=0
+for off in `"$DAMAGE" s.xpa find=ARMG`; do
+  n=`expr $n + 1`
+  #  The first ARMG in an index volume is the critical group.
+  if test "$n" -gt 1; then
+    ops="$ops flip=`expr $off + 64`,1 flip=`expr $off + 128`,1"
+  fi
+done
+test -n "$ops" || hard_error "the index volume carries no wrapped table"
+damage s.xpa $ops
+run 0 "$XPAR" verify s.xpa
+equal "the inner code repaired the tables" \
+      "`grep -c 'armoured regions:' "$log"`" 1
+cdto ..
+
+step "maintenance keeps every packet wrapped"
+
+#  Maintenance verbs inherit the stored armour level.
+mkdir -p ai4 && cdto ai4
+mkdir tree
+mkfile tree/a.bin 300000 77
+run 0 "$XPAR" create -r 10% -s 8K --armour=all -o s -R tree
+run 0 "$XPAR" addrecovery -r 20% s.xpa
+equal "addrecovery wraps its new slices" "`bare_packets 's.xpa s.v*'`" 0
+run 0 "$XPAR" verify s.xpa
+mkfile tree/b.bin 200000 78
+run 0 "$XPAR" add s.xpa -R tree
+equal "add wraps the new generation" \
+      "`bare_packets 's.xpa s.v* s.g001.xpa s.g001.v*'`" 0
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" consolidate s.xpa -o k
+equal "consolidate wraps its output" "`bare_packets 'k.xpa k.v*'`" 0
+run 0 "$XPAR" verify k.xpa
+v=`find . -maxdepth 1 -name 'k.v*' | sort | head -1`
+test -n "$v" || hard_error "no recovery volume to recover"
+cp "$v" orig.bin
+rm -f "$v"
+run 0 "$XPAR" recover --volume="`basename $v`" k.xpa
+same "$v" orig.bin
+run 0 "$XPAR" verify k.xpa
+cdto ..
+
+step "--armour=all writes the same bytes twice"
+
+#  Determinism covers the wrapped packets as well as the group.
+mkdir -p ai5 && cdto ai5
+mkfile p.bin 300000 79
+run 0 "$XPAR" create --reproducible -r 10% -s 8K --armour=all -o x p.bin
+mkdir keep && cp x.xpa x.v*.xpa keep/
+rm -f x.xpa x.v*.xpa
+run 0 "$XPAR" create --reproducible -r 10% -s 8K --armour=all -o x p.bin
+for f in x.xpa x.v*.xpa; do same "$f" "keep/$f"; done
 cdto ..
 
 step "a same-name short volume is reported as relengthed, not substituted"
@@ -1515,6 +1680,302 @@ run 0 "$XPAR" repair --in-place y.xpa
 grep -q 'recovery slice' "$log" || bad "split repair did not regenerate"
 for v in y.xpa y.d00 y.v*.xpa; do same "$v" "keep/$v"; done
 run 0 "$XPAR" verify y.xpa
+cdto ..
+
+step "--scan supplies volumes, never the data root"
+
+#  --scan must not change the protected data root.
+mkdir -p scanroot && cdto scanroot
+mkdir orig backup
+mkfile orig/data.bin 400000 401
+cdto orig
+run 0 "$XPAR" create -r 20% -o s data.bin
+cdto ..
+cp orig/s.xpa orig/s.v*.xpa orig/data.bin backup/
+damage orig/data.bin rand=200000,64
+run 1 "$XPAR" verify --scan="`pwd`/backup" orig/s.xpa
+run 0 "$XPAR" repair --scan="`pwd`/backup" --in-place orig/s.xpa
+same orig/data.bin backup/data.bin
+cdto ..
+
+step "a generation with no readable descriptor is damage, not absence"
+
+#  Preserve generations whose descriptors are unreadable.
+mkdir -p lostgen && cdto lostgen
+mkdir t
+mkfile t/a.bin 80000 421
+cp t/a.bin t/b.bin
+run 0 "$XPAR" create -r 30% --dedup=file -o s -R t
+cp t/a.bin t/c.bin
+run 0 "$XPAR" add --dedup-scope=chain s.xpa -R t
+test -f s.g001.xpa || hard_error "add wrote no second generation"
+
+#  This generation has no critical-group replica.
+damage s.g001.xpa truncate=0
+run 2 "$XPAR" verify s.xpa
+run 2 "$XPAR" consolidate --replace s.xpa
+exists s.xpa
+exists s.g001.xpa
+run 2 "$XPAR" prune --generation=0 s.xpa
+"$XPAR" list s.xpa > /dev/null 2> "$log"
+grep -q descriptor "$log" || bad "list dropped the damaged generation silently"
+cdto ..
+
+step "a generation recovers from the replicas in its own volumes"
+
+#  Recovery volumes replicate the generation's critical group.
+mkdir -p replgen && cdto replgen
+mkdir t
+mkfile t/a.bin 80000 421
+run 0 "$XPAR" create -r 30% -o s -R t
+mkfile t/c.bin 90000 99
+run 0 "$XPAR" add -r 30% s.xpa -R t
+test -f s.g001.v00+01.xpa || hard_error "the generation carries no recovery"
+rm -f s.g001.xpa
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "an unstorable manifest is refused before any output exists"
+
+#  Reject duplicate stored names before publishing.
+mkdir -p dupname && cdto dupname
+mkfile a.bin 20000 411
+run 4 "$XPAR" create --no-verify-after -r 30% -o c a.bin a.bin
+if test -e c.xpa; then bad "create wrote an index no reader accepts"; else ok; fi
+run 4 "$XPAR" create -r 30% -o c2 a.bin a.bin
+run 4 "$XPAR" create -r 30% -o c3 a.bin a.bin
+for d in .xpar-create-*; do
+  test -e "$d" && bad "a failed create left the staging directory $d"
+done
+ok
+cdto ..
+
+step "add validates before it publishes a generation"
+
+#  Validate additions before publishing a generation.
+mkdir -p dupadd && cdto dupadd
+mkdir t
+mkfile t/a.bin 80000 421
+run 0 "$XPAR" create -r 30% -o s -R t
+run 4 "$XPAR" add -r 30% s.xpa t/a.bin t/a.bin
+if test -e s.g001.xpa
+then bad "add published a generation it then refused"
+else ok
+fi
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "--include restricts, and never re-admits an --exclude"
+
+mkdir -p sel && cdto sel
+mkdir -p tree/a
+echo hi > tree/a/1.txt
+echo secret > tree/secret.txt
+run 0 "$XPAR" create -r 10% -o e2 --exclude='*secret*' --include='*.txt' -R tree
+capture names "$XPAR" list e2.xpa
+grep -q '1\.txt' names || bad "--include dropped a path it admitted"
+if grep -q secret names
+then bad "--include re-admitted a path --exclude removed"
+else ok
+fi
+cdto ..
+
+step "an interleave past -m is refused on every layout"
+
+#  Every layout must reject an over-budget depth.
+mkdir -p armdepth && cdto armdepth
+mkfile d.bin 300000 431
+run 4 "$XPAR" create -m 2M -r 20% --depth=32000 -o s d.bin
+run 4 "$XPAR" create -m 2M -r 20% --burst=100M -o s2 d.bin
+run 4 "$XPAR" create -m 2M -r 20% --depth=32000 --layout=split -o s3 d.bin
+
+#  Report an affordable depth.
+"$XPAR" create -m 2M -r 20% --depth=32000 -o s4 d.bin > /dev/null 2> "$log"
+afford=`sed -n 's/.*affords --depth \([0-9][0-9]*\).*/\1/p' "$log" | head -1`
+test -n "$afford" || hard_error "the refusal named no affordable depth"
+run 0 "$XPAR" create -m 2M -r 20% --depth="$afford" -o s5 d.bin
+cdto ..
+
+step "--burst delivers at least the tolerance it was asked for"
+
+#  Burst tolerance must not be rounded below the request.
+mkdir -p burst && cdto burst
+mkfile d.bin 300000
+for b in 127 255 511; do
+  "$XPAR" create -f -r 20% --layout=armoured --burst=$b -o z d.bin \
+    > /dev/null 2> "$log" || bad "create --burst=$b failed"
+  got=`sed -n 's/.*burst tolerance \([0-9][0-9]*\) bytes.*/\1/p' "$log" |
+       head -1`
+  test -n "$got" || hard_error "no burst tolerance was reported for $b"
+  if test "$got" -ge "$b"
+  then ok
+  else bad "--burst=$b delivered only $got bytes"
+  fi
+done
+cdto ..
+
+step "--max-recovery widens the axis for the matrix codec too"
+
+#  Reserve the matrix recovery axis requested by --max-recovery.
+mkdir -p maxrec && cdto maxrec
+mkfile d.bin 300000 1
+run 0 "$XPAR" create -r 10 --max-recovery=500 --codec=matrix -o u d.bin
+run 0 "$XPAR" addrecovery -r 400 u.xpa
+run 0 "$XPAR" verify u.xpa
+cdto ..
+
+step "--rescan=hash inherits the bytes of a metadata-only change"
+
+mkdir -p metaonly && cdto metaonly
+mkdir r
+mkfile r/a.bin 90000 77
+run 0 "$XPAR" create -r 30% -o rs -R r
+touch r/a.bin
+"$XPAR" add -r 30% --rescan=hash rs.xpa -R r > /dev/null 2> "$log" ||
+  bad "add after touch failed"
+grep -q '0 new stream bytes' "$log" || bad "a touch re-stored the whole file"
+chmod 600 r/a.bin
+"$XPAR" add -r 30% --rescan=hash rs.xpa -R r > /dev/null 2> "$log" ||
+  bad "add after chmod failed"
+grep -q '0 new stream bytes' "$log" || bad "a chmod re-stored the whole file"
+run 0 "$XPAR" verify rs.xpa
+cdto ..
+
+step "an intact set is never unrepairable for superseded slices alone"
+
+#  Superseded slices alone require no decoding.
+mkdir -p supersede && cdto supersede
+mkfile f1.bin 300000 1
+mkfile f2.bin 250000 2
+run 0 "$XPAR" create -r 15% -o set f1.bin f2.bin
+mkfile f2.bin 250000 22
+run 0 "$XPAR" add set.xpa f1.bin f2.bin
+run 0 "$XPAR" verify set.xpa
+grep -q superseded "$log" || bad "verify did not warn about superseded slices"
+
+#  Real damage against that same depth still exhausts the recovery.
+damage f1.bin rand=1000,64
+run 2 "$XPAR" verify set.xpa
+cdto ..
+
+step "consolidate inherits the widest ratio in the chain"
+
+#  Inherit the widest nonzero ratio in the chain.
+mkdir -p ratio && cdto ratio
+mkdir t
+mkfile t/a.bin 80000 41
+cp t/a.bin t/b.bin
+run 0 "$XPAR" create -r 30% --dedup=file -o s -R t
+cp t/a.bin t/c.bin
+run 0 "$XPAR" add --dedup-scope=chain s.xpa -R t
+run 0 "$XPAR" consolidate --replace s.xpa
+read_geometry s.xpa
+pct=`expr 100 \* "$R" / "$S"`
+if test "$pct" -ge 25
+then ok
+else bad "consolidate fell to R=$R of S=$S, $pct%"
+fi
+cdto ..
+
+step "--base names the input or an ancestor of it, or is refused"
+
+mkdir -p basedir && cdto basedir
+mkdir -p tree/a
+echo hi > tree/a/1.txt
+run 0 "$XPAR" create -r 10% -o tree/e --base="`pwd`/tree" -R tree
+capture names "$XPAR" list tree/e.xpa
+if grep -q 'tree/a/1\.txt' names
+then bad "--base naming the input directory did not strip it"
+else ok
+fi
+grep -q 'a/1\.txt' names || bad "--base lost the entry altogether"
+run 4 "$XPAR" create -f -r 10% -o e2 --base=/usr -R tree
+cdto ..
+
+step "a name the format cannot carry is skipped, not fatal"
+
+mkdir -p ctrlname && cdto ctrlname
+mkdir -p t2/a
+echo hi > t2/a/1.txt
+odd="t2/`printf 'ct\001rl'`"
+if can_hold "$odd"; then
+  echo x > "$odd"
+  "$XPAR" create -r 10% -o c1 -R t2 > /dev/null 2> "$log" ||
+    bad "one unstorable name aborted the whole create"
+  grep -q skipping "$log" || bad "the unstorable name was not reported"
+  run 0 "$XPAR" verify c1.xpa
+  run 4 "$XPAR" create -f -r 10% --strict -o c1s -R t2
+else
+  note "this host cannot hold a control byte in a name"
+fi
+cdto ..
+
+step "argument paths are normalised before they become stored names"
+
+mkdir -p dotpath && cdto dotpath
+mkdir -p t2/a t2/b
+echo hi > t2/a/1.txt
+for p in "t2//a/1.txt" "t2/./a/1.txt" "t2/b/../a/1.txt"; do
+  run 0 "$XPAR" create -f -r 10% -o c2 "$p"
+  capture names "$XPAR" list c2.xpa
+  grep -q 't2/a/1\.txt' names || bad "'$p' was not stored as t2/a/1.txt"
+done
+cdto ..
+
+step "armour parameters that would inflate the archive are refused"
+
+#  Refuse disproportionate inner-code expansion.
+mkdir -p armgrow && cdto armgrow
+printf A > one.b
+run 4 "$XPAR" create --layout=armoured --armour-t=32767 --armour-field=16 \
+                     -r 10% -o z one.b
+if test -e z.xpa; then bad "the refused archive was written anyway"; else ok; fi
+mkfile big.b 300000
+run 4 "$XPAR" create --layout=armoured --armour-t=32767 --armour-field=16 \
+                     -r 10% -o z2 big.b
+
+#  The refusal has to name a t the very same input accepts.
+most=`sed -n 's/.*[^0-9]\([0-9][0-9]*\)[^0-9]*$/\1/p' "$log" | head -1`
+test -n "$most" || hard_error "the refusal named no affordable --armour-t"
+run 0 "$XPAR" create --layout=armoured --armour-t="$most" --armour-field=16 \
+                     -r 10% -o zt big.b
+run 0 "$XPAR" verify zt.xpa
+run 4 "$XPAR" create -r 10% --armour-t=32767 --armour-field=8 -o z3 big.b
+cdto ..
+
+step "an armoured create reports the one volume it wrote"
+
+mkdir -p onevol && cdto onevol
+mkfile d.bin 300000
+"$XPAR" create -r 10% --layout=armoured -o z d.bin > /dev/null 2> "$log" ||
+  bad "armoured create failed"
+grep -q 'in 1 volume' "$log" || bad "armoured create miscounted its volumes"
+run 0 "$XPAR" verify z.xpa
+cdto ..
+
+step "consolidate --dry-run writes nothing and needs no destination"
+
+mkdir -p condry && cdto condry
+mkdir t
+mkfile t/a.bin 80000 41
+run 0 "$XPAR" create -r 30% -o s -R t
+mkfile t/c.bin 40000 42
+run 0 "$XPAR" add s.xpa -R t
+capture plan "$XPAR" consolidate --dry-run s.xpa
+if test "$status" -eq 0
+then ok
+else bad "consolidate --dry-run demanded a destination it does not use"
+fi
+exists s.g001.xpa
+
+#  Count aliased extents once when estimating reclaimable bytes.
+total=`sed -n 's/.*stream *: \([0-9][0-9]*\) bytes across.*/\1/p' plan`
+live=`sed -n 's/.*bytes across the chain, \([0-9][0-9]*\) still.*/\1/p' plan`
+test -n "$total" && test -n "$live" || hard_error "no dry-run stream line"
+if test "$live" -le "$total"
+then ok
+else bad "consolidate --dry-run says $live of $total bytes are referenced"
+fi
 cdto ..
 
 summary

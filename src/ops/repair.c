@@ -116,6 +116,7 @@ typedef struct {
   u8 *         fstate;        /*  Bit 0: the file exists. Bit 1: too long.  */
   xpar_resync_map * resync;   /*  Strongly confirmed displaced slices.  */
 
+  u64          armg_corrected;/*  Inner-code corrections while reading.  */
   u64          unrecovered;   /*  Entries repair could not reproduce.  */
   u64          overlong;      /*  Entries with bytes past the recorded end.  */
 
@@ -228,29 +229,29 @@ static void rp_keep_plain(rp * r, u8 * p) {
   r->plain[r->plain_count++] = p;
 }
 
-static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync);
+static void rp_collect_at(rp * r, const u8 * buf, u64 size, bool resync,
+                          bool nested);
 
-/*  Plaintext an armoured group gave up. Corrected and uncorrected
-    readings are kept apart and both retained, because the collector
-    holds pointers into whichever one its packets came from.  */
+/*  Retain decoded plaintext backing collected packet pointers.  */
 static void rp_plain(void * user, u8 * plain, u64 len) {
   rp * r = (rp *) user;
-  rp_collect(r, plain, len, false);
+  rp_collect_at(r, plain, len, false, true);
   rp_keep_plain(r, plain);
 }
 
-static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
+static void rp_collect_at(rp * r, const u8 * buf, u64 size, bool resync,
+                          bool nested) {
+  const xpar_key * key = r->key_loaded ? &r->key : NULL;
   xpar_scan sc;
   xpar_pkt h;
   const u8 * body;
   u64 off;
-  xpar_scan_init(&sc, buf, size, r->key_loaded ? &r->key : NULL, resync);
+  xpar_scan_init(&sc, buf, size, key, resync);
   sc.accept_unverified_keyed = !r->key_loaded;
   while (xpar_scan_next(&sc, &h, &body, &off)) {
-    if (xpar_pkt_is(&h, XPAR_T_ARMG))
-      xpar_armg_unwrap(body, h.length - XPAR_PKT_HDR, false, rp_plain, r);
-    else
-      xpar_critset_add(&r->crit, &h, body);
+    /*  Defer ARMG validation to the inner-code sweep.  */
+    if (xpar_pkt_is(&h, XPAR_T_ARMG)) continue;
+    xpar_critset_add(&r->crit, &h, body);
   }
   xpar_reject_unknown_critical(&sc);
   if (r->verbose > 2)
@@ -259,6 +260,23 @@ static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
             sc.emitted,
             sc.skip_checksum,
             sc.skip_keyed);
+  /*  ARMG nesting is exactly one level.  */
+  if (nested) return;
+  { u64 pos = 0, blen = 0;
+    while (xpar_verify_next_armg(buf, size, key, &pos, &body, &blen)) {
+      u64 plen = 0;
+      bool corrected = false;
+      u8 * plain = xpar_verify_armg_plain(body, (sz) blen, key, false, &plen,
+                                          NULL, &corrected);
+      if (!plain) continue;
+      if (corrected) r->armg_corrected++;
+      rp_keep_plain(r, plain);
+      rp_collect_at(r, plain, plen, false, true);
+    } }
+}
+
+static void rp_collect(rp * r, const u8 * buf, u64 size, bool resync) {
+  rp_collect_at(r, buf, size, resync, false);
 }
 
 static bool rp_have_setd(const rp * r) {
@@ -2329,6 +2347,7 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "entries_opaque", r->opaque);
     xpar_json_u64(&r->js, "names_recreated", r->names_made);
     xpar_json_u64(&r->js, "recovery_regenerated", r->rec_regen);
+    xpar_json_u64(&r->js, "inner_corrected", r->armg_corrected);
     xpar_json_end(&r->js);
     xpar_json_summary(&r->js, status, code);
   } else if (!r->quiet) {
@@ -2347,6 +2366,10 @@ static void rp_report(rp * r, const char * status, int code) {
       rp_note(r, "xpar: %" PRIu64 " recovery slice%s regenerated in %" PRIu64
               " volume%s\n", r->rec_regen, PLURAL(r->rec_regen),
               r->rec_regen_vols, PLURAL(r->rec_regen_vols));
+    if (r->armg_corrected)
+      rp_note(r, "xpar: the inner code corrected %" PRIu64
+              " armoured region%s\n", r->armg_corrected,
+              PLURAL(r->armg_corrected));
     if (!r->cell_count && !r->overlong && !r->links_made && !r->opaque &&
         !r->names_made && !r->rec_regen)
       rp_note(r, "xpar: no damage found.\n");
@@ -3420,10 +3443,16 @@ static void repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
   if (!xpar_vset_volumes_dropped(s)) return;
   if (!xpar_vset_rewrite_dropped(s, &n, &why)) {
     /*  Recovery regeneration handles missing RCVS packets separately.  */
-    if (!o->quiet && !xpar_vset_recovery_bad(s))
+    if (!o->quiet && !xpar_vset_recovery_bad(s)) {
       xpar_fprintf(xpar_stderr,
                    "xpar: could not rewrite a stale volume: %s\n",
                    why ? why : "unknown error");
+      /*  Inner-coded regions need no replicas.  */
+      if (xpar_vset_inner_corrected(s))
+        xpar_fprintf(xpar_stderr,
+                     "xpar: inner-code corrections remain; run "
+                     "`xpar scrub --rewrite` to persist them\n");
+    }
     return;
   }
   if (n && !o->quiet)
@@ -3657,8 +3686,10 @@ int xpar_op_repair(const xpar_options * o) {
   }
 
   FATAL_UNLESS("Repair needs a set to work on.", o->set_ref.count > 0);
-  r.dir = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                         : xpar_path_dir(o->set_ref.vol[0]);
+  /*  Resolve entries beside the named set.  */
+  r.dir = o->set_ref.dir  ? xpar_strdup(o->set_ref.dir)
+        : o->set_ref.home ? xpar_strdup(o->set_ref.home)
+                          : xpar_path_dir(o->set_ref.vol[0]);
   for (i = 0; i < o->set_ref.count; i++)
     (void) rp_vol_open(&r, o->set_ref.vol[i]);
   FATAL_UNLESS("Nothing in '%s' could be opened.", r.vol_count > 0, o->set);

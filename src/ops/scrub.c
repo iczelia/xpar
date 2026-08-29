@@ -63,6 +63,8 @@ typedef struct {
   u64 * hist;
   u32   hist_len;
   u64   regions, regions_rewritten;
+  /*  Statistics for wrapped recovery regions.  */
+  u64   rec_regions, rec_codewords, rec_corrected, rec_failed, rec_symbols;
 
   /*  --deep and --rebuild-cells.  */
   u64  rcvs_wrong, rcvs_unchecked;
@@ -84,6 +86,23 @@ static void take_rcvs(scrub * c, const xpar_pkt * hdr, const u8 * body) {
   c->rcvs[r.exponent].data     = r.data;
   c->rcvs[r.exponent].exponent = r.exponent;
   c->rcvs_present++;
+}
+
+/*  Collect RCVS packets from decoded plaintext.  */
+static void take_rcvs_decoded(scrub * c) {
+  const xpar_setd * sd = xpar_vset_setd(c->s);
+  u64 i;
+  for (i = 0; i < c->rcvs_count; i++) {
+    u64 n = 0;
+    const u8 * p;
+    if (c->rcvs[i].seen) continue;
+    p = xpar_vset_rcvs(c->s, i, &n);
+    if (!p || n != sd->slice_size) continue;
+    c->rcvs[i].seen = true;
+    c->rcvs[i].data = p;
+    c->rcvs[i].exponent = i;
+    c->rcvs_present++;
+  }
 }
 
 static void scan_image(scrub * c, const u8 * buf, u64 size) {
@@ -111,18 +130,7 @@ static void load_recovery(scrub * c) {
                                                      : 1,
                                        sizeof(scrub_rcvs));
   /* Scan decoded plaintext, not armoured codewords, for RCVS packets. */
-  if (sd->layout == XPAR_LAYOUT_ARMOURED) {
-    for (i = 0; i < c->rcvs_count; i++) {
-      u64 n = 0;
-      const u8 * p = xpar_vset_rcvs(c->s, i, &n);
-      if (!p || n != sd->slice_size) continue;
-      c->rcvs[i].seen = true;
-      c->rcvs[i].data = p;
-      c->rcvs[i].exponent = i;
-      c->rcvs_present++;
-    }
-    return;
-  }
+  if (sd->layout == XPAR_LAYOUT_ARMOURED) { take_rcvs_decoded(c);  return; }
   /*  The index volumes may carry recovery slices themselves on a small
       set, so they are scanned before anything is opened.  */
   for (i = 0; i < xpar_vset_volumes(c->s); i++) {
@@ -151,6 +159,7 @@ static void load_recovery(scrub * c) {
     scan_image(c, c->rmap[c->rcount].map, c->rmap[c->rcount].size);
     c->rcount++;
   }
+  take_rcvs_decoded(c);
 }
 
 /*  The inner code, over everything.  */
@@ -270,6 +279,17 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
   plain = (u8 *) xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
   xpar_armour_extract(ar, plain, a.plain_length, region);
   ok = xpar_verify_packets_ok(plain, a.plain_length, xpar_vset_key(c->s));
+  /*  Track wrapped RCVS damage separately from metadata.  */
+  if (a.plain_length >= XPAR_PKT_HDR &&
+      !xpar_memcmp(plain, XPAR_PKT_MAGIC, 8) &&
+      xpar_rd64(plain + 8) == a.plain_length &&
+      !xpar_memcmp(plain + 32, XPAR_T_RCVS, 4)) {
+    c->rec_regions++;
+    c->rec_codewords += st.codewords;
+    c->rec_corrected += st.corrected;
+    c->rec_failed    += st.failed;
+    c->rec_symbols   += st.symbols;
+  }
   xpar_free(plain);
 
   if (c->o->rewrite && ok && st.symbols && path) {
@@ -739,6 +759,16 @@ static void report(const scrub * c, int rc) {
                  "xpar: corrected symbols: %" PRIu64 " total, worst codeword %" PRIu32 "\n",
                  c->symbols,
                  c->worst);
+    if (c->rec_regions)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: recovery regions: %" PRIu64 " regions, %" PRIu64
+                   " codewords, %" PRIu64 " corrected, %" PRIu64
+                   " symbols, %" PRIu64 " past capacity\n",
+                   c->rec_regions,
+                   c->rec_codewords,
+                   c->rec_corrected,
+                   c->rec_symbols,
+                   c->rec_failed);
     for (i = 1; i < c->hist_len; i++)
       if (c->hist[i])
         xpar_fprintf(xpar_stderr,
@@ -824,6 +854,11 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     xpar_json_u64(js, "codewords_corrected", c.corrected);
     xpar_json_u64(js, "codewords_failed", c.failed);
     xpar_json_u64(js, "symbols_corrected", c.symbols);
+    xpar_json_u64(js, "recovery_regions", c.rec_regions);
+    xpar_json_u64(js, "recovery_codewords", c.rec_codewords);
+    xpar_json_u64(js, "recovery_corrected", c.rec_corrected);
+    xpar_json_u64(js, "recovery_symbols_corrected", c.rec_symbols);
+    xpar_json_u64(js, "recovery_codewords_failed", c.rec_failed);
     xpar_json_u64(js, "worst_codeword", c.worst);
     xpar_json_u64(js, "recovery_wrong", c.rcvs_wrong);
     xpar_json_u64(js, "link_drift", c.link_drift);

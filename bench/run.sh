@@ -83,8 +83,11 @@ pristine=$work/corpus.bin
 
 say "kernel tiers"
 echo "$xpar benchmark --tiers --json --quiet" >> "$cmdlog"
+_t0=`date +%s 2>/dev/null || echo 0`
 "$xpar" benchmark --tiers --json --quiet > "$out/kernels.json" 2>/dev/null ||
   warn "benchmark --tiers failed"
+_t1=`date +%s 2>/dev/null || echo 0`
+say "kernel tiers took $((_t1 - _t0)) s"
 
 setup_create() { rm -f "$sdir"/set*.xpa; }
 
@@ -253,4 +256,5 @@ for codec in $codecs; do
 done
 
 echo
+say "time spent in sync(1) before measurements: $sync_seconds s"
 bench_finish

@@ -31,6 +31,9 @@ v2.0 (26-08-2026)
 - Layouts: sidecar (default) leaves data in place; split writes bare data
   volumes that concatenate exactly; armoured writes one self-contained,
   inner-coded file with a replicated prologue.
+- '--armour=all' now works in the sidecar and split layouts, wrapping each
+  slice-table and recovery-slice packet in an inner code of its own so bit
+  rot in a recovery volume costs parity symbols, not whole slices.
 - Generations: 'add' records changes while inheriting unchanged data;
   'prune' removes unneeded generations; 'consolidate' collapses a chain;
   'info --deps' shows dependencies.

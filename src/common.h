@@ -24,6 +24,9 @@ void xpar_fatal(int code, const char * fmt, ...) XPAR_PRINTF(2, 3)
                                                  XPAR_NORETURN;
 void xpar_json_fatal(int code, const char * fmt, ...) XPAR_PRINTF(2, 3);
 
+/*  Set or clear cleanup run before a fatal exit.  */
+void xpar_on_fatal(void (* fn)(void));
+
 #define FATAL_CODE(code, fmt, ...) xpar_fatal(code, fmt, ##__VA_ARGS__)
 
 #define FATAL(fmt, ...)        FATAL_CODE(XPAR_EXIT_USAGE, fmt, ##__VA_ARGS__)

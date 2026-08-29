@@ -30,6 +30,10 @@ typedef struct {
   u32 gen, volume_index, volume_kind;
   u64 recovery_first, recovery_count;
   bool armoured_file, armoured_crit, has_volh;
+  /*  Wrapped recovery and table packets were found.  */
+  bool wrap_rcvs, wrap_tab;
+  xpar_armour_params wrap_rcvs_ap, wrap_tab_ap;
+  u64 armg_disk, armg_plain;
   const u8 * layt_body;
   sz layt_len;
   u8 set_id[XPAR_SET_ID_LEN];
@@ -46,6 +50,11 @@ typedef struct {
   sz layt_len;
 } xpar_chain_gen;
 
+/*  Count on-disk generations lacking readable descriptors.  */
+u32 xpar_gen_unreadable(const xpar_setref * ref, const u32 * have,
+                        u32 have_count, char * const * read, u32 read_count,
+                        u32 * first);
+
 typedef struct {
   xpar_chain_vol * vol;
   u32 vol_count;
@@ -58,6 +67,8 @@ typedef struct {
   xpar_key key;
   u8 master[XPAR_BLAKE3_KEY_LEN];
   bool key_loaded, authenticated, auth_only;
+  /*  On-disk members lacking a readable generation.  */
+  u32 lost_count, lost_first;
   /*  Packets failing authentication with the loaded key.  */
   u64 auth_failed;
   char * base, * dir;
@@ -88,6 +99,14 @@ u32 xpar_garm_prologue_copies(const u8 *, sz);
 
 /*  Read critical-group armour from ARMG; false when stored plain.  */
 bool xpar_gchain_crit_armour(const xpar_chain *, u32, xpar_armour_params *);
+
+/*  Return the region code for wrapped recovery or table packets.  */
+bool xpar_gchain_wrap_armour(const xpar_chain *, u32, bool rcvs,
+                             xpar_armour_params *);
+
+/*  Bytes a generation's ARMG packets occupy and the plaintext they hold. */
+void xpar_gchain_armour_bytes(const xpar_chain *, u32, u64 * disk,
+                              u64 * plain);
 
 /*  Three copies of the 96-byte prologue, each with its 32 GF(2^8) parity
     bytes, which is how an armoured volume starts.  */

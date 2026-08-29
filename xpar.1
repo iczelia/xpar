@@ -103,13 +103,22 @@ Add recovery slices to an existing generation.
 Append a generation protecting new or changed files.
 .TP
 .B consolidate
-Collapse a chain of generations into one through re-encoding.
+Collapse a chain of generations into one through re-encoding. Without
+.B \-r
+it inherits the widest redundancy any generation of the chain carries,
+not the newest generation's, which may store nothing at all.
 .TP
 .B prune
 Remove older generations from a chain, keeping any generation that a
 surviving entry still depends on unless
 .B \-f
 is given.
+.PP
+Both refuse, with exit status 2, while any generation of the chain is
+unreadable: a member whose volumes are on disk but whose descriptor
+survives neither in them nor in the replicas its own recovery volumes
+carry is reported as damaged, never dropped, since rewriting the chain
+around it would destroy what it protects.
 .TP
 .B list
 Print the manifest of the set.
@@ -293,11 +302,27 @@ is the default for
 .B \-\-layout=sidecar
 and
 .BR \-\-layout=split ,
-which armour the critical metadata group alone;
+and covers the critical metadata group alone.
 .I all
-is the default for
+additionally wraps every SLTG and SLCL slice-table packet and every RCVS
+recovery slice in an inner code of its own, so bit rot in a recovery
+volume costs a few parity symbols rather than a whole slice. It costs
+about 14 percent of the recovery volumes at the default GF(2^8)
+RS(255,223) code, which is about 1.5 percent of the protected data at
+.BR \-r " 10%."
+Once a recovery slice is large enough for the wider GF(2^16) code to pay
+for its 128 KiB frame, that code is chosen instead and the cost falls
+under 2 percent;
+.B \-\-armour\-field
+forces either field. Reading an
+.B all
+set materialises each wrapped packet, so it needs about as much memory as
+the recovery data it holds.
+.I all
+is the default and the only level for
 .BR \-\-layout=armoured ,
-which armours the whole archive, and is refused for the other two.
+which armours the whole archive. A bare split data volume carries no
+packets and is never armoured.
 .TP
 .BI \-\-armour\-field= W
 .IR auto " (default), 8, or 16-bit inner field."
@@ -310,7 +335,12 @@ symbols per inner-code codeword. Use four or more.
 leaves a codeword two parity symbols, which is enough to correct one
 symbol and not enough to tell two apart from one, so almost every
 two-symbol error is silently miscorrected and only the outer checksums
-notice.
+notice. A
+.I N
+that would leave the codeword storing more than four times its plaintext
+is refused rather than clamped, and the refusal names the largest
+.I N
+the input affords.
 .TP
 .BI \-\-armour\-pct= P
 Set inner-code overhead relative to the protected data, so that 2t/k is
@@ -325,14 +355,18 @@ Choose interleave depth for this burst size. Excludes
 .TP
 .BI \-\-depth= D
 Set interleave depth; default 1. An interleave the working-set limit
-cannot hold is refused rather than quietly reduced, and the refusal names
-both the
+cannot hold is refused rather than quietly reduced, whichever layout
+carries the inner code, and the refusal names both the
 .B \-m
 the request would need and the largest
 .B \-\-burst
 or
 .B \-\-depth
-the current budget affords.
+the current budget affords, computed the way the acceptance test computes
+it. A
+.B \-\-burst
+is rounded up, never down, so the depth chosen delivers at least the
+tolerance asked for.
 .TP
 .BI \-\-volumes= WHICH
 .IR ladder " (default), " equal ", or a positive count."
@@ -344,10 +378,14 @@ the current budget affords.
 Chunk size for chunk deduplication.
 .TP
 .BI \-\-dedup\-memory= SIZE
-Memory ceiling for the deduplication index.
+Memory ceiling for the chunk-fingerprint index, which only
+.B \-\-dedup=chunk
+builds; the other levels need no index and ignore it. Exceeding it is a
+refusal, not a silent downgrade.
 .TP
 .BI \-\-dedup\-max\-refs= N
-Maximum aliases of one stored range.
+Maximum aliases of one stored range. Zero, the default, does not limit
+them.
 .TP
 .BI \-\-preserve= LIST
 Metadata to record. Tokens are
@@ -377,7 +415,13 @@ Store target content rather than the symbolic link.
 .TP
 .BI \-\-base= DIR
 Store names relative to
-.IR DIR .
+.IR DIR ,
+which must be the input itself or a directory containing it; anything
+else is a usage error rather than a silent fallback. Relative and
+absolute spellings meet, so
+.I DIR
+may be absolute while the inputs are not. Naming the input directory
+itself stores its children under their own names.
 .TP
 .B \-\-labels
 Write a label file per volume. Only
@@ -389,7 +433,15 @@ Omit public CRC and whole-file hashes from an authenticated set. It works
 at any set size.
 .TP
 .B \-\-no\-verify\-after
-Skip the post-write read-back pass.
+Skip the post-write read-back pass. It never defers a check of what may
+be stored: a manifest the readers would refuse, such as one where two
+inputs share a stored name, is settled before the first byte is written
+and costs exit status 4.
+.TP
+.B \-\-strict
+Refuse a name the format cannot carry rather than skipping it. Without
+it such a name is reported and skipped, as an unreadable special file is,
+and the rest of the tree is still protected.
 .TP
 .B \-\-spool
 Stage a pipe in a temporary file beside the output.
@@ -420,6 +472,11 @@ is absent, with or without this.
 .B verify
 warns when recovery slices themselves fail their checksum, since the set
 can then be clean and still be protected by fewer slices than it names.
+It warns in the same way about slices a later generation superseded:
+those count as erasures for the decoder, so they can exhaust an older
+generation's recovery, but with nothing damaged there is nothing to
+decode and the verdict stays clean. They lower the verdict only once
+real damage has to be localised against them.
 .TP
 .BI "verify \-\-resync=" WHICH ", " "repair \-\-resync=" WHICH
 .IR off ", " auto " (default), or " always .
@@ -447,7 +504,9 @@ beside the set. Every verb that opens a set takes it:
 .BR addrecovery ", " add ", " consolidate ", " prune ", " list ", "
 .BR info " and " explain .
 A volume found beside the set wins; the scanned directory supplies only
-what is missing.
+what is missing. It never moves the set: the protected entries always
+resolve beside the set named on the command line, so a scan directory
+holding a stale copy of the data cannot be mistaken for it.
 .TP
 .BR "repair \-\-in\-place" ", " "repair \-\-to=DIR"
 Rewrite originals, or write a repaired tree under
@@ -513,6 +572,13 @@ Add recovery slices within the reserved axis.
 .TP
 .BI "add \-\-rescan=" WHICH
 .IR stat " (default), " hash ", or " none .
+Under
+.I hash
+an entry whose bytes still hash to what the chain records inherits those
+bytes and only its metadata is rewritten, so a touch or a chmod adds no
+stream data.
+.I stat
+may re-store such an entry.
 .TP
 .BR "add \-\-verify\-unchanged" ", " "add \-\-allow\-missing"
 Alias for
@@ -578,10 +644,9 @@ data.
 Original files remain external. The index is
 .IB base .xpa;
 recovery volumes contain packets. Originals have outer-code protection but
-are not inner-armoured; the inner code covers the critical metadata group
-alone, so
-.B \-\-armour=all
-is refused here.
+are not inner-armoured; the inner code covers the critical metadata group,
+and the slice tables and recovery slices as well under
+.BR \-\-armour=all .
 .TP
 .B split
 Bare
@@ -589,7 +654,10 @@ Bare
 volumes hold consecutive set-stream ranges with no header, trailer, or tail
 padding. Concatenating them numerically yields the exact stream. Index and
 recovery volumes contain packets, and as in the sidecar layout the inner
-code covers the critical metadata group alone.
+code covers the critical metadata group, extended by
+.B \-\-armour=all
+to the slice tables and the recovery slices. The bare data volumes stay
+raw by definition.
 .TP
 .B armoured
 One

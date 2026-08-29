@@ -306,7 +306,7 @@ enum {
   O_EXIT_ON_CHANGE, O_DEEP,
   O_REWRITE, O_REBUILD_CELLS, O_STDOUT, O_OWNER_MAP, O_REQUIRE, O_STRICT_NAMES,
   O_VOLUME, O_RESCAN, O_VERIFY_UNCHANGED, O_ALLOW_MISSING, O_DEDUP_SCOPE,
-  O_REPLACE, O_BEFORE, O_DEPS, O_LINKS, O_LIST_DEDUP, O_TIERS
+  O_REPLACE, O_BEFORE, O_DEPS, O_LINKS, O_LIST_DEDUP, O_TIERS, O_STRICT
 };
 
 static const yarg_options t_global[] = {
@@ -360,6 +360,7 @@ static const yarg_options t_create[] = {
   { O_LABELS,          no_argument,       "labels"          },
   { O_AUTH_ONLY,       no_argument,       "auth-only"       },
   { O_NO_VERIFY_AFTER, no_argument,       "no-verify-after" },
+  { O_STRICT,          no_argument,       "strict"          },
   { O_SPOOL,           no_argument,       "spool"           },
   { O_SPOOL_DIR,       required_argument, "spool-dir"       },
   { O_STDIN_NAME,      required_argument, "stdin-name"      },
@@ -616,7 +617,7 @@ static const char * const verb_opts[] = {
   "      --align=WHICH          none (default), slice, 1k\n"
   "      --slice-tag=W          none, 8 (default), 16\n"
   "      --armour=WHICH         none, metadata (default outside\n"
-  "                             --layout=armoured), all (armoured only)\n"
+  "                             --layout=armoured), all\n"
   "      --armour-field=W       auto (default), 8, 16\n"
   "      --armour-t=N           Symbols corrected per inner codeword\n"
   "      --armour-pct=P         Inner-code overhead 2t/k, 0 < P <= 50\n"
@@ -636,6 +637,7 @@ static const char * const verb_opts[] = {
   "      --labels               Write a label file per volume\n"
   "      --auth-only            Omit public CRC and whole-file hashes\n"
   "      --no-verify-after      Skip the read-back pass\n"
+  "      --strict               Refuse names the format cannot carry\n"
   "      --spool                Buffer a pipe to a file first\n"
   "      --spool-dir=DIR        Buffer it under DIR; implies --spool\n"
   "      --stdin-name=PATH      Manifest path for a lone '-' input\n",
@@ -939,7 +941,10 @@ static void gather_chain_siblings(xpar_setref * s) {
 
 void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   out->vol = NULL;  out->count = 0;  out->base = NULL;  out->dir = NULL;
+  out->home = NULL;
   FATAL_UNLESS("A set argument is required.", arg && *arg);
+  /*  --scan supplies volumes, not protected entries.  */
+  out->home = is_dir(arg) ? dup_str(arg) : xpar_path_dir(arg);
 
   if (is_dir(arg)) {
     xpar_dir * d = xpar_opendir(arg);
@@ -998,8 +1003,9 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
 
 void xpar_setref_free(xpar_setref * s) {
   free_strv(s->vol, s->count);
-  xpar_free(s->base);  xpar_free(s->dir);
+  xpar_free(s->base);  xpar_free(s->dir);  xpar_free(s->home);
   s->vol = NULL;  s->count = 0;  s->base = NULL;  s->dir = NULL;
+  s->home = NULL;
 }
 
 /*  Defaults.  */
@@ -1148,6 +1154,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
                      break;
     case O_AUTH_ONLY:       o->auth_only = true;  break;
     case O_NO_VERIFY_AFTER: o->no_verify_after = true;  break;
+    case O_STRICT: o->strict = true;  break;
     case O_SPOOL: o->spool = true;  break;
     case O_SPOOL_DIR:
       o->spool = true;
@@ -1266,9 +1273,6 @@ static void positionals(xpar_options * o, char ** pos, int n) {
 /*  Resolve armour defaults and constraints for LAYOUT.  */
 void xpar_cli_armour_for_layout(xpar_options * o, int layout) {
   if (layout == XPAR_LAYOUT_ARMOURED) return;
-  FATAL_UNLESS("--armour=all requires --layout=armoured; use "
-               "--armour=metadata or --armour=none with other layouts.",
-               !(o->armour_given && o->armour == XPAR_ARMOUR_ALL));
   if (!o->armour_given) o->armour = XPAR_ARMOUR_METADATA;
 }
 

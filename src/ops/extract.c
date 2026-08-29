@@ -220,9 +220,13 @@ static void ex_collect(ex * x, const u8 * buf, u64 size) {
   xpar_scan_init(&sc, buf, size, x->key_loaded ? &x->key : NULL, false);
   sc.accept_unverified_keyed = false;
   while (xpar_scan_next(&sc, &h, &body, &off)) {
-    if (xpar_pkt_is(&h, XPAR_T_ARMG))
+    if (xpar_pkt_is(&h, XPAR_T_ARMG)) {
+      /*  Skip wrapped recovery slices during metadata extraction.  */
+      char wt[4];
+      if (xpar_armg_wrapped_type(body, (sz) (h.length - XPAR_PKT_HDR), wt) &&
+          !xpar_memcmp(wt, XPAR_T_RCVS, 4)) continue;
       xpar_armg_unwrap(body, h.length - XPAR_PKT_HDR, false, ex_plain, x);
-    else {
+    } else {
       if (xpar_pkt_is(&h, XPAR_T_STRM)) {
         xpar_strm s;
         if (xpar_strm_read(body, (sz) (h.length - XPAR_PKT_HDR),
@@ -944,8 +948,10 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_vset * guard = xpar_vset_open(o);
     xpar_vset_close(guard);
   }
-  x.dir  = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                          : xpar_path_dir(o->set_ref.vol[0]);
+  /*  Resolve entries beside the named set.  */
+  x.dir  = o->set_ref.dir  ? xpar_strdup(o->set_ref.dir)
+         : o->set_ref.home ? xpar_strdup(o->set_ref.home)
+                           : xpar_path_dir(o->set_ref.vol[0]);
   x.dest = xpar_strdup(o->to_dir ? o->to_dir : ".");
 
   for (i = 0; i < o->set_ref.count; i++) {

@@ -98,6 +98,7 @@ typedef struct {
   u32     count;
   char *  base;   /*  Derived base name, or NULL for a directory scan.  */
   char *  dir;    /*  The scanned directory, or NULL.  */
+  char *  home;   /*  Directory named on the command line.  */
 } xpar_setref;
 
 /*  The parsed command line.  */
@@ -150,6 +151,7 @@ typedef struct {
   u32  require;          /*  XPAR_PRES_* mask; 0 means degrade.  */
   bool recurse, follow_symlinks, labels;
   bool auth_only, no_verify_after, spool;
+  bool strict;           /*  Reject unstorable names.  */
   char ** exclude;  u32 exclude_count;
   char ** include;  u32 include_count;
   char * base_dir;

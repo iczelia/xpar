@@ -31,6 +31,10 @@ bool xpar_vname_has_ext(const char * name);
 bool xpar_vname_is_index (const char * name, const char * stem);
 bool xpar_vname_is_member(const char * name, const char * stem);
 
+/*  The generation a member volume name encodes, or -1 when NAME names no
+    member of STEM.  */
+i64 xpar_vname_gen_of(const char * name, const char * stem);
+
 /*  Whether PATH is an output associated with BASE.  */
 bool xpar_vname_is_output(const char * path, const char * base);
 

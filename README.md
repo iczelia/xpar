@@ -193,22 +193,33 @@ ok
 ```
 
 An optional inner code adds redundancy that corrects bit errors in place. In
-sidecar and split sets it covers the critical metadata group; in the armoured
-layout it covers the whole archive. `--armour=metadata` is therefore the
-default outside `--layout=armoured`, which defaults to `--armour=all`.
+sidecar and split sets `--armour=metadata`, the default, covers the critical
+metadata group; `--armour=all` also wraps every slice-table packet and every
+recovery slice in an inner code of its own, so a flipped bit in a recovery
+volume costs a few parity symbols instead of a whole Z-byte slice. In the
+armoured layout the inner code covers the whole archive, which is what
+`--armour=all` means there.
+
+`--armour=all` costs about 14% of the recovery volumes at the default GF(2^8)
+RS(255,223) code, so about 1.5% of the protected data at `-r 10%`. Once a
+recovery slice is large enough for the wider GF(2^16) code to pay for its
+128 KiB frame, xpar picks that instead and the cost falls under 2%;
+`--armour-field` forces either field. Bare split data volumes stay raw
+whatever the level, and a clean `verify` of an `all` set runs within about a
+tenth of the time a `metadata` one takes.
 
 ```
 % xpar verify arch.xpa
 xpar: 2 stored packets failed a checksum; replicas were used. Rewrite the set volumes to clear them.
 xpar: 74 slices of 4096 bytes, 7 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: armoured metadata: 1 region corrected, 0 past the inner code
+xpar: armoured regions: 1 corrected, 0 past the inner code
 xpar: coverage: tree (1 entry)
 xpar: status: clean
 
 % xpar scrub arch.xpa
 xpar: 2 stored packets failed a checksum; replicas were used. Rewrite the set volumes to clear them.
 xpar: 74 slices of 4096 bytes, 7 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: armoured metadata: 1 region corrected, 0 past the inner code
+xpar: armoured regions: 1 corrected, 0 past the inner code
 xpar: coverage: tree (1 entry)
 xpar: status: clean
 xpar: recovery: 7 slices named, 7 present, 2 packets failed their checksum
@@ -251,10 +262,11 @@ p.xpa is a packet-bearing xpar volume.
 
 The protected data is not in here: in the sidecar and split layouts the
 original files are the data, and they are never rewritten or armoured.
-What is armoured is the critical metadata group, one ARMG packet at file
-offset 72 whose payload begins at 168. The recipe below recovers that
-group as a plain packet stream, which begins with "XPAR2PKT" and holds
+What is armoured is the critical metadata group, one ARMG packet holding
 the set descriptor, the manifest and the slice checksums.
+The recipe below recovers the first ARMG packet's plaintext, which begins
+with "XPAR2PKT". That packet is at file offset 72 and its payload
+begins at 168.
 
   code             RS(255, 223), t = 16 over GF(2^8)
   interleave D     1
@@ -340,14 +352,22 @@ Some drawbacks of xpar:
   ancestry oldest first unless `--generation=G` picks one; `--chain` asks for
   that walk explicitly and is now the default.  Damage that falls in
   inherited bytes is reported as such, and slices an ancestor no longer owns
-  count as erasures against that ancestor's verdict.  Omitting `-r` makes
-  `add` and `consolidate` inherit the chain's ratio, and `add` warns when a
-  changed file spends an ancestor's recovery budget.
+  count as erasures for the decoder: they can exhaust that ancestor's
+  recovery, and `verify` says so, but with nothing damaged there is nothing
+  to decode and the verdict stays clean.  Omitting `-r` makes `add` inherit
+  the generation it extends and `consolidate` the widest ratio in the chain,
+  and `add` warns when a changed file spends an ancestor's recovery budget.
+  Under `--rescan=hash` an entry whose content still matches inherits its
+  bytes, so a metadata-only change adds no stream data.
+  A generation whose volumes are on disk but whose descriptor survives
+  nowhere, not even in the replicas its own recovery volumes carry, is
+  reported as damaged rather than dropped; `consolidate` and `prune` refuse
+  to rewrite a chain around it.
 ```
 % xpar add -r 15% photos.xpa -R pics
 xpar: generation 1, set 09817e407913ea82a05c5cf7ebf32144: 10 entries (1 added, 2 changed, 7 inherited, 0 dropped), 500000 new stream bytes, 18 recovery slices in 5 volumes.
 xpar: warning: redundancy falls from 15.0% to 14.6%; pass -r to keep the old ratio.
-xpar: warning: generation 0: 72 of 77 recovery slices are consumed by superseded data; only 5 remain for its 7 inherited entries.
+xpar: warning: generation 0: 74 of its 513 slices are superseded and count as erasures; only 3 of 77 recovery slices remain for its 7 inherited entries.
 
 % xpar verify photos.xpa
 xpar: pics/IMG0002.jpg: superseded
@@ -420,9 +440,11 @@ xpar: No plan fits: raise -m to 2.0 MiB; no -b fits this -m; --codec=matrix does
   tags       : CRC32C per slice, BLAKE3 strong tag of 8 bytes
   dedup      : level 0 (none)
   armour     : GF(2^8) RS(255, 223), t = 16, D = 1
-               the critical packet group is armoured; frame 255 bytes on disk carrying 223 of plaintext
+               level metadata: the critical packet group is armoured
+               frame 255 bytes on disk carrying 223 of plaintext
                correctable burst 15 bytes anywhere in a frame
                code overhead 14.350%
+               on disk 20520 bytes for 17836 of plaintext, overhead 15.048%
   ...
   creator    : xpar 2.0
   chain      : 1 generation
@@ -481,8 +503,8 @@ xpar supports three layouts:
 - `--layout=armoured`: one self-contained `base.xpa` containing three
   replicated header copies, alongside an inner-coded packet stream with the
   manifest, the data and the recovery.  Use `extract` to unpack, rather than
-  concatenation.  This is the only layout that accepts `--armour=all`; the
-  other two armour the critical metadata group alone.
+  concatenation.  Here `--armour=all` is the only level: the archive is one
+  protected region.
 
 ## Performance
 

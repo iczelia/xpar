@@ -275,3 +275,14 @@ int xpar_name_of(u32 uid, char * buf, sz n) {
 int xpar_group_of(u32 gid, char * buf, sz n) {
   (void) gid;  (void) buf;  (void) n;  return -1;
 }
+
+char * xpar_getcwd(void) {
+  sz n = 512;
+  for (;;) {
+    char * p = (char *) xpar_alloc_raw(n);
+    if (getcwd(p, n)) return p;
+    xpar_free(p);
+    if (errno != ERANGE || n > ((sz) 1 << 20)) return NULL;
+    n *= 2;
+  }
+}

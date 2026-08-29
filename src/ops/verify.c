@@ -64,6 +64,8 @@ typedef struct {
   u64       size;
   u64       pkt_dropped;  /*  Stored packets of this volume that failed.  */
   bool      armoured;
+  bool      has_volh;     /*  A volume header parsed in this image.  */
+  u8        volh_id[XPAR_SET_ID_LEN];
   bool      short_tail;   /*  The file stops before armoured_length.  */
   u8 *      plain;
   u64       plain_len, stream_offset, stream_length;
@@ -172,6 +174,7 @@ struct xpar_vset {
   u64 bad_slices, bad_entries, alias_bad, opaque_bad, missing_entries;
   u64 inherited_bad;          /*  Damaged in bytes an ancestor owns.  */
   u64 gone_cells, gone_slices;/*  Superseded; erased for the decoder.  */
+  u32 lost_gens, lost_gen_first;  /*  Named on disk, no descriptor left.  */
   u32 inherited_gen;          /*  Oldest generation owning that damage.  */
   u64 column_groups;          /* Distinct erasure patterns. */
   bool hash_sampled, hash_parallel;
@@ -498,9 +501,10 @@ static bool armg_check(const void * ctx, const u8 * plain, u64 len) {
                                 ((const armg_ctx *) ctx)->key);
 }
 
-/*  Return owned ARMG plaintext, or NULL beyond correction capacity.  */
-static const u8 * armg_plain(xpar_vset * s, const u8 * body, sz n,
-                             u64 * out_len) {
+/*  Extract ARMG plaintext, decoding only when packet checks fail.  */
+u8 * xpar_verify_armg_plain(const u8 * body, sz n, const xpar_key * key,
+                            bool exact, u64 * out_len, bool * decoded,
+                            bool * corrected) {
   xpar_armg a;
   xpar_armour_params p;
   xpar_armour * ar;
@@ -508,7 +512,11 @@ static const u8 * armg_plain(xpar_vset * s, const u8 * body, sz n,
   armg_ctx ctx;
   xpar_armour_status rc;
 
+  *out_len = 0;
+  if (decoded) *decoded = false;
+  if (corrected) *corrected = false;
   if (xpar_armg_read(body, n, &a) != XPAR_OK) return NULL;
+  if (a.plain_length > (u64) (sz) -1 / 2) return NULL;
   xpar_memset(&p, 0, sizeof p);
   p.symbol_bits = a.symbol_bits;  p.poly = a.poly;
   p.n     = a.n;    p.k    = a.k;
@@ -517,34 +525,43 @@ static const u8 * armg_plain(xpar_vset * s, const u8 * body, sz n,
   if (xpar_armour_check(&p)) return NULL;
   ar    = xpar_armour_new(&p);
   plain = (u8 *) xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
-  ctx.key = s->keyed ? &s->key : NULL;
+  ctx.key = key;
 
   xpar_armour_extract(ar, plain, a.plain_length, a.data);
-  rc = xpar_verify_packets_ok(plain, a.plain_length, ctx.key)
+  rc = (exact || xpar_verify_packets_ok(plain, a.plain_length, ctx.key))
          ? XPAR_ARMOUR_CLEAN : XPAR_ARMOUR_FAILED;
   if (rc != XPAR_ARMOUR_CLEAN) {
     u8 * region = (u8 *) xpar_alloc_raw((sz) a.armoured_length);
     xpar_memcpy(region, a.data, (sz) a.armoured_length);
-    syndromes++;
+    if (decoded) *decoded = true;
     rc = xpar_armour_decode(ar, region, a.armoured_length, plain,
                             a.plain_length, armg_check, &ctx, NULL);
     xpar_free(region);
-    if (rc == XPAR_ARMOUR_CORRECTED) s->armg_corrected++;
+    if (rc == XPAR_ARMOUR_CORRECTED && corrected) *corrected = true;
   }
   xpar_armour_free(ar);
   if (rc == XPAR_ARMOUR_FAILED) {
-    s->armg_failed++;
     xpar_free(plain);
     return NULL;
   }
-  keep_plain(s, plain, a.plain_length, true);
   *out_len = a.plain_length;
   return plain;
 }
 
-/*  ARMG bodies may be damaged, so accept a structurally valid header after
-    body-checksum failure and let the inner decoder decide. Other packet
-    types remain checksum-gated.  */
+/*  Return owned ARMG plaintext, or NULL beyond correction capacity.  */
+static const u8 * armg_plain(xpar_vset * s, const u8 * body, sz n,
+                             bool exact, u64 * out_len) {
+  bool decoded = false, corrected = false;
+  u8 * plain = xpar_verify_armg_plain(body, n, s->keyed ? &s->key : NULL,
+                                      exact, out_len, &decoded, &corrected);
+  if (decoded) syndromes++;
+  if (corrected) s->armg_corrected++;
+  if (!plain) { s->armg_failed++;  return NULL; }
+  keep_plain(s, plain, *out_len, true);
+  return plain;
+}
+
+/*  Find ARMG packets even when their body checksum fails.  */
 bool xpar_verify_next_armg(const u8 * buf, u64 size, const xpar_key * key,
                            u64 * pos, const u8 ** body, u64 * body_len) {
   u64 p = *pos;
@@ -569,6 +586,8 @@ bool xpar_verify_next_armg(const u8 * buf, u64 size, const xpar_key * key,
   return false;
 }
 
+typedef struct { const u8 * body;  u64 len; } scan_armg;
+
 static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
                       bool resync, bool nested) {
   const xpar_key * key = s->keyed ? &s->key : NULL;
@@ -576,15 +595,33 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
   xpar_pkt hdr;
   const u8 * body;
   u64 off;
+  scan_armg * seen = NULL;
+  u32 seen_count = 0, seen_cap = 0;
   xpar_scan_init(&sc, buf, size, key, resync);
   sc.accept_unverified_keyed = false;
   while (xpar_scan_next(&sc, &hdr, &body, &off)) {
     if (s->have_auth && !(hdr.flags & XPAR_PF_KEYED))
       FATAL_CODE(XPAR_EXIT_AUTH,
                  "An authenticated volume contains an unkeyed packet.");
-    /*  STRM uses slice checks; ARMG uses the recovery sweep below.  */
+    /*  STRM uses slice checks; ARMG waits for the pass below.  */
+    if (xpar_pkt_is(&hdr, XPAR_T_VOLH) && s->scan_img < s->img_count &&
+        !s->img[s->scan_img].has_volh) {
+      s->img[s->scan_img].has_volh = true;
+      xpar_memcpy(s->img[s->scan_img].volh_id, hdr.set_id, XPAR_SET_ID_LEN);
+    }
     if (xpar_pkt_is(&hdr, XPAR_T_STRM)) continue;
-    if (xpar_pkt_is(&hdr, XPAR_T_ARMG)) continue;
+    if (xpar_pkt_is(&hdr, XPAR_T_ARMG)) {
+      if (!nested) {
+        if (seen_count == seen_cap) {
+          seen_cap = seen_cap ? seen_cap * 2 : 16;
+          seen = (scan_armg *) xpar_realloc(seen,
+                                            (sz) seen_cap * sizeof *seen);
+        }
+        seen[seen_count].body = body;
+        seen[seen_count++].len = hdr.length - XPAR_PKT_HDR;
+      }
+      continue;
+    }
     xpar_critset_add(&s->crit, &hdr, body);
   }
   s->pkt_dropped += sc.skip_checksum;
@@ -592,11 +629,22 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
     s->img[s->scan_img].pkt_dropped += sc.skip_checksum;
   xpar_reject_unknown_critical(&sc);
   /*  ARMG nesting is exactly one level.  */
-  if (nested) return;
+  if (nested) { xpar_free(seen);  return; }
+  /*  Extract verified ARMG packets without a second scan.  */
+  if (!sc.skip_checksum && !sc.skip_keyed && !sc.skip_length) {
+    For(u32, i, seen_count,
+        u64 plen = 0;
+        const u8 * pl = armg_plain(s, seen[i].body, (sz) seen[i].len, true,
+                                   &plen);
+        if (pl) scan_into(s, pl, plen, false, true))
+    xpar_free(seen);
+    return;
+  }
+  xpar_free(seen);
   { u64 pos = 0, blen = 0;
     while (xpar_verify_next_armg(buf, size, key, &pos, &body, &blen)) {
       u64 plen = 0;
-      const u8 * pl = armg_plain(s, body, (sz) blen, &plen);
+      const u8 * pl = armg_plain(s, body, (sz) blen, false, &plen);
       if (pl) scan_into(s, pl, plen, false, true);
     } }
 }
@@ -932,7 +980,7 @@ static void load_layt(xpar_vset * s) {
       xpar_free(path);
     }
     /*  Count named RCVS packets lost to checksum damage.  */
-    if (s->pkt_dropped && s->recovery) {
+    if ((s->pkt_dropped || s->armg_failed) && s->recovery) {
       u64 seen = 0;
       for (i = 0; i < s->crit.count; i++)
         if (xpar_pkt_is(&s->crit.pkt[i].hdr, XPAR_T_RCVS) &&
@@ -1637,8 +1685,12 @@ static void auth_preflight(xpar_vset * s) {
       while (xpar_verify_next_armg(s->img[i].data, s->img[i].size, NULL,
                                    &pos, &body, &blen)) {
         u64 plen = 0;
-        const u8 * plain = armg_plain(s, body, (sz) blen, &plen);
+        const u8 * plain;
         xpar_scan inner;
+        char wt[4];
+        /*  AUTH lives in a critical group, never in a wrapped packet.  */
+        if (xpar_armg_wrapped_type(body, (sz) blen, wt)) continue;
+        plain = armg_plain(s, body, (sz) blen, false, &plen);
         if (!plain) continue;
         xpar_scan_init(&inner, plain, plen, NULL, false);
         inner.accept_unverified_keyed = true;
@@ -1703,8 +1755,10 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
     s->img_count++;
   }
   auth_preflight(s);
-  s->dir = o->set_ref.dir ? xpar_strdup(o->set_ref.dir)
-                          : xpar_path_dir(o->set_ref.vol[0]);
+  /*  Resolve entries beside the named set.  */
+  s->dir = o->set_ref.dir  ? xpar_strdup(o->set_ref.dir)
+         : o->set_ref.home ? xpar_strdup(o->set_ref.home)
+                           : xpar_path_dir(o->set_ref.vol[0]);
   for (i = 0; i < s->img_count; i++)
     if (!s->img[i].armoured) {
       s->scan_img = i;
@@ -1725,6 +1779,29 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
                  PLURAL(s->pkt_dropped));
 
   collect_gens(s);
+  {
+    u32 * have = (u32 *) xpar_calloc(s->gen_count ? s->gen_count : 1,
+                                     sizeof(u32));
+    u32 j;
+    char ** read = (char **) xpar_calloc(s->img_count ? s->img_count : 1,
+                                        sizeof(char *));
+    u32 nread = 0;
+    for (j = 0; j < s->gen_count; j++) have[j] = s->gen[j].generation;
+    /*  A volume whose header names a generation that materialised is
+        accounted for; anything else may be the rubble of a lost one.  */
+    for (j = 0; j < s->img_count; j++) {
+      u32 k;
+      if (!s->img[j].has_volh) continue;
+      for (k = 0; k < s->gen_count; k++)
+        if (!xpar_memcmp(s->gen[k].id, s->img[j].volh_id, XPAR_SET_ID_LEN)) {
+          read[nread++] = s->img[j].path;
+          break;
+        }
+    }
+    s->lost_gens = xpar_gen_unreadable(&o->set_ref, have, s->gen_count,
+                                       read, nread, &s->lost_gen_first);
+    xpar_free(have);  xpar_free(read);
+  }
   s->gen_target = pick_gen(s, o);
   xpar_memcpy(s->set_id, s->gen[s->gen_target].id, XPAR_SET_ID_LEN);
   p = xpar_critset_find(&s->crit, s->set_id, XPAR_T_SETD, 0);
@@ -1854,9 +1931,33 @@ bool xpar_vset_bind_sources(xpar_vset * s, const xpar_manifest * m) {
   return true;
 }
 
-/*  Writer read-back strictly parses every emitted byte, including recovery
-    payloads that normal verify skips. Junk, truncation, duplicate exponents
-    and wrong VOLH metadata are write failures.  */
+/*  Validate one ARMG-wrapped recovery slice.  */
+static bool written_wrapped_rcvs(const u8 * body, u64 body_len,
+                                 const xpar_key * key, const u8 * set_id,
+                                 u32 volume_kind, u64 slice_size, u64 first,
+                                 u64 count, u64 * found) {
+  u64 plen = 0;
+  u8 * plain;
+  xpar_pkt ih;
+  xpar_rcvs r;
+  bool ok;
+  if (volume_kind != XPAR_VOL_RECOVERY) return false;
+  plain = xpar_verify_armg_plain(body, (sz) body_len, key, false, &plen,
+                                 NULL, NULL);
+  if (!plain) return false;
+  ok = xpar_pkt_read(plain, plen, key, &ih) == XPAR_OK &&
+       ih.length == plen && xpar_pkt_is(&ih, XPAR_T_RCVS) &&
+       !xpar_memcmp(ih.set_id, set_id, XPAR_SET_ID_LEN) &&
+       xpar_rcvs_read(plain + XPAR_PKT_HDR, (sz) (plen - XPAR_PKT_HDR),
+                      slice_size, &r) == XPAR_OK &&
+       *found < count && r.exponent >= first &&
+       r.exponent - first == *found;
+  xpar_free(plain);
+  if (ok) (*found)++;
+  return ok;
+}
+
+/*  Strictly validate a newly written volume.  */
 bool xpar_verify_written_volume(const char * path, const xpar_key * key,
                                 const u8 * set_id, u32 volume_index,
                                 u32 volume_kind, u64 first, u64 count,
@@ -1917,6 +2018,17 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
         xpar_free(packet); ok = false; break;
       }
       found++;
+    } else if (xpar_pkt_is(&h, XPAR_T_ARMG)) {
+      /*  Validate wrapped recovery packets only.  */
+      char t[4];
+      if (xpar_armg_wrapped_type(packet + XPAR_PKT_HDR, (sz) body_len, t) &&
+          !xpar_memcmp(t, XPAR_T_RCVS, 4)) {
+        if (!written_wrapped_rcvs(packet + XPAR_PKT_HDR, body_len, key,
+                                  set_id, volume_kind, slice_size, first,
+                                  count, &found)) {
+          xpar_free(packet); ok = false; break;
+        }
+      }
     }
     xpar_free(packet);
     pos += len;
@@ -2988,7 +3100,12 @@ scanned:
   /*  Prologue mismatches are repairable.  */
   if (xpar_vset_archive_stale(s) && rc == XPAR_EXIT_OK)
     rc = XPAR_EXIT_REPAIRABLE;
-  if (s->depth > s->recovery || s->opaque_bad) rc = XPAR_EXIT_UNREPAIRABLE;
+  /*  Superseded erasures alone do not make an intact set unrepairable.  */
+  if (s->opaque_bad ||
+      (s->depth > s->recovery && rc != XPAR_EXIT_OK))
+    rc = XPAR_EXIT_UNREPAIRABLE;
+  /*  Missing descriptors make their generations unreadable.  */
+  if (s->lost_gens) rc = XPAR_EXIT_UNREPAIRABLE;
   return rc;
 }
 
@@ -3005,6 +3122,10 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  "table survives; erasures fall back to slice granularity "
                  "(`xpar scrub --rebuild-cells` restores it)\n",
                  s->geom.cell_bytes);
+  if (s->lost_gens)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: generation %" PRIu32 " is unreadable: no descriptor "
+                 "survives; its entries are unprotected\n", s->lost_gen_first);
   if (s->recovery_bad)
     xpar_fprintf(xpar_stderr,
                  "xpar: warning: %" PRIu64 " of %" PRIu64 " recovery slices "
@@ -3074,10 +3195,9 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     xpar_fputs("slice\n", xpar_stderr);
   if (s->armg_corrected || s->armg_failed)
     xpar_fprintf(xpar_stderr,
-                 "xpar: armoured metadata: %" PRIu64 " region%s corrected, %" PRIu64 " "
+                 "xpar: armoured regions: %" PRIu64 " corrected, %" PRIu64 " "
                  "past the inner code\n",
                  s->armg_corrected,
-                 PLURAL(s->armg_corrected),
                  s->armg_failed);
   if (o->fast)
     xpar_fprintf(xpar_stderr,
@@ -3158,6 +3278,12 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
                  (s->depth - s->recovery),
                  PLURAL(s->depth - s->recovery));
+  else if (rc == XPAR_EXIT_UNREPAIRABLE && s->lost_gens && !s->opaque_bad)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: status: %sunrepairable%s, generation %" PRIu32
+                 " of this chain is unreadable\n",
+                 color ? "\033[31m" : "", color ? "\033[0m" : "",
+                 s->lost_gen_first);
   else if (rc == XPAR_EXIT_UNREPAIRABLE)
     xpar_fprintf(xpar_stderr,
                  "xpar: status: %sunrepairable%s, checksum-invisible damage\n",

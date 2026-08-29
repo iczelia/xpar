@@ -243,6 +243,11 @@ void xpar_json_fatal(int code, const char * fmt, ...) {
   json_fatal_text(code, msg);
 }
 
+/*  Cleanup for unpublished scratch.  */
+static void (* fatal_hook)(void);
+
+void xpar_on_fatal(void (* fn)(void)) { fatal_hook = fn; }
+
 void xpar_fatal(int code, const char * fmt, ...) {
   char msg[4096];
   va_list ap;
@@ -252,5 +257,6 @@ void xpar_fatal(int code, const char * fmt, ...) {
   json_trim(msg);
   xpar_fprintf(xpar_stderr, "xpar: %s\n", msg);
   json_fatal_text(code, msg);
+  if (fatal_hook) { void (* f)(void) = fatal_hook;  fatal_hook = NULL;  f(); }
   xpar_exit(code);
 }

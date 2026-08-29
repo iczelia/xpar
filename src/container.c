@@ -1452,6 +1452,20 @@ void xpar_armg_write(xpar_buf * out, const xpar_armg * a,
   xpar_pkt_writev(out, XPAR_T_ARMG, pkt_flags(0, key), set_id, part, 2, key);
 }
 
+/*  Read a wrapped packet type from the verbatim frame prefix.  */
+bool xpar_armg_wrapped_type(const u8 * body, sz n, char type[4]) {
+  xpar_armg a;
+  u64 prefix;
+  if (xpar_armg_read(body, n, &a) != XPAR_OK) return false;
+  if (a.plain_length < XPAR_PKT_HDR) return false;
+  prefix = a.depth * (u64) a.k * (a.symbol_bits / 8);
+  if (prefix < XPAR_PKT_HDR) return false;
+  if (xpar_memcmp(a.data, XPAR_PKT_MAGIC, 8) != 0) return false;
+  if (xpar_rd64(a.data + 8) != a.plain_length) return false;
+  xpar_memcpy(type, a.data + 32, 4);
+  return type_chars_ok(type);
+}
+
 xpar_status xpar_strm_read(const u8 * body, sz n, xpar_strm * out) {
   xpar_memset(out, 0, sizeof *out);
   if (n < 16) return XPAR_E_SHORT;

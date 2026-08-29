@@ -536,13 +536,13 @@ static bool any_glob(char * const * pat, u32 count, const char * name) {
   return false;
 }
 
+/*  --exclude wins: --include only restricts what survived it.  */
 static bool selected(const xpar_walk_opts * o, const char * name,
                      bool * excluded) {
-  bool inc = any_glob(o->include, o->include_count, name);
   bool exc = any_glob(o->exclude, o->exclude_count, name);
-  *excluded = exc && !inc;
-  if (inc) return true;
-  return !o->include_count && !exc;
+  *excluded = exc;
+  if (exc) return false;
+  return !o->include_count || any_glob(o->include, o->include_count, name);
 }
 
 bool xpar_manifest_name_selected(const xpar_walk_opts * o,
@@ -715,15 +715,17 @@ static void walk_dir(walker * w, pathbuf * disk, const char * name,
   xpar_free(kids);
 }
 
-/*  A name the host produced but the format may not carry is a hard
-    error and not a silent skip: dropping one file out of a backup set
-    without saying so is the failure this program exists to prevent.  */
-static void check_emit_name(const walker * w, const char * name, u32 len,
+/*  Skip unstorable names unless --strict is active.  */
+static bool check_emit_name(const walker * w, const char * name, u32 len,
                             const char * disk) {
   xpar_path_status s = xpar_path_check(name, len, w->o->path_flags);
-  if (s != XPAR_PATH_OK)
+  if (s == XPAR_PATH_OK) return true;
+  if (w->o->strict)
     FATAL("Cannot store '%s': %s.", xpar_name_escape(disk),
           xpar_path_reason(s));
+  xpar_fprintf(xpar_stderr, "xpar: skipping '%s': %s; use --strict to "
+               "reject it.\n", xpar_name_escape(disk), xpar_path_reason(s));
+  return false;
 }
 
 static void note_stat(walker * w, u32 idx, const xpar_stat_t * st) {
@@ -737,7 +739,7 @@ static xpar_entry * emit_entry(walker * w, const char * name, u32 name_len,
                                const char * path, const xpar_stat_t * st) {
   xpar_entry * e;
   u32 idx;
-  check_emit_name(w, name, name_len, path);
+  if (!check_emit_name(w, name, name_len, path)) return NULL;
   e = xpar_manifest_append(w->m);
   idx = w->m->count - 1;
   e->name     = (char *) dup_bytes(name, name_len);
@@ -800,16 +802,21 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
     return;
   }
 
+  /*  An unstorable directory prunes its subtree.  */
+  if (name_len && (keep || st.is_dir) &&
+      !check_emit_name(w, name, name_len, path->p)) {
+    xpar_free(real.p);
+    return;
+  }
+
   if (st.is_dir) {
     /*  A nameless root is one the path rules cannot express, such as
         ".", so its children are stored and it is not.  */
     if (name_len && keep)
       emit_entry(w, name, name_len, path->p, &st)->entry_type =
         (u16) XPAR_ENTRY_DIR;
-    /*  An excluded directory prunes its subtree unless an include list may
-        name a descendant explicitly. An unmatched include directory still
-        has to be traversed for the same reason.  */
-    if (w->o->recurse && (!excluded || w->o->include_count))
+    /*  Excludes prune directories; includes may match descendants.  */
+    if (w->o->recurse && !excluded)
       walk_dir(w, path, name, name_len, depth);
   } else if (!name_len) {
     FATAL("Input '%s' resolves to no storable name.",
@@ -862,6 +869,57 @@ static void detect_links(walker * w) {
   xpar_free(table);
 }
 
+/*  Collapse "//", "." and ".." so one file has one stored spelling.  */
+static char * path_lex_norm(const char * p) {
+  sz n = xpar_strlen(p), i = 0, start, at = 0, cap = 1;
+  bool abs = n && xpar_path_sep(p[0]);
+  sz * off;
+  u32 * len, count = 0;
+  char * out;
+  for (i = 0; i < n; i++) if (xpar_path_sep(p[i])) cap++;
+  off = (sz *)  xpar_alloc_raw((cap + 1) * sizeof(sz));
+  len = (u32 *) xpar_alloc_raw((cap + 1) * sizeof(u32));
+  i = 0;
+  while (i < n) {
+    while (i < n && xpar_path_sep(p[i])) i++;
+    start = i;
+    while (i < n && !xpar_path_sep(p[i])) i++;
+    if (i == start) break;
+    if (i - start == 1 && p[start] == '.') continue;
+    if (i - start == 2 && p[start] == '.' && p[start + 1] == '.') {
+      bool up = count && !(len[count - 1] == 2 &&
+                           p[off[count - 1]] == '.' &&
+                           p[off[count - 1] + 1] == '.');
+      if (up)  { count--;  continue; }
+      if (abs) continue;               /*  "/.." is "/".  */
+    }
+    off[count] = start;  len[count] = (u32) (i - start);  count++;
+  }
+  out = (char *) xpar_alloc_raw(n + 3);
+  if (abs) out[at++] = '/';
+  for (i = 0; i < count; i++) {
+    if (i) out[at++] = '/';
+    xpar_memcpy(out + at, p + off[i], len[i]);
+    at += len[i];
+  }
+  if (!at) out[at++] = abs ? '/' : '.';
+  out[at] = 0;
+  xpar_free(off);  xpar_free(len);
+  return out;
+}
+
+/*  Normalize PATH as an absolute path.  */
+static char * path_lex_abs(const char * p) {
+  char * cwd, * join, * abs;
+  if (xpar_path_sep(p[0])) return path_lex_norm(p);
+  cwd = xpar_getcwd();
+  if (!cwd) return NULL;
+  join = xpar_path_join(cwd, p);
+  abs  = path_lex_norm(join);
+  xpar_free(cwd);  xpar_free(join);
+  return abs;
+}
+
 void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
                         u32 root_count, const xpar_walk_opts * o) {
   walker w;
@@ -880,38 +938,50 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
 
   for (r = 0; r < root_count; r++) {
     const char * root = roots[r];
-    sz rl = xpar_strlen(root), cut;
+    char * norm = path_lex_norm(root), * rooted = NULL;
+    sz rl = xpar_strlen(root), nl = xpar_strlen(norm), cut;
     const char * base;
     u32 blen;
-    while (rl > 1 && root[rl - 1] == '/') rl--;
-    cut = rl;
-    while (cut && root[cut - 1] != '/') cut--;
-    base = root + cut;
-    blen = (u32) (rl - cut);
+    while (rl > 1 && xpar_path_sep(root[rl - 1])) rl--;
+    cut = nl;
+    while (cut && !xpar_path_sep(norm[cut - 1])) cut--;
+    base = norm + cut;
+    blen = (u32) (nl - cut);
     /*  A root named ".", ".." or "/" cannot be emitted as a component,
         so its children are stored under their own names instead.  */
     if (blen == 0 || (blen == 1 && base[0] == '.') ||
         (blen == 2 && base[0] == '.' && base[1] == '.')) blen = 0;
     if (o->base_dir) {
-      sz bl = xpar_strlen(o->base_dir);
-      if (rl > bl + 1 && !xpar_strncmp(root, o->base_dir, bl) &&
-          root[bl] == '/') {
-        base = root + bl + 1;  blen = (u32) (rl - bl - 1);
-      }
+      char * ba = path_lex_abs(o->base_dir);
+      sz bl;
+      rooted = path_lex_abs(norm);
+      FATAL_UNLESS("Cannot resolve '%s' against --base '%s'.",
+                   rooted && ba, xpar_name_escape(root), o->base_dir);
+      bl = xpar_strlen(ba);
+      if (bl == 1 && ba[0] == '/') bl = 0;   /*  --base=/ names no prefix.  */
+      if (!xpar_strcmp(rooted, ba)) {
+        /*  The input directory itself: its children carry the names.  */
+        base = rooted;  blen = 0;
+      } else if (!xpar_strncmp(rooted, ba, bl) &&
+                 xpar_path_sep(rooted[bl])) {
+        base = rooted + bl + 1;
+        blen = (u32) (xpar_strlen(rooted) - bl - 1);
+      } else
+        FATAL("--base '%s' does not contain '%s'.", o->base_dir,
+              xpar_name_escape(root));
+      xpar_free(ba);
     } else {
       /*  Preserve legal relative roots so sidecar paths remain resolvable.  */
-      const char * rel = root;
-      sz rn = rl;
-      while (rn > 2 && rel[0] == '.' && rel[1] == '/') { rel += 2;  rn -= 2; }
-      if (rn && rn <= XPAR_NAME_MAX &&
-          xpar_path_check(rel, (u32) rn, 0) == XPAR_PATH_OK) {
-        base = rel;  blen = (u32) rn;
+      if (nl && nl <= XPAR_NAME_MAX &&
+          xpar_path_check(norm, (u32) nl, 0) == XPAR_PATH_OK) {
+        base = norm;  blen = (u32) nl;
       }
     }
     w.caps = xpar_fs_caps(root) & o->caps_mask;
     w.caps_all &= w.caps;
     pb_set(&disk, root, rl);
     walk_path(&w, &disk, base, blen, 0);
+    xpar_free(norm);  xpar_free(rooted);
   }
   xpar_free(disk.p);
   if (!m->count) { xpar_free(w.st);  return; }

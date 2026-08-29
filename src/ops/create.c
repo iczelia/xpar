@@ -57,6 +57,7 @@ typedef struct {
   xpar_json       js;
   xpar_progress_t prog;
   xpar_armour   * arm;            /*  Critical-group armour, or NULL.  */
+  bool            wrap;           /*  Wrap non-archive packets.  */
   xpar_armour_params region_ap;   /*  The armoured layout's region code.  */
   xpar_chunk_index chunk_cache;
   char * chunk_cache_path, * chunk_cache_stage;
@@ -164,22 +165,84 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
   p->depth = 1;
 }
 
+/*  Largest depth whose frame buffers fit the budget.  */
+static u64 armour_depth_max(u64 budget, const xpar_armour_params * p) {
+  u64 w = p->symbol_bits / 8, per = 2 * (u64) p->n * w, d;
+  if (!per) return XPAR_ARMG_DEPTH_MAX;
+  d = (budget / 4) / per;
+  if (!d) d = 1;
+  if (d > XPAR_ARMG_DEPTH_MAX) d = XPAR_ARMG_DEPTH_MAX;
+  return d;
+}
+
 /*  A burst spans at most (t*D - 1)*W bytes. Clamp D until two frame
     buffers fit within one quarter of the memory budget.  */
 static void armour_depth(const xpar_options * o, u64 budget,
                          xpar_armour_params * p) {
-  u64 w = p->symbol_bits / 8, t = (p->n - p->k) / 2, d = 1;
+  u64 w = p->symbol_bits / 8, t = (p->n - p->k) / 2, d = 1, mx;
   if (o->depth) d = o->depth;
   else if (o->burst) {
-    /*  Saturate the increment to prevent wraparound.  */
-    u64 sym = o->burst / w;
+    /*  Round up to meet the requested tolerance.  */
+    u64 sym = xpar_ceil_div(o->burst, w ? w : 1);
     d = sym == (u64) -1 ? (u64) -1 : xpar_ceil_div(sym + 1, t ? t : 1);
   }
   if (!d) d = 1;
   /*  Clamp before computing the footprint to avoid overflow.  */
   if (d > XPAR_ARMG_DEPTH_MAX) d = XPAR_ARMG_DEPTH_MAX;
-  while (d > 1 && 2 * d * p->n * w > budget / 4) d /= 2;
+  mx = armour_depth_max(budget, p);
+  if (d > mx) d = mx;
   p->depth = d;
+}
+
+/*  Maximum encoded-to-plaintext size ratios.  */
+#define ARMOUR_MAX_GROWTH      4
+#define ARMOUR_MAX_GROWTH_META 256
+
+static u32 armour_growth_cap(bool metadata) {
+  return metadata ? ARMOUR_MAX_GROWTH_META : ARMOUR_MAX_GROWTH;
+}
+
+static bool armour_inflates(const xpar_armour_params * p, bool metadata) {
+  return p->k && (u64) p->n > (u64) armour_growth_cap(metadata) * (u64) p->k;
+}
+
+/*  Largest --armour-t within the growth limit.  */
+static u32 armour_t_affordable(const xpar_options * o, u64 object_bytes,
+                               bool metadata) {
+  xpar_options probe = *o;
+  xpar_armour_params p;
+  u32 lo = 0, hi = o->armour_t ? o->armour_t : 1;
+  probe.armour_pct = 0.0;
+  while (lo < hi) {
+    u32 mid = lo + (hi - lo + 1) / 2;
+    probe.armour_t = mid;
+    armour_params(&probe, object_bytes, metadata, &p);
+    /*  A named maximum has to be one this input can actually use.  */
+    if (armour_inflates(&p, metadata) || xpar_armour_check(&p)) hi = mid - 1;
+    else lo = mid;
+  }
+  return lo;
+}
+
+/*  Reject infeasible or excessive inner-code growth.  */
+static void armour_growth_or_die(const xpar_options * o, u64 object_bytes,
+                                 bool metadata,
+                                 const xpar_armour_params * p) {
+  u32 most, honoured = (p->n - p->k) / 2;
+  if (o->armour_t && honoured < o->armour_t)
+    FATAL("--armour-t %" PRIu32 " exceeds the GF(2^%" PRIu8
+          ") maximum of %" PRIu32 ".",
+          o->armour_t, p->symbol_bits, honoured);
+  if (!armour_inflates(p, metadata)) return;
+  most = armour_t_affordable(o, object_bytes, metadata);
+  if (!most)
+    FATAL("--armour-t %" PRIu32 " expands data %" PRIu64
+          "x; a %" PRIu64 "-byte object is too small for any inner code "
+          "this wide.",
+          o->armour_t, (u64) p->n / (p->k ? p->k : 1), object_bytes);
+  FATAL("--armour-t %" PRIu32 " expands data %" PRIu64
+        "x; this input affords --armour-t %" PRIu32 ".",
+        o->armour_t, (u64) p->n / (p->k ? p->k : 1), most);
 }
 
 /*  The burst a depth delivers: a burst spans at most (t*D - 1)*W bytes.  */
@@ -191,19 +254,21 @@ static u64 armour_burst(const xpar_armour_params * p) {
 /*  Reject explicit depths or bursts that exceed memory.  */
 static void armour_depth_or_die(const xpar_options * o, u64 budget,
                                 xpar_armour_params * p) {
-  xpar_armour_params want = *p;
+  xpar_armour_params want = *p, most = *p;
   u64 need;
   armour_depth(o, budget, p);
   if (!o->burst && !o->depth) return;
   armour_depth(o, UINT64_MAX, &want);
   if (want.depth <= p->depth) return;
   need = 8 * want.depth * want.n * (want.symbol_bits / 8);
+  most.depth = armour_depth_max(budget, p);
   if (o->depth)
     FATAL("--depth %" PRIu32 " needs -m %" PRIu64
-          "; current memory allows %" PRIu64 ".", o->depth, need, p->depth);
+          "; -m as given affords --depth %" PRIu64 ".", o->depth, need,
+          most.depth);
   FATAL("--burst %" PRIu64 " needs -m %" PRIu64
-        "; current memory allows %" PRIu64 ".", o->burst, need,
-        armour_burst(p));
+        "; -m as given affords --burst %" PRIu64 ".", o->burst, need,
+        armour_burst(&most));
 }
 
 /*  Resolve logical stream bytes through canonical occurrences. Bytes past
@@ -667,6 +732,31 @@ static void emit_crit(ctx * c, xpar_buf * out, const xpar_crit * cr) {
   xpar_buf_free(&plain);
 }
 
+/*  Inner-code each table packet under --armour=all.  */
+static void emit_tables(ctx * c, xpar_buf * out) {
+  xpar_buf t;
+  if (!c->wrap) {
+    if (c->tag_len)
+      xpar_sltg_write_all(out, c->slice_tag, c->geom.slice_count,
+                          c->tag_len, c->set_id, create_key(c));
+    if (c->cell_crc)
+      xpar_slcl_write_all(out, c->cell_crc, c->geom.slice_count,
+                          c->geom.cell_bytes, c->geom.cells_per_slice,
+                          c->set_id, create_key(c));
+    return;
+  }
+  xpar_buf_init(&t);
+  if (c->tag_len)
+    xpar_sltg_write_all(&t, c->slice_tag, c->geom.slice_count,
+                        c->tag_len, c->set_id, create_key(c));
+  if (c->cell_crc)
+    xpar_slcl_write_all(&t, c->cell_crc, c->geom.slice_count,
+                        c->geom.cell_bytes, c->geom.cells_per_slice,
+                        c->set_id, create_key(c));
+  xpar_armg_wrap_each(out, c->o, t.data, t.len, c->set_id, create_key(c));
+  xpar_buf_free(&t);
+}
+
 static void emit_head(ctx * c, xpar_buf * out, const xpar_crit * cr,
                       u32 index, u32 kind, bool tables, bool crit) {
   xpar_volh v;
@@ -676,15 +766,7 @@ static void emit_head(ctx * c, xpar_buf * out, const xpar_crit * cr,
   v.version_minor = XPAR_FORMAT_MINOR;
   xpar_volh_write(out, &v, c->set_id, create_key(c));
   if (crit) emit_crit(c, out, cr);
-  if (tables && c->geom.slice_count) {
-    if (c->tag_len)
-      xpar_sltg_write_all(out, c->slice_tag, c->geom.slice_count,
-                          c->tag_len, c->set_id, create_key(c));
-    if (c->cell_crc)
-      xpar_slcl_write_all(out, c->cell_crc, c->geom.slice_count,
-                          c->geom.cell_bytes, c->geom.cells_per_slice,
-                          c->set_id, create_key(c));
-  }
+  if (tables && c->geom.slice_count) emit_tables(c, out);
 }
 
 /*  Stream armour frames so the L-byte STRM body is never resident. The
@@ -702,6 +784,32 @@ static void check_reachable(ctx * c) {
     FATAL("Sidecar entry '%.*s' is unreachable; place the set beside its "
           "data or use --base.",
           (int) lost->name_len, lost->name);
+}
+
+/*  Validate the manifest before creating output.  */
+static void check_manifest(ctx * c) {
+  xpar_mf_limits lim;
+  xpar_mf_result res;
+  const xpar_entry * e;
+  xpar_memset(&lim, 0, sizeof lim);
+  lim.stream_base        = c->m.stream_base;
+  lim.stream_length      = c->m.stream_length;
+  lim.slice_size         = c->m.slice_size;
+  lim.align              = c->m.align;
+  lim.posix_record_count = XPAR_ABSENT_U32;
+  if (xpar_manifest_validate(&c->m, &lim, &res) == XPAR_MF_OK) return;
+  e = &c->m.entry[res.entry];
+  if (res.status == XPAR_MF_DUP_NAME) {
+    const char * a = c->m.source[res.entry] ? c->m.source[res.entry] : "?";
+    const char * b = c->m.source[res.other] ? c->m.source[res.other] : "?";
+    if (!xpar_strcmp(a, b))
+      FATAL("Input '%s' is duplicated as '%.*s'.", a,
+            (int) e->name_len, e->name);
+    FATAL("'%s' and '%s' both map to '%.*s'; use --base to disambiguate.",
+          a, b, (int) e->name_len, e->name);
+  }
+  FATAL("Entry '%.*s' cannot be stored: %s.", (int) e->name_len, e->name,
+        xpar_mf_reason(res.status));
 }
 
 /*  Rebuild and hash every entry through its extents, then reparse all
@@ -785,6 +893,7 @@ static void build_walk(const xpar_options * o, xpar_walk_opts * w, u64 z) {
   w->recurse       = o->recurse;
   w->follow_symlinks = o->follow_symlinks;
   w->reproducible  = o->reproducible;
+  w->strict        = o->strict;
 }
 
 static void stage_chunk_cache(ctx * c, const xpar_walk_opts * w) {
@@ -893,6 +1002,34 @@ static xpar_file * create_stage_open(const char * dir, char ** path) {
   return f;
 }
 
+/*  Remove unpublished staging on fatal exit.  */
+static const char * stage_pending;
+
+static void stage_sweep(void) {
+  const char * dir = stage_pending;
+  char ** name = NULL;
+  u32 count = 0, i;
+  xpar_dir * d;
+  const xpar_dirent * e;
+  if (!dir) return;
+  stage_pending = NULL;
+  d = xpar_opendir(dir);
+  if (d) {
+    while ((e = xpar_readdir(d)) != NULL) {
+      name = (char **) xpar_realloc(name, (sz) (count + 1) * sizeof(char *));
+      name[count++] = xpar_strdup(e->name);
+    }
+    xpar_closedir(d);
+  }
+  for (i = 0; i < count; i++) {
+    char * p = xpar_path_join(dir, name[i]);
+    (void) xpar_remove(p);
+    xpar_free(p);  xpar_free(name[i]);
+  }
+  xpar_free(name);
+  (void) xpar_rmdir(dir);
+}
+
 static char * create_output_stage(const char * base) {
   char * parent = xpar_path_dir(base);
   char * stem = xpar_path_join(parent, ".xpar-create-");
@@ -900,6 +1037,8 @@ static char * create_output_stage(const char * base) {
   xpar_free(parent);  xpar_free(stem);
   if (!path)
     FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
+  stage_pending = path;
+  xpar_on_fatal(stage_sweep);
   return path;
 }
 
@@ -1386,6 +1525,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (c.keyed)
     for (i = 0; i < c.m.count; i++)
       xpar_file_id(&c.m.entry[i], c.key.k_file, c.m.entry[i].file_id);
+  check_manifest(&c);
   xpar_occindex_build(&c.m, &c.ix);
 
   /*  Settle Z, S, and geometry-dependent R together.  */
@@ -1423,6 +1563,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->layout == XPAR_LAYOUT_ARMOURED) {
     const char * bad;
     armour_params(o, c.geom.stream_length, false, &c.region_ap);
+    armour_growth_or_die(o, c.geom.stream_length, false, &c.region_ap);
     armour_depth_or_die(o, budget ? budget : ((u64) 1 << 30), &c.region_ap);
     bad = xpar_armour_check(&c.region_ap);
     if (bad) FATAL("%s", bad);
@@ -1455,6 +1596,34 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (ps != XPAR_PLAN_OK)
     FATAL("%s.", xpar_plan_reason(ps));
   c.geom = c.plan.geom;
+  /*  Reserve the --max-recovery axis for every codec.  */
+  if (o->max_recovery.kind != XPAR_R_NONE &&
+      c.plan.codec == XPAR_CODEC_MATRIX) {
+    u64 mx = resolve_recovery(&o->max_recovery, c.geom.slice_count,
+                              c.geom.slice_size, 0);
+    if (mx > c.recovery &&
+        !xpar_codec_supports(c.plan.codec, c.plan.field_log2,
+                             c.geom.slice_count, mx)) {
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN,
+                        "--max-recovery=%" PRIu64 " does not fit beside S=%"
+                        PRIu64 " in GF(2^%" PRIu8 ").",
+                        o->field == XPAR_CLI_AUTO && c.plan.field_log2 == 8 &&
+                        xpar_codec_supports(c.plan.codec, 16,
+                                            c.geom.slice_count, mx),
+                        mx, c.geom.slice_count, c.plan.field_log2);
+      pr.field_log2 = 16;
+      ps = xpar_plan_make(&pr, &c.plan);
+      if (ps == XPAR_PLAN_NO_FIT) {
+        char why[256];
+        xpar_plan_explain_no_fit(&pr, why, sizeof why);
+        FATAL_CODE(XPAR_EXIT_NOPLAN, "No plan fits: %s.", why);
+      }
+      if (ps == XPAR_PLAN_BAD_GEOMETRY)
+        geometry_refused(o, &gr, XPAR_GEOM_FIELD);
+      if (ps != XPAR_PLAN_OK) FATAL("%s.", xpar_plan_reason(ps));
+      c.geom = c.plan.geom;
+    }
+  }
   FATAL_UNLESS("--cell %" PRIu64 " exceeds the slice size of %" PRIu64
                " bytes; lower --cell or raise -s.",
                !o->cell_bytes || c.geom.slice_size < XPAR_CELL_MIN ||
@@ -1487,17 +1656,15 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     }
   }
 
-  /*  The 32-byte whole-entry table overlaps the codec plan's lifetime.  */
+  /*  Account for the deduplication index.  */
   {
     u64 idx = 32 * (u64) c.m.count;
     if (o->memory && o->dedup != XPAR_DEDUP_NONE &&
         c.plan.mem_total + idx > budget)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "The plan needs %" PRIu64 " bytes and the deduplication index for "
-                 "%" PRIu32 " entries another %" PRIu64 ", against -m %" PRIu64 "; raise -m or use "
-                 "--dedup=none.", c.plan.mem_total,
-                 c.m.count, idx,
-                 budget);
+                 "Plan and deduplication index need %" PRIu64
+                 " bytes; -m allows %" PRIu64 ". Raise -m or use "
+                 "--dedup=none.", c.plan.mem_total + idx, budget);
   }
 
   if (o->verbose && !o->json)
@@ -1506,8 +1673,10 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->armour != XPAR_ARMOUR_NONE && o->layout != XPAR_LAYOUT_ARMOURED) {
     xpar_armour_params ap;
     const char * bad;
+    c.wrap = o->armour == XPAR_ARMOUR_ALL;
     armour_params(o, 16384, true, &ap);
-    armour_depth(o, budget, &ap);
+    armour_growth_or_die(o, 16384, true, &ap);
+    armour_depth_or_die(o, budget, &ap);
     bad = xpar_armour_check(&ap);
     if (bad) FATAL("%s", bad);
     c.arm = xpar_armour_new(&ap);
@@ -1819,6 +1988,32 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       xpar_buf_free(&b);
       scratch = rsp->mem ? NULL
                          : (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
+      if (c.wrap) {
+        /*  Wrap each recovery slice separately for random access.  */
+        u64 plen = xpar_align_up(XPAR_PKT_HDR + 16 + c.geom.slice_size,
+                                 XPAR_PKT_ALIGN);
+        xpar_armour_params rap;
+        xpar_armour * ra;
+        u8 * pkt = (u8 *) xpar_calloc((sz) plen, 1);
+        xpar_buf wb;
+        xpar_armour_wrap_params(o, plen, &rap);
+        ra = xpar_armour_new(&rap);
+        xpar_buf_init(&wb);
+        for (j = 0; j < span[i].count; j++) {
+          const u8 * p = rs_data(rsp, span[i].first + j, scratch);
+          xpar_rcvs_stream_header(pkt, span[i].first + j, p,
+                                  (sz) c.geom.slice_size, c.set_id,
+                                  create_key(&c));
+          xpar_memcpy(pkt + XPAR_PKT_HDR + 16, p, (sz) c.geom.slice_size);
+          wb.len = 0;
+          xpar_armg_wrap_with(&wb, ra, pkt, (sz) plen, c.set_id,
+                              create_key(&c));
+          xpar_xwrite(f, wb.data, wb.len);
+        }
+        xpar_buf_free(&wb);
+        xpar_armour_free(ra);
+        xpar_free(pkt);
+      } else
       for (j = 0; j < span[i].count; j++) {
         static const u8 zero[XPAR_PKT_ALIGN] = { 0 };
         xpar_write_part part[3];
@@ -1887,6 +2082,9 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (!o->no_verify_after)
     verify_after(&c, write_names,
                  o->layout == XPAR_LAYOUT_ARMOURED ? 0 : nvol + 1);
+  /*  Publication now owns the staging files.  */
+  stage_pending = NULL;
+  xpar_on_fatal(NULL);
   publish_outputs(o, write_names, names, name_count, nvol + 1,
                   o->labels && o->layout == XPAR_LAYOUT_SPLIT ? data_n : 0,
                   pipe_stage, ready ? ready->final_path : NULL,
@@ -1909,7 +2107,9 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
                  PLURAL(c.geom.slice_count),
                  c.geom.slice_size,
                  c.recovery, PLURAL(c.recovery),
-                 nvol, PLURAL(nvol), burst);
+                 o->layout == XPAR_LAYOUT_ARMOURED ? 1 : nvol,
+                 PLURAL(o->layout == XPAR_LAYOUT_ARMOURED ? 1 : nvol),
+                 burst);
   }
   if (o->json) xpar_json_summary(&c.js, "ok", XPAR_EXIT_OK);
 

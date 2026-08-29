@@ -92,6 +92,10 @@ bool xpar_verify_written_volume(const char *, const xpar_key *, const u8 *,
                                 u32, u32, u64, u64, u64);
 bool xpar_verify_packets_ok(const u8 *, u64, const xpar_key *);
 
+/*  Return owned ARMG plaintext, decoding unless EXACT permits extraction.  */
+u8 * xpar_verify_armg_plain(const u8 * body, sz, const xpar_key *, bool exact,
+                            u64 * out_len, bool * decoded, bool * corrected);
+
 /*  Lazily correct armour frames backing [lo, hi); report any change.  */
 bool xpar_vset_armour_correct(xpar_vset *, u64 lo, u64 hi);
 bool xpar_verify_next_armg(const u8 *, u64, const xpar_key *, u64 *,

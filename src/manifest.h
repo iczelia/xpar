@@ -161,6 +161,7 @@ typedef struct {
   char * const * include; /*  Explicit includes override excludes.  */
   u32 include_count;
   const char * self_base; /*  Output base to skip.  */
+  bool strict;            /*  Reject unstorable names.  */
   bool recurse;
   bool follow_symlinks;
   bool reproducible;

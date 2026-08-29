@@ -286,6 +286,9 @@ void        xpar_armg_write(xpar_buf *, const xpar_armg *,
                             const void * armoured, const u8 * set_id,
                             const xpar_key *);
 
+/*  Read TYPE when the ARMG body wraps exactly one packet.  */
+bool xpar_armg_wrapped_type(const u8 * body, sz n, char type[4]);
+
 typedef struct {
   u64 stream_offset;
   const u8 * data;
