@@ -105,17 +105,32 @@ xpar_file * const xpar_stdin  = &g_stdin;
 xpar_file * const xpar_stdout = &g_stdout;
 xpar_file * const xpar_stderr = &g_stderr;
 
-void xpar_host_init(void) { }
+void xpar_host_init(void) {
+  /*  Let write() fail with EFBIG instead of killing the process, so the
+      ordinary I/O-error path reports and closes the JSON stream.  */
+#if defined(SIGXFSZ)
+  signal(SIGXFSZ, SIG_IGN);
+#endif
+}
 
 /*  off_t is 32 bits on a 32-bit host built without _FILE_OFFSET_BITS=64,
     and a silent truncation there would read or write the wrong place in a
     large file. Range-check every offset that crosses into libc.  */
+/*  What xpar_open reports for a FIFO, socket or device.  */
+#if defined(ENOTSUP)
+  #define XPAR_ENOTREG ENOTSUP
+#elif defined(EOPNOTSUPP)
+  #define XPAR_ENOTREG EOPNOTSUPP
+#else
+  #define XPAR_ENOTREG EINVAL
+#endif
+
 static bool off_fits(u64 v) {
   return sizeof(off_t) >= 8 || v <= 0x7fffffffULL;
 }
 
 #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-static int open_nofollow(const char * path, int flags) {
+static int open_nofollow(const char * path, int flags, int mode) {
   char * work = strdup(path), * p, * slash;
   int dfd, fd = -1, saved;
   if (!work) { errno = ENOMEM;  return -1; }
@@ -135,7 +150,7 @@ static int open_nofollow(const char * path, int flags) {
     if (!*p || strcmp(p, ".") == 0) {
       if (!slash) { fd = dup(dfd);  break; }
     } else if (!slash) {
-      fd = openat(dfd, p, flags | O_NOFOLLOW, 0666);
+      fd = openat(dfd, p, flags | O_NOFOLLOW, mode);
       break;
     } else {
       next = openat(dfd, p, O_RDONLY | O_DIRECTORY | O_NOFOLLOW
@@ -170,17 +185,30 @@ xpar_file * xpar_open(const char * path, int flags) {
 #if defined(O_CLOEXEC)
   of |= O_CLOEXEC;
 #endif
+#if defined(O_NONBLOCK)
+  /*  A FIFO, socket or device must never block this open.  */
+  of |= O_NONBLOCK;
+#endif
   int fd;
   if (flags & XPAR_O_NOFOLLOW) {
 #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-    fd = open_nofollow(path, of);
+    fd = open_nofollow(path, of, (flags & XPAR_O_PRIVATE) ? 0600 : 0666);
 #else
     errno = ENOTSUP;  fd = -1;
 #endif
   } else {
-    fd = open(path, of, 0666);
+    fd = open(path, of, (flags & XPAR_O_PRIVATE) ? 0600 : 0666);
   }
   if (fd < 0) return NULL;
+  /*  Only a regular file can be read or written the way xpar needs.  */
+  { struct stat st;
+    int e;
+    if (fstat(fd, &st) != 0) e = errno;
+    else if (S_ISREG(st.st_mode)) e = 0;
+    else if (S_ISDIR(st.st_mode)) e = EISDIR;
+    else e = XPAR_ENOTREG;
+    if (e) { close(fd);  errno = e;  return NULL; }
+  }
 #if !defined(O_CLOEXEC)
   /*  A descriptor on a half-written volume must not leak into a child.  */
   { int fl = fcntl(fd, F_GETFD);
@@ -555,8 +583,68 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
   return done;
 }
 
+/*  Test hook. POSIX lets a mapped file be resized, replaced and unlinked;
+    Windows does not, and a wrong publication order is invisible here
+    without it. XPAR_TEST_STRICT_MAP borrows the Windows rule.  */
+
+#define MAPLOCK_MAX 64
+
+typedef struct { const void * at;  u64 dev, ino; } maplock;
+
+static maplock maplock_held[MAPLOCK_MAX];
+static u32     maplock_count;
+static int     maplock_wanted = -1;
+
+static bool maplock_on(void) {
+  if (maplock_wanted < 0) {
+    const char * v = getenv("XPAR_TEST_STRICT_MAP");
+    maplock_wanted = v && *v && *v != '0';
+  }
+  return maplock_wanted != 0;
+}
+
+static bool maplock_hit(u64 dev, u64 ino) {
+  u32 i;
+  for (i = 0; i < maplock_count; i++)
+    if (maplock_held[i].dev == dev && maplock_held[i].ino == ino) return true;
+  return false;
+}
+
+#if defined(HAVE_MMAP)
+static void maplock_add(const void * at, u64 dev, u64 ino) {
+  if (!maplock_on() || maplock_count == MAPLOCK_MAX) return;
+  maplock_held[maplock_count].at  = at;
+  maplock_held[maplock_count].dev = dev;
+  maplock_held[maplock_count].ino = ino;
+  maplock_count++;
+}
+
+static void maplock_drop(const void * at) {
+  u32 i;
+  for (i = 0; i < maplock_count; i++)
+    if (maplock_held[i].at == at) {
+      maplock_held[i] = maplock_held[--maplock_count];
+      return;
+    }
+}
+#endif
+
+bool xpar_maplock_blocks(const char * path) {
+  struct stat st;
+  if (!maplock_count || !maplock_on()) return false;
+  if (lstat(path, &st) != 0) return false;
+  return maplock_hit((u64) st.st_dev, (u64) st.st_ino);
+}
+
 int xpar_ftruncate(xpar_file * f, u64 length) {
   if (!off_fits(length)) { errno = EOVERFLOW;  return -1; }
+  if (maplock_on()) {
+    struct stat st;
+    if (fstat(f->fd, &st) == 0 &&
+        maplock_hit((u64) st.st_dev, (u64) st.st_ino)) {
+      errno = f->last_errno = EBUSY;  return -1;
+    }
+  }
 #if defined(HAVE_FTRUNCATE)
   while (ftruncate(f->fd, (off_t) length) != 0) {
     if (errno == EINTR) continue;
@@ -579,7 +667,7 @@ int xpar_fsync_dir(const char * path) {
   dir = cut ? xpar_strndup(path, cut) : xpar_strdup(len && path[0] == '/'
                                                     ? "/" : ".");
 #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-  fd = open_nofollow(dir, O_RDONLY | O_DIRECTORY);
+  fd = open_nofollow(dir, O_RDONLY | O_DIRECTORY, 0);
 #else
   fd = open(dir, O_RDONLY);
 #endif
@@ -674,9 +762,15 @@ xpar_mmap xpar_map(const char * path) {
   {
     struct stat st;
     void * p;
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY
+#if defined(O_NONBLOCK)
+                  | O_NONBLOCK
+#endif
+                  );
     if (fd < 0) return m;
-    if (fstat(fd, &st) != 0 || st.st_size <= 0) { close(fd);  return m; }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+      close(fd);  return m;
+    }
     /*  sz is 32-bit on some hosts and st_size is not: a file larger than
         the address space cannot be mapped and the caller streams it.  */
     if ((u64) st.st_size > (u64) (sz) -1) { close(fd);  return m; }
@@ -685,6 +779,7 @@ xpar_mmap xpar_map(const char * path) {
     close(fd);
     if (p == MAP_FAILED) { m.size = 0;  return m; }
     m.map = (u8 *) p;  m.valid = true;
+    maplock_add(p, (u64) st.st_dev, (u64) st.st_ino);
   }
 #else
   (void) path;
@@ -694,7 +789,7 @@ xpar_mmap xpar_map(const char * path) {
 
 void xpar_unmap(xpar_mmap * m) {
 #if defined(HAVE_MMAP)
-  if (m->map) munmap(m->map, m->size);
+  if (m->map) { maplock_drop(m->map);  munmap(m->map, m->size); }
 #endif
   m->map = NULL;  m->size = 0;  m->valid = false;
 }

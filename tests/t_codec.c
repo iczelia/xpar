@@ -808,6 +808,59 @@ static void test_armour_tiers(xt_rng * rng) {
   xpar_armour_use_tier(saved);
 }
 
+static void test_armour_encode_batches(xt_rng * rng) {
+  static const u64 depths[] = { 1, 3, 32 };
+  static const u32 fields[] = { 8, 16 };
+  static const u64 counts[] = { 1, 2, 5, 7, 8, 16, 33 };
+  int saved = xpar_armour_tier(), n = xpar_armour_tier_count(), tier;
+  u32 fi, di, ci;
+
+  for (fi = 0; fi < ARRAY_LEN(fields); fi++)
+    for (di = 0; di < ARRAY_LEN(depths); di++) {
+      xpar_armour_params p;
+      u64 fp, fx;
+      u8 * plain, * ref, * work;
+      xpar_armour * a;
+      xpar_armour_defaults(&p, fields[fi]);
+      p.depth = depths[di];
+      p.n = fields[fi] == 8 ? 64 : 96;
+      p.k = p.n - 16;
+      a = xpar_armour_new(&p);
+      fp = xpar_armour_frame_plain(a);  fx = xpar_armour_frame_disk(a);
+      xpar_armour_free(a);
+      plain = (u8 *) xpar_alloc_aligned((sz) (fp * 33), 64);
+      ref   = (u8 *) xpar_alloc_aligned((sz) (fx * 33), 64);
+      work  = (u8 *) xpar_alloc_aligned((sz) (fx * 33), 64);
+      xt_fill(rng, plain, (sz) (fp * 33));
+
+      for (tier = 0; tier < n; tier++) {
+        if (!xpar_armour_tier_usable(tier) || !xpar_armour_use_tier(tier))
+          continue;
+        a = xpar_armour_new(&p);
+        for (ci = 0; ci < 33; ci++) {
+          xpar_memcpy(ref + ci * fx, plain + ci * fp, (sz) fp);
+          xpar_armour_encode_frame(a, ref + ci * fx);
+        }
+        for (ci = 0; ci < ARRAY_LEN(counts); ci++) {
+          char label[128];
+          u64 cnt = counts[ci], f;
+          for (f = 0; f < cnt; f++)
+            xpar_memcpy(work + f * fx, plain + f * fp, (sz) fp);
+          xpar_armour_encode_frames(a, work, cnt);
+          xpar_snprintf(label, sizeof label,
+                        "armour GF(2^%" PRIu32 ") D=%" PRIu64 " tier %s: "
+                        "batch of %" PRIu64, fields[fi], depths[di],
+                        xpar_armour_tier_name(tier), cnt);
+          if (!xt_bytes_equal(label, work, ref, (sz) (cnt * fx))) break;
+        }
+        xpar_armour_free(a);
+      }
+      xpar_free_aligned(plain);  xpar_free_aligned(ref);
+      xpar_free_aligned(work);
+    }
+  xpar_armour_use_tier(saved);
+}
+
 /* Recovery remains stable when data grows within one transform axis. */
 static void test_prefix_stable(u8 kind, u8 field, u64 s, u64 grown, u64 r,
                                xt_rng * rng) {
@@ -963,6 +1016,9 @@ int xpar_main(int argc, char ** argv) {
 
   xt_section_begin("armour tiers and depths");
   { xt_rng ar;  xt_seed(&ar, 0xA12000);  test_armour_tiers(&ar); }
+
+  xt_section_begin("armour frame batches");
+  { xt_rng ar;  xt_seed(&ar, 0xA12001);  test_armour_encode_batches(&ar); }
 
   xt_section_begin("prefix stability");
   test_prefix_stable(XPAR_CODEC_MATRIX, 8, 8, 20, 4, &rng);

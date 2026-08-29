@@ -1007,7 +1007,7 @@ step "repair never reports a clean tree while damage stands unlocalised"
 mkdir -p ch5 && cdto ch5
 mkdir tree
 mkfile tree/d.bin 200000 51
-if ln -s d.bin tree/rel.lnk 2> /dev/null; then
+if symlinks_work d.bin tree/rel.lnk; then
   run 0 "$XPAR" create -r 10% -o set -R tree
   rm tree/rel.lnk
   mkfile tree/rel.lnk 100 52
@@ -1195,12 +1195,19 @@ mkfile data.bin 16777216 73
 echo VICTIM > victim.txt
 cp victim.txt victim.orig
 : > out.xpar-tmp-plain
-if ln -s victim.txt out.xpar-tmp 2> /dev/null; then linked=yes; else linked=no; fi
+#  A host that copies instead of linking still plants the name.
+if symlinks_work victim.txt out.xpar-tmp; then linked=yes
+else linked=no;  cp victim.txt out.xpar-tmp; fi
 run 0 "$XPAR" create -o out -r 30% -m 4M -s 64K data.bin
 same victim.txt victim.orig
 exists out.xpar-tmp-plain
-if test "$linked" = no || test -L out.xpar-tmp; then ok
-else bad "the planted symlink was replaced"; fi
+if test "$linked" = yes; then
+  if test -L out.xpar-tmp; then ok
+  else bad "the planted symlink was replaced"; fi
+else
+  same out.xpar-tmp victim.orig
+  note "symbolic links unsupported; skipped"
+fi
 run 0 "$XPAR" verify out.xpa
 cdto ..
 
@@ -1214,14 +1221,14 @@ run 4 "$XPAR" create -o setB sub
 if test -e setB.xpa; then bad "a refused create still wrote a set"; else ok; fi
 run 0 "$XPAR" create -o setB -R sub
 run 0 "$XPAR" verify setB.xpa
-if mkfifo p1 2> /dev/null; then
+if fifos_work p1; then
   run 4 "$XPAR" create -o e1 p1
   run 4 "$XPAR" create -o e2 --no-verify-after p1
   if test -e e1.xpa || test -e e2.xpa; then
     bad "a set with no entry was published"
   else ok; fi
 else
-  note "this host has no FIFOs; the empty-manifest case is untested"
+  note "FIFOs unsupported; the empty-manifest case is skipped"
 fi
 cdto ..
 
@@ -1607,6 +1614,51 @@ grep -q 'restored to its recorded length' "$log" ||
 run 0 "$XPAR" verify s.xpa
 cdto ..
 
+step "a volume is unmapped before it is resized, replaced or unlinked"
+
+#  Windows refuses to resize, replace or unlink a file it still has
+#  mapped. XPAR_TEST_STRICT_MAP borrows that rule on hosts without it, so
+#  a publication that outlives its own mapping fails here rather than only
+#  on the Windows runner. Builds without the hook ignore the variable and
+#  assert the same outcomes.
+mkdir -p maplock && cdto maplock
+XPAR_TEST_STRICT_MAP=1;  export XPAR_TEST_STRICT_MAP
+
+#  A same-name volume restored to its recorded length: an ftruncate.
+mkfile p.bin 400000 92
+run 0 "$XPAR" create --layout=split --volumes=2 --armour=none -r 20% -o s p.bin
+"$DAMAGE" s.d00 extend=4096 > /dev/null || hard_error "extend failed"
+run 0 "$XPAR" repair --in-place s.xpa
+run 0 "$XPAR" verify s.xpa
+
+#  A renamed volume rewritten under its recorded name: a rename.
+mv s.d01 moved.bin
+run 0 "$XPAR" repair --in-place s.xpa
+exists s.d01
+run 0 "$XPAR" verify s.xpa
+
+#  A stale volume rewritten from replicas: a rename over a mapped volume.
+mkfile q.bin 500000 93
+run 0 "$XPAR" create --armour=none -r 20% -o t q.bin
+off=`"$DAMAGE" t.xpa find=SETD | head -1`
+test -n "$off" || hard_error "no SETD in index"
+damage t.xpa "rand=`expr $off + 4`,1"
+run 0 "$XPAR" repair --in-place t.xpa
+run 0 "$XPAR" verify t.xpa
+if grep -q 'replicas were used' "$log"; then
+  bad "the stale volume was not rewritten under a mapped-file lock"
+else ok; fi
+
+#  An armoured archive republished in place: a rename over the archive.
+mkfile r.bin 300000 94
+run 0 "$XPAR" create --layout=armoured --armour=all -r 20% -s 8K -o u r.bin
+damage u.xpa rand=100000,64
+run 0 "$XPAR" repair --in-place u.xpa
+run 0 "$XPAR" verify u.xpa
+
+unset XPAR_TEST_STRICT_MAP
+cdto ..
+
 step "repair regenerates recovery slices that no longer verify"
 
 #  Re-encode recovery slices that have no replica.
@@ -1731,7 +1783,17 @@ run 0 "$XPAR" create -r 30% -o s -R t
 mkfile t/c.bin 90000 99
 run 0 "$XPAR" add -r 30% s.xpa -R t
 test -f s.g001.v00+01.xpa || hard_error "the generation carries no recovery"
+mkdir keep
+cp s.g001.xpa keep/s.g001.keep
 rm -f s.g001.xpa
+#  The generation still reads through its own replicas, and the lost index
+#  volume is repairable damage that repair puts back byte for byte.
+run 1 "$XPAR" verify s.xpa
+grep -q "index volume 's.g001.xpa' is missing" "$log" && ok ||
+  bad "verify did not name the lost index volume"
+run 0 "$XPAR" repair --in-place s.xpa
+exists s.g001.xpa
+same s.g001.xpa keep/s.g001.keep
 run 0 "$XPAR" verify s.xpa
 cdto ..
 
@@ -1976,6 +2038,323 @@ if test "$live" -le "$total"
 then ok
 else bad "consolidate --dry-run says $live of $total bytes are referenced"
 fi
+cdto ..
+
+# Batch B regressions.
+
+step "no verb blocks on a FIFO where a regular file belongs"
+
+mkdir -p fifo && cdto fifo
+if fifos_work probe.fifo; then
+  rm -f probe.fifo
+  mkfile d.bin 200000 500
+  run 0 "$XPAR" create -r 20% -o b d.bin
+
+  #  A FIFO named like the set.
+  mkfifo v.xpa
+  run_any "3 5" "$XPAR" verify v.xpa
+  run_any "3 5" "$XPAR" info v.xpa
+  run_any "3 5" "$XPAR" list v.xpa
+  run_any "3 5" "$XPAR" explain v.xpa
+  rm -f v.xpa
+
+  #  A FIFO the scan directory offers as a volume.
+  mkdir sc && mkfifo sc/b.v00+05.xpa
+  run_any "1 2 5" "$XPAR" verify --scan="`pwd`/sc" b.xpa
+  rm -rf sc
+
+  #  A FIFO where an output volume would go.
+  mkdir out && cdto out
+  mkfile z.bin 40000 7
+  mkfifo o.xpa
+  run 4 "$XPAR" create -r 10% -o o z.bin
+  cdto ..
+
+  #  A FIFO where a protected file used to be.
+  rm -f d.bin && mkfifo d.bin
+  run_any "2 5" "$XPAR" repair --in-place b.xpa
+  run_any "1 2 5" "$XPAR" verify b.xpa
+  rm -f d.bin
+  note "every verb refused the FIFO instead of blocking"
+else
+  note "this host has no usable FIFOs; skipped"
+fi
+cdto ..
+
+step "verify judges by the recovery that survives, not by the layout"
+
+mkdir -p survive && cdto survive
+mkfile d.bin 1000000 301
+run 0 "$XPAR" create -r 20% -s 4096 -o b d.bin
+victim=`ls b.v*.xpa | tail -1`
+vsize=`nbytes < "$victim"`
+damage "$victim" "rand=200,`expr $vsize - 300`"
+i=0
+while test "$i" -lt 40; do
+  damage d.bin "rand=`expr $i \* 4096 + 100`,64"
+  i=`expr $i + 1`
+done
+"$XPAR" verify --json b.xpa > v.json 2> "$log" && bad "verify called it clean"
+avail=`json_num v.json recovery_available summary`
+need=`json_num v.json recovery_needed summary`
+if test -n "$avail" && test -n "$need" && test "$avail" -lt "$need"
+then ok
+else bad "verify counted $avail usable against $need needed"
+fi
+run 2 "$XPAR" verify b.xpa
+run 2 "$XPAR" repair --in-place b.xpa
+cdto ..
+
+step "a dry run plans the names and the recovery a real run would write"
+
+mkdir -p dryplan && cdto dryplan
+mkdir tr
+mkfile tr/f.bin 5000 1
+: > tr/empty
+mkdir tr/d
+run 0 "$XPAR" create --preserve=all -r 20% -o s -R tr
+rm -f tr/empty && rmdir tr/d
+run 1 "$XPAR" repair --dry-run --exit-on-change --in-place s.xpa
+grep -q 'would recreate' "$log" || bad "the dry run did not plan the names"
+if test -e tr/empty; then bad "the dry run recreated a name"; else ok; fi
+run 1 "$XPAR" repair --in-place --exit-on-change s.xpa
+exists tr/empty
+exists tr/d
+
+#  A rotted recovery volume is a planned action too.
+mkdir -p rot && cdto rot
+mkfile d.bin 300000 3
+run 0 "$XPAR" create -r 20% -o s d.bin
+victim=`ls s.v*.xpa | tail -1`
+before=`cat "$victim" | nbytes`
+damage "$victim" "rand=2000,4096"
+run 1 "$XPAR" repair --dry-run --exit-on-change --in-place s.xpa
+grep -q 'would be regenerated' "$log" ||
+  bad "the dry run did not plan the recovery rewrite"
+equal "the dry run wrote nothing" "`cat "$victim" | nbytes`" "$before"
+run 1 "$XPAR" repair --in-place --exit-on-change s.xpa
+cdto ..
+cdto ..
+
+step "a nonconforming volume is reported, and repair restores it"
+
+mkdir -p ragged && cdto ragged
+mkfile d.bin 300000 21
+run 0 "$XPAR" create -r 20% -o b d.bin
+cp b.xpa b.keep
+for op in truncate=1000 extend=4096; do
+  cp b.keep b.xpa
+  damage b.xpa "$op"
+  run 1 "$XPAR" verify b.xpa
+  grep -q 'nonconforming' "$log" || bad "$op was not reported"
+  run 0 "$XPAR" repair --in-place b.xpa
+  same b.xpa b.keep
+  run 0 "$XPAR" verify b.xpa
+done
+cdto ..
+
+step "a packet-bearing volume is found under any name and put back"
+
+mkdir -p renamed && cdto renamed
+mkfile d.bin 400000 31
+run 0 "$XPAR" create -r 20% -o b d.bin
+victim=`ls b.v*.xpa | tail -1`
+#  Keep the reference copy out of the set's own directory.
+mkdir keep && cp "$victim" keep/orig
+mv "$victim" zz
+run 1 "$XPAR" verify b.xpa
+grep -q "is missing; using 'zz'" "$log" ||
+  bad "the renamed volume was not found by its header"
+run 0 "$XPAR" repair --in-place b.xpa
+exists "$victim"
+same "$victim" keep/orig
+run 0 "$XPAR" verify b.xpa
+cdto ..
+
+step "an armoured archive with no prologue says how to get it back"
+
+mkdir -p noprol && cdto noprol
+mkfile d.bin 200000 13
+run 0 "$XPAR" create --layout=armoured -r 20% -o a d.bin
+cp a.xpa a.keep
+damage a.xpa "zero=0,384"
+for v in verify repair scrub extract; do
+  run 2 "$XPAR" "$v" a.xpa
+  grep -q 'recover-prologue' "$log" || bad "$v gave no hint"
+done
+run 2 "$XPAR" explain a.xpa
+grep -q 'prologue is gone' "$log" ||
+  bad "explain did not recognise the armoured layout"
+run 0 "$XPAR" recover-prologue a.xpa
+same a.xpa a.keep
+run 0 "$XPAR" verify a.xpa
+cdto ..
+
+step "a copy that replaced a hard link is relinked or refused"
+
+mkdir -p relink && cdto relink
+mkdir t
+mkfile t/a.bin 40000 5
+if ln t/a.bin t/b.bin 2> /dev/null; then
+  run 0 "$XPAR" create -r 20% -o s -R t
+  rm -f t/b.bin && cp t/a.bin t/b.bin
+  run 1 "$XPAR" verify s.xpa
+  run 0 "$XPAR" repair --in-place s.xpa
+  run 0 "$XPAR" verify s.xpa
+
+  #  Bytes that differ are never discarded to make the link.
+  rm -f t/b.bin && mkfile t/b.bin 40000 6
+  run 1 "$XPAR" verify s.xpa
+  run 2 "$XPAR" repair --in-place s.xpa
+  exists t/b.bin
+else
+  note "this filesystem has no hard links; skipped"
+fi
+cdto ..
+
+step "a chain repair states one verdict, not one per generation"
+
+mkdir -p chainmsg && cdto chainmsg
+mkdir t
+mkfile t/a.bin 40000 7
+if ln t/a.bin t/c.bin 2> /dev/null; then
+  run 0 "$XPAR" create -r 20% -o s -R t
+  mkfile t/a.bin 50000 8
+  rm -f t/c.bin && mkfile t/c.bin 40000 7
+  run 0 "$XPAR" add -r 20% s.xpa -R t
+  attempt "$XPAR" repair --in-place s.xpa
+  if test "$status" -ne 0 && grep -q 'no damage found' "$log"
+  then bad "a failing chain repair still said it found no damage"
+  else ok
+  fi
+else
+  note "this filesystem has no hard links; skipped"
+fi
+cdto ..
+
+step "a file the host will not open is an I/O error, not an absence"
+
+mkdir -p noread && cdto noread
+mkfile d.bin 40000 3
+run 0 "$XPAR" create -r 20% -o s d.bin
+if chmod 000 d.bin 2> /dev/null && ! ( : < d.bin ) 2> /dev/null; then
+  run 5 "$XPAR" verify s.xpa
+  grep -q 'read failed' "$log" || bad "an unreadable file was called missing"
+  chmod 644 d.bin
+else
+  note "this user can read mode 000 files; skipped"
+  chmod 644 d.bin 2> /dev/null
+fi
+cdto ..
+
+step "a write past the file-size limit ends the JSON stream properly"
+
+mkdir -p fsz && cdto fsz
+#  Large enough that a volume passes the limit whichever block size the
+#  shell's ulimit counts in.
+mkfile d.bin 4000000 9
+if ( ulimit -f 100 ) 2> /dev/null; then
+  status=0
+  ( ulimit -f 100; "$XPAR" create --json -r 20% -o s d.bin ) > out.json \
+      2> "$log" || status=$?
+  if test "$status" -eq 5; then ok
+  else bad "a size-limited write exited $status, not 5"
+  fi
+  equal "the JSON stream ended with a summary" \
+        "`json_str out.json status summary`" error
+else
+  note "this shell cannot set a file-size limit; skipped"
+fi
+cdto ..
+
+step "extract applies every class --preserve=all names"
+
+mkdir -p setid && cdto setid
+mkdir tr
+mkfile tr/f1 5000 441
+if modes_work . && chmod 4755 tr/f1 2> /dev/null &&
+   test "`mode_of tr/f1`" = 4755; then
+  run 0 "$XPAR" create --preserve=all -r 10% --layout=split -o pv -R tr
+  run 0 "$XPAR" extract -f --preserve=all --to=b pv.xpa
+  equal "--preserve=all kept the set-ID bits" "`mode_of b/tr/f1`" 4755
+  #  --require makes a class it could not apply fatal.
+  run 5 "$XPAR" extract -f --preserve=mode --require=setid --to=c pv.xpa
+else
+  note "this filesystem does not keep set-ID bits; skipped"
+fi
+cdto ..
+
+step "the documented exit code is the one every verb returns"
+
+mkdir -p codes && cdto codes
+mkfile d.bin 40000 3
+run 0 "$XPAR" create -r 20% -o s d.bin
+mkdir bare
+run 3 "$XPAR" verify bare
+run 3 "$XPAR" nosuch.xpa
+run 4 "$XPAR" verfy
+run 4 "$XPAR" addrecovery -r 100000 s.xpa
+run 6 "$XPAR" verify --auth-key=absent.key s.xpa
+cdto ..
+
+step "--json keeps stdout for the machine and stderr for the reader"
+
+mkdir -p jsonio && cdto jsonio
+mkdir t
+mkfile t/a.bin 40000 3
+run 0 "$XPAR" create --layout=split -r 20% -o s -R t
+for v in list info explain; do
+  "$XPAR" "$v" --json s.xpa > out.json 2> "$log" ||
+    bad "$v --json failed"
+  if test -s out.json && test -s "$log"; then ok
+  else bad "$v --json dropped one of its two streams"; fi
+done
+#  A name that is not UTF-8 still reaches a consumer intact.
+raw=`printf 't/bad\377name'`
+if can_hold "$raw"; then
+  printf 'x' > "$raw"
+  run 0 "$XPAR" create --layout=split -r 20% -o s2 -R t
+  "$XPAR" list --json s2.xpa > out.json 2> "$log" || bad "list --json failed"
+  grep -q '"name_hex":' out.json ||
+    bad "a name that is not UTF-8 was emitted without its bytes"
+  rm -f "$raw"
+else
+  note "this filesystem refuses the byte 0xFF in a name; skipped"
+fi
+cdto ..
+
+step "a separate destination reports its repairs and writes what it can"
+
+mkdir -p tosave && cdto tosave
+mkdir t
+mkfile t/a.bin 200000 3
+mkfile t/b.bin 200000 4
+cp -R t t.orig
+run 0 "$XPAR" create -r 30% -s 4096 -o s -R t
+damage t/a.bin "rand=64,5000"
+run 0 "$XPAR" repair --to=out s.xpa
+grep -q '1 entry repaired' "$log" ||
+  bad "--to reported no entries repaired"
+same out/t/a.bin t.orig/a.bin
+
+#  Past the recovery, the entries that survive are still written out.
+cp t.orig/a.bin t/a.bin
+i=0
+while test "$i" -lt 41; do
+  damage t/a.bin "rand=200,`expr $i \* 4096 + 50`"
+  i=`expr $i + 1`
+done
+run 2 "$XPAR" repair --to=out2 s.xpa
+same out2/t/b.bin t.orig/b.bin
+cdto ..
+
+step "recover --to creates the directory it was given"
+
+mkdir -p recdir && cdto recdir
+mkfile d.bin 300000 11
+run 0 "$XPAR" create -r 20% -o lv d.bin
+run 0 "$XPAR" recover --volume=0 --to=fresh lv.xpa
+exists fresh/lv.xpa
 cdto ..
 
 summary

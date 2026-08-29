@@ -203,6 +203,41 @@ mode_of() {   # mode_of <path>
   echo "?"
 }
 
+# Whether chmod round-trips file modes.
+modes_work() {   # modes_work <scratch dir>
+  _f=$1/mode-probe
+  rm -f "$_f"
+  ( : > "$_f" ) 2> /dev/null || return 1
+  chmod 600 "$_f" 2> /dev/null || { rm -f "$_f";  return 1; }
+  _m=`mode_of "$_f"`
+  rm -f "$_f"
+  test "x$_m" = "x600"
+}
+
+# Whether the filesystem creates true symbolic links.
+symlinks_work() {   # symlinks_work <target> <link>
+  ln -s "$1" "$2" 2> /dev/null || return 1
+  test -L "$2" && return 0
+  rm -f "$2" 2> /dev/null
+  return 1
+}
+
+xpar_host() {
+  "$XPAR" --version 2> /dev/null |
+    sed -n '1s/^xpar [^ ]* (\([^,)]*\).*/\1/p'
+}
+
+# Whether this xpar build can open FIFOs.
+fifos_work() {   # fifos_work <path>
+  case `xpar_host` in
+    *mingw* | *cygwin* | *msys* | *windows* | *djgpp* | *msdos*) return 1 ;;
+  esac
+  mkfifo "$1" 2> /dev/null || return 1
+  test -p "$1" && return 0
+  rm -f "$1" 2> /dev/null
+  return 1
+}
+
 # Whether mode 555 prevents this user from creating files.
 perms_bite() {   # perms_bite <scratch dir>
   _d=$1/perm-probe

@@ -3726,18 +3726,14 @@ int xpar_op_addrecovery(const xpar_options * o) {
   /*  Refuse FFT growth beyond its recorded prefix-stable bracket.  */
   if (want > axis) {
     if (c.gen[g].sd.codec == XPAR_CODEC_FFT)
-      FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Generation %" PRIu32 " allows at most %" PRIu64
-                 " FFT recovery slices, not %" PRIu64 ". Re-encode with "
-                 "`xpar consolidate --max-recovery=%" PRIu64 "`.",
-                 c.gen[g].sd.generation, axis,
-                 want, want);
-    FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "Generation %" PRIu32 " allows at most %" PRIu64
-               " recovery slices, not %" PRIu64 ". Re-encode with "
-               "`xpar consolidate --max-recovery=%" PRIu64 "`.",
-               c.gen[g].sd.generation, axis,
-               want, want);
+      FATAL("Generation %" PRIu32 " allows at most %" PRIu64
+            " FFT recovery slices, not %" PRIu64 ". Re-encode with "
+            "`xpar consolidate --max-recovery=%" PRIu64 "`.",
+            c.gen[g].sd.generation, axis, want, want);
+    FATAL("Generation %" PRIu32 " allows at most %" PRIu64
+          " recovery slices, not %" PRIu64 ". Re-encode with "
+          "`xpar consolidate --max-recovery=%" PRIu64 "`.",
+          c.gen[g].sd.generation, axis, want, want);
   }
   if (!xpar_codec_supports_axis(c.gen[g].sd.codec,
                                 c.gen[g].sd.field_log2,
@@ -5482,7 +5478,7 @@ static void gen_recovery_volume(xpar_buf * out, const xpar_options * o,
 
 /*  Re-encode volumes containing missing recovery exponents.  */
 u64 xpar_gen_regen_recovery(const xpar_options * o, u64 * volumes,
-                            const char ** reason) {
+                            const char ** reason, bool dry) {
   xpar_chain c;
   xpar_manifest m;
   xpar_layt layt;
@@ -5531,14 +5527,16 @@ u64 xpar_gen_regen_recovery(const xpar_options * o, u64 * volumes,
     const xpar_vol * v = &layt.vol[i];
     if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
     for (e = v->recovery_first; e < v->recovery_first + v->byte_length; e++)
-      if (want[e]) { hit[hits++] = i;  break; }
+      if (want[e]) { hit[hits++] = i;  slices += v->byte_length;  break; }
   }
   xpar_free(want);
-  if (!hits) {
+  if (!hits || dry) {
     xpar_vset_close(src);
+    if (volumes) *volumes = hits;
     xpar_free(hit);  xpar_layt_free(&layt);  xpar_gchain_free(&c);
-    return 0;
+    return hits ? slices : 0;
   }
+  slices = 0;
 
   gen_manifest_on_disk(&c, g, o, &m, &owner);
   xpar_memset(&p, 0, sizeof p);
@@ -5606,6 +5604,100 @@ u64 xpar_gen_regen_recovery(const xpar_options * o, u64 * volumes,
   return slices;
 }
 
+/*  Recreate index volumes the layout names but the directory no longer
+    holds; every packet they carry survives in the recovery volumes.  */
+u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
+                         const char ** reason, bool dry) {
+  xpar_chain c;
+  xpar_layt layt;
+  gen_plan p;
+  gen_tables t;
+  gen_addrec_file * staged;
+  char ** paths;
+  const xpar_tags * st;
+  xpar_vset * src;
+  u32 * hit;
+  u32 g, i, hits = 0;
+
+  if (reason) *reason = NULL;
+  if (volumes) *volumes = 0;
+  xpar_gchain_load(o, &c);
+  g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);
+  if (c.gen[g].sd.layout == XPAR_LAYOUT_ARMOURED || !c.gen[g].layt_body ||
+      xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) !=
+        XPAR_OK) {
+    xpar_gchain_free(&c);
+    return 0;
+  }
+  hit = (u32 *) xpar_calloc(layt.count ? layt.count : 1, sizeof(u32));
+  for (i = 0; i < layt.count; i++) {
+    const xpar_vol * v = &layt.vol[i];
+    xpar_stat_t vst;
+    char * path;
+    if (v->kind != XPAR_VOL_INDEX || !v->name) continue;
+    path = xpar_path_join(c.dir, v->name);
+    /*  Lost, or no longer exactly the packets it should hold.  */
+    if (xpar_lstat(path, &vst) != 0 || !vst.is_regular ||
+        !xpar_verify_volume_tiles(path, gen_chain_key(&c))) hit[hits++] = i;
+    xpar_free(path);
+  }
+  if (!hits || dry) {
+    if (volumes) *volumes = hits;
+    xpar_free(hit);  xpar_layt_free(&layt);  xpar_gchain_free(&c);
+    return hits;
+  }
+  gen_require_write_key(&c, "repair");
+  xpar_memset(&p, 0, sizeof p);
+  if (!xpar_geom_from_setd(&c.gen[g].sd, &p.geom))
+    FATAL_FORMAT("Generation %" PRIu32 "'s geometry is malformed.",
+                 c.gen[g].sd.generation);
+  p.field_log2 = c.gen[g].sd.field_log2;
+  p.codec      = c.gen[g].sd.codec;
+  p.axis       = c.gen[g].sd.recovery_axis_log2;
+
+  /*  An index volume carries no recovery slices, so the stored tag tables
+      are all the payload it needs.  */
+  src = xpar_vset_open(o);
+  st  = xpar_vset_tags(src);
+  xpar_memset(&t, 0, sizeof t);
+  t.slice_crc = st->slice_crc;
+  t.slice_tag = st->slice_tag;
+  t.cell_crc  = st->cell_crc;
+  t.tag_len   = st->tag_len;
+  staged = (gen_addrec_file *) xpar_calloc(hits, sizeof(*staged));
+  paths  = (char **) xpar_calloc(hits, sizeof(char *));
+  for (i = 0; i < hits; i++) {
+    const xpar_vol * v = &layt.vol[hit[i]];
+    xpar_buf out;
+    gen_recovery_volume(&out, o, &c, g, &layt, hit[i], &p, &t, NULL);
+    paths[i] = xpar_path_join(c.dir, v->name);
+    staged[i].stage = gen_stage_whole(paths[i], out.data, out.len);
+    staged[i].final = paths[i];
+    staged[i].replace = true;
+    if (!xpar_verify_written_volume(staged[i].stage, gen_chain_key(&c),
+                                    c.gen[g].set_id, XPAR_VOL_STANDALONE,
+                                    v->kind, v->recovery_first, 0,
+                                    p.geom.slice_size)) {
+      gen_addrec_discard(staged, i + 1);
+      xpar_vset_close(src);
+      FATAL_CODE(XPAR_EXIT_INTERNAL,
+                 "internal: a regenerated index volume did not pass its "
+                 "strict packet read-back. Nothing was published.");
+    }
+    xpar_buf_free(&out);
+  }
+  /*  Nothing may hold a mapping over a file about to be renamed over.  */
+  xpar_vset_close(src);
+  gen_addrec_publish(staged, hits);
+  for (i = 0; i < hits; i++) xpar_free(paths[i]);
+  xpar_free(paths);
+  if (volumes) *volumes = hits;
+  xpar_free(hit);
+  xpar_layt_free(&layt);
+  xpar_gchain_free(&c);
+  return hits;
+}
+
 int xpar_op_recover(const xpar_options * o) {
   xpar_chain c;
   xpar_manifest m;
@@ -5621,6 +5713,13 @@ int xpar_op_recover(const xpar_options * o) {
   xpar_vset * source_set;
   int source_rc;
 
+  /*  --to names an output directory, which extract and repair create.  */
+  if (o->to_dir && xpar_strlen(o->to_dir) && xpar_mkdir_p(o->to_dir, 0777) != 0) {
+    xpar_stat_t dst;
+    if (xpar_lstat(o->to_dir, &dst) != 0 || !dst.is_dir)
+      FATAL_IO("Cannot create '%s': %s.", o->to_dir,
+               xpar_strerror(xpar_errno()));
+  }
   xpar_gchain_load(o, &c);
   gen_require_write_key(&c, "recover");
   g = xpar_gchain_select(&c, o->gen_count ? &o->gens[0] : NULL);

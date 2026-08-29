@@ -111,6 +111,8 @@ jobs:
         run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
+          #  Hold the sanitized Linux jobs to the Windows mapping rule.
+          XPAR_TEST_STRICT_MAP: ${{ matrix.san == 'sanitized' && '1' || '' }}
 
       - name: Show the test logs
         if: failure()

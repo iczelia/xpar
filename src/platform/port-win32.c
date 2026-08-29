@@ -601,6 +601,8 @@ void xpar_xclose(xpar_file * f) {
   }
 }
 
+bool xpar_maplock_blocks(const char * path) { (void) path;  return false; }
+
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m;
   HANDLE fh, fm;

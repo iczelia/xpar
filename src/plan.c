@@ -34,6 +34,15 @@
 #define PLAN_RA_QUANTUM ((u64) 64 << 20)
 #define PLAN_RA_SMALL   ((u64) 1 << 20)
 
+/*  GF(2^16) log and exponent tables.  */
+#define PLAN_GF16_TABLES ((u64) 393212)
+
+/*  Maximum armour frame batch.  */
+#define PLAN_ARMOUR_CAP ((u64) 64 << 20)
+
+/*  Pass count that triggers a warning.  */
+#define PLAN_PASS_WARN  8
+
 /*  Estimated MAC rates in MB/s by working-set class.  */
 static u64 mac_rate(u8 codec, u8 field_log2, u64 ws) {
   static const u64 fft8 [3] = { 44000, 22600,  7500 };
@@ -65,6 +74,10 @@ static u64 pow2_of(u64 v) { return xpar_next_pow2(v); }
 static u64 floor64(u64 v) { return v & ~(u64) 63; }
 
 static u64 sub_sat(u64 a, u64 b) { return a > b ? a - b : 0; }
+
+static u64 mul_sat(u64 a, u64 b) {
+  return (a && b > (u64) -1 / a) ? (u64) -1 : a * b;
+}
 
 static void group(char * buf, u64 v) {
   char tmp[24];
@@ -307,6 +320,36 @@ static u32 dedup_target(u64 stream_length, u64 budget, u64 payload,
   return (u32) MIN(t, (u64) 0xFFFFFFFFu);
 }
 
+/*  Estimate process-lifetime tables and manifest state.  */
+static u64 fixed_bytes(const xpar_geom * g, u8 field_log2, u8 tag, u32 files) {
+  /*  The verifier's stream read-ahead is budgeted from -m, so it is not
+      a fixed cost here.  */
+  u64 s = g->slice_count, v = 0;
+  if (field_log2 == 16) v += PLAN_GF16_TABLES;
+  v += s * 4;                                   /*  Slice CRC32C.  */
+  v += s * (u64) tag;                           /*  Strong slice tags.  */
+  v += s * (u64) g->cells_per_slice * 4;        /*  Cell CRC32C.  */
+  v += (u64) files * 512;                       /*  Manifest entries.  */
+  return v;
+}
+
+/*  Estimate loaded volume-image bytes.  */
+static u64 images_bytes(const xpar_setd * sd, u64 s, u64 r, u64 z) {
+  u64 v = r * z;                                /*  Recovery payload.  */
+  if (sd->layout != XPAR_LAYOUT_SIDECAR) v += s * z;
+  return v;
+}
+
+/*  Allocate a capped, frame-aligned armour batch.  */
+static u64 armour_batch_bytes(u64 budget, u64 free_now, u32 frame) {
+  u64 want = budget / 4;
+  if (!frame) return 0;
+  if (want > PLAN_ARMOUR_CAP) want = PLAN_ARMOUR_CAP;
+  if (want > free_now) want = free_now;
+  if (want < frame) return frame;
+  return want / frame * frame;
+}
+
 /*  Staging.  */
 
 static u64 stage_bytes(u64 budget, u64 z, int threads) {
@@ -369,7 +412,12 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     out->field_log2 = probe;
     out->codec      = XPAR_CODEC_MATRIX;
     out->mem_stage  = stage_bytes(budget, out->geom.slice_size, threads);
-    out->mem_total  = out->mem_stage;
+    out->mem_armour = armour_batch_bytes(budget,
+                        sub_sat(budget, out->mem_stage), gr.armour_frame);
+    out->mem_total  = out->mem_stage + out->mem_armour;
+    out->mem_fixed  = fixed_bytes(&out->geom, out->field_log2,
+                                  req->slice_tag, req->file_count);
+    out->mem_peak   = out->mem_total + out->mem_fixed;
     return out->mem_total <= budget ? XPAR_PLAN_OK : XPAR_PLAN_NO_FIT;
   }
 
@@ -445,8 +493,13 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   out->encode_work  = won.encode_work;
   out->mem_codec    = won.working_set;
 
+  out->mem_armour = armour_batch_bytes(budget,
+                      sub_sat(budget, out->mem_codec + out->mem_stage),
+                      gr.armour_frame);
+
   {
-    u64 left = sub_sat(budget, out->mem_codec + out->mem_stage);
+    u64 left = sub_sat(budget, out->mem_codec + out->mem_stage +
+                               out->mem_armour);
     u64 q;
     /*  Reading further ahead than the stream is long buys nothing, so the
         clamp comes before the quantum is chosen or a small set would round
@@ -459,7 +512,11 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   out->dedup_target_chunk = dedup_target(out->geom.stream_length, budget,
                                          r * out->geom.slice_size,
                                          0);
-  out->mem_total = out->mem_codec + out->mem_stage + out->mem_readahead;
+  out->mem_total = out->mem_codec + out->mem_stage + out->mem_readahead +
+                   out->mem_armour;
+  out->mem_fixed = fixed_bytes(&out->geom, out->field_log2, req->slice_tag,
+                               req->file_count);
+  out->mem_peak  = out->mem_total + out->mem_fixed;
   if (out->mem_total > budget) return XPAR_PLAN_NO_FIT;
   return XPAR_PLAN_OK;
 }
@@ -477,9 +534,15 @@ xpar_plan_status xpar_plan_for_repair(const xpar_setd * sd,
   out->codec      = sd->codec;
   out->field_log2 = sd->field_log2;
 
+  out->mem_images = images_bytes(sd, out->geom.slice_count,
+                                 recovery_slices, out->geom.slice_size);
+
   if (!out->geom.slice_count) {
     out->mem_stage = stage_bytes(budget, out->geom.slice_size, out->threads);
     out->mem_total = out->mem_stage;
+    out->mem_fixed = fixed_bytes(&out->geom, out->field_log2, sd->slice_tag_len,
+                                 (u32) sd->file_count);
+    out->mem_peak  = out->mem_total + out->mem_fixed + out->mem_images;
     return out->mem_total <= budget ? XPAR_PLAN_OK : XPAR_PLAN_NO_FIT;
   }
 
@@ -542,6 +605,9 @@ xpar_plan_status xpar_plan_for_repair(const xpar_setd * sd,
                                             out->geom.slice_count, r, 1) *
                      out->geom.slice_size;
   out->mem_total = out->mem_codec + out->mem_stage;
+  out->mem_fixed = fixed_bytes(&out->geom, out->field_log2, sd->slice_tag_len,
+                               (u32) sd->file_count);
+  out->mem_peak  = out->mem_total + out->mem_fixed + out->mem_images;
   if (out->mem_total > budget) return XPAR_PLAN_NO_FIT;
   return XPAR_PLAN_OK;
 }
@@ -626,6 +692,51 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   }
 }
 
+/*  Return the smallest one-pass budget, or 0.  */
+static u64 one_pass_budget(const xpar_plan_req * req) {
+  xpar_plan_req q = *req;
+  xpar_plan p;
+  u64 lo = 0, hi = (u64) 1 << 20;
+  int i;
+  for (i = 0; i < 44; i++) {
+    q.memory_budget = hi;
+    if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK && p.passes <= 1) break;
+    lo = hi;
+    if (hi > ((u64) 1 << 62)) return 0;
+    hi *= 2;
+  }
+  q.memory_budget = hi;
+  if (xpar_plan_make(&q, &p) != XPAR_PLAN_OK || p.passes > 1) return 0;
+  while (lo + ((u64) 1 << 20) < hi) {
+    u64 mid = lo + (hi - lo) / 2;
+    q.memory_budget = mid;
+    if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK && p.passes <= 1) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
+
+bool xpar_plan_pass_advice(const xpar_plan_req * req, const xpar_plan * p,
+                           char * buf, sz cap) {
+  u64 need;
+  char a[32], b[32], g[28];
+  if (p->passes <= PLAN_PASS_WARN) return false;
+  need = one_pass_budget(req);
+  group(g, p->passes);
+  human(a, sizeof a, mul_sat(p->passes, p->geom.stream_length));
+  if (!need) {
+    xpar_snprintf(buf, cap, "%s passes read %s; increase -s or reduce -r",
+                  g, a);
+    return true;
+  }
+  /*  Round up to whole MiB for display.  */
+  need = xpar_ceil_div(need, (u64) 1 << 20) << 20;
+  human(b, sizeof b, need);
+  xpar_snprintf(buf, cap, "%s passes read %s; -m %s makes one pass", g, a,
+                b);
+  return true;
+}
+
 static const char * codec_name(u8 c) {
   return c == XPAR_CODEC_FFT_LOW ? "fft-low"
        : c == XPAR_CODEC_FFT ? "fft" : "matrix";
@@ -683,13 +794,24 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
   human(h1, sizeof h1, p->mem_codec);
   human(h2, sizeof h2, p->mem_readahead);
   human(h3, sizeof h3, p->mem_stage);
-  human(h4, sizeof h4, p->mem_total);
+  human(h4, sizeof h4, p->mem_peak ? p->mem_peak : p->mem_total);
   group(g1, p->column_chunk);
   xpar_fprintf(out, "  codec      : %s  (GF(2^%" PRIu8 "), C = %s B)\n",
                codec_name(p->codec), p->field_log2, g1);
   xpar_fprintf(out, "  memory     : work buffers %s;  read-ahead %s;  "
-               "stage + hash %s\n               total %s\n",
-               h1, h2, h3, h4);
+               "stage + hash %s\n", h1, h2, h3);
+  if (p->mem_armour || p->mem_fixed || p->mem_images) {
+    char h5[32], h6[32], h7[32];
+    human(h5, sizeof h5, p->mem_armour);
+    human(h6, sizeof h6, p->mem_fixed);
+    human(h7, sizeof h7, p->mem_images);
+    xpar_fprintf(out, "               armour frames %s;  tables + buffers "
+                 "%s;  volume images %s\n", h5, h6, h7);
+    human(h5, sizeof h5, p->mem_total);
+    xpar_fprintf(out, "               total %s, of which -m bounds %s\n",
+                 h4, h5);
+  } else
+    xpar_fprintf(out, "               total %s\n", h4);
 
   if (p->geom.cell_bytes) {
     u64 last = p->geom.slice_size -
@@ -720,6 +842,11 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
   xpar_fprintf(out, "  passes     : %s %s read%s totalling %s bytes\n", g1,
                XPAR_CODEC_IS_FFT(p->codec) ? "strided" : "sequential",
                p->passes == 1 ? "" : "s", g2);
+  if (p->passes > PLAN_PASS_WARN) {
+    group(g1, p->passes);
+    human(h1, sizeof h1, mul_sat(p->passes, p->geom.stream_length));
+    xpar_fprintf(out, "               %s passes read %s total\n", g1, h1);
+  }
 
   if (verbose && XPAR_CODEC_IS_FFT(p->codec)) {
     u64 cross = xpar_plan_repair_crossover(p->codec, p->field_log2,

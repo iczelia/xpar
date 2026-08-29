@@ -51,6 +51,17 @@ const u8 * xpar_vset_rcvs(const xpar_vset *, u64, u64 *);
 bool xpar_vset_armoured(const xpar_vset *, const u8 **, u64 *, u64 *,
                         xpar_armour_params *, const char **);
 
+/*  Release a volume's image so its file can be replaced or resized.  */
+void xpar_vset_release_volume(xpar_vset *, const char * path);
+
+/*  Trim trailing bytes that are not packets; volumes that lost packets
+    are left for the regeneration paths.  */
+bool xpar_vset_trim_ragged(xpar_vset *, u64 * volumes, const char ** reason);
+u64 xpar_vset_volumes_ragged(const xpar_vset *);
+
+/*  Put an adopted packet-bearing volume back under its recorded name.  */
+bool xpar_vset_restore_names(xpar_vset *, u64 * volumes, const char ** reason);
+
 /*  Rewrite damaged named split volumes from intact substitutes.  */
 bool xpar_vset_rewrite_substituted(xpar_vset *, const char ** reason);
 
@@ -91,6 +102,7 @@ void xpar_verify_written_archive_at(const xpar_options *, const char * path,
 bool xpar_verify_written_volume(const char *, const xpar_key *, const u8 *,
                                 u32, u32, u64, u64, u64);
 bool xpar_verify_packets_ok(const u8 *, u64, const xpar_key *);
+bool xpar_verify_volume_tiles(const char * path, const xpar_key *);
 
 /*  Return owned ARMG plaintext, decoding unless EXACT permits extraction.  */
 u8 * xpar_verify_armg_plain(const u8 * body, sz, const xpar_key *, bool exact,

@@ -51,9 +51,13 @@ int xpar_op_undo(const xpar_options *);
 int xpar_op_recover_prologue(const xpar_options *);
 int xpar_op_benchmark(const xpar_options *);
 
-/*  Re-encode volumes containing missing recovery exponents.  */
+/*  Re-encode volumes containing missing recovery exponents; `dry` only
+    counts the slices and volumes a real run would rewrite.  */
 u64 xpar_gen_regen_recovery(const xpar_options *, u64 * volumes,
-                            const char ** reason);
+                            const char ** reason, bool dry);
+/*  Recreate missing index volumes from the surviving critical packets.  */
+u64 xpar_gen_regen_index(const xpar_options *, u64 * volumes,
+                         const char ** reason, bool dry);
 char * xpar_spool_stdin(const xpar_options *);
 char * xpar_publish_spooled_stdin(const xpar_options *, const char *);
 

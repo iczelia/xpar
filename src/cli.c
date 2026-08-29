@@ -226,7 +226,8 @@ static const struct { const char * name;  u32 bits, lit; } pres_tokens[] = {
   { "xattr-all", XPAR_PRES_XATTR | XPAR_PRES_XATTR_ALL,
                                       XPAR_PRES_XATTR_ALL },
   { "links",     XPAR_PRES_LINKS,     0                   },
-  { "all",       XPAR_PRES_ALL,       0                   },
+  { "all",       XPAR_PRES_ALL,       XPAR_PRES_SETID |
+                                      XPAR_PRES_XATTR_ALL },
   { "none",      0,                   0                   }
 };
 
@@ -616,8 +617,8 @@ static const char * const verb_opts[] = {
   "      --field=W              auto (default), 8, 16\n"
   "      --align=WHICH          none (default), slice, 1k\n"
   "      --slice-tag=W          none, 8 (default), 16\n"
-  "      --armour=WHICH         none, metadata (default outside\n"
-  "                             --layout=armoured), all\n"
+  "      --armour=WHICH         none, metadata (default), all;\n"
+  "                             --layout=armoured is always all\n"
   "      --armour-field=W       auto (default), 8, 16\n"
   "      --armour-t=N           Symbols corrected per inner codeword\n"
   "      --armour-pct=P         Inner-code overhead 2t/k, 0 < P <= 50\n"
@@ -956,8 +957,9 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
         push_vol(out, join_path(arg, e->name));
     xpar_closedir(d);
     sort_vols(out);
-    FATAL_UNLESS("Directory '%s' holds no " XPAR_EXT " file.",
-                 out->count > 0, xpar_name_escape(arg));
+    FATAL_UNLESS_CODE(XPAR_EXIT_NOTFOUND,
+                      "Directory '%s' holds no " XPAR_EXT " file.",
+                      out->count > 0, xpar_name_escape(arg));
   } else if (is_file(arg)) {
     if (xpar_vname_has_ext(arg)) {
       char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
@@ -1272,7 +1274,12 @@ static void positionals(xpar_options * o, char ** pos, int n) {
 
 /*  Resolve armour defaults and constraints for LAYOUT.  */
 void xpar_cli_armour_for_layout(xpar_options * o, int layout) {
-  if (layout == XPAR_LAYOUT_ARMOURED) return;
+  if (layout == XPAR_LAYOUT_ARMOURED) {
+    FATAL_UNLESS("--layout=armoured requires --armour=all.",
+                 !o->armour_given || o->armour == XPAR_ARMOUR_ALL);
+    o->armour = XPAR_ARMOUR_ALL;
+    return;
+  }
   if (!o->armour_given) o->armour = XPAR_ARMOUR_METADATA;
 }
 
@@ -1453,9 +1460,19 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   if (o->verb == XPAR_VERB_NONE) {
     FATAL_UNLESS("A verb is required; 'xpar --help' lists them.",
                  r->res->pos_argc > 0);
-    FATAL_UNLESS("Unknown verb '%s'; 'xpar --help' lists them.",
-                 names_a_set(r->res->pos_args[0]),
-                 xpar_name_escape(r->res->pos_args[0]));
+    if (!names_a_set(r->res->pos_args[0])) {
+      /*  A set name that is simply absent is not found, not a typo.  */
+      const char * a = r->res->pos_args[0];
+      sz al = xpar_strlen(a);
+      bool looks = (al > XPAR_EXT_LEN &&
+                    !xpar_strcmp(a + al - XPAR_EXT_LEN, XPAR_EXT)) ||
+                   xpar_path_base(a) != a;
+      FATAL_CODE(looks ? XPAR_EXIT_NOTFOUND : XPAR_EXIT_USAGE,
+                 looks ? "No xpar set found for '%s'; use 'xpar --help' to "
+                         "list verbs."
+                       : "Unknown verb '%s'; 'xpar --help' lists them.",
+                 xpar_name_escape(a));
+    }
     FATAL_UNLESS("Only a single set argument may stand in for a verb; "
                  "'xpar --help' lists them.", r->res->pos_argc == 1);
     o->verb = XPAR_VERB_VERIFY;

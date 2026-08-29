@@ -36,6 +36,8 @@ void xpar_json_end  (xpar_json *);
 
 void xpar_json_str (xpar_json *, const char * key, const char * val);
 void xpar_json_strn(xpar_json *, const char * key, const char * val, sz n);
+/*  Like strn, plus a "<key>_hex" field when the bytes are not UTF-8.  */
+void xpar_json_name(xpar_json *, const char * key, const char * val, sz n);
 void xpar_json_u64 (xpar_json *, const char * key, u64 val);
 void xpar_json_i64 (xpar_json *, const char * key, i64 val);
 void xpar_json_bool(xpar_json *, const char * key, bool val);

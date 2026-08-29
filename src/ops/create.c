@@ -1583,6 +1583,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   pr.field_log2      = o->field == 8 ? 8 : (o->field == 16 ? 16 : 0);
   pr.codec           = o->codec == XPAR_CLI_AUTO ? 0xFF : (u8) o->codec;
   pr.layout          = (u8) o->layout;
+  pr.file_count      = c.m.count;
+  pr.slice_tag       = c.tag_len;
   pr.rotational      = xpar_is_rotational(c.base);
   pr.streaming       = o->from_stdin;
   pr.threads         = o->jobs;
@@ -1669,6 +1671,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
 
   if (o->verbose && !o->json)
     xpar_plan_print(&c.plan, xpar_stderr, o->verbose > 1);
+
+  {
+    char advice[192];
+    if (!o->quiet && xpar_plan_pass_advice(&pr, &c.plan, advice,
+                                           sizeof advice))
+      xpar_fprintf(xpar_stderr, "xpar: warning: %s.\n", advice);
+  }
 
   if (o->armour != XPAR_ARMOUR_NONE && o->layout != XPAR_LAYOUT_ARMOURED) {
     xpar_armour_params ap;
@@ -1928,6 +1937,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
                    xpar_armour_size(ra, plain_len), stream_at,
                    c.geom.stream_length);
     xpar_armsink_init(&sk, ra, f);
+    xpar_armsink_tune(&sk, c.plan.mem_armour, o->jobs);
     xpar_armsink_put(&sk, head.data, head.len);
     slice = (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
     rd_init(&rd, &c);

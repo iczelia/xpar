@@ -254,7 +254,7 @@ tests_forge_LDADD       = $(xpar_LDADD)
 
 TESTS = tests/t_unit tests/t_codec tests/t_central \
         tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-        tests/build.sh tests/regress.sh tests/bench.sh
+        tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh
 endif
 
 TEST_EXTENSIONS = .sh
@@ -292,7 +292,7 @@ EXTRA_DIST = \
   contrib/dos/run-check.sh contrib/dos/run2.c \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-  tests/build.sh tests/regress.sh tests/bench.sh \
+  tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \
   bench/run.sh bench/lib.sh bench/plot.py bench/mktree.sh \
   bench/competitors.sh bench/experiments.sh bench/remote.sh
 

@@ -59,7 +59,10 @@ void xpar_keyfile_load_or_die(const char * path, xpar_key * key,
                               u8 master[XPAR_BLAKE3_KEY_LEN]) {
   switch (xpar_keyfile_load(path, key, master)) {
     case XPAR_KEYFILE_OK:    return;
-    case XPAR_KEYFILE_OPEN:  FATAL_PERROR(path);
+    case XPAR_KEYFILE_OPEN:  FATAL_CODE(XPAR_EXIT_AUTH,
+                                        "Cannot open key file '%s': %s.",
+                                        path,
+                                        xpar_strerror(xpar_errno()));
     case XPAR_KEYFILE_EMPTY: FATAL_CODE(XPAR_EXIT_AUTH,
                                         "Key file '%s' is empty.", path);
     default:                 FATAL_CODE(XPAR_EXIT_AUTH,

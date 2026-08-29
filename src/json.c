@@ -57,6 +57,41 @@ void xpar_json_end(xpar_json * j) {
 }
 
 /*  Emit one JSON string, quotes included, escaping per RFC 8259.  */
+/*  Length of the UTF-8 sequence at `i`, or 0 when the bytes are not one.  */
+static sz utf8_len_at(const char * s, sz n, sz i) {
+  u8 c = (u8) s[i];
+  sz len, k;
+  u32 cp;
+  if (c < 0x80) return 1;
+  if      ((c & 0xE0) == 0xC0) { len = 2;  cp = c & 0x1Fu; }
+  else if ((c & 0xF0) == 0xE0) { len = 3;  cp = c & 0x0Fu; }
+  else if ((c & 0xF8) == 0xF0) { len = 4;  cp = c & 0x07u; }
+  else return 0;
+  if (i + len > n) return 0;
+  for (k = 1; k < len; k++) {
+    u8 cc = (u8) s[i + k];
+    if ((cc & 0xC0) != 0x80) return 0;
+    cp = (cp << 6) | (cc & 0x3Fu);
+  }
+  if (len == 2 && cp < 0x80)    return 0;
+  if (len == 3 && cp < 0x800)   return 0;
+  if (len == 4 && cp < 0x10000) return 0;
+  if (cp >= 0xD800 && cp <= 0xDFFF) return 0;
+  if (cp > 0x10FFFF) return 0;
+  return len;
+}
+
+/*  Whether the escaped form loses nothing.  */
+static bool utf8_clean(const char * s, sz n) {
+  sz i = 0;
+  while (i < n) {
+    sz len = utf8_len_at(s, n, i);
+    if (!len) return false;
+    i += len;
+  }
+  return true;
+}
+
 static void emit_string(xpar_json * j, const char * s, sz n) {
   static const char hex_digits[] = "0123456789abcdef";
   char esc[8];
@@ -87,28 +122,8 @@ static void emit_string(xpar_json * j, const char * s, sz n) {
     }
 
     {
-      sz len = 0, k;
-      u32 cp = 0;
-      bool ok = true;
-
-      if ((c & 0xE0) == 0xC0) { len = 2;  cp = c & 0x1Fu; }
-      else if ((c & 0xF0) == 0xE0) { len = 3;  cp = c & 0x0Fu; }
-      else if ((c & 0xF8) == 0xF0) { len = 4;  cp = c & 0x07u; }
-      else ok = false;
-
-      if (ok && i + len > n) ok = false;
-      for (k = 1; ok && k < len; k++) {
-        u8 cc = (u8) s[i + k];
-        if ((cc & 0xC0) != 0x80) ok = false;
-        else cp = (cp << 6) | (cc & 0x3Fu);
-      }
-      if (ok && len == 2 && cp < 0x80)    ok = false;
-      if (ok && len == 3 && cp < 0x800)   ok = false;
-      if (ok && len == 4 && cp < 0x10000) ok = false;
-      if (ok && cp >= 0xD800 && cp <= 0xDFFF) ok = false;
-      if (ok && cp > 0x10FFFF) ok = false;
-
-      if (!ok) { put(j, "\\ufffd");  i++;  continue; }
+      sz len = utf8_len_at(s, n, i), k;
+      if (!len) { put(j, "\\ufffd");  i++;  continue; }
       for (k = 0; k < len; k++) {
         esc[0] = s[i + k];  esc[1] = 0;
         put(j, esc);
@@ -123,6 +138,19 @@ void xpar_json_strn(xpar_json * j, const char * k, const char * v, sz n) {
   if (!j->enabled) return;
   key(j, k);
   emit_string(j, v, n);
+}
+
+/*  A path a consumer must be able to reopen: bytes that are not UTF-8
+    would be lost to U+FFFD, so they get a hex companion field.  */
+void xpar_json_name(xpar_json * j, const char * k, const char * v, sz n) {
+  if (!j->enabled) return;
+  key(j, k);
+  emit_string(j, v, n);
+  if (!utf8_clean(v, n)) {
+    char hk[64];
+    xpar_snprintf(hk, sizeof hk, "%s_hex", k);
+    xpar_json_hex(j, hk, (const u8 *) v, n);
+  }
 }
 
 void xpar_json_str(xpar_json * j, const char * k, const char * v) {

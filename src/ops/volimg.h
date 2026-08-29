@@ -20,6 +20,7 @@
 
 #include "armour.h"
 #include "container.h"
+#include "platform/port-thread.h"
 
 /*  A volume read whole: mapped where the host can map it, on the heap
     where it cannot. `data` and `size` are the image either way.  */
@@ -60,11 +61,19 @@ void xpar_armg_wrap_each(xpar_buf * out, const xpar_options *,
 typedef struct {
   const xpar_armour * armour;
   xpar_file * file;
-  u8 * frame;
-  u64 cap, fill;
+  u8 * frame;                  /*  `slots` consecutive frames.  */
+  u64 cap, fill;               /*  Plaintext capacity and current fill.  */
+  u64 disk;                    /*  Encoded bytes per frame.  */
+  u64 slots, staged;           /*  Frame capacity and current count.  */
+  u64 quantum;                 /*  Frames per vector.  */
+  xpar_pool * pool;            /*  NULL for single-threaded encoding.  */
+  xpar_armour ** work;         /*  One codec per worker.  */
+  int workers, jobs;           /*  Active and maximum workers.  */
 } xpar_armsink;
 
 void xpar_armsink_init (xpar_armsink *, const xpar_armour *, xpar_file *);
+/*  Tune frame batching within BUDGET.  */
+void xpar_armsink_tune (xpar_armsink *, u64 budget, int jobs);
 void xpar_armsink_put  (xpar_armsink *, const void *, u64);
 void xpar_armsink_flush(xpar_armsink *);
 void xpar_armsink_free (xpar_armsink *);

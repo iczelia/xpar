@@ -101,9 +101,10 @@ generation 0  set e356e96ef0495c7c3360960a49d50a2b  9 entries
 
 `verify` checks the integrity of the data, and writes nothing beside the
 set: an armoured archive is staged in memory when its plaintext fits `-m`,
-otherwise under `$TMPDIR` (or `TMP`/`TEMP`), and the stage is removed on
-exit.  Only when none of those variables is set and the plaintext exceeds
-`-m` does the stage fall back to a temporary file beside the archive.
+otherwise under `$TMPDIR` (or `TMP`/`TEMP`), and failing those under the
+host's own temporary directory; the stage is mode 0600 and is removed on
+exit.  Only when none of those directories can hold it does the stage fall
+back to a temporary file beside the archive.
 Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
 repairable), 2 (hopelessly broken).
 

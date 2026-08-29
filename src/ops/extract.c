@@ -130,7 +130,8 @@ static void ex_note(ex * x, const char * fmt, ...) {
   va_list ap;
   if (x->quiet) return;
   va_start(ap, fmt);
-  xpar_vfprintf(x->o->json ? xpar_stderr : xpar_stdout, fmt, ap);
+  /*  stdout carries JSON Lines or, under --stdout, the data itself.  */
+  xpar_vfprintf(xpar_stderr, fmt, ap);
   va_end(ap);
 }
 
@@ -139,7 +140,7 @@ static void ex_skip(ex * x, const xpar_entry * e, int cls,
   x->skip[cls]++;
   if (!x->o->json) return;
   xpar_json_begin(&x->js, "metadata_skipped");
-  xpar_json_strn(&x->js, "entry", e->name, e->name_len);
+  xpar_json_name(&x->js, "entry", e->name, e->name_len);
   xpar_json_str (&x->js, "class", ex_sk_name[cls]);
   xpar_json_str (&x->js, "reason", why);
   xpar_json_end(&x->js);
@@ -921,6 +922,13 @@ static void ex_validate(ex * x) {
   s = xpar_manifest_validate(&x->mf, &lim, &res);
   if (s != XPAR_MF_OK) {
     const xpar_entry * e = &x->mf.entry[res.entry];
+    /*  A name this destination cannot hold is data that cannot be
+        reproduced here, not a malformed set.  */
+    if (s == XPAR_MF_PATH && lim.path_flags)
+      FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+                 "Entry %" PRIu32 " ('%.*s'): %s under the naming rules in "
+                 "force for this destination.", res.entry,
+                 (int) e->name_len, e->name, xpar_mf_reason(s));
     FATAL_FORMAT("Entry %" PRIu32 " ('%.*s'): %s.", res.entry,
                  (int) e->name_len, e->name, xpar_mf_reason(s));
   }
@@ -1205,7 +1213,9 @@ int xpar_op_extract(const xpar_options * o) {
   { u32 q;
     for (q = 0; q < ARRAY_LEN(ex_require_map); q++) {
       u8 cls = ex_require_map[q].cls;
-      if (!(o->require & o->preserve & ex_require_map[q].bit)) continue;
+      /*  --require makes a degradation fatal whether or not --preserve
+          asked for the class, since it was not applied either way.  */
+      if (!(o->require & ex_require_map[q].bit)) continue;
       if (!x.skip[cls]) continue;
       ex_note(&x, "xpar: --require: %" PRIu64 " entr%s lost %s.\n",
               x.skip[cls], x.skip[cls] == 1 ? "y" : "ies", ex_sk_name[cls]);

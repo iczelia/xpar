@@ -214,33 +214,116 @@ void xpar_armg_wrap_each(xpar_buf * out, const xpar_options * o,
                at == len);
 }
 
+/*  Default frame-batch memory before tuning.  */
+#define ARMSINK_DEFAULT ((u64) 4 << 20)
+
+static void armsink_alloc(xpar_armsink * s, u64 slots) {
+  if (slots < 1) slots = 1;
+  if (slots == s->slots) return;
+  xpar_free(s->frame);
+  s->slots = slots;
+  s->frame = (u8 *) xpar_calloc((sz) (slots * s->disk), 1);
+}
+
 void xpar_armsink_init(xpar_armsink * s, const xpar_armour * a,
                        xpar_file * f) {
-  s->armour = a;  s->file = f;
-  s->cap = xpar_armour_frame_plain(a);
-  s->frame = (u8 *) xpar_calloc((sz) xpar_armour_frame_disk(a), 1);
-  s->fill = 0;
+  xpar_memset(s, 0, sizeof *s);
+  s->armour  = a;  s->file = f;
+  s->cap     = xpar_armour_frame_plain(a);
+  s->disk    = xpar_armour_frame_disk(a);
+  s->quantum = xpar_armour_lane_frames(a);
+  s->workers = 1;
+  armsink_alloc(s, MIN(MIN(s->quantum, xpar_armour_batch(a)),
+                       MAX((u64) 1, ARMSINK_DEFAULT / MAX(s->disk, (u64) 1))));
+}
+
+/*  Split a batch on vector-sized boundaries.  */
+static u64 armsink_per(const xpar_armsink * s, u64 total) {
+  u64 per = xpar_ceil_div(total, (u64) s->workers);
+  u64 q = s->quantum ? s->quantum : 1;
+  per = xpar_ceil_div(per, q) * q;
+  return per ? per : 1;
+}
+
+typedef struct { xpar_armsink * sink;  u64 total, per; } armsink_job;
+
+static void armsink_run(sz index, void * arg) {
+  armsink_job * j = (armsink_job *) arg;
+  u64 first = (u64) index * j->per, n;
+  if (first >= j->total) return;
+  n = MIN(j->per, j->total - first);
+  xpar_armour_encode_frames(j->sink->work[index],
+                            j->sink->frame + first * j->sink->disk, n);
+}
+
+void xpar_armsink_tune(xpar_armsink * s, u64 budget, int jobs) {
+  u64 fit = s->disk ? budget / s->disk : 0;
+  u64 want = xpar_armour_batch(s->armour);
+  int n = jobs > 0 ? jobs : xpar_cpu_count();
+  if (n < 1) n = 1;
+  if (want < s->quantum) want = s->quantum;
+  if (want > (u64) n * s->quantum * 4) want = (u64) n * s->quantum * 4;
+  if (fit < want) want = fit;
+  armsink_alloc(s, want);
+  s->jobs = n;
+}
+
+/*  Wait until each worker can encode a full vector.  */
+static void armsink_workers(xpar_armsink * s, u64 staged) {
+  u64 q = s->quantum ? s->quantum : 1;
+  int want = (int) MIN((u64) s->jobs, staged / q), i;
+  if (want <= s->workers) return;
+  s->work = (xpar_armour **) xpar_realloc(s->work,
+              (sz) want * sizeof(xpar_armour *));
+  if (s->workers < 1) s->workers = 1;
+  s->work[0] = (xpar_armour *) s->armour;
+  for (i = s->workers; i < want; i++)
+    s->work[i] = xpar_armour_new(xpar_armour_params_of(s->armour));
+  if (s->pool) xpar_pool_destroy(s->pool);
+  s->pool = xpar_pool_create(want);
+  s->workers = want;
+}
+
+static void armsink_emit(xpar_armsink * s) {
+  if (!s->staged) return;
+  if (s->jobs > 1) armsink_workers(s, s->staged);
+  if (s->pool && s->workers > 1) {
+    armsink_job j;
+    j.sink = s;  j.total = s->staged;  j.per = armsink_per(s, s->staged);
+    xpar_pool_run(s->pool, (sz) s->workers, armsink_run, &j);
+  } else
+    xpar_armour_encode_frames(s->armour, s->frame, s->staged);
+  xpar_xwrite(s->file, s->frame, (sz) (s->staged * s->disk));
+  s->staged = 0;
 }
 
 void xpar_armsink_flush(xpar_armsink * s) {
-  if (!s->fill) return;
-  xpar_memset(s->frame + s->fill, 0, (sz) (s->cap - s->fill));
-  xpar_armour_encode_frame(s->armour, s->frame);
-  xpar_xwrite(s->file, s->frame, (sz) xpar_armour_frame_disk(s->armour));
-  s->fill = 0;
+  if (s->fill) {
+    u8 * fr = s->frame + s->staged * s->disk;
+    xpar_memset(fr + s->fill, 0, (sz) (s->cap - s->fill));
+    s->fill = 0;  s->staged++;
+  }
+  armsink_emit(s);
 }
 
 void xpar_armsink_put(xpar_armsink * s, const void * data, u64 length) {
   const u8 * p = (const u8 *) data;
   while (length) {
+    u8 * fr = s->frame + s->staged * s->disk;
     u64 take = MIN(length, s->cap - s->fill);
-    xpar_memcpy(s->frame + s->fill, p, (sz) take);
+    xpar_memcpy(fr + s->fill, p, (sz) take);
     s->fill += take;  p += take;  length -= take;
-    if (s->fill == s->cap) xpar_armsink_flush(s);
+    if (s->fill < s->cap) continue;
+    s->fill = 0;
+    if (++s->staged == s->slots) armsink_emit(s);
   }
 }
 
 void xpar_armsink_free(xpar_armsink * s) {
+  int i;
+  for (i = 1; i < s->workers; i++) xpar_armour_free(s->work[i]);
+  xpar_free(s->work);
+  if (s->pool) xpar_pool_destroy(s->pool);
   xpar_free(s->frame);
   xpar_memset(s, 0, sizeof *s);
 }

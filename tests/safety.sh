@@ -43,26 +43,25 @@ equal "entries with damage no cell explains" \
 equal "entries blamed on an alias" \
       "`json_num v.json entries_alias_only summary`" 0
 
-# It must neither report clean nor promise an impossible repair.
+# It must neither report clean nor promise a repair the CRCs cannot aim.
 run 2 "$XPAR" verify set.xpa
 equal "verify status" "`json_str v.json status summary`" unrepairable
-run 2 "$XPAR" verify --strong set.xpa
 run_any "1 2" "$XPAR" scrub --deep set.xpa
+
+# --strong reads the slice tags, which localise the forged slice.
+"$XPAR" verify --strong --json set.xpa > s.json 2> "$log"
+equal "the strong tag condemns the forged slice" \
+      "`json_num s.json slices_bad summary`" 1
+equal "strong verdict" "`json_str s.json status summary`" repairable
+run 1 "$XPAR" verify --strong set.xpa
 
 attempt "$XPAR" repair --in-place set.xpa
 never_false_success "$status" data.bin pristine.bin "repair of a forgery"
-if test "$status" -eq 0; then
-  bad "repair claimed to fix damage no checksum can localise"
-else
-  ok
-  note "repair refused with status $status"
-fi
-grep -q 'strong tag' "$log" && ok || {
-  #  Refusing for another stated reason is fine; refusing silently is not.
-  test -s "$log" && ok || bad "repair refused without saying why"
-}
+run 0 "$XPAR" verify set.xpa
+same data.bin pristine.bin
+note "repair decoded the forged slice (status $status)"
 
-# A strong tag must catch a forgery alongside repairable damage.
+# A forgery alongside repairable damage in one slice decodes as well.
 cp pristine.bin data.bin
 "$DAMAGE" data.bin -Z "$Z" -Y "$Y" -k forge cell=1,5 ||
   hard_error "forge failed"
@@ -73,12 +72,21 @@ equal "the visible cell is the only one condemned" \
 attempt "$XPAR" repair --in-place set.xpa
 never_false_success "$status" data.bin pristine.bin \
                     "repair of a slice carrying a forgery"
-if test "$status" -eq 0; then
-  bad "repair rebuilt a slice whose strong tag cannot match"
-else
-  ok
-  note "the strong tag stopped the write back (status $status)"
-fi
+same data.bin pristine.bin
+note "the strong tag drove the write back (status $status)"
+
+# Without slice tags nothing can localise a forgery, so nothing may claim
+# to have repaired it.
+mkfile plain.bin 2097152
+cp plain.bin plain.orig
+run 0 "$XPAR" create -s 1M -r 2 --dedup=none --align=none \
+    --slice-tag=none -o notag plain.bin
+"$DAMAGE" plain.bin -Z "$Z" -Y "$Y" -k forge cell=0,3 ||
+  hard_error "forge failed"
+run 2 "$XPAR" verify notag.xpa
+attempt "$XPAR" repair --in-place -f notag.xpa
+never_false_success "$status" plain.bin plain.orig "repair without tags"
+equal "tagless repair status" "$status" 2
 cd ..
 
 # Keep alias-local damage distinct from checksum-invisible damage.
@@ -621,7 +629,8 @@ if can_hold 'tree/back\slash.bin'; then
   mkfile tree/ok.bin 4096
   run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
   run 0 "$XPAR" extract --to=plain arc.xpa
-  run 3 "$XPAR" extract --strict-names --to=strict arc.xpa
+  #  The set is fine; the name is one this destination cannot hold.
+  run 2 "$XPAR" extract --strict-names --to=strict arc.xpa
   note "Windows naming rules refuse backslashes"
 else
   note "backslashes are native separators; skipped"
@@ -1017,7 +1026,7 @@ mkdir ansi;  cdto ansi
 mkdir tree
 mkfile tree/a.bin 4096
 esc=`printf '\033'`
-if ln -s "${esc}[41;97m PWNED ${esc}[0m" tree/evil 2> /dev/null; then
+if symlinks_work "${esc}[41;97m PWNED ${esc}[0m" tree/evil; then
   run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
   "$XPAR" list a.xpa > out.txt 2> "$log" || hard_error "list failed"
   equal "no raw escape reached the output" \
@@ -1142,7 +1151,7 @@ cp victim.txt victim.keep
 run 0 "$XPAR" create -s 4096 -r 30 -o set p.bin
 damage p.bin rand=4096,64 rand=12288,64 rand=20480,64
 
-if ln -s victim.txt set.xparundo 2> /dev/null; then
+if symlinks_work victim.txt set.xparundo; then
   run 4 "$XPAR" repair --in-place set.xpa
   same victim.txt victim.keep
   #  --replace-journal replaces the name; it does not write through it.
@@ -1157,7 +1166,11 @@ fi
 damage p.bin rand=4096,64
 run 0 "$XPAR" repair --in-place --keep-journal set.xpa
 exists set.xparundo
-equal "the journal is owner-only" "`mode_of set.xparundo`" 600
+if modes_work .; then
+  equal "the journal is owner-only" "`mode_of set.xparundo`" 600
+else
+  note "file modes unsupported; permission checks skipped"
+fi
 cd ..
 
 step "an in-place repair restores the names and metadata it recreates"
@@ -1173,7 +1186,11 @@ rm -rf tree/sub
 
 run 0 "$XPAR" repair --in-place s.xpa
 same tree/sub/x.bin keep.bin
-equal "the recorded mode came back" "`mode_of tree/sub/x.bin`" 600
+if modes_work .; then
+  equal "the recorded mode came back" "`mode_of tree/sub/x.bin`" 600
+else
+  note "file modes unsupported; permission checks skipped"
+fi
 equal "no journal was left behind" \
       "`find . -maxdepth 1 -name '*.xparundo' | nlines`" 0
 run 0 "$XPAR" verify s.xpa

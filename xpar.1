@@ -61,12 +61,10 @@ armoured archive is staged in memory when its plaintext fits
 .BR \-m ,
 otherwise under
 .BR TMPDIR ,
-.B TMP
-or
-.BR TEMP ,
-and the stage is removed on exit; only when none of those is set and the
-plaintext exceeds
-.B \-m
+.BR TMP ,
+.B TEMP
+or the host's own temporary directory,
+and the stage is removed on exit; only when none of those can hold it
 does the stage fall back beside the archive. The exit codes distinguish
 clean, damaged but repairable, and hopelessly damaged data.
 .TP
@@ -806,8 +804,9 @@ The first of these that is set names the directory where
 .B verify
 stages the plaintext of an armoured archive too large for
 .BR \-m .
-With none set the stage is written beside the archive instead. It is
-removed when the verb ends.
+With none set the host's own temporary directory is used, and only if
+that cannot hold the stage is it written beside the archive instead. The
+stage is created mode 0600 and removed when the verb ends.
 .SH SECURITY
 Input volumes and manifests are by default considered untrusted.  xpar validates
 packet and nested record lengths before allocation, the total allocation is also

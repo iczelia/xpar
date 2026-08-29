@@ -211,8 +211,11 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
     note "no separate recovery volumes in this layout"
     cd ..;  return 0
   fi
-  cp set.xpa index.orig
-  for v in $vols; do cp "$v" "$v.orig"; done
+  #  Keep the backups out of the set's own directory: a copy beside the
+  #  set is one of the set's volumes, whatever it is called.
+  mkdir keep
+  cp set.xpa keep/index.orig
+  for v in $vols; do cp "$v" "keep/$v.orig"; done
 
   #  Intact data with damaged recovery is not a data emergency: verify
   #  answers for the protected data and stays clean, exactly as it does
@@ -224,7 +227,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   run 0 "$XPAR" verify set.xpa
   run_any "1 2" "$XPAR" scrub --deep set.xpa
   same data.bin pristine.bin
-  for v in $vols; do cp "$v.orig" "$v"; done
+  for v in $vols; do cp "keep/$v.orig" "$v"; done
 
   #  A missing volume lowers the budget by exactly the slices it held.
   rm -f "$victim"

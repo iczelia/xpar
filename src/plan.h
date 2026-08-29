@@ -46,6 +46,8 @@ typedef struct {
   u8   codec;              /*  0xFF for auto.  */
   u8   layout;             /*  XPAR_LAYOUT_*  */
   u32  armour_frame;       /*  Bytes per armour frame, or 0 when unarmoured.  */
+  u32  file_count;         /*  Manifest entries.  */
+  u8   slice_tag;          /*  Strong tag bytes; 0 if absent.  */
   bool rotational;         /*  Target device.  */
   bool streaming;          /*  Input is a pipe, so the codec must stream.  */
   int  threads;
@@ -73,12 +75,17 @@ typedef struct {
   u64 passes;
   u64 encode_work;
 
-  /*  Footprint, itemised because a refusal has to say which part did not
-      fit before a user can act on it.  */
+  /*  Budgeted memory.  */
   u64 mem_codec;
   u64 mem_readahead;
   u64 mem_stage;
-  u64 mem_total;
+  u64 mem_armour;            /*  Armoured-layout frame batch.  */
+  u64 mem_total;             /*  Total bounded by -m.  */
+
+  /*  Unbudgeted process memory.  */
+  u64 mem_fixed;             /*  Field tables, slice tables, manifest.  */
+  u64 mem_images;            /*  Volume images a reader holds at once.  */
+  u64 mem_peak;              /*  Budgeted and unbudgeted total.  */
 
   u32 dedup_target_chunk;    /*  0 when dedup is off or whole-file.  */
   int threads;
@@ -103,5 +110,9 @@ void xpar_plan_print(const xpar_plan *, xpar_file * out, bool verbose);
 
 /*  Explain how to resolve XPAR_PLAN_NO_FIT.  */
 void xpar_plan_explain_no_fit(const xpar_plan_req *, char * buf, sz cap);
+
+/*  Describe an expensive multi-pass plan.  */
+bool xpar_plan_pass_advice(const xpar_plan_req *, const xpar_plan *,
+                           char * buf, sz cap);
 
 #endif

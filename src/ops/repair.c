@@ -67,6 +67,7 @@ typedef struct {
   u8 *  old;                  /*  Owned; what was there, for the journal.  */
   u8    trunc;                /*  Remove [off, off+len) instead.  */
   u8    link;                 /*  Link from canon[entry] instead.  */
+  u8    relink;               /*  A copy stands where the link belongs.  */
 } rp_write;
 
 typedef struct {
@@ -136,6 +137,7 @@ typedef struct {
   u64 structure_bad;          /*  Recorded type or link target differs.  */
   u64 names_made;             /*  Empty names the manifest fully describes.  */
   u64 rec_regen, rec_regen_vols;  /*  Recovery slices re-encoded, and where. */
+  u64 index_regen;            /*  Index volumes rebuilt from replicas.  */
   u8 * hash_bad;              /*  Per entry; owned.  */
   bool changed;
 } rp;
@@ -156,7 +158,7 @@ static void rp_meta_skip(const xpar_options * o, const xpar_entry * e,
   if (!o->json) return;
   xpar_json_init(&js, xpar_stdout, true);
   xpar_json_begin(&js, "metadata_skipped");
-  xpar_json_strn(&js, "entry", e->name, e->name_len);
+  xpar_json_name(&js, "entry", e->name, e->name_len);
   xpar_json_str(&js, "class", cls);
   xpar_json_str(&js, "reason", reason);
   xpar_json_end(&js);
@@ -998,7 +1000,10 @@ static void rp_scan_entries(rp * r, xpar_progress_t * pg) {
     /*  Mark overlong owned entries for truncation.  */
     if (exists && touches && st.size > e->length) r->fstate[i] |= 2;
     if (!touches) continue;
-    if (certified) continue;
+    /*  Clean CRCs certify an entry only where a strong slice tag backs
+        them; without one the entry hash is the only forgery check.  */
+    if (certified && (r->tag_have & XPAR_TAGS_TAG) && r->tags.t.slice_tag)
+      continue;
     /*  The entry hash strongly covers aliases; cell CRCs localise a
         failing occurrence.  */
     { xpar_blake3_t h;
@@ -1196,7 +1201,7 @@ static void rp_solve_copies(rp * r) {
 }
 
 /*  Reuse one decode plan for every column with the same erasure pattern.  */
-static bool rp_solve_decode(rp * r, u32 chunk) {
+static bool rp_solve_decode(rp * r, u32 chunk, bool partial) {
   xpar_col_groups g;
   xpar_codec * cd;
   u64 s = r->geom.slice_count;
@@ -1232,7 +1237,9 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
     u32 ci;
     if (!grp->erased) continue;
     pl = xpar_codec_plan_new(cd, grp->present, r->rec_present, &st);
-    if (!pl) { ok = false;  break; }
+    /*  A column past the recovery leaves its cells unsolved; --to still
+        writes every entry that does not depend on them.  */
+    if (!pl) { if (partial) continue;  ok = false;  break; }
     for (ci = 0; ci < grp->column_count && ok; ci++) {
       u32 col = grp->column[ci];
       u64 width = xpar_cell_size(&r->geom, col);
@@ -1273,7 +1280,7 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
     u32 i;
     for (i = 0; i < r->cell_count; i++) {
       rp_cell * c = &r->cell[i];
-      if (!c->decode || !c->bytes) continue;
+      if (!c->decode || !c->bytes || c->solved) continue;
       if (rp_cell_verify(r, c)) { c->solved = 1;  r->cells_decoded++; }
       else ok = false;
     }
@@ -1281,8 +1288,51 @@ static bool rp_solve_decode(rp * r, u32 chunk) {
   return ok;
 }
 
-/*  Verify repaired slices when strong tags exist; -f gates their absence.  */
-static bool rp_slice_gate(rp * r) {
+/*  A slice whose strong tag still fails holds damage no cell checksum can
+    see, so every cell of it becomes an erasure and the outer code rebuilds
+    the whole slice. The work set stays ordered by (slice, column).  */
+static bool rp_widen_slice(rp * r, u64 slice) {
+  u32 k = r->geom.cells_per_slice, c, i, lo, hi, n;
+  rp_cell * out;
+  bool changed = false;
+  lo = 0;
+  while (lo < r->cell_count && r->cell[lo].slice < slice) lo++;
+  hi = lo;
+  while (hi < r->cell_count && r->cell[hi].slice == slice) hi++;
+  n = r->cell_count - (hi - lo) + k;
+  out = (rp_cell *) xpar_alloc_raw((sz) n * sizeof(rp_cell));
+  xpar_memcpy(out, r->cell, (sz) lo * sizeof(rp_cell));
+  for (c = 0; c < k; c++) {
+    rp_cell * d = &out[lo + c];
+    const rp_cell * src = NULL;
+    for (i = lo; i < hi; i++)
+      if (r->cell[i].col == c) { src = &r->cell[i];  break; }
+    if (src) *d = *src;
+    else {
+      xpar_memset(d, 0, sizeof *d);
+      d->slice = slice;  d->col = c;
+      d->begin = xpar_cell_begin(&r->geom, slice, c);
+      d->size  = xpar_cell_size(&r->geom, c);
+    }
+    if (!src || !d->decode) changed = true;
+    if (d->solved && !d->decode && r->cells_copied) r->cells_copied--;
+    if (d->solved && d->decode && r->cells_decoded) r->cells_decoded--;
+    xpar_free(d->bytes);  d->bytes = NULL;
+    d->decode = 1;  d->solved = 0;
+    *rp_cell_key(r, slice, c) = 1;
+    xpar_cell_mark(&r->er, slice, c);
+  }
+  xpar_memcpy(out + lo + k, r->cell + hi,
+              (sz) (r->cell_count - hi) * sizeof(rp_cell));
+  xpar_free(r->cell);
+  r->cell = out;  r->cell_count = n;  r->cell_cap = n;
+  return changed;
+}
+
+/*  Verify repaired slices when strong tags exist; -f gates their absence.
+    With `widened`, a failing slice is erased whole and retried through the
+    decoder instead of being called unrepairable.  */
+static bool rp_slice_gate(rp * r, bool * widened) {
   u32 i;
   u64 z = r->geom.slice_size;
   u8 * buf;
@@ -1302,9 +1352,11 @@ static bool rp_slice_gate(rp * r) {
     if (!done) continue;
     rp_read_stream(r, xpar_slice_begin(&r->geom, s), z, buf);
     rp_tag(r, s, buf, tag, r->tags.t.tag_len);
-    if (!xpar_blake3_tag_equal(tag, r->tags.t.slice_tag +
-                               s * r->tags.t.tag_len, r->tags.t.tag_len))
-      ok = false;
+    if (xpar_blake3_tag_equal(tag, r->tags.t.slice_tag +
+                              s * r->tags.t.tag_len, r->tags.t.tag_len))
+      continue;
+    if (widened && rp_widen_slice(r, s)) *widened = true;
+    else ok = false;
   }
   xpar_free(buf);
   return ok;
@@ -1367,6 +1419,27 @@ static void rp_sort_edits(rp * r) {
   r->edit = out;  r->edit_cap = n;
 }
 
+/*  Whether two names already hold the same bytes, so linking one over the
+    other loses nothing.  */
+static bool rp_same_content(rp * r, u32 a, u32 b) {
+  u64 len = r->mf.entry[a].length, off = 0;
+  u32 z = (u32) MIN((u64) (r->geom.slice_size ? r->geom.slice_size : 4096),
+                    (u64) (1u << 20));
+  u8 * pa, * pb;
+  bool same = true;
+  if (r->mf.entry[b].length != len) return false;
+  pa = (u8 *) xpar_alloc_raw(z);  pb = (u8 *) xpar_alloc_raw(z);
+  while (off < len && same) {
+    u64 take = MIN((u64) z, len - off);
+    if (!rp_read_entry_raw(r, a, off, take, pa) ||
+        !rp_read_entry_raw(r, b, off, take, pb) ||
+        xpar_memcmp(pa, pb, (sz) take)) same = false;
+    off += take;
+  }
+  xpar_free(pa);  xpar_free(pb);
+  return same;
+}
+
 /*  Emit one write per damaged inode, not per hard-link alias.  */
 
 typedef struct {
@@ -1385,17 +1458,15 @@ static void rp_write_occ(const xpar_occurrence * o, void * user) {
   if (lo >= hi) return;
   if (r->alias[o->entry] ||
       r->mf.entry[o->entry].entry_type != XPAR_ENTRY_REGULAR) return;
-  if (r->o->repair_head_set) {
-    u64 n = hi - lo;
+  /*  The solved bytes have passed the cell tag and, where one exists, the
+      slice tag, so only they decide whether this occurrence must change; a
+      CRC probe would call a CRC-preserving forgery intact.  */
+  { u64 n = hi - lo;
     if (rp_read_entry_raw(r, o->entry,
                           o->file_offset + (lo - o->stream_offset), n,
                           w->buf) &&
         !xpar_memcmp(w->buf, c->bytes + (lo - c->begin), (sz) n))
       return;
-  } else {
-    rp_probe pr;
-    pr.r = r;  pr.slice = c->slice;  pr.col = c->col;  pr.buf = w->buf;
-    if (rp_occ_raw_intact(o, &pr)) return;
   }
   rp_add_edit(r, o->entry, o->file_offset + (lo - o->stream_offset),
               hi - lo, w->cell, lo - c->begin);
@@ -1445,14 +1516,29 @@ static void rp_build_writes(rp * r) {
     }
     i = j + 1;
   }
-  /*  Recreate missing hard-link names from their canonical entries.  */
+  /*  Recreate missing hard-link names, and relink a copy that replaced
+      one, from their canonical entries.  */
   for (i = 0; i < r->mf.count; i++) {
     rp_write * w;
-    xpar_stat_t st;
+    xpar_stat_t st, ct;
     u32 t = r->canon[i];
+    bool relink = false;
     if (r->mf.entry[i].entry_type != XPAR_ENTRY_HARDLINK || t == i) continue;
-    if (xpar_lstat(r->path[i], &st) == 0) continue;
-    if (xpar_lstat(r->path[t], &st) != 0 || !st.is_regular) continue;
+    if (xpar_lstat(r->path[t], &ct) != 0 || !ct.is_regular) continue;
+    if (xpar_lstat(r->path[i], &st) == 0) {
+      if (!st.is_regular || !(st.dev | st.ino) || !(ct.dev | ct.ino)) continue;
+      if (st.dev == ct.dev && st.ino == ct.ino) continue;
+      /*  Only an identical copy may be replaced by the link.  */
+      if (!rp_same_content(r, i, t)) {
+        r->structure_bad++;
+        rp_note(r, "xpar: %.*s: recorded as a hard link to '%.*s' but holds "
+                "different bytes; repair will not discard them\n",
+                (int) r->mf.entry[i].name_len, r->mf.entry[i].name,
+                (int) r->mf.entry[t].name_len, r->mf.entry[t].name);
+        continue;
+      }
+      relink = true;
+    }
     if (r->wr_count == r->wr_cap) {
       r->wr_cap = r->wr_cap ? r->wr_cap * 2 : 16;
       r->wr = (rp_write *) xpar_realloc(r->wr,
@@ -1461,7 +1547,7 @@ static void rp_build_writes(rp * r) {
     w = &r->wr[r->wr_count++];
     xpar_memset(w, 0, sizeof *w);
     /*  Record the absent name; rp_read_old allocates its empty payload.  */
-    w->entry = i;  w->link = 1;
+    w->entry = i;  w->link = 1;  w->relink = relink ? 1 : 0;
   }
 
   /*  A hash failure with no corresponding write is unrepairable.  */
@@ -1640,6 +1726,9 @@ static void rp_apply(rp * r) {
       char * d = xpar_path_dir(r->path[entry]);
       xpar_mkdir_p(d, 0777);
       xpar_free(d);
+      /*  An identical copy is removed first so the link can take its
+          name; rp_build_writes proved the bytes match.  */
+      if (r->wr[i].relink) xpar_remove(r->path[entry]);
       if (xpar_link(r->path[r->canon[entry]], r->path[entry]) == 0) {
         r->writes++;  r->links_made++;
       }
@@ -1873,6 +1962,9 @@ static void rp_find_aliases(rp * r) {
                      eb->extents[k].stream_offset &&
                    ea->extents[k].length == eb->extents[k].length;
           if (!same) {
+            /*  One name in two generations is not two linked names.  */
+            if (ea->name_len == eb->name_len &&
+                !xpar_memcmp(ea->name, eb->name, ea->name_len)) continue;
             rp_note(r, "xpar: '%s' and '%s' share an inode but differ; "
                        "kept separate.\n",
                     r->path[ai], r->path[bi]);
@@ -2242,6 +2334,8 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       xpar_free(stage); xpar_free(bak);
     }
     r->writes++;
+    /*  Count the entries this run actually put right.  */
+    if (hit[i]) r->entries_repaired++;
     /*  Never apply metadata through a symlink.  */
     rp_basic_meta(r, i, out, false);
     xpar_free(out);
@@ -2347,6 +2441,7 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "entries_opaque", r->opaque);
     xpar_json_u64(&r->js, "names_recreated", r->names_made);
     xpar_json_u64(&r->js, "recovery_regenerated", r->rec_regen);
+    xpar_json_u64(&r->js, "index_volumes_recreated", r->index_regen);
     xpar_json_u64(&r->js, "inner_corrected", r->armg_corrected);
     xpar_json_end(&r->js);
     xpar_json_summary(&r->js, status, code);
@@ -2360,18 +2455,32 @@ static void rp_report(rp * r, const char * status, int code) {
                    : "xpar: found %" PRIu64 " overlong entr%s.\n",
               r->overlong, r->overlong == 1 ? "y" : "ies");
     if (r->names_made)
-      rp_note(r, "xpar: recreated %" PRIu64 " missing name%s from the "
-              "manifest.\n", r->names_made, PLURAL(r->names_made));
+      rp_note(r, r->o->dry_run
+                   ? "xpar: would recreate %" PRIu64 " missing name%s from "
+                     "the manifest.\n"
+                   : "xpar: recreated %" PRIu64 " missing name%s from the "
+                     "manifest.\n", r->names_made, PLURAL(r->names_made));
+    if (r->index_regen)
+      rp_note(r, r->o->dry_run
+                   ? "xpar: %" PRIu64 " index volume%s would be recreated "
+                     "from packet replicas\n"
+                   : "xpar: recreated %" PRIu64 " index volume%s from packet "
+                     "replicas\n", r->index_regen, PLURAL(r->index_regen));
     if (r->rec_regen)
-      rp_note(r, "xpar: %" PRIu64 " recovery slice%s regenerated in %" PRIu64
-              " volume%s\n", r->rec_regen, PLURAL(r->rec_regen),
+      rp_note(r, r->o->dry_run
+                   ? "xpar: %" PRIu64 " recovery slice%s would be regenerated "
+                     "in %" PRIu64 " volume%s\n"
+                   : "xpar: %" PRIu64 " recovery slice%s regenerated in %"
+                     PRIu64 " volume%s\n",
+              r->rec_regen, PLURAL(r->rec_regen),
               r->rec_regen_vols, PLURAL(r->rec_regen_vols));
     if (r->armg_corrected)
       rp_note(r, "xpar: the inner code corrected %" PRIu64
               " armoured region%s\n", r->armg_corrected,
               PLURAL(r->armg_corrected));
     if (!r->cell_count && !r->overlong && !r->links_made && !r->opaque &&
-        !r->names_made && !r->rec_regen)
+        !r->names_made && !r->rec_regen && !r->index_regen &&
+        !r->o->chain_member)
       rp_note(r, "xpar: no damage found.\n");
     else if (r->cell_count)
       rp_note(r, "xpar: %" PRIu32 " cell%s damaged, %" PRIu64 " copied, %"
@@ -2934,6 +3043,9 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
     if (armoured && (xpar_vset_inner_corrected(s) ||
                      xpar_vset_archive_stale(s))) {
       if (o->dest == XPAR_DEST_BACKUP) owned_backup_path(arm_path);
+      /*  The rebuilt archive is renamed over this name; a host that locks
+          a mapped file needs the image gone first.  */
+      xpar_vset_release_volume(s, arm_path);
       xpar_garm_write_patched(arm_path, &ap, arm_plain, arm_len, strm_off,
                               g->stream_length, NULL, NULL,
                               g->slice_count, g->slice_size);
@@ -3072,6 +3184,8 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
   if (ok && o->dest == XPAR_DEST_TO) {
     owned_write_tree(o, s, stage, slot);
   } else if (ok && armoured) {
+    /*  As above: release the image before the rebuilt archive replaces it.  */
+    xpar_vset_release_volume(s, arm_path);
     xpar_garm_write_patched(arm_path, &ap, arm_plain, arm_len, strm_off,
                             g->stream_length, stage, slot,
                             g->slice_count, g->slice_size);
@@ -3427,12 +3541,60 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
 static u64 repair_regen_recovery(const xpar_options * o, u64 * volumes) {
   const char * why = NULL;
   u64 done;
-  if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
-  done = xpar_gen_regen_recovery(o, volumes, &why);
+  if (o->dest == XPAR_DEST_TO) return 0;
+  /*  A dry run only counts what a real one would rewrite.  */
+  done = xpar_gen_regen_recovery(o, volumes, &why, o->dry_run);
   if (!done && why && !o->quiet)
     xpar_fprintf(xpar_stderr,
                  "xpar: recovery slices could not be regenerated: %s\n", why);
   return done;
+}
+
+/*  Drop volume mappings so a regenerated volume can be renamed over them;
+    nothing below reads volume-backed memory again.  */
+static void rp_release_vols(rp * r) {
+  u32 i;
+  for (i = 0; i < r->vol_count; i++) xpar_volimg_close(&r->vol[i]);
+  xpar_free((void *) r->rec);  r->rec = NULL;
+  xpar_free(r->rec_present);   r->rec_present = NULL;
+  r->rec_avail = 0;
+}
+
+/*  Put a volume found under another name back where the layout says.  */
+static u64 repair_restore_names(const xpar_options * o, xpar_vset * s) {
+  const char * why = NULL;
+  u64 n = 0;
+  if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
+  if (!xpar_vset_restore_names(s, &n, &why) && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: could not restore a volume's recorded "
+                 "name: %s\n", why ? why : "unknown error");
+  if (n && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: restored %" PRIu64 " volume%s to the "
+                 "name the layout records\n", n, PLURAL(n));
+  return n;
+}
+
+/*  Cut trailing bytes that are not packets off the set's volumes.  */
+static u64 repair_trim_ragged(const xpar_options * o, xpar_vset * s) {
+  const char * why = NULL;
+  u64 n = 0;
+  if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
+  if (!xpar_vset_volumes_ragged(s)) return 0;
+  if (!xpar_vset_trim_ragged(s, &n, &why) && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: could not trim a nonconforming "
+                 "volume: %s\n", why ? why : "unknown error");
+  if (n && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: trimmed %" PRIu64 " nonconforming "
+                 "volume%s back to its last packet\n", n, PLURAL(n));
+  return n;
+}
+
+/*  Recreate index volumes the layout names but disk has lost.  */
+static u64 repair_regen_index(const xpar_options * o) {
+  const char * why = NULL;
+  u64 vols = 0;
+  if (o->dest == XPAR_DEST_TO) return 0;
+  return xpar_gen_regen_index(o, &vols, &why, o->dry_run);
 }
 
 /*  Rewrite stale volumes from intact packet replicas.  */
@@ -3442,8 +3604,9 @@ static void repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
   if (o->dry_run || o->dest == XPAR_DEST_TO) return;
   if (!xpar_vset_volumes_dropped(s)) return;
   if (!xpar_vset_rewrite_dropped(s, &n, &why)) {
-    /*  Recovery regeneration handles missing RCVS packets separately.  */
-    if (!o->quiet && !xpar_vset_recovery_bad(s)) {
+    /*  Recovery and index regeneration handle lost packets separately.  */
+    if (!o->quiet && !xpar_vset_recovery_bad(s) &&
+        !xpar_vset_volumes_ragged(s)) {
       xpar_fprintf(xpar_stderr,
                    "xpar: could not rewrite a stale volume: %s\n",
                    why ? why : "unknown error");
@@ -3468,7 +3631,7 @@ int xpar_op_repair(const xpar_options * o) {
   xpar_plan pl;
   int rc = XPAR_EXIT_OK;
   xpar_vset * owned = NULL;
-  bool walk = o->chain;
+  bool walk = o->chain, partial = false;
 
   /*  Repair unselected ancestry oldest first.  */
   if (!walk && !o->gen_count) {
@@ -3564,6 +3727,8 @@ int xpar_op_repair(const xpar_options * o) {
       owned_chain_stage_remove(&c, order, walked, selected, chain_stage);
     if (o->json)
       xpar_json_summary(&chain_js, xpar_status_word(worst), worst);
+    else if (worst == XPAR_EXIT_OK && !o->quiet)
+      xpar_fputs("xpar: no damage found.\n", xpar_stderr);
     xpar_free(chain_stage);
     xpar_free(order);
     xpar_gchain_free(&c);
@@ -3643,7 +3808,8 @@ int xpar_op_repair(const xpar_options * o) {
       }
       if (!o->quiet && out != XPAR_EXIT_OK)
         xpar_fprintf(xpar_stderr, "xpar: owned-layout repair: unrepairable\n");
-      else if (!o->quiet && !acct.slices_rebuilt && !acct.volumes_rebuilt &&
+      else if (!o->quiet && !o->chain_member && !acct.slices_rebuilt &&
+               !acct.volumes_rebuilt &&
                !acct.volumes_rewritten && !acct.volumes_relengthed &&
                !acct.recovery_regen && !acct.inner_corrected)
         xpar_fprintf(xpar_stderr,
@@ -3671,6 +3837,8 @@ int xpar_op_repair(const xpar_options * o) {
                      acct.recovery_volumes, PLURAL(acct.recovery_volumes));
       return out;
     }
+    repair_restore_names(o, owned);
+    repair_trim_ragged(o, owned);
     repair_rewrite_dropped(o, owned);
     xpar_vset_close(owned);
   }
@@ -3744,15 +3912,20 @@ int xpar_op_repair(const xpar_options * o) {
   rp_close_files(&r);
 
   depth = xpar_erasures_max_depth(&r.er);
+  partial = o->dest == XPAR_DEST_TO || o->dest == XPAR_DEST_BACKUP;
   if (depth > r.rec_avail) {
     rp_note(&r, "xpar: the deepest column has %" PRIu64 " erasures against %"
             PRIu64 " "
                 "recovery slices; %" PRIu64 " short.\n",
             depth, r.rec_avail,
             (depth - r.rec_avail));
-    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-    rp_free(&r);
-    return XPAR_EXIT_UNREPAIRABLE;
+    if (!partial) {
+      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
+      rp_free(&r);
+      return XPAR_EXIT_UNREPAIRABLE;
+    }
+    rp_note(&r, "xpar: writing the entries that can still be "
+            "reproduced\n");
   }
   { bool unclean = false;
     for (i = 0; i < r.mf.count; i++) {
@@ -3763,10 +3936,16 @@ int xpar_op_repair(const xpar_options * o) {
     }
     /*  A missing hard-link name is damage even if all cells verify.  */
     for (i = 0; i < r.mf.count; i++) {
-      xpar_stat_t lst;
+      xpar_stat_t lst, cst;
       if (r.mf.entry[i].entry_type != XPAR_ENTRY_HARDLINK ||
           r.canon[i] == i) continue;
       if (xpar_lstat(r.path[i], &lst) != 0) { r.links_missing++;  break; }
+      /*  A copy standing where the link belongs is damage as well.  */
+      if (xpar_lstat(r.path[r.canon[i]], &cst) == 0 && (lst.dev | lst.ino) &&
+          (cst.dev | cst.ino) &&
+          (lst.dev != cst.dev || lst.ino != cst.ino)) {
+        r.links_missing++;  break;
+      }
     }
     /*  Hash failures may be repairable even when no cell is marked.  */
     for (i = 0; i < r.mf.count; i++)
@@ -3775,8 +3954,10 @@ int xpar_op_repair(const xpar_options * o) {
     if (!r.cell_count && !unclean && !r.links_missing &&
         !r.structure_bad) {
       bool regen;
+      rp_release_vols(&r);
+      r.index_regen = repair_regen_index(o);
       r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
-      regen = r.rec_regen != 0;
+      regen = r.rec_regen != 0 || r.index_regen != 0;
       rp_report(&r, "clean", XPAR_EXIT_OK);
       rp_free(&r);
       if (regen && o->exit_on_change) return XPAR_EXIT_REPAIRABLE;
@@ -3803,17 +3984,34 @@ int xpar_op_repair(const xpar_options * o) {
     if (chunk < 64) chunk = 64;
   }
   rp_solve_copies(&r);
-  if (!rp_solve_decode(&r, chunk)) {
+  if (!rp_solve_decode(&r, chunk, partial)) {
     rp_note(&r, "xpar: decoded data does not match the recorded cell tags\n");
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
   }
-  if (!rp_slice_gate(&r)) {
-    rp_note(&r, "xpar: a reconstructed slice failed its strong tag\n");
-    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-    rp_free(&r);
-    return XPAR_EXIT_UNREPAIRABLE;
+  { bool widened = false;
+    bool gated = rp_slice_gate(&r, &widened);
+    if (gated && widened) {
+      /*  A CRC-invisible forgery only shows up here; decode those cells.  */
+      depth = xpar_erasures_max_depth(&r.er);
+      if (depth > r.rec_avail) {
+        rp_note(&r, "xpar: the deepest column has %" PRIu64 " erasures against %"
+                PRIu64 " recovery slices; %" PRIu64 " short.\n",
+                depth, r.rec_avail, (depth - r.rec_avail));
+        gated = false;
+      } else if (!rp_solve_decode(&r, chunk, partial)) {
+        rp_note(&r,
+                "xpar: decoded data does not match the recorded cell tags\n");
+        gated = false;
+      } else gated = rp_slice_gate(&r, NULL);
+    }
+    if (!gated) {
+      rp_note(&r, "xpar: a reconstructed slice failed its strong tag\n");
+      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
+      rp_free(&r);
+      return XPAR_EXIT_UNREPAIRABLE;
+    }
   }
   if (o->paranoid && !rp_paranoid(&r, chunk)) {
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
@@ -3825,7 +4023,8 @@ int xpar_op_repair(const xpar_options * o) {
   rp_build_writes(&r);
   /*  --to restores structural damage from the manifest.  */
   if (o->dest != XPAR_DEST_TO) r.opaque += r.structure_bad;
-  if (r.opaque) {
+  /*  A separate destination still reproduces everything else.  */
+  if (r.opaque && !partial) {
     rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
     rp_free(&r);
     return XPAR_EXIT_UNREPAIRABLE;
@@ -3835,10 +4034,11 @@ int xpar_op_repair(const xpar_options * o) {
       rp_write_tree(&r, o->dest == XPAR_DEST_TO ? o->to_dir : r.dir,
                     o->dest == XPAR_DEST_BACKUP);
     r.changed = r.writes > 0;
-    if (r.unrecovered) {
+    if (r.unrecovered || r.opaque) {
+      u64 lost = r.unrecovered ? r.unrecovered : r.opaque;
       rp_note(&r, "xpar: %" PRIu64 " entr%s unrecoverable; repaired the "
               "rest of the tree\n",
-              r.unrecovered, r.unrecovered == 1 ? "y is" : "ies are");
+              lost, lost == 1 ? "y is" : "ies are");
       rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
       rp_free(&r);
       return XPAR_EXIT_UNREPAIRABLE;
@@ -3856,11 +4056,18 @@ int xpar_op_repair(const xpar_options * o) {
             " bytes would "
                 "be made.\n", r.wr_count,
             total);
+    /*  The names a real run would recreate, and the recovery it would
+        re-encode, are actions the dry run must plan as well.  */
+    r.names_made  = rp_missing_names(&r);
+    r.index_regen = repair_regen_index(o);
+    r.rec_regen   = repair_regen_recovery(o, &r.rec_regen_vols);
     rp_report(&r, "dry-run", XPAR_EXIT_OK);
+    r.changed = r.wr_count || r.names_made || r.rec_regen ||
+                r.index_regen || r.links_missing;
     rp_free(&r);
     /*  Preserve --exit-on-change in dry runs.  */
-    return o->exit_on_change && r.wr_count ? XPAR_EXIT_REPAIRABLE
-                                           : XPAR_EXIT_OK;
+    return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE
+                                          : XPAR_EXIT_OK;
   }
 
   /*  Nothing may change protected data before the journal is durable.  */
@@ -3896,9 +4103,12 @@ int xpar_op_repair(const xpar_options * o) {
     /*  Make journal removal durable.  */
     xpar_fsync_dir(r.journal);
   }
-  if (rc == XPAR_EXIT_OK)
+  if (rc == XPAR_EXIT_OK) {
+    rp_release_vols(&r);
+    r.index_regen = repair_regen_index(o);
     r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
-  r.changed = r.writes > 0 || r.rec_regen > 0;
+  }
+  r.changed = r.writes > 0 || r.rec_regen > 0 || r.index_regen > 0;
 
   rp_report(&r, rc == XPAR_EXIT_OK ? "repaired" : "unrepairable", rc);
   rp_free(&r);

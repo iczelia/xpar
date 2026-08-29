@@ -162,14 +162,19 @@ xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
     xpar_random_bytes(rnd, sizeof rnd);
     xpar_hex(hex, rnd, sizeof rnd);
     xpar_asprintf(&path, "%s%s.tmp", trimmed, hex);
-    f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL);
+    f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL |
+                        XPAR_O_PRIVATE);
     if (f) {
       (void) xpar_set_mode(path, nofollow, 0600);
       *out = path;
       xpar_free(trimmed);
       return f;
     }
-    xpar_free(path);
+    /*  Only a name collision is worth another random name.  */
+    { xpar_stat_t st;
+      bool collided = xpar_lstat(path, &st) == 0;
+      xpar_free(path);
+      if (!collided) break; }
   }
   xpar_free(trimmed);
   return NULL;
@@ -185,7 +190,11 @@ char * xpar_stage_dir(const char * stem) {
     xpar_hex(hex, rnd, sizeof rnd);
     xpar_asprintf(&path, "%s%s", trimmed, hex);
     if (xpar_mkdir(path, 0700) == 0) { xpar_free(trimmed);  return path; }
-    xpar_free(path);
+    /*  Only a name collision is worth another random name.  */
+    { xpar_stat_t st;
+      bool collided = xpar_lstat(path, &st) == 0;
+      xpar_free(path);
+      if (!collided) break; }
   }
   xpar_free(trimmed);
   return NULL;

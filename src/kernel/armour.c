@@ -463,6 +463,11 @@ u64 xpar_armour_burst(const xpar_armour * a) {
 
 u64 xpar_armour_batch(const xpar_armour * a) { return a->vb; }
 
+u64 xpar_armour_lane_frames(const xpar_armour * a) {
+  if (!a->vstep || !a->lane) return 1;
+  return xpar_ceil_div((u64) a->vstep, (u64) a->lane);
+}
+
 void xpar_armour_generator(const xpar_armour * a, u32 * g) {
   for (u32 i = 0; i <= a->t2; i++) g[i] = a->gpoly[i];
 }
@@ -545,6 +550,11 @@ static void encode_run(const xpar_armour * a, u8 * frames, u64 count) {
 
 void xpar_armour_encode_frame(const xpar_armour * a, u8 * frame) {
   encode_batch(a, frame, xpar_armour_frame_disk(a), 1);
+}
+
+void xpar_armour_encode_frames(const xpar_armour * a, u8 * frames,
+                               u64 count) {
+  encode_run(a, frames, count);
 }
 
 void xpar_armour_encode(const xpar_armour * a, u8 * out,

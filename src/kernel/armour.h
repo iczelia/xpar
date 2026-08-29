@@ -67,12 +67,16 @@ u64 xpar_armour_burst(const xpar_armour * a);
 /*  Preferred frame batch size for inner-code kernels.  */
 u64 xpar_armour_batch(const xpar_armour * a);
 
+/*  Frames needed to fill one vector.  */
+u64 xpar_armour_lane_frames(const xpar_armour * a);
+
 /*  Return g[i], the coefficient of x^i for 0 <= i <= 2t.  */
 void xpar_armour_generator(const xpar_armour * a, u32 * g);
 
 /*  Encode one prepared frame, or copy and encode a whole region.  */
 
 void xpar_armour_encode_frame(const xpar_armour * a, u8 * frame);
+void xpar_armour_encode_frames(const xpar_armour * a, u8 * frames, u64 count);
 /*  Encode a region in frame batches.  */
 void xpar_armour_encode(const xpar_armour * a, u8 * out,
                         const u8 * plain, u64 plain_length);
