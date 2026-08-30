@@ -289,12 +289,12 @@ static xpar_file * plain_stage_open(const char * archive, char ** path) {
                                             : xpar_tmpdir();
       if (!dir || !*dir) continue;
       stem = xpar_path_join(dir, "xpar.plain-");
-      f = xpar_stage_open(stem, XPAR_O_RDWR, 0, path);
+      f = xpar_stage_open(stem, "VFY", XPAR_O_RDWR, 0, path);
       xpar_free(stem);
       if (f) return f)
   /*  Fall back to staging beside the archive.  */
   xpar_asprintf(&stem, "%s.plain-", archive);
-  f = xpar_stage_open(stem, XPAR_O_RDWR, 0, path);
+  f = xpar_stage_open(stem, "VFY", XPAR_O_RDWR, 0, path);
   xpar_free(stem);
   if (!f)
     FATAL_IO("Cannot create a secure plaintext stage for '%s': %s.",
@@ -1584,7 +1584,8 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     }
   }
   if (ok) {
-    f = xpar_stage_open(v->path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
+    f = xpar_stage_open(v->path, "VFY",
+                        XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
     if (!f) {
       first_reason(reason, "staging failed");
@@ -1666,6 +1667,25 @@ bool xpar_vset_trim_ragged(xpar_vset * s, u64 * volumes, u64 * failures,
 
 u64 xpar_vset_volumes_ragged(const xpar_vset * s) { return s->ragged_vols; }
 
+u32 xpar_vset_ragged_ranges(const xpar_vset * s, xpar_ragged_range * out,
+                            u32 cap) {
+  u32 i, n = 0;
+  for (i = 0; i < s->img_count; i++) {
+    const xpar_vimg * v = &s->img[i];
+    if (!v->ragged || !v->pkt_end || v->pkt_end >= v->size || !v->path)
+      continue;
+    if (v->size - v->pkt_end >= 8 &&
+        !xpar_memcmp(v->data + v->pkt_end, XPAR_PKT_MAGIC, 8)) continue;
+    if (out && n < cap) {
+      out[n].path = v->path;
+      out[n].offset = v->pkt_end;
+      out[n].length = v->size - v->pkt_end;
+    }
+    n++;
+  }
+  return n;
+}
+
 u64 xpar_vset_volumes_stale(const xpar_vset * s) {
   u64 n = 0;
   For(u32, i, s->img_count,
@@ -1736,7 +1756,8 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
       first_reason(reason, "the volume found has no readable length");
       failed++;  xpar_close(in);  xpar_free(want);  continue;
     }
-    out = xpar_stage_open(want, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
+    out = xpar_stage_open(want, "VFY",
+                          XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                           1, &stage);
     if (!out) {
       first_reason(reason, "staging failed");
@@ -1817,7 +1838,8 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, u64 * rewritten,
       if (vok) sized++; else failed++;
       continue;
     }
-    f = xpar_stage_open(path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
+    f = xpar_stage_open(path, "VFY",
+                        XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
     if (!f) {
       first_reason(reason, "staging failed");
@@ -3410,7 +3432,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   { u64 share = o->memory ? o->memory / 4
                           : (u64) VERIFY_BATCH * VERIFY_IOBUF;
     if (share < VERIFY_IOBUF) {
-      s->io_buf   = (sz) MAX(share, (u64) 64 << 10);
+      s->io_buf   = (sz) MAX(share, (u64) 1);
       s->io_batch = 1;
     } else {
       s->io_buf   = VERIFY_IOBUF;
@@ -3421,6 +3443,10 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {
     if (s->geom.slice_size > (u64) (sz) -1)
       FATAL_FORMAT("The slice size exceeds this host's address space.");
+    if (o->memory && s->geom.slice_size > o->memory)
+      FATAL_CODE(XPAR_EXIT_NOPLAN,
+                 "Verification needs one %" PRIu64
+                 "-byte slice buffer; raise -m.", s->geom.slice_size);
     buf_size = MAX(buf_size, (sz) s->geom.slice_size);
   }
   s->io_span = buf_size;

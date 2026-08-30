@@ -62,6 +62,14 @@ bool xpar_vset_trim_ragged(xpar_vset *, u64 * volumes, u64 * failures,
                            const char ** reason);
 u64 xpar_vset_volumes_ragged(const xpar_vset *);
 
+typedef struct {
+  const char * path;
+  u64 offset, length;
+} xpar_ragged_range;
+
+/*  Enumerate tails trim_ragged would remove; returns the total count.  */
+u32 xpar_vset_ragged_ranges(const xpar_vset *, xpar_ragged_range *, u32 cap);
+
 /*  Put an adopted packet-bearing volume back under its recorded name.  */
 bool xpar_vset_restore_names(xpar_vset *, u64 * volumes, u64 * failures,
                              const char ** reason);

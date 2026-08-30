@@ -16,6 +16,8 @@
 
 #include "chunk.h"
 
+#include "pathname.h"
+
 #include "blake3.h"
 #include "container.h"
 #include "crc32c.h"
@@ -254,7 +256,11 @@ bool xpar_chunk_cache_write(const char * path,
   xpar_wr32(h + 48, payload_crc);
   xpar_wr32(h + 52, xpar_crc32c(0, h, 52));
   for (suffix = 0; suffix < 1000; suffix++) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    tmp = xpar_dos_numbered(path, "CHK", "TMP", suffix);
+#else
     xpar_asprintf(&tmp, "%s.tmp-%03" PRIu32, path, suffix);
+#endif
     f = xpar_open(tmp, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL);
     if (f) break;
     xpar_free(tmp);  tmp = NULL;

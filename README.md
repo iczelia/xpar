@@ -153,7 +153,13 @@ machine powers off mid repair, or the tool crashes, `xpar undo` replays stale
 journal files.  The journal is created with mode 0600 and never follows a
 symlink planted under its name.  `repair` issues a write only after the
 corrected result matches the stored BLAKE3 checksum, and then re-verifies the
-finished file.
+finished file. A journal that is unreadable or fails its footer CRC is retained:
+the program cannot safely distinguish a torn pre-write journal from a complete
+journal damaged after writes began. Only `--replace-journal` discards it.
+The journal reverses protected-tree byte and length writes, objects repair
+created, hard-link topology it replaced, and non-packet volume tails it
+trimmed. Rebuilding derived redundancy and restoring filesystem metadata are
+set housekeeping, not rollback records.
 
 `repair --in-place` also puts back what is missing rather than only what is
 damaged: empty files, directories and symbolic links are recreated from the
@@ -424,7 +430,9 @@ xpar: The authentication key is wrong for this set.
   report that unauthenticated set clean.  Nothing in an archive can force a
   verifier to ask for a key it never passes.  `--auth-only`, which drops the
   public CRCs and whole-file hashes, works at any set size.
-- `--memory`: sets the maximum working set size for the planner.
+- `--memory`: sets the maximum working set size for the planner and the
+  explicitly buffered readers. If even their smallest useful buffer does not
+  fit, the operation exits 7 instead of silently exceeding the ceiling.
 ```
 % xpar create -m 1M -r 20% -o tiny data.bin
 xpar: No plan fits: raise -m to 2.0 MiB; no -b fits this -m; --codec=matrix does not fit either at -m 1.0 MiB.

@@ -151,9 +151,38 @@ char * xpar_stage_stem(const char * stem, sz suffix) {
   return out;
 }
 
-xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
-                            char ** out) {
+xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
+                            int flags, int nofollow, char ** out) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  char * dir = xpar_path_dir(stem);
+  sz tl = xpar_strlen(dos_tag);
+  FATAL_UNLESS("Internal DOS staging tag '%s' exceeds four bytes.", tl <= 4,
+               dos_tag);
+  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+    u8 rnd[4];  char hex[9], leaf[13];
+    char * path;
+    xpar_file * f;
+    xpar_random_bytes(rnd, sizeof rnd);  xpar_hex(hex, rnd, sizeof rnd);
+    xpar_memcpy(leaf, dos_tag, tl);
+    xpar_memcpy(leaf + tl, hex, 8 - tl);
+    xpar_memcpy(leaf + 8, ".TMP", 5);
+    path = xpar_path_join(dir, leaf);
+    f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL |
+                        XPAR_O_PRIVATE);
+    if (f) {
+      (void) xpar_set_mode(path, nofollow, 0600);
+      *out = path;  xpar_free(dir);  return f;
+    }
+    { xpar_stat_t st;
+      bool collided = xpar_lstat(path, &st) == 0;
+      xpar_free(path);
+      if (!collided) break; }
+  }
+  xpar_free(dir);
+  return NULL;
+#else
   char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM + 4);
+  (void) dos_tag;
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
@@ -178,10 +207,33 @@ xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
   }
   xpar_free(trimmed);
   return NULL;
+#endif
 }
 
-char * xpar_stage_dir(const char * stem) {
+char * xpar_stage_dir(const char * stem, const char * dos_tag) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  char * dir = xpar_path_dir(stem);
+  sz tl = xpar_strlen(dos_tag);
+  FATAL_UNLESS("Internal DOS directory tag '%s' exceeds four bytes.", tl <= 4,
+               dos_tag);
+  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+    u8 rnd[4];  char hex[9], leaf[9];
+    char * path;
+    xpar_random_bytes(rnd, sizeof rnd);  xpar_hex(hex, rnd, sizeof rnd);
+    xpar_memcpy(leaf, dos_tag, tl);
+    xpar_memcpy(leaf + tl, hex, 8 - tl);  leaf[8] = 0;
+    path = xpar_path_join(dir, leaf);
+    if (xpar_mkdir(path, 0700) == 0) { xpar_free(dir);  return path; }
+    { xpar_stat_t st;
+      bool collided = xpar_lstat(path, &st) == 0;
+      xpar_free(path);
+      if (!collided) break; }
+  }
+  xpar_free(dir);
+  return NULL;
+#else
   char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM);
+  (void) dos_tag;
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
@@ -198,6 +250,23 @@ char * xpar_stage_dir(const char * stem) {
   }
   xpar_free(trimmed);
   return NULL;
+#endif
+}
+
+char * xpar_dos_numbered(const char * path, const char * tag,
+                         const char * ext, u32 number) {
+  char * dir = xpar_path_dir(path), * out;
+  char leaf[13];
+  sz tl = xpar_strlen(tag), el = xpar_strlen(ext);
+  FATAL_UNLESS("Internal DOS numbered name is not 8.3.",
+               tl <= 5 && tl + 3 <= 8 && el <= 3 && number < 1000);
+  if (el)
+    xpar_snprintf(leaf, sizeof leaf, "%s%03" PRIu32 ".%s", tag, number, ext);
+  else
+    xpar_snprintf(leaf, sizeof leaf, "%s%03" PRIu32, tag, number);
+  out = xpar_path_join(dir, leaf);
+  xpar_free(dir);
+  return out;
 }
 
 int xpar_keep_aside(const char * path, const char * backup) {

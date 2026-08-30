@@ -413,7 +413,8 @@ static void rs_open(recstore * rs, u64 count, u64 z, u64 budget,
   {
     char * stem;
     xpar_asprintf(&stem, "%s.xpar-tmp-", base);
-    rs->spill = xpar_stage_open(stem, XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
+    rs->spill = xpar_stage_open(stem, "XRS",
+                                XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
                                 &rs->path);
     xpar_free(stem);
   }
@@ -899,11 +900,16 @@ static void build_walk(const xpar_options * o, xpar_walk_opts * w, u64 z) {
 static void stage_chunk_cache(ctx * c, const xpar_walk_opts * w) {
   u32 i;
   if (!c->chunk_cache.slot) return;
-  xpar_asprintf(&c->chunk_cache_path, "%s.xparidx", c->base);
+  c->chunk_cache_path = xpar_vname_cache(c->base);
   for (i = 0; i < 1000; i++) {
     xpar_stat_t st;
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    c->chunk_cache_stage = xpar_dos_numbered(c->chunk_cache_path, "CCA",
+                                              "TMP", i);
+#else
     xpar_asprintf(&c->chunk_cache_stage, "%s.xpar-cache-%03" PRIu32,
                   c->chunk_cache_path, i);
+#endif
     if (xpar_lstat(c->chunk_cache_stage, &st) != 0) break;
     xpar_free(c->chunk_cache_stage);  c->chunk_cache_stage = NULL;
   }
@@ -994,7 +1000,7 @@ static void geometry_refused(const xpar_options * o, const xpar_geom_req * gr,
     a stale temporary rather than a truncated set.  */
 static xpar_file * create_stage_open(const char * dir, char ** path) {
   char * stem = xpar_path_join(dir, ".xpar-stdin-");
-  xpar_file * f = xpar_stage_open(stem, XPAR_O_WRONLY, 0, path);
+  xpar_file * f = xpar_stage_open(stem, "XSI", XPAR_O_WRONLY, 0, path);
   xpar_free(stem);
   if (!f)
     FATAL_IO("Cannot create a secure pipe staging file in '%s': %s.", dir,
@@ -1033,7 +1039,7 @@ static void stage_sweep(void) {
 static char * create_output_stage(const char * base) {
   char * parent = xpar_path_dir(base);
   char * stem = xpar_path_join(parent, ".xpar-create-");
-  char * path = xpar_stage_dir(stem);
+  char * path = xpar_stage_dir(stem, "XCR");
   xpar_free(parent);  xpar_free(stem);
   if (!path)
     FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
@@ -1091,7 +1097,13 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
       }
   }
   for (i = 0; i < total; i++) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    { char leaf[13];
+      xpar_snprintf(leaf, sizeof leaf, "B%03" PRIu32 ".BAK", i);
+      backup[i] = xpar_path_join(stage_dir, leaf); }
+#else
     xpar_asprintf(&backup[i], "%s/.backup-%" PRIu32, stage_dir, i);
+#endif
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) {
@@ -1254,7 +1266,11 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
     had = true;
   }
   for (i = 0; i < 1000; i++) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    local = xpar_dos_numbered(final, "CIN", "TMP", i);
+#else
     xpar_asprintf(&local, "%s.xpar-input-%03" PRIu32, final, i);
+#endif
     if (xpar_lstat(local, &st) != 0 &&
         (xpar_rename(stage, local) == 0 || create_copy_file(stage, local)))
       break;
@@ -1263,7 +1279,11 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
   if (!local) FATAL_IO("Cannot stage pipe input beside '%s'.", final);
   if (had) {
     for (i = 0; i < 1000; i++) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+      backup = xpar_dos_numbered(final, "CBA", "BAK", i);
+#else
       xpar_asprintf(&backup, "%s.xpar-old-%03" PRIu32, final, i);
+#endif
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }
@@ -1818,7 +1838,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   names[0] = xpar_vname_index(c.base, 0);
   for (i = 0; i < nvol; i++)
     names[i + 1] = xpar_vname_recovery(c.base, 0, span[i].first,
-                                       span[i].count, wf, wc);
+                                       span[i].count, wf, wc, i);
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     int wd = MAX(xpar_digits10(data_n ? data_n - 1 : 0), 2);
     for (i = 0; i < data_n; i++)
@@ -1911,7 +1931,11 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     for (i = 0; i < name_count; i++)
       FATAL_UNLESS("The pipe destination collides with set output '%s'.",
                    xpar_strcmp(ready->final_path, names[i]) != 0, names[i]);
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    pipe_stage = xpar_path_join(output_stage, "STDIN.DAT");
+#else
     pipe_stage = xpar_path_join(output_stage, ".stdin-data");
+#endif
     create_stage_input(ready, pipe_stage, &c.m);
   }
 

@@ -28,6 +28,10 @@
 #define XPAR_UNDO_HDR      64u
 #define XPAR_UNDO_REC      40u
 #define XPAR_UNDO_FOOT     24u
-#define XPAR_UNDO_CREATED  1u        /*  rflags bit 0.  */
+#define XPAR_UNDO_CREATED  1u        /*  Remove a name created by repair.  */
+#define XPAR_UNDO_REPLACED 2u        /*  Recreate an independent file.  */
+#define XPAR_UNDO_DIRECTORY 4u       /*  CREATED names a directory.  */
+#define XPAR_UNDO_FLAGS                                                    \
+  (XPAR_UNDO_CREATED | XPAR_UNDO_REPLACED | XPAR_UNDO_DIRECTORY)
 
 #endif

@@ -59,10 +59,14 @@ char * xpar_path_vol(const char * dir, const char * name);
 /*  Maximum component length used by staging helpers.  */
 #define XPAR_COMPONENT_MAX 255
 
-xpar_file * xpar_stage_open(const char * stem, int flags, int nofollow,
-                            char ** out);
+xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
+                            int flags, int nofollow, char ** out);
 
-char * xpar_stage_dir(const char * stem);
+char * xpar_stage_dir(const char * stem, const char * dos_tag);
+
+/*  A caller-designed numbered 8.3 name beside PATH.  */
+char * xpar_dos_numbered(const char * path, const char * tag,
+                         const char * ext, u32 number);
 
 /*  Trim STEM's final component to leave room for a SUFFIX-byte tail.  */
 char * xpar_stage_stem(const char * stem, sz suffix);

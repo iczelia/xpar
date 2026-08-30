@@ -509,6 +509,90 @@ if test -e tree/a.bin; then bad "undo kept a repair-created file"
 else ok; fi
 cd ..
 
+# Replaying a CREATED record is idempotent after an interrupted earlier undo.
+jrt created-retry
+rm -f tree/a.bin
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+rm -f tree/a.bin
+run 0 "$XPAR" undo s.xpa
+if test -e tree/a.bin; then bad "retry recreated a removed repair output"
+else ok; fi
+if test -e s.xparundo; then bad "an idempotently replayed journal was kept"
+else ok; fi
+cd ..
+
+# A complete journal whose footer is corrupt may already describe writes.
+# It is evidence, not a disposable pre-write temporary.
+jrt corrupt-journal
+damage tree/a.bin "rand=4096,512"
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same tree/a.bin keep/a.bin
+jsize=`nbytes < s.xparundo`
+damage s.xparundo "flip=`expr $jsize - 8`,1"
+run 3 "$XPAR" undo s.xpa
+grep -q 'incomplete or corrupt' "$log" ||
+  bad "the corrupt complete journal was not diagnosed"
+exists s.xparundo
+same tree/a.bin keep/a.bin
+damage tree/a.bin "rand=8192,64"
+run 4 "$XPAR" repair --in-place s.xpa
+exists s.xparundo
+cd ..
+
+# Empty objects carry no byte writes, but they are still repair mutations.
+mkdir objects && cd objects
+mkdir -p tree/empty-dir
+mkfile tree/data.bin 65536
+: > tree/empty.bin
+have_symlink=no
+if symlinks_work empty.bin tree/empty-link; then have_symlink=yes; fi
+run 0 "$XPAR" create -R -r 30% -s 4K -o s tree
+rm -f tree/empty.bin tree/empty-link
+rmdir tree/empty-dir
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+exists tree/empty.bin
+exists tree/empty-dir
+if test "$have_symlink" = yes; then
+  if test -L tree/empty-link; then ok; else bad "repair did not restore symlink"; fi
+fi
+run 0 "$XPAR" undo s.xpa
+if test -e tree/empty.bin || test -e tree/empty-dir; then
+  bad "undo left a manifest object created by repair"
+else ok; fi
+if test "$have_symlink" = yes; then
+  if test -e tree/empty-link || test -L tree/empty-link; then
+    bad "undo left a symlink created by repair"
+  else ok; fi
+fi
+cd ..
+
+# Relinking an identical copy discards an inode; undo materialises that copy
+# again instead of merely restoring its bytes through the shared inode.
+mkdir hardlink && cd hardlink
+mkdir tree
+mkfile tree/a.bin 131072
+if ln tree/a.bin tree/b.bin 2> /dev/null; then
+  run 0 "$XPAR" create -R -r 30% -s 4K -o s tree
+  rm tree/b.bin && cp tree/a.bin tree/b.bin
+  if test "`ls -di tree/a.bin | awk '{print $1}'`" = \
+          "`ls -di tree/b.bin | awk '{print $1}'`"; then
+    bad "the damaged pair did not start independent"
+  else ok; fi
+  run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+  equal "repair restored the hard link" \
+        "`ls -di tree/a.bin | awk '{print $1}'`" \
+        "`ls -di tree/b.bin | awk '{print $1}'`"
+  run 0 "$XPAR" undo s.xpa
+  if test "`ls -di tree/a.bin | awk '{print $1}'`" = \
+          "`ls -di tree/b.bin | awk '{print $1}'`"; then
+    bad "undo left the formerly independent files linked"
+  else ok; fi
+  same tree/a.bin tree/b.bin
+else
+  note "this filesystem has no hard links; skipped journalled relinking"
+fi
+cd ..
+
 # A failed undo keeps the journal for retry.
 if perms_bite .; then
   jrt held
@@ -1193,6 +1277,13 @@ if modes_work .; then
 else
   note "file modes unsupported; permission checks skipped"
 fi
+#  Collision policy depends on existence, never successful parsing.  Thus an
+#  unreadable recovery artifact cannot be silently replaced either.
+chmod 000 set.xparundo 2> /dev/null
+damage p.bin rand=8192,64
+run 4 "$XPAR" repair --in-place set.xpa
+chmod 600 set.xparundo 2> /dev/null
+exists set.xparundo
 cd ..
 
 step "an in-place repair restores the names and metadata it recreates"
@@ -1383,6 +1474,7 @@ run 0 "$XPAR" create --layout=split -s 4096 -r 3 -o s d.bin
 mkdir -p keep && cp d.bin keep/d.bin
 vol=`ls s.v*.xpa | tail -1`
 printf 'ragged-tail' >> "$vol"
+cp "$vol" ragged.keep
 run 1 "$XPAR" verify s.xpa
 "$XPAR" verify --json s.xpa > v.json 2> "$log"
 equal "volumes the layout calls nonconforming" \
@@ -1390,11 +1482,15 @@ equal "volumes the layout calls nonconforming" \
 #  A plan carries the keys of a result, so the two can be diffed.
 "$XPAR" repair --dry-run --json s.xpa > p.json 2> "$log"
 equal "the plan counts the trim" "`json_num p.json volumes_trimmed repair`" 1
-"$XPAR" repair --json s.xpa > r.json 2> "$log"
+"$XPAR" repair --keep-journal --json s.xpa > r.json 2> "$log"
 equal "the run counts the trim" "`json_num r.json volumes_trimmed repair`" 1
 equal "repair verdict" "`json_str r.json status summary`" clean
+exists s.xparundo
 run 0 "$XPAR" verify s.xpa
 same d.bin keep/d.bin
+run 0 "$XPAR" undo s.xpa
+same "$vol" ragged.keep
+run 1 "$XPAR" verify s.xpa
 cdto ..
 
 step "repair --backup converges after a crash between its two renames"
@@ -1471,5 +1567,18 @@ else
   if test -s s.xparundo; then bad "a spent journal was left live"; else ok; fi
   cdto ..
 fi
+
+step "explicit memory ceilings refuse readers whose minimum buffer will not fit"
+
+mkdir -p membound && cdto membound
+mkfile d.bin 300000 100
+run 0 "$XPAR" create -s 4096 -r 3 -o side d.bin
+run 7 "$XPAR" scrub --deep -m 1 side.xpa
+grep -q 'raise -m' "$log" || bad "deep scrub did not explain its memory floor"
+run 0 "$XPAR" create --layout=split -s 4096 -r 3 -o owned d.bin
+run 7 "$XPAR" verify -m 1 owned.xpa
+grep -q 'slice buffer' "$log" ||
+  bad "owned verification did not explain its memory floor"
+cdto ..
 
 summary

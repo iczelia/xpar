@@ -113,7 +113,7 @@ cmp "$work/BIG.BIN" "$root/BIG.orig" \
   || fail "DOS repair output differs from the original"
 
 #  Verify the DOS-generated set on the host.
-( cd "$work" && "$native_xpar" verify --strong DOSMADE.xpa ) \
+( cd "$work" && "$native_xpar" verify --strong DOSM.XPA ) \
   || fail "host cannot verify the DOS-generated set"
 echo "$prog: the set MS-DOS wrote verifies on this host"
 

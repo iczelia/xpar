@@ -634,7 +634,11 @@ static char * ex_stage_name(const char * path) {
   u32 i;
   for (i = 0; i < 1000; i++) {
     char * p = NULL;
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    p = xpar_dos_numbered(path, "EXT", "TMP", i);
+#else
     xpar_asprintf(&p, "%s.xpar-stage-%03" PRIu32, stem, i);
+#endif
     if (xpar_lstat(p, &st) != 0) { xpar_free(stem);  return p; }
     xpar_free(p);
   }
@@ -662,7 +666,11 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
   }
   if (had) {
     for (i = 0; i < 1000; i++) {
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+      backup = xpar_dos_numbered(path, "EXB", "BAK", i);
+#else
       xpar_asprintf(&backup, "%s.xpar-old-%03" PRIu32, path, i);
+#endif
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }

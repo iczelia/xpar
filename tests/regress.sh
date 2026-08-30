@@ -2781,6 +2781,27 @@ else
   mkdir keep && cp t/a.bin t/b.bin t/c.bin keep/
   cdto ..
 
+  #  A damaged journal is still evidence of an interrupted operation.  It
+  #  must win discovery over the misleading missing-set fallback and remain
+  #  available for operator recovery.
+  k=1
+  while test "$k" -le 30; do
+    rm -rf corrupt && cp -R tmpl corrupt && cdto corrupt
+    crash_at "$k" "$XPAR" consolidate --replace s.xpa
+    if test -f s.xparmaint; then break; fi
+    cdto ..
+    k=`expr $k + 1`
+  done
+  equal "a rename fault reached the journalled window" \
+        "`test -f s.xparmaint && echo yes`" yes
+  equal "the injected consolidate stopped" "$status" 97
+  damage s.xparmaint flip=0,1
+  run 2 "$XPAR" repair --in-place s.xpa
+  grep -q 'cannot validate pending maintenance journal' "$log" ||
+    bad "repair did not identify the corrupt maintenance journal"
+  exists s.xparmaint
+  cdto ..
+
   #  Scan crash points inside the missing-set window.
   hits=0
   k=1

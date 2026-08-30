@@ -60,8 +60,6 @@ u64 xpar_gen_regen_index(const xpar_options *, u64 * volumes,
                          const char ** reason, bool dry);
 /*  Remove or empty a spent undo journal; false when it still replays.  */
 bool xpar_journal_drop(const char * path);
-/*  Whether the journal at `path` would replay (or is not a journal).  */
-bool xpar_journal_live(const char * path);
 /*  Recover a maintenance journal.  */
 int xpar_maint_recover(const char * journal, bool quiet);
 /*  Find a journal for ARG and return its operation through OP.  */

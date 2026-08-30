@@ -76,15 +76,18 @@ same t/a.bin dmg.bin
 run 0 "$XPAR" repair --in-place s.xpa
 healed
 
-#  A torn journal blocks neither undo nor the next repair.
+#  A torn journal cannot prove whether protected writes began.  Keep it and
+#  require the operator to replace it explicitly.
 hurt
 run 97 inject XPAR_FI_CRASH_WRITE=1 -- "$XPAR" repair --in-place s.xpa
 same t/a.bin dmg.bin
-run 0 "$XPAR" undo s.xpa
-grep -q 'nothing to undo' "$log" || bad "a torn journal was not recognised"
-hurt
-run 97 inject XPAR_FI_CRASH_WRITE=1 -- "$XPAR" repair --in-place s.xpa
-run 0 "$XPAR" repair --in-place s.xpa
+run 3 "$XPAR" undo s.xpa
+grep -q 'not an xpar repair journal\|incomplete or corrupt' "$log" ||
+  bad "a torn journal was not reported"
+exists s.xparundo
+run 4 "$XPAR" repair --in-place s.xpa
+exists s.xparundo
+run 0 "$XPAR" repair --in-place --replace-journal s.xpa
 healed
 
 #  An undeletable spent journal must not replay or block repair.

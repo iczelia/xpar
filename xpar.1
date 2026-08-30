@@ -520,6 +520,10 @@ Keep damaged originals, or re-read and re-verify every write.
 Keep the journal after success, or disable it. These exclude each other.
 The journal is created with mode 0600 and is never written through a
 symbolic link planted under its name.
+It records protected-tree byte and length writes, objects repair creates,
+hard-link topology it replaces, and non-packet volume tails it trims.
+Regenerated redundancy and restored filesystem metadata are not rollback
+records.
 .TP
 .B "repair \-\-replace\-journal"
 Discard an undo journal an earlier repair left behind and write a new one.
@@ -531,6 +535,9 @@ a set created with
 already requires
 .B \-f
 to be repaired in place, which is an unrelated decision.
+An unreadable journal, or one whose framing or footer checksum is damaged,
+also stops repair and is kept: xpar cannot prove whether it was torn before
+the first write or corrupted after writes began.
 .TP
 .BR "repair \-\-dry\-run" ", " "repair \-\-exit\-on\-change"
 Report only, or exit 1 when anything was repaired. The two combine: a dry
@@ -894,7 +901,8 @@ Optional volume label written beside each bare data volume by
 .IB base .xparundo
 An in-place repair journal. Its presence means a repair was interrupted;
 .B xpar undo
-replays it.
+replays it. A journal that does not validate is reported and retained rather
+than being treated as empty.
 .TP
 .IB base .xparmaint
 A maintenance journal. Its presence means a
@@ -903,7 +911,8 @@ or
 .B prune
 was interrupted before it could publish the new set;
 .B xpar repair
-completes or rolls it back.
+completes or rolls it back. A corrupt or unreadable maintenance journal is
+still reported as pending and is retained for operator recovery.
 .SH SEE ALSO
 .BR par2 (1)
 .PP

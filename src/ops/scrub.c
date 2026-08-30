@@ -556,7 +556,11 @@ static void deep(scrub * c) {
 
   chunk = budget / (s_count + r_count);
   chunk &= ~(u64) 63;
-  if (chunk < 64) chunk = 64;
+  if (chunk < 64)
+    FATAL_CODE(XPAR_EXIT_NOPLAN,
+               "--deep needs at least %" PRIu64
+               " bytes of slice buffers; raise -m.",
+               (s_count + r_count) * 64);
   if (chunk > g->slice_size) chunk = g->slice_size;
 
   data = (u8 **) xpar_calloc((sz) s_count, sizeof(u8 *));

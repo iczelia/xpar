@@ -1652,10 +1652,11 @@ data volume $j$ (split) &
 \verb|base.d<j>| & \verb|BASE.D00| through
 \verb|BASE.D99| \\
 label volume of data volume $j$ &
-\verb|base.d<j>.xpa| & \verb|BASE.D<nn>| with the label written in place of
-the bare data volume \\
+\verb|base.d<j>.xpa| & \verb|BASE.L<nn>| \\
 armoured archive & \verb|base.xpa| & \verb|BASE.XPA| \\
+undo journal & \verb|base.xparundo| & \verb|BASE.XPU| \\
 maintenance journal & \verb|base.xparmaint| & \verb|BASE.XPM| \\
+chunk cache & \verb|base.xparidx| & \verb|BASE.XPI| \\
 \end{longtable}
 
 \specp The placeholders \verb|<f>|, \verb|<c>| and \verb|<j>| are zero-padded
@@ -1689,7 +1690,9 @@ data volume (split) & \verb|base.d<j>| &
 the only ones this specification requires, and a conforming reader identifies a
 volume by its LAYT entry rather than by the shape of its name. An
 implementation whose host cannot hold a long name may map the names as follows;
-version 2.0 of this implementation does not, and always writes the long forms.
+the DOS build of this implementation uses this mapping. Temporary, rollback and
+cache names are separately selected by each operation and also fit 8.3; they are
+not set members and are not inferred from the public long forms.
 
 \specp \verb|BASE| is formed by converting ASCII lowercase letters in
 the requested base name to uppercase, replacing every byte other than an ASCII
@@ -1706,6 +1709,9 @@ data-volume index $j$. For generation $g\ge1$, the index volume uses
 \verb|BASG<g>.D<nn>|. An armoured archive uses the same \verb|BASE.XPA| for
 generation 0 and \verb|BASE.XG<g>| for a later generation; a generation is
 either armoured or packet-bearing, never both, so the two never collide.
+The corresponding data label replaces \verb|D| by \verb|L|. The generation-0
+undo journal is \verb|BASE.XPU|, and a later generation uses
+\verb|BASE.XU<g>|.
 
 \specp An implementation that emits these names has to refuse the cases they
 cannot express: a generation number greater than 9, more than 100 recovery
@@ -1739,11 +1745,17 @@ or with the xpar magic itself.
 
 \section{The undo journal}\label{undo-journal}
 
-\specp A repair that rewrites the originals in place records what it
-overwrote, so that the change can be reversed. The journal is not part of a
-set: it holds no recovery data, it is never read to interpret a set, and a set
-whose journal is missing is unaffected. It is specified here because two
-programs have to agree on its bytes.
+\specp An in-place repair records the mutations that can destroy the
+pre-repair protected tree: overwritten byte ranges and lengths, manifest names
+it creates, an independent regular file it replaces with a hard link, and a
+non-packet tail it trims from a set volume. Those mutations can be reversed.
+The journal does not promise to remove newly reconstructed redundancy, to put
+checksum-corrupt redundant packets back, or to reverse metadata restoration;
+those are derived set housekeeping rather than recovery of overwritten
+protected bytes. The journal is not part of a set: it holds no recovery data,
+it is never read to interpret a set, and a set whose journal is missing is
+unaffected. It is specified here because two programs have to agree on its
+bytes.
 
 \specp The journal of generation 0 is named \verb|<set>.xparundo|; for
 generation $g$ it is \verb|<set>.g<g>.xparundo| with the width of
@@ -1768,7 +1780,9 @@ first protected write.
 
   record (40 bytes, then its two variable parts):
   0   4   u32le   path_len         >= 1
-  4   4   u32le   rflags           bit 0: the file did not exist before
+  4   4   u32le   rflags           bit 0: the object did not exist before
+                                   bit 1: an independent file was replaced
+                                   bit 2: the bit-0 object is a directory
   8   8   u64le   offset           where the repair wrote
   16  8   u64le   length           how many bytes it replaced
   24  8   u64le   original_size    the file's size before the repair
@@ -1787,14 +1801,21 @@ first protected write.
 
 \specp A reader shall reject a journal whose magic, version, header CRC or
 reserved fields do not hold, and shall reject a record whose framing does not
-fit within the bytes before the footer. A journal without a valid footer is
-\textit{incomplete}: it was still being written when the repair stopped, which
-is before any protected byte was overwritten, so there is nothing to undo and a
-reader shall report that rather than replay it. Replay resolves each record's
-path against the effective manifest, opens that file without following a
-symbolic link, writes the recorded bytes back at \verb|offset|, restores
-\verb|original_size| when the length changed, and removes rather than truncates
-a file whose \verb|rflags| bit 0 is set.
+fit within the bytes before the footer. A journal without a valid footer is not
+safe to classify automatically: it may be a pre-write torn journal, or a
+complete journal damaged after protected writes began. A reader shall therefore
+report it, preserve it, and neither replay nor silently replace it. Explicit
+operator replacement is required before a later repair may reuse its name.
+
+\specp Replay resolves each record's path against the effective manifest. For
+an ordinary byte record it opens that file without following a symbolic link,
+writes the recorded bytes back at \verb|offset|, and restores
+\verb|original_size| when the length changed. Bit 0 removes an object created by
+repair (using directory removal when bit 2 is also set); an already absent
+object completes that record, making replay restart-safe. Bit 1 atomically
+materialises the recorded bytes as a new independent file, restoring topology
+when repair replaced an identical copy by a hard link. Bits 0 and 1 shall not
+both be set.
 
 \subsection{The maintenance journal}\label{maintenance-journal}
 
@@ -1810,6 +1831,12 @@ first rename, and shall remove it, durably, only once the operation has fully
 succeeded. Its framing follows the undo journal, so that a journal written
 only in part is detectably incomplete and describes an operation that had not
 yet moved anything.
+
+\specp As with an undo journal, failed validation does not establish that no
+rename occurred: storage may have corrupted a complete journal later. A damaged
+or unreadable maintenance journal remains a pending operation, shall be named in
+diagnostics, and shall be preserved rather than deleted or replaced
+automatically.
 
 \specp The maintenance journal is a writer-side recovery record. It carries no
 recovery data, describes no packet, and belongs to no set; a reader shall not

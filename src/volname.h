@@ -20,14 +20,18 @@
 
 char * xpar_vname_index   (const char * base, u32 gen);
 char * xpar_vname_recovery(const char * base, u32 gen, u64 first, u64 count,
-                           int wfirst, int wcount);
+                           int wfirst, int wcount, u32 ordinal);
 char * xpar_vname_data    (const char * base, u32 gen, u32 index, int width);
 
 char * xpar_vname_label(const char * data_name);
+char * xpar_vname_undo(const char * base, u32 generation);
+char * xpar_vname_maint(const char * base);
+char * xpar_vname_cache(const char * base);
 
 void xpar_vname_widths(u64 max_first, u64 max_count,
                        int * wfirst, int * wcount);
 bool xpar_vname_has_ext(const char * name);
+bool xpar_vname_is_undo(const char * name);
 bool xpar_vname_is_index (const char * name, const char * stem);
 bool xpar_vname_is_member(const char * name, const char * stem);
 

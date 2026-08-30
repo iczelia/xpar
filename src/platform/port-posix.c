@@ -1139,8 +1139,43 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
   _exit(XPAR_EXIT_INTERNAL);
 }
 
+/*  Sanitizers install their own fatal-signal handlers, which we retain for
+    defects.  A SIGBUS inside one of our tracked file mappings is different:
+    it is an ordinary host I/O failure (most commonly a file truncated after
+    mmap), and must still get xpar's stable exit status and pathname.  */
+static struct sigaction sanitizer_bus_action;
+
+static void mapped_bus_handler(int sig, siginfo_t * si, void * uc) {
+  int have_addr = si && si->si_code > 0;
+  (void) uc;
+  if (have_addr) {
+    const char * path = mapreg_find(si->si_addr);
+    if (path) {
+      static const char pre[] = "xpar: mapped read failed for '";
+      static const char post[] = "': file truncated or media error.\n";
+      (void) write(2, pre, sizeof pre - 1);
+      (void) write(2, path, xpar_strlen(path));
+      (void) write(2, post, sizeof post - 1);
+      _exit(XPAR_EXIT_IO);
+    }
+  }
+  /*  Put the sanitizer's disposition back and deliver the original signal
+      again.  This keeps its stack report for genuine invalid accesses.  */
+  (void) sigaction(sig, &sanitizer_bus_action, NULL);
+  (void) raise(sig);
+  _exit(XPAR_EXIT_INTERNAL);
+}
+
 void xpar_crash_install(void) {
-  if (!xpar_crash_wanted()) return;
+  if (!xpar_crash_wanted()) {
+    struct sigaction sa;
+    xpar_memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = mapped_bus_handler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    (void) sigaction(SIGBUS, &sa, &sanitizer_bus_action);
+    return;
+  }
   static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
   struct sigaction sa;
   sz i;

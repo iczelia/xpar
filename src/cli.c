@@ -960,7 +960,7 @@ static char * swap_ext(const char * p) {
       char * head = xpar_strndup(p, i);
       char * out;
       FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", head != NULL);
-      out = cat_str(head, XPAR_EXT);
+      out = xpar_vname_index(head, 0);
       xpar_free(head);
       return out;
     }
@@ -1034,7 +1034,7 @@ static bool set_absent(const char * arg) {
     return none;
   }
   if (is_file(arg)) return false;
-  a = cat_str(arg, XPAR_EXT);
+  a = xpar_vname_index(arg, 0);
   if (is_file(a)) none = false;
   xpar_free(a);
   if (none) {
@@ -1097,7 +1097,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
       out->base = b;
       push_vol(out, dup_str(arg));
     } else {
-      char * a = cat_str(arg, XPAR_EXT);
+      char * a = xpar_vname_index(arg, 0);
       char * b = swap_ext(arg);
       if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
       else xpar_free(a);
@@ -1118,7 +1118,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     }
   } else {
     /*  A base name: `base` means `base.xpa`.  */
-    char * a = cat_str(arg, XPAR_EXT);
+    char * a = xpar_vname_index(arg, 0);
     if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
     else {
       xpar_free(a);
@@ -1518,7 +1518,7 @@ static bool names_a_set(const char * arg) {
   bool ok;
   if (!arg || !*arg) return false;
   if (is_file(arg) || is_dir(arg)) return true;
-  a = cat_str(arg, XPAR_EXT);
+  a = xpar_vname_index(arg, 0);
   ok = is_file(a);
   xpar_free(a);
   return ok;
@@ -1592,9 +1592,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     if (!names_a_set(r->res->pos_args[0])) {
       /*  A set name that is simply absent is not found, not a typo.  */
       const char * a = r->res->pos_args[0];
-      sz al = xpar_strlen(a);
-      bool looks = (al > XPAR_EXT_LEN &&
-                    !xpar_strcmp(a + al - XPAR_EXT_LEN, XPAR_EXT)) ||
+      bool looks = xpar_vname_has_ext(a) ||
                    xpar_path_base(a) != a;
       maint_gate(a);
       if (looks) say_rollback_residue(a);
