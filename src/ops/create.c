@@ -2144,6 +2144,10 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   /*  Publication now owns the staging files.  */
   stage_pending = NULL;
   xpar_on_fatal(NULL);
+  /*  A publication failure is fatal and does not return through the normal
+      epilogue.  The volume spans are no longer needed once every staged
+      output has been verified, so release them before entering that path.  */
+  xpar_free(span);  span = NULL;
   publish_outputs(o, write_names, names, name_count, nvol + 1,
                   o->labels && o->layout == XPAR_LAYOUT_SPLIT ? data_n : 0,
                   pipe_stage, ready ? ready->final_path : NULL,

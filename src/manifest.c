@@ -955,8 +955,11 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
       char * ba = path_lex_abs(o->base_dir);
       sz bl;
       rooted = path_lex_abs(norm);
-      FATAL_UNLESS("Cannot resolve '%s' against --base '%s'.",
-                   rooted && ba, xpar_name_escape(root), o->base_dir);
+      if (!rooted || !ba) {
+        xpar_free(norm);  xpar_free(rooted);  xpar_free(ba);
+        FATAL("Cannot resolve '%s' against --base '%s'.",
+              xpar_name_escape(root), o->base_dir);
+      }
       bl = xpar_strlen(ba);
       if (bl == 1 && ba[0] == '/') bl = 0;   /*  --base=/ names no prefix.  */
       if (!xpar_strcmp(rooted, ba)) {
@@ -966,9 +969,11 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
                  xpar_path_sep(rooted[bl])) {
         base = rooted + bl + 1;
         blen = (u32) (xpar_strlen(rooted) - bl - 1);
-      } else
+      } else {
+        xpar_free(norm);  xpar_free(rooted);  xpar_free(ba);
         FATAL("--base '%s' does not contain '%s'.", o->base_dir,
               xpar_name_escape(root));
+      }
       xpar_free(ba);
     } else {
       /*  Preserve legal relative roots so sidecar paths remain resolvable.  */
