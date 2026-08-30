@@ -1063,6 +1063,8 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   char ** backup = (char **) xpar_calloc(total, sizeof(char *));
   bool * had = (bool *) xpar_calloc(total, sizeof(bool));
   bool collision = false, irregular = false;
+  u32 stranded = 0;
+  int saved = 0;
   xpar_stat_t st;
   if (extra) {
     from[at] = xpar_strdup(extra_from);
@@ -1104,14 +1106,21 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) { collision = true;  goto rollback_old; }
-    if (xpar_rename(to[i], backup[i]) != 0) goto rollback_old;
+    /*  Keep the old output reachable under both names while publishing.  */
+    if (xpar_keep_aside(to[i], backup[i]) != 0) {
+      saved = xpar_errno();  goto rollback_old;
+    }
     had[i] = true;
   }
   for (i = 0; i < total; i++) {
-    if (xpar_rename(from[i], to[i]) != 0) goto rollback_new;
+    if (xpar_rename(from[i], to[i]) != 0) {
+      saved = xpar_errno();  goto rollback_new;
+    }
     published++;
   }
-  if (xpar_fsync_dir(to[total - 1]) != 0) goto rollback_new;
+  if (xpar_fsync_dir(to[total - 1]) != 0) {
+    saved = xpar_errno();  goto rollback_new;
+  }
   for (i = 0; i < total; i++)
     if (had[i] && xpar_remove(backup[i]) != 0)
       xpar_fprintf(xpar_stderr,
@@ -1127,18 +1136,34 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   return;
 
 rollback_new:
-  while (published) { published--;  (void) xpar_remove(to[published]); }
+  /*  Restore published files to staging, including piped input.  */
+  while (published) {
+    published--;
+    if (xpar_rename(to[published], from[published]) != 0) {
+      stranded++;
+      xpar_fprintf(xpar_stderr, "xpar: warning: '%s' stays published: %s.\n",
+                   to[published], xpar_strerror(xpar_errno()));
+    }
+  }
 rollback_old:
   for (u32 j = total; j > 0; j--)
-    if (had[j - 1]) (void) xpar_rename(backup[j - 1], to[j - 1]);
+    if (had[j - 1] && xpar_put_back(to[j - 1], backup[j - 1]) != 0)
+      xpar_fprintf(xpar_stderr,
+                   "xpar: warning: old output remains at '%s'.\n",
+                   backup[j - 1]);
   if (irregular)
     FATAL("Refusing non-regular output '%s'; set remains in '%s'.",
           to[i], stage_dir);
   if (collision)
     FATAL("Output '%s' appeared; set remains in '%s'.", to[i], stage_dir);
+  if (stranded)
+    FATAL_IO("Cannot publish '%s': %s; %" PRIu32 " file%s remain%s published; "
+             "set remains in '%s'.", to[i < total ? i : total - 1],
+             xpar_strerror(saved), stranded, PLURAL(stranded),
+             stranded == 1 ? "s" : "", stage_dir);
   FATAL_IO("Cannot publish '%s': %s; set remains in '%s'.",
-           to[i < total ? i : total - 1], xpar_strerror(xpar_errno()),
-           stage_dir);
+           to[i < total ? i : total - 1],
+           xpar_strerror(saved), stage_dir);
 }
 
 static bool create_copy_file(const char * from, const char * to) {

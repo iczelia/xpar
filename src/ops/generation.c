@@ -41,9 +41,10 @@ static xpar_file * gen_hout(const xpar_options * o) {
   return o->json ? xpar_stderr : xpar_stdout;
 }
 
-static void gen_json_result(const xpar_options * o, const char * verb,
-                            const u8 * set_id, u32 generation,
-                            const char * status, int rc) {
+static void gen_json_result_field(const xpar_options * o, const char * verb,
+                                  const u8 * set_id, u32 generation,
+                                  const char * status, int rc,
+                                  const char * field, u64 value) {
   xpar_json js;
   if (!o->json) return;
   xpar_json_init(&js, xpar_stdout, true);
@@ -56,8 +57,15 @@ static void gen_json_result(const xpar_options * o, const char * verb,
   xpar_json_begin(&js, "operation");
   xpar_json_str(&js, "verb", verb);
   xpar_json_u64(&js, "generation", generation);
+  if (field) xpar_json_u64(&js, field, value);
   xpar_json_end(&js);
   xpar_json_summary(&js, status, rc);
+}
+
+static void gen_json_result(const xpar_options * o, const char * verb,
+                            const u8 * set_id, u32 generation,
+                            const char * status, int rc) {
+  gen_json_result_field(o, verb, set_id, generation, status, rc, NULL, 0);
 }
 
 static u8 * gen_read_whole(const char * path, sz * out_len, bool fatal) {
@@ -463,6 +471,7 @@ static void chain_scan(xpar_chain * c, xpar_chain_vol * v, const u8 * buf,
         v->volume_index = vh.volume_index;
         v->volume_kind  = vh.volume_kind;
         xpar_memcpy(v->set_id, hdr.set_id, XPAR_SET_ID_LEN);
+        c->crit.rank = vh.volume_kind == XPAR_VOL_INDEX ? 2 : 1;
       }
     }
     if (xpar_pkt_is(&hdr, XPAR_T_RCVS)) {
@@ -474,13 +483,12 @@ static void chain_scan(xpar_chain * c, xpar_chain_vol * v, const u8 * buf,
       if (!v->recovery_count || e < v->recovery_first) v->recovery_first = e;
       v->recovery_count++;
     }
-    if (xpar_pkt_is(&hdr, XPAR_T_LAYT)) {
-      if (!v->layt_body) { v->layt_body = body;  v->layt_len = (sz) blen; }
-      xpar_critset_add(&c->crit, &hdr, body);
-      continue;
-    }
+    if (xpar_pkt_is(&hdr, XPAR_T_LAYT) &&
+        !v->layt_body) { v->layt_body = body;  v->layt_len = (sz) blen; }
     if (xpar_pkt_is(&hdr, XPAR_T_VOLH)) continue;
-    xpar_critset_add(&c->crit, &hdr, body);
+    { u32 stale = c->crit.stale;
+      xpar_critset_add(&c->crit, &hdr, body);
+      if (c->crit.stale != stale) v->stale_packets++; }
   }
   xpar_reject_unknown_critical(&sc);
   /*  Authentication failures are not format errors.  */
@@ -525,8 +533,7 @@ static void chain_add_vol(xpar_chain * c, char * path) {
   for (i = 0; i < c->vol_count; i++)
     if (!xpar_strcmp(c->vol[i].path, path)) { xpar_free(path);  return; }
 
-  data = gen_read_whole(path, &len, false);
-  if (!data) { xpar_free(path);  return; }
+  data = gen_read_whole(path, &len, true);
 
   c->vol = (xpar_chain_vol *) xpar_realloc(c->vol,
              (sz) (c->vol_count + 1) * sizeof(xpar_chain_vol));
@@ -536,27 +543,55 @@ static void chain_add_vol(xpar_chain * c, char * path) {
   v->gen = XPAR_GEN_NONE;  v->volume_index = XPAR_VOL_STANDALONE;
 
   if (len >= ARM_HDR_LEN) {
+    xpar_arm_prologue pr;
+    int copy = -1;
+    if (xpar_garm_prologue(data, len, &pr, &copy)) {
+      v->armoured_file = true;  v->scan_first = true;
+      return;
+    }
+  }
+  { xpar_pkt h;
+    xpar_volh vh;
+    if (len >= XPAR_PKT_HDR && !xpar_memcmp(data, XPAR_PKT_MAGIC, 8) &&
+        xpar_pkt_read(data, len, c->key_loaded ? &c->key : NULL, &h) ==
+          XPAR_OK &&
+        xpar_pkt_is(&h, XPAR_T_VOLH) &&
+        xpar_volh_read(data + XPAR_PKT_HDR, (sz) (h.length - XPAR_PKT_HDR),
+                       &vh) == XPAR_OK)
+      v->scan_first = vh.volume_kind == XPAR_VOL_INDEX; }
+}
+
+static void chain_scan_vol(xpar_chain * c, xpar_chain_vol * v) {
+  if (v->armoured_file) {
     xpar_arm_prologue pr;  xpar_armour_params ap;  u8 * plain;  sz plen;
     int copy = -1;
-    if (!xpar_garm_prologue(data, len, &pr, &copy)) goto packets;
-    v->armoured_file = true;
+    if (!xpar_garm_prologue(v->data, v->len, &pr, &copy)) return;
     arm_params_of(&pr, &ap);
-    plain = arm_extract(&ap, data + ARM_HDR_LEN, (u64) len - ARM_HDR_LEN,
-                        pr.plain_length, &plen,
+    plain = arm_extract(&ap, v->data + ARM_HDR_LEN,
+                        (u64) v->len - ARM_HDR_LEN, pr.plain_length, &plen,
                         c->key_loaded ? &c->key : NULL);
     if (!plain) {
       xpar_fprintf(xpar_stderr,
                    "xpar: '%s': uncorrectable armoured-region damage.\n",
-                   path);
+                   v->path);
       return;
     }
     chain_blob(c, plain);
     chain_scan(c, v, plain, plen, false);
     return;
   }
+  chain_scan(c, v, v->data, v->len, false);
+}
 
-packets:
-  chain_scan(c, v, data, len, false);
+/*  Scan index volumes first.  */
+static void chain_scan_all(xpar_chain * c) {
+  u32 i, pass;
+  for (pass = 0; pass < 2; pass++)
+    for (i = 0; i < c->vol_count; i++) {
+      if ((pass == 0) != c->vol[i].scan_first) continue;
+      c->crit.rank = c->vol[i].scan_first ? 2 : 1;
+      chain_scan_vol(c, &c->vol[i]);
+    }
 }
 
 static void chain_strip_gen(char * stem) {
@@ -574,7 +609,13 @@ static void chain_gather_dir(const xpar_options * o, xpar_chain * c,
                              const char * dir, const char * stem) {
   xpar_dir * d = xpar_opendir(*dir ? dir : ".");
   const xpar_dirent * e;
-  if (!d) return;
+  if (!d) {
+    int err = xpar_errno();
+    if (!xpar_errno_absent(err))
+      FATAL_IO("Cannot list '%s': %s.", *dir ? dir : ".",
+               xpar_strerror(err));
+    return;
+  }
   while ((e = xpar_readdir(d)) != NULL)
     if (!e->is_dir &&
         (o->chain_metadata_only
@@ -613,6 +654,7 @@ static void chain_gather(const xpar_options * o, xpar_chain * c) {
       xpar_closedir(d);
     }
   }
+  chain_scan_all(c);
 }
 
 /*  Report authentication failures before derivative format errors.  */
@@ -719,6 +761,13 @@ static void chain_map_volumes(xpar_chain * c) {
         }
         break;
       }
+  }
+  for (j = 0; j < c->gen_count; j++) {
+    const xpar_crit_pkt * p =
+      xpar_critset_find(&c->crit, c->gen[j].set_id, XPAR_T_LAYT, 0);
+    if (p) {
+      c->gen[j].layt_body = p->body;  c->gen[j].layt_len = (sz) p->body_len;
+    }
   }
   for (i = 0; i < c->crit.count; i++) {
     const xpar_crit_pkt * p = &c->crit.pkt[i];
@@ -1346,16 +1395,18 @@ static void gen_report_stale_stage(const xpar_options * o, const char * base) {
   char * dir = xpar_path_dir(base);
   xpar_dir * d = xpar_opendir(*dir ? dir : ".");
   const xpar_dirent * e;
+  if (!d && !xpar_errno_absent(xpar_errno()))
+    xpar_fprintf(xpar_stderr, "xpar: cannot list '%s' for stale staging "
+                 "trees: %s\n", *dir ? dir : ".",
+                 xpar_strerror(xpar_errno()));
   if (d) {
     while ((e = xpar_readdir(d)) != NULL) {
       char * p;
       if (!e->is_dir || xpar_strncmp(e->name, ".xpar-consolidate-", 18))
         continue;
       p = xpar_path_join(dir, e->name);
-      xpar_fprintf(xpar_stderr,
-                   "xpar: an earlier consolidate left the staging tree '%s' "
-                   "behind; nothing in this set depends on it, so it can be "
-                   "removed.\n", p);
+      xpar_fprintf(xpar_stderr, "xpar: stale staging tree '%s'; safe to "
+                   "remove.\n", p);
       xpar_free(p);
     }
     xpar_closedir(d);
@@ -2066,9 +2117,9 @@ static u64 gen_stream_tag(const xpar_manifest * m, u64 local_offset,
   return xpar_vol_tag_final(&h);
 }
 
-static void gen_write_data_range(const xpar_manifest * m,
-                                 const char * path, u64 local_offset,
-                                 u64 length, bool replace) {
+static char * gen_stage_data_range(const xpar_manifest * m,
+                                   const char * path, u64 local_offset,
+                                   u64 length, bool replace) {
   gen_src src;
   char * tmp;
   xpar_file * f;
@@ -2094,7 +2145,7 @@ static void gen_write_data_range(const xpar_manifest * m,
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
     FATAL_IO("Cannot flush temporary data volume '%s'.", tmp);
   xpar_xclose(f);
-  gen_publish_whole(tmp, path, replace);
+  return tmp;
 }
 
 static char * gen_stage_arm_archive(const char * path,
@@ -2269,12 +2320,23 @@ static bool gen_chain_data_names(const xpar_chain * c, const char * path) {
   return false;
 }
 
-/*  Retain rollback names until consolidation is fully published.  */
+/*  Consolidation rollback state.  */
+typedef struct {
+  const xpar_chain * c;
+  const xpar_options * o;
+  char ** backup;
+  char ** data_backup;
+  char ** final_data;
+  char * final_base;
+  u32 vol_count, data_n;
+} gen_consol_tx;
+
 static void gen_commit_consolidation(const xpar_chain * c,
                                      const xpar_options * o,
                                      const char * stage_base,
                                      const char * final_base,
-                                     const gen_plan * p) {
+                                     const gen_plan * p,
+                                     gen_consol_tx * tx) {
   gen_vol * stage, * final;
   char ** backup, ** stage_data = NULL, ** final_data = NULL;
   char ** data_backup = NULL;
@@ -2383,26 +2445,17 @@ static void gen_commit_consolidation(const xpar_chain * c,
     if (k == 0) {
       u32 d;
       for (d = 0; d < data_n; d++) {
-        if (gen_exists(final_data[d]) && xpar_remove(final_data[d]) != 0) {
-          saved = xpar_errno(); goto rollback;
-        }
         if (xpar_rename(stage_data[d], final_data[d]) != 0) {
           saved = xpar_errno(); goto rollback;
         }
         data_published[d] = true;
         if (o->labels) {
-          if (gen_exists(final_label[d]) && xpar_remove(final_label[d]) != 0) {
-            saved = xpar_errno(); goto rollback;
-          }
           if (xpar_rename(stage_label[d], final_label[d]) != 0) {
             saved = xpar_errno(); goto rollback;
           }
           label_published[d] = true;
         }
       }
-    }
-    if (gen_exists(final[k].name) && xpar_remove(final[k].name) != 0) {
-      saved = xpar_errno();  goto rollback;
     }
     if (xpar_rename(stage[k].name, final[k].name) != 0) {
       saved = xpar_errno();  goto rollback;
@@ -2413,39 +2466,13 @@ static void gen_commit_consolidation(const xpar_chain * c,
     saved = xpar_errno();  goto rollback;
   }
 
-  for (i = 0; i < c->vol_count; i++) {
-    if (xpar_remove(backup[i]) != 0)
-      xpar_fprintf(xpar_stderr, "xpar: cannot remove rollback volume '%s': "
-                   "%s\n", backup[i], xpar_strerror(xpar_errno()));
-  }
-  for (i = 0; i < data_n; i++) if (data_backup[i]) {
-    if (xpar_remove(data_backup[i]) != 0)
-      xpar_fprintf(xpar_stderr, "xpar: cannot remove rollback volume '%s': "
-                   "%s\n", data_backup[i], xpar_strerror(xpar_errno()));
-  }
-  /*  Generation data volumes are bare and therefore absent from c->vol.
-      Once the new generation-0 index is durable, remove every old bare
-      volume that is not one of the newly published names.  */
-  for (i = 0; i < c->gen_count; i++) {
-    xpar_layt l;
-    u32 k;
-    if (!c->gen[i].layt_body ||
-        xpar_layt_read(c->gen[i].layt_body, c->gen[i].layt_len, &l) !=
-          XPAR_OK) continue;
-    for (k = 0; k < l.count; k++) if (l.vol[k].kind == XPAR_VOL_DATA) {
-      char * old = xpar_path_join(c->dir, l.vol[k].name);
-      u32 d;
-      for (d = 0; d < data_n; d++)
-        if (!xpar_strcmp(old, final_data[d])) break;
-      if (d == data_n && gen_exists(old)) xpar_remove(old);
-      xpar_free(old);
-    }
-    xpar_layt_free(&l);
-  }
-  if (xpar_fsync_dir(final_base) != 0 && o->verbose)
-    xpar_fprintf(xpar_stderr, "xpar: cannot sync the directory after "
-                 "removing rollback volumes: %s\n",
-                 xpar_strerror(xpar_errno()));
+  /*  Keep backups through read-back.  */
+  tx->c = c;  tx->o = o;
+  tx->backup = backup;  tx->vol_count = c->vol_count;
+  tx->data_backup = data_backup;  tx->final_data = final_data;
+  tx->data_n = data_n;
+  tx->final_base = xpar_strdup(final_base);
+  backup = NULL;  data_backup = NULL;  final_data = NULL;
   goto done;
 
 rollback:
@@ -2463,32 +2490,79 @@ rollback:
   for (i = data_n; i-- > 0;)
     if (data_moved[i] &&
         xpar_rename(data_backup[i], final_data[i]) != 0)
-      xpar_fprintf(xpar_stderr, "xpar: rollback volume remains at '%s'.\n",
-                   data_backup[i]);
+      xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; the "
+                   "original remains at '%s'.\n", final_data[i],
+                   xpar_strerror(xpar_errno()), data_backup[i]);
   while (moved) {
     moved--;
     if (xpar_rename(backup[moved], c->vol[moved].path) != 0)
-      xpar_fprintf(xpar_stderr, "xpar: rollback volume remains at '%s'.\n",
-                   backup[moved]);
+      xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; the "
+                   "original remains at '%s'.\n", c->vol[moved].path,
+                   xpar_strerror(xpar_errno()), backup[moved]);
   }
-  xpar_fsync_dir(final_base);
+  if (xpar_fsync_dir(final_base) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
+                 "after rollback: %s.\n", xpar_strerror(xpar_errno()));
   FATAL_IO("Cannot publish the consolidated set: %s.",
            xpar_strerror(saved));
 
 done:
-  for (i = 0; i < c->vol_count; i++) xpar_free(backup[i]);
   for (i = 0; i < data_n; i++) {
-    xpar_free(stage_data[i]); xpar_free(final_data[i]);
-    xpar_free(data_backup[i]);
+    xpar_free(stage_data[i]);
     if (o->labels) {
       xpar_free(stage_label[i]); xpar_free(final_label[i]);
     }
   }
-  xpar_free(backup);  xpar_free(published);
-  xpar_free(stage_data); xpar_free(final_data); xpar_free(data_backup);
+  xpar_free(published);
+  xpar_free(stage_data);
   xpar_free(data_published); xpar_free(data_moved);
   xpar_free(stage_label); xpar_free(final_label); xpar_free(label_published);
   gen_volumes_free(stage, ns);  gen_volumes_free(final, nf);
+}
+
+/*  Drop the old chain once the consolidated set has been read back.  */
+static void gen_consol_finish(gen_consol_tx * tx) {
+  u32 i;
+  if (!tx->final_base) return;
+  for (i = 0; i < tx->vol_count; i++) {
+    if (tx->backup[i] && xpar_remove(tx->backup[i]) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: cannot remove rollback volume '%s': "
+                   "%s\n", tx->backup[i], xpar_strerror(xpar_errno()));
+    xpar_free(tx->backup[i]);
+  }
+  for (i = 0; i < tx->data_n; i++) {
+    if (tx->data_backup[i] && xpar_remove(tx->data_backup[i]) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: cannot remove rollback volume '%s': "
+                   "%s\n", tx->data_backup[i], xpar_strerror(xpar_errno()));
+    xpar_free(tx->data_backup[i]);
+  }
+  /*  Remove superseded bare data volumes, which are absent from c->vol.  */
+  for (i = 0; i < tx->c->gen_count; i++) {
+    xpar_layt l;
+    u32 k;
+    if (!tx->c->gen[i].layt_body ||
+        xpar_layt_read(tx->c->gen[i].layt_body, tx->c->gen[i].layt_len,
+                       &l) != XPAR_OK) continue;
+    for (k = 0; k < l.count; k++) if (l.vol[k].kind == XPAR_VOL_DATA) {
+      char * old = xpar_path_join(tx->c->dir, l.vol[k].name);
+      u32 d;
+      for (d = 0; d < tx->data_n; d++)
+        if (!xpar_strcmp(old, tx->final_data[d])) break;
+      if (d == tx->data_n && gen_exists(old) && xpar_remove(old) != 0)
+        xpar_fprintf(xpar_stderr, "xpar: cannot remove the superseded data "
+                     "volume '%s': %s\n", old, xpar_strerror(xpar_errno()));
+      xpar_free(old);
+    }
+    xpar_layt_free(&l);
+  }
+  if (xpar_fsync_dir(tx->final_base) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: cannot sync the directory after "
+                 "removing rollback volumes: %s\n",
+                 xpar_strerror(xpar_errno()));
+  for (i = 0; i < tx->data_n; i++) xpar_free(tx->final_data[i]);
+  xpar_free(tx->backup);  xpar_free(tx->data_backup);
+  xpar_free(tx->final_data);  xpar_free(tx->final_base);
+  xpar_memset(tx, 0, sizeof *tx);
 }
 
 static void gen_layt_build(xpar_layt * l, const gen_vol * v, u32 n) {
@@ -2626,6 +2700,114 @@ static void gen_crit_group(xpar_buf * out, const xpar_setd * sd,
   xpar_layt_write(out, &l, set_id, key);
 }
 
+typedef struct {
+  char * stage;
+  const char * final;
+  bool replace;
+} gen_addrec_file;
+
+static void gen_addrec_discard(gen_addrec_file * files, u32 count) {
+  u32 i;
+  for (i = 0; i < count; i++) {
+    if (files[i].stage) xpar_remove(files[i].stage);
+    xpar_free(files[i].stage);
+  }
+  xpar_free(files);
+}
+
+/*  Publish staged files with rollback.  */
+static void gen_addrec_publish(gen_addrec_file * files, u32 count) {
+  char ** backup = (char **) xpar_calloc(count ? count : 1, sizeof(char *));
+  const char * failed = NULL;
+  int err = 0;
+  u32 i, done = 0;
+  for (i = 0; i < count; i++)
+    if (!files[i].replace && gen_exists(files[i].final)) {
+      const char * name = files[i].final;
+      xpar_free(backup);
+      gen_addrec_discard(files, count);
+      FATAL("'%s' exists; -f overwrites it.", name);
+    }
+  for (i = 0; i < count; i++) {
+    if (gen_exists(files[i].final)) {
+      backup[i] = gen_unused_path(files[i].final, "xpar-old");
+      if (!backup[i] || xpar_keep_aside(files[i].final, backup[i]) != 0) {
+        err = xpar_errno();  failed = files[i].final;
+        xpar_free(backup[i]);  backup[i] = NULL;
+        break;
+      }
+    }
+    if (xpar_rename(files[i].stage, files[i].final) != 0) {
+      err = xpar_errno();  failed = files[i].final;
+      break;
+    }
+    xpar_free(files[i].stage);  files[i].stage = NULL;
+    done = i + 1;
+  }
+  if (!failed)
+    for (i = 0; i < count; i++)
+      if (xpar_fsync_dir(files[i].final) != 0) {
+        err = xpar_errno();  failed = files[i].final;
+        break;
+      }
+  if (failed) {
+    char * name = xpar_strdup(failed);
+    /*  Restore backups in reverse order.  */
+    for (i = count; i > 0; i--) {
+      u32 k = i - 1;
+      if (backup[k]) {
+        if (xpar_put_back(files[k].final, backup[k]) != 0) {
+          int e = xpar_errno();
+          if (gen_exists(files[k].final))
+            xpar_fprintf(xpar_stderr, "xpar: warning: rollback copy of '%s' "
+                         "remains at '%s': %s.\n", files[k].final, backup[k],
+                         xpar_strerror(e));
+          else
+            xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; the "
+                         "original remains at '%s'.\n", files[k].final,
+                         xpar_strerror(e), backup[k]);
+        }
+      } else if (k < done && xpar_remove(files[k].final) != 0)
+        xpar_fprintf(xpar_stderr, "xpar: warning: unreferenced '%s' "
+                     "remains: %s.\n", files[k].final,
+                     xpar_strerror(xpar_errno()));
+      xpar_free(backup[k]);
+    }
+    if (count && xpar_fsync_dir(files[0].final) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
+                   "after rollback: %s.\n", xpar_strerror(xpar_errno()));
+    xpar_free(backup);
+    gen_addrec_discard(files, count);
+    FATAL_IO("Cannot publish '%s': %s.", name,
+             xpar_strerror(err));
+  }
+  for (i = 0; i < count; i++) {
+    if (backup[i] && xpar_remove(backup[i]) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: warning: old '%s' remains "
+                   "at '%s'.\n", files[i].final, backup[i]);
+    xpar_free(backup[i]);
+  }
+  xpar_free(backup);
+  xpar_free(files);
+}
+
+/*  Order replacements first, the index last, then new files.  */
+static void gen_addrec_order(gen_addrec_file * files, u32 count, u32 fresh,
+                             const char * index_path) {
+  gen_addrec_file * out = (gen_addrec_file *) xpar_calloc(count ? count : 1,
+                                                          sizeof *out);
+  u32 i, n = 0;
+  for (i = fresh; i < count; i++)
+    if (!index_path || xpar_strcmp(files[i].final, index_path))
+      out[n++] = files[i];
+  for (i = fresh; i < count; i++)
+    if (index_path && !xpar_strcmp(files[i].final, index_path))
+      out[n++] = files[i];
+  for (i = 0; i < fresh; i++) out[n++] = files[i];
+  xpar_memcpy(files, out, (sz) count * sizeof *out);
+  xpar_free(out);
+}
+
 static void gen_write_set(gen_write_req * rq) {
   const xpar_options * o = rq->o;
   xpar_manifest * m = rq->m;
@@ -2641,7 +2823,8 @@ static void gen_write_set(gen_write_req * rq) {
   xpar_buf probe;
   xpar_progress_t prog;
   xpar_json pjs;
-  u32 nvol, data_n = 0, i, j;
+  gen_addrec_file * pub = NULL;
+  u32 nvol, data_n = 0, i, j, pub_n = 0;
   u64 crit_bytes;
   u8 * rec_scratch = NULL;
   xpar_key key;
@@ -2809,6 +2992,10 @@ static void gen_write_set(gen_write_req * rq) {
   }
   xpar_buf_free(&probe);
 
+  /*  Stage the generation before publishing its index last.  */
+  pub = (gen_addrec_file *) xpar_calloc(nvol + 2 * data_n + 1,
+                                        sizeof *pub);
+
   if (o->layout == XPAR_LAYOUT_ARMOURED) {
     xpar_armour_params ap;
     xpar_armour * a;
@@ -2833,7 +3020,8 @@ static void gen_write_set(gen_write_req * rq) {
     tmp = gen_stage_arm_archive(vol[0].name, &ap, m, &rq->plan, &t,
                                 rec_scratch, &head, rq->set_id, kp, &w,
                                 NULL, NULL);
-    gen_publish_whole(tmp, vol[0].name, o->force);
+    pub[pub_n].stage = tmp;  pub[pub_n].final = vol[0].name;
+    pub[pub_n].replace = o->force;  pub_n++;
     xpar_buf_free(&head);
     xpar_armour_free(a);
   } else {
@@ -2899,10 +3087,13 @@ static void gen_write_set(gen_write_req * rq) {
         if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
           FATAL_IO("Cannot flush temporary volume '%s'.", tmp);
         xpar_xclose(f);
-        gen_publish_whole(tmp, vol[i].name, o->force);
+        pub[pub_n].stage = tmp;  pub[pub_n].final = vol[i].name;
+        pub[pub_n].replace = o->force;  pub_n++;
       } else {
         xpar_crtr_write(&out, "xpar " PACKAGE_VERSION, rq->set_id, kp, &w);
-        gen_write_whole(vol[i].name, out.data, out.len, o->force);
+        pub[pub_n].stage = gen_stage_whole(vol[i].name, out.data, out.len);
+        pub[pub_n].final = vol[i].name;
+        pub[pub_n].replace = o->force;  pub_n++;
         xpar_buf_free(&out);
       }
     }
@@ -2913,8 +3104,11 @@ static void gen_write_set(gen_write_req * rq) {
     u32 data_first = layt.count - data_n;
     for (i = 0; i < data_n; i++) {
       const xpar_vol * dv = &layt.vol[data_first + i];
-      gen_write_data_range(m, data_name[i], dv->stream_offset,
-                           dv->byte_length, o->force);
+      pub[pub_n].stage = gen_stage_data_range(m, data_name[i],
+                                              dv->stream_offset,
+                                              dv->byte_length, o->force);
+      pub[pub_n].final = data_name[i];
+      pub[pub_n].replace = o->force;  pub_n++;
     if (label_name[i]) {
       xpar_buf out, group;
       xpar_volh vh;
@@ -2933,12 +3127,18 @@ static void gen_write_set(gen_write_req * rq) {
         xpar_buf_put(&out, group.data, group.len);
       xpar_buf_free(&group);
       xpar_crtr_write(&out, "xpar " PACKAGE_VERSION, rq->set_id, kp, &w);
-      gen_write_whole(label_name[i], out.data, out.len, o->force);
+      pub[pub_n].stage = gen_stage_whole(label_name[i], out.data, out.len);
+      pub[pub_n].final = label_name[i];
+      pub[pub_n].replace = o->force;  pub_n++;
       xpar_buf_free(&out);
     }
     }
   }
   }
+  /*  Publish data volumes and labels before the index that names them.  */
+  gen_addrec_order(pub, pub_n, 0, vol[0].name);
+  gen_addrec_publish(pub, pub_n);
+  pub = NULL;
   rq->volumes = nvol;
   rq->index_path = xpar_strdup(vol[0].name);
 
@@ -3495,7 +3695,9 @@ static void gen_rebuild(xpar_buf * out, const xpar_options * o,
       if (!plain) FATAL_FORMAT("An armoured critical group will not extract.");
       xpar_buf_init(&inner);
       gen_rebuild(&inner, o, plain, plen, rw, true);
-      gen_armour_pack(out, o, inner.data, inner.len, rw->set_id, rw->key);
+      /*  Preserve the volume's armour parameters.  */
+      gen_armour_pack_ap(out, &ap, inner.data, inner.len, rw->set_id,
+                         rw->key);
       xpar_buf_free(&inner);
       xpar_free(plain);
       continue;
@@ -3611,7 +3813,12 @@ static void gen_manifest_on_disk(const xpar_chain * c, u32 g,
 }
 
 static bool gen_read_vset(void * ctx, u64 off, u8 * out, u64 len) {
-  return xpar_vset_read((xpar_vset *) ctx, off, out, len);
+  xpar_vset * s = (xpar_vset *) ctx;
+  if (xpar_vset_read(s, off, out, len)) return true;
+  if (xpar_vset_io_errors(s))
+    FATAL_IO("The stored stream could not be read at offset %" PRIu64 ".",
+             off);
+  return false;
 }
 
 static void gen_require_source_tables(const xpar_vset * set,
@@ -3638,30 +3845,6 @@ static void gen_require_source_tables(const xpar_vset * set,
                    "Slice %" PRIu64 " changed while recovery data was prepared; "
                    "nothing was written.", i);
   }
-}
-
-typedef struct {
-  char * stage;
-  const char * final;
-  bool replace;
-} gen_addrec_file;
-
-static void gen_addrec_discard(gen_addrec_file * files, u32 count) {
-  u32 i;
-  for (i = 0; i < count; i++) {
-    if (files[i].stage) xpar_remove(files[i].stage);
-    xpar_free(files[i].stage);
-  }
-  xpar_free(files);
-}
-
-static void gen_addrec_publish(gen_addrec_file * files, u32 count) {
-  u32 i;
-  for (i = 0; i < count; i++) {
-    gen_publish_whole(files[i].stage, files[i].final, files[i].replace);
-    files[i].stage = NULL;
-  }
-  xpar_free(files);
 }
 
 int xpar_op_addrecovery(const xpar_options * o) {
@@ -3952,8 +4135,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
       xpar_buf_free(&out);
       gen_addrec_discard(staged, staged_count + 1);
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: a staged addrecovery volume did not pass its "
-                 "strict packet read-back. Nothing was published.");
+                 "internal: staged addrecovery volume failed verification.");
     }
     staged_count++;
     xpar_buf_free(&out);
@@ -3989,8 +4171,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
       xpar_buf_free(&out);
       gen_addrec_discard(staged, staged_count + 1);
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: a staged layout update did not pass its strict "
-                 "packet read-back. Nothing was published.");
+                 "internal: staged layout update failed verification.");
     }
     staged_count++;
     xpar_buf_free(&out);
@@ -3999,6 +4180,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
   FATAL_UNLESS("Generation %" PRIu32
                " has no index volume to verify after writing.",
                verify_path != NULL, c.gen[g].sd.generation);
+  /*  Publish the index between replacements and new volumes.  */
+  gen_addrec_order(staged, staged_count, nvol, verify_path);
   gen_addrec_publish(staged, staged_count);
   xpar_verify_written_set_at(o, verify_path, &verify_ref);
 
@@ -4274,9 +4457,13 @@ int xpar_op_add(const xpar_options * caller) {
       } else if (o->rescan == XPAR_RESCAN_HASH) {
         xpar_entry probe;
         gen_entry_copy(&probe, old);
-        if (gen_refresh(&probe, path, o, caps, &warn_posix,
-                        gen_chain_key(&c), c.auth_only) &&
-            xpar_memcmp(probe.content_hash, old->content_hash, 32))
+        if (!gen_refresh(&probe, path, o, caps, &warn_posix,
+                         gen_chain_key(&c), c.auth_only)) {
+          int err = xpar_errno();
+          if (st.is_regular || st.is_dir || st.is_symlink)
+            FATAL_IO("Cannot re-read '%s': %s.", path, xpar_strerror(err));
+          stale = true;
+        } else if (xpar_memcmp(probe.content_hash, old->content_hash, 32))
           stale = true;
         xpar_entry_free(&probe);
       }
@@ -4756,8 +4943,7 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
   if (xpar_fsync_dir(sync_path) != 0) {
     saved = xpar_errno();  goto rollback;
   }
-  /*  Bare data and packet-bearing non-index volumes first, index files last.
-     The transaction's rollback names keep every original byte reachable.  */
+  /*  Publish non-index volumes first.  */
   for (j = 0; j < 2; j++)
     for (i = 0; i < t->count; i++) if (t->f[i].new_path) {
       if ((j == 0 && t->f[i].index) || (j == 1 && !t->f[i].index)) continue;
@@ -4779,20 +4965,35 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
     if (xpar_remove(t->f[i].backup) != 0)
       xpar_fprintf(xpar_stderr, "xpar: cannot remove rollback volume '%s': "
                    "%s\n", t->f[i].backup, xpar_strerror(xpar_errno()));
-  xpar_fsync_dir(sync_path);
+  if (xpar_fsync_dir(sync_path) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: cannot sync the directory after "
+                 "removing rollback volumes: %s\n",
+                 xpar_strerror(xpar_errno()));
   return;
 
 rollback:
+  /*  Restore rollback names.  */
   for (i = 0; i < t->count; i++)
-    if (t->f[i].published && !t->f[i].move) xpar_remove(t->f[i].new_path);
+    if (t->f[i].published && !t->f[i].move &&
+        xpar_remove(t->f[i].new_path) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: warning: unreferenced '%s' remains: "
+                   "%s\n", t->f[i].new_path, xpar_strerror(xpar_errno()));
   for (i = 0; i < t->count; i++)
-    if (t->f[i].published && t->f[i].move)
-      xpar_rename(t->f[i].new_path, t->f[i].backup);
+    if (t->f[i].published && t->f[i].move &&
+        xpar_rename(t->f[i].new_path, t->f[i].backup) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: cannot move '%s' back to '%s': %s\n",
+                   t->f[i].new_path, t->f[i].backup,
+                   xpar_strerror(xpar_errno()));
   for (i = 0; i < t->count; i++) if (t->f[i].backup)
-    xpar_rename(t->f[i].backup, t->f[i].old_path);
+    if (xpar_rename(t->f[i].backup, t->f[i].old_path) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; the "
+                   "original remains at '%s'.\n", t->f[i].old_path,
+                   xpar_strerror(xpar_errno()), t->f[i].backup);
   for (i = 0; i < t->count; i++)
     if (t->f[i].stage && !t->f[i].published) xpar_remove(t->f[i].stage);
-  xpar_fsync_dir(sync_path);
+  if (xpar_fsync_dir(sync_path) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
+                 "after rollback: %s\n", xpar_strerror(xpar_errno()));
   FATAL_IO("Cannot publish the pruned chain: %s.", xpar_strerror(saved));
 }
 
@@ -5170,7 +5371,7 @@ int xpar_op_consolidate(const xpar_options * caller) {
   u32 * owner = NULL;
   gen_write_req rq;
   bool * owned = NULL;
-  u32 head, i, caps, bad = 0, unreadable = 0, ratio_gen = 0;
+  u32 head, i, caps, bad = 0, unreadable = 0, io_bad = 0, ratio_gen = 0;
   bool owned_layout;
   char * stage_tree = NULL;
   u64 live = 0, total = 0;
@@ -5179,7 +5380,9 @@ int xpar_op_consolidate(const xpar_options * caller) {
   const char * base;
   char * stage_base = NULL, * cache_path = NULL, * stage_cache = NULL;
   xpar_chunk_index chunk_cache;
+  gen_consol_tx ctx;
 
+  xpar_memset(&ctx, 0, sizeof ctx);
   xpar_memset(&chunk_cache, 0, sizeof chunk_cache);
   xpar_memset(&rq, 0, sizeof rq);
   xpar_gchain_load(o, &c);
@@ -5266,9 +5469,20 @@ int xpar_op_consolidate(const xpar_options * caller) {
     }
     if (!gen_refresh(&m.entry[i], path, o, caps, &warn_posix,
                      gen_chain_key(&c), c.auth_only)) {
-      if (!owned_layout)
+      int err = xpar_errno();
+      xpar_stat_t rst;
+      bool refused = xpar_lstat(path, &rst) == 0 &&
+                     (rst.is_regular || rst.is_dir || rst.is_symlink);
+      if (owned_layout) { bad++;  unreadable++; }
+      else if (refused) {
+        xpar_fprintf(xpar_stderr, "xpar: cannot read '%s': %s\n", path,
+                     xpar_strerror(err));
+        io_bad++;
+      } else {
         xpar_fprintf(xpar_stderr, "xpar: cannot read '%s'.\n", path);
-      bad++;  unreadable++;  xpar_free(path);  continue;
+        bad++;
+      }
+      xpar_free(path);  continue;
     }
     if (xpar_memcmp(want, m.entry[i].content_hash, 32)) {
       xpar_fprintf(xpar_stderr,
@@ -5288,11 +5502,18 @@ int xpar_op_consolidate(const xpar_options * caller) {
                "%" PRIu32 " of %" PRIu32 " entries could not be extracted "
                "from this self-contained chain; repair it first.",
                unreadable, m.count);
+  if (io_bad)
+    FATAL_CODE(XPAR_EXIT_IO,
+               "%" PRIu32 "/%" PRIu32 " entries could not be read; nothing "
+               "was written.", io_bad, m.count);
   if (bad && !o->force)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "%" PRIu32 " entries do not match the chain; consolidating would "
-               "record the damage as the new truth. Repair first, or pass "
+               "%" PRIu32 " entries do not match the chain; repair or pass "
                "--force.", bad);
+  if (bad)
+    xpar_fprintf(xpar_stderr, "xpar: --force: recorded %" PRIu32
+                 " mismatched entr%s as found.\n", bad,
+                 bad == 1 ? "y" : "ies");
 
   {
     gen_merge g;
@@ -5338,7 +5559,8 @@ int xpar_op_consolidate(const xpar_options * caller) {
   }
   gen_write_set(&rq);
   if (o->replace)
-    gen_commit_consolidation(&c, o, stage_base, base, &rq.plan);
+    gen_commit_consolidation(&c, o, stage_base, base, &rq.plan, &ctx);
+  /*  Verify before removing rollback names.  */
   if (!o->no_verify_after) {
     if (o->replace) {
       gen_vol * final;
@@ -5350,6 +5572,7 @@ int xpar_op_consolidate(const xpar_options * caller) {
       xpar_verify_written_set(o, rq.index_path);
     }
   }
+  gen_consol_finish(&ctx);
   if (stage_cache &&
       (!xpar_chunk_cache_rebind(stage_cache, rq.set_id) ||
        !gen_publish_cache(stage_cache, cache_path))) {
@@ -5383,10 +5606,11 @@ int xpar_op_consolidate(const xpar_options * caller) {
                    rq.plan.geom.slice_count);
 
 done:
-  gen_json_result(o, "consolidate",
-                  rq.index_path ? rq.set_id : c.gen[head].set_id,
-                  rq.index_path ? 0 : c.gen[head].sd.generation,
-                  o->dry_run ? "dry-run" : "ok", XPAR_EXIT_OK);
+  gen_json_result_field(o, "consolidate",
+                        rq.index_path ? rq.set_id : c.gen[head].set_id,
+                        rq.index_path ? 0 : c.gen[head].sd.generation,
+                        o->dry_run ? "dry-run" : "ok", XPAR_EXIT_OK,
+                        "entries_damaged", bad);
   for (i = 0; i < c.gen_count; i++)
     if (tab[i]) xpar_gchain_posix_free(tab[i], tabn[i]);
   xpar_free(tab);  xpar_free(tabn);  xpar_free(owned);  xpar_free(owner);
@@ -5583,8 +5807,7 @@ u64 xpar_gen_regen_recovery(const xpar_options * o, u64 * volumes,
                                     p.geom.slice_size)) {
       gen_addrec_discard(staged, i + 1);
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: a regenerated recovery volume did not pass its "
-                 "strict packet read-back. Nothing was published.");
+                 "internal: regenerated recovery volume failed verification.");
     }
     xpar_buf_free(&out);
     slices += v->byte_length;
@@ -5681,8 +5904,7 @@ u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
       gen_addrec_discard(staged, i + 1);
       xpar_vset_close(src);
       FATAL_CODE(XPAR_EXIT_INTERNAL,
-                 "internal: a regenerated index volume did not pass its "
-                 "strict packet read-back. Nothing was published.");
+                 "internal: regenerated index volume failed verification.");
     }
     xpar_buf_free(&out);
   }
@@ -5696,6 +5918,69 @@ u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
   xpar_layt_free(&layt);
   xpar_gchain_free(&c);
   return hits;
+}
+
+/*  Rewrite stale critical packets from the index; `dry` only counts.  */
+u64 xpar_gen_rewrite_stale(const xpar_options * o, u64 * volumes,
+                           const char ** reason, bool dry) {
+  xpar_chain c;
+  gen_addrec_file * staged;
+  u32 i, hits = 0, n = 0;
+  if (reason) *reason = NULL;
+  if (volumes) *volumes = 0;
+  xpar_gchain_load(o, &c);
+  for (i = 0; i < c.vol_count; i++)
+    if (c.vol[i].stale_packets && c.vol[i].gen != XPAR_GEN_NONE &&
+        !c.vol[i].armoured_file) hits++;
+  if (!hits || dry) {
+    if (volumes) *volumes = hits;
+    xpar_gchain_free(&c);
+    return hits;
+  }
+  gen_require_write_key(&c, "repair");
+  staged = (gen_addrec_file *) xpar_calloc(hits, sizeof *staged);
+  for (i = 0; i < c.vol_count; i++) {
+    const xpar_chain_vol * v = &c.vol[i];
+    u32 g = v->gen;
+    xpar_layt layt;
+    bool have_layt;
+    xpar_buf group, out;
+    gen_rewrite rw;
+    if (!v->stale_packets || g == XPAR_GEN_NONE || v->armoured_file)
+      continue;
+    have_layt = c.gen[g].layt_body &&
+      xpar_layt_read(c.gen[g].layt_body, c.gen[g].layt_len, &layt) == XPAR_OK;
+    xpar_buf_init(&group);
+    gen_group_stored(&group, &c, g, have_layt ? &layt : NULL,
+                     v->volume_index, c.gen[g].set_id);
+    xpar_memset(&rw, 0, sizeof rw);
+    rw.group = group.data;  rw.group_len = group.len;
+    rw.this_vol = v->volume_index;  rw.set_id = c.gen[g].set_id;
+    rw.key = gen_chain_key(&c);
+    xpar_buf_init(&out);
+    gen_rebuild(&out, o, v->data, v->len, &rw, false);
+    staged[n].stage = gen_stage_whole(v->path, out.data, out.len);
+    staged[n].final = v->path;
+    staged[n].replace = true;
+    if (!xpar_verify_written_volume(staged[n].stage, gen_chain_key(&c),
+                                    c.gen[g].set_id, v->volume_index,
+                                    v->volume_kind, v->recovery_first,
+                                    v->recovery_count,
+                                    c.gen[g].sd.slice_size)) {
+      xpar_buf_free(&out);  xpar_buf_free(&group);
+      if (have_layt) xpar_layt_free(&layt);
+      gen_addrec_discard(staged, n + 1);
+      FATAL_CODE(XPAR_EXIT_INTERNAL,
+                 "internal: rewritten stale volume failed verification.");
+    }
+    n++;
+    xpar_buf_free(&out);  xpar_buf_free(&group);
+    if (have_layt) xpar_layt_free(&layt);
+  }
+  gen_addrec_publish(staged, n);
+  if (volumes) *volumes = n;
+  xpar_gchain_free(&c);
+  return n;
 }
 
 int xpar_op_recover(const xpar_options * o) {
@@ -5946,43 +6231,108 @@ static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
   return ok ? best : -1;
 }
 
-int xpar_op_undo(const xpar_options * o) {
-  u8 * j;  sz n = 0;  u64 at, count, i;
+/*  Whether a journal could replay.  */
+bool xpar_journal_live(const char * path) {
+  sz n = 0;
+  u8 * j = gen_read_whole(path, &n, false);
+  bool live;
+  if (!j) return false;
+  if (n < XPAR_UNDO_HDR + XPAR_UNDO_FOOT)
+    live = xpar_memcmp(j, XPAR_UNDO_MAGIC, n < 8 ? n : 8) != 0;
+  else
+    live = xpar_memcmp(j, XPAR_UNDO_MAGIC, 8) != 0 ||
+           !xpar_memcmp(j + n - XPAR_UNDO_FOOT, XPAR_UNDO_END, 8);
+  xpar_free(j);
+  return live;
+}
+
+/*  Remove or empty a spent journal.  */
+bool xpar_journal_drop(const char * path) {
+  xpar_file * f;
+  bool gone = xpar_remove(path) == 0;
+  if (!gone) {
+    f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_NOFOLLOW);
+    if (f && xpar_ftruncate(f, 0) == 0 && xpar_fsync(f) == 0) gone = true;
+    if (f) xpar_close(f);
+    if (gone) xpar_fprintf(xpar_stderr, "xpar: warning: spent journal '%s' "
+                           "could not be removed; emptied instead.\n", path);
+    else xpar_fprintf(xpar_stderr, "xpar: cannot remove spent journal '%s': "
+                      "%s\n", path, xpar_strerror(xpar_errno()));
+  }
+  if (xpar_fsync_dir(path) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: warning: dropping the journal '%s' is "
+                 "not durable: %s\n", path, xpar_strerror(xpar_errno()));
+  return gone;
+}
+
+static char * gen_undo_path(const xpar_options * o, const xpar_chain * c,
+                            u32 g) {
   char * path = NULL;
-  u32 applied = 0, skipped = 0, removed = 0;
-  xpar_chain chain;
+  if (c->gen[g].sd.generation)
+    xpar_asprintf(&path, "%s.g%03" PRIu32 ".xparundo", o->set_ref.base,
+                  c->gen[g].sd.generation);
+  else
+    xpar_asprintf(&path, "%s.xparundo", o->set_ref.base);
+  return path;
+}
+
+/*  Return 0 for success, 1 for absence, or 2 for an I/O error.  */
+static int gen_journal_read(const char * path, u8 ** out, sz * out_len,
+                            int * err) {
+  xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
+  i64 n;
+  *out = NULL;  *out_len = 0;  *err = 0;
+  if (!f) {
+    *err = xpar_errno();
+    return xpar_errno_absent(*err) ? 1 : 2;
+  }
+  n = xpar_size(f);
+  if (n < 0 || (u64) n >= (u64) (sz) -1) {
+    *err = xpar_errno();  xpar_close(f);  return 2;
+  }
+  *out = (u8 *) xpar_alloc_raw((sz) n + 1);
+  if (n) xpar_xread(f, *out, (sz) n);
+  xpar_xclose(f);
+  *out_len = (sz) n;
+  return 0;
+}
+
+static int gen_undo_worse(int a, int b) {
+  if (a == XPAR_EXIT_IO || b == XPAR_EXIT_IO) return XPAR_EXIT_IO;
+  return a > b ? a : b;
+}
+
+/*  Replay one generation's journal.  */
+static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
+                        u32 generation, const char * path, bool * present) {
+  u8 * j;  sz n = 0;  u64 at, count, i;
+  u32 applied = 0, skipped = 0;
   xpar_manifest manifest;
   xpar_stat_t setdir;
   u32 * owner = NULL;
-  u32 generation;
+  int err = 0;
 
-  if (o->set && xpar_path_ends_with(o->set, ".xparundo"))
-    FATAL("undo takes the protected set, not a journal pathname; it needs "
-          "the set to bind the journal to the right generation and "
-          "manifest.");
-  xpar_gchain_load(o, &chain);
-  generation = xpar_gchain_select(&chain,
-                         o->gen_count ? &o->gens[0] : NULL);
-  if (o->set_ref.base) {
-    if (chain.gen[generation].sd.generation)
-      xpar_asprintf(&path, "%s.g%03" PRIu32 ".xparundo", o->set_ref.base,
-                    chain.gen[generation].sd.generation);
-    else
-      xpar_asprintf(&path, "%s.xparundo", o->set_ref.base);
-  } else {
-    FATAL("undo needs a set with a resolvable base name.");
+  *present = false;
+  switch (gen_journal_read(path, &j, &n, &err)) {
+    case 1: return XPAR_EXIT_NOTFOUND;
+    case 2:
+      *present = true;
+      xpar_fprintf(xpar_stderr, "xpar: cannot read the journal '%s': %s\n",
+                   path, err ? xpar_strerror(err)
+                             : "the host would not size it");
+      return XPAR_EXIT_IO;
+    default: break;
   }
-
-  j = gen_read_whole(path, &n, false);
-  if (!j) {
-    xpar_fprintf(xpar_stderr, "xpar: no journal at '%s'; nothing to undo.\n",
-                 path);
-    gen_json_result(o, "undo", chain.gen[generation].set_id,
-                    chain.gen[generation].sd.generation, "not-found",
-                    XPAR_EXIT_NOTFOUND);
-    xpar_free(path);
-    xpar_gchain_free(&chain);
-    return XPAR_EXIT_NOTFOUND;
+  *present = true;
+  /*  Empty, or torn inside its header: no data write ever followed.  */
+  if (n < XPAR_UNDO_HDR + XPAR_UNDO_FOOT &&
+      !xpar_memcmp(j, XPAR_UNDO_MAGIC, n < 8 ? (sz) n : 8)) {
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an %s journal; nothing to "
+                 "undo.\n", path, n ? "unfinished" : "emptied");
+    if (!o->keep_journal && !xpar_journal_drop(path))
+      FATAL_IO("Cannot remove the spent journal '%s'.", path);
+    xpar_free(j);
+    return XPAR_EXIT_OK;
   }
   if (n < XPAR_UNDO_HDR + XPAR_UNDO_FOOT || xpar_memcmp(j, XPAR_UNDO_MAGIC, 8))
     FATAL_FORMAT("'%s' is not an xpar repair journal.", path);
@@ -6005,28 +6355,23 @@ int xpar_op_undo(const xpar_options * o) {
     if (!complete) {
       /*  An incomplete journal predates all protected-data writes.  */
       xpar_fprintf(xpar_stderr,
-                   "xpar: the journal '%s' is incomplete, so the repair that "
-                   "owns it never wrote anything and there is nothing to "
-                   "undo. %s\n", path,
+                   "xpar: journal '%s' is incomplete; nothing to undo. %s\n",
+                   path,
                    o->keep_journal ? "Kept." : "Removing it.");
-      if (!o->keep_journal && xpar_remove(path) != 0)
-        xpar_fprintf(xpar_stderr, "xpar: cannot remove '%s'.\n", path);
-      gen_json_result(o, "undo", chain.gen[generation].set_id,
-                      chain.gen[generation].sd.generation, "ok",
-                      XPAR_EXIT_OK);
-      xpar_free(j);  xpar_free(path);
-      xpar_gchain_free(&chain);
+      if (!o->keep_journal && !xpar_journal_drop(path))
+        FATAL_IO("Cannot remove the spent journal '%s'.", path);
+      xpar_free(j);
       return XPAR_EXIT_OK;
     }
     if (xpar_rd32(foot + 20))
       FATAL_FORMAT("The footer of '%s' has a non-zero reserved field.", path);
   }
 
-  if (xpar_memcmp(j + 16, chain.gen[generation].set_id, XPAR_SET_ID_LEN))
+  if (xpar_memcmp(j + 16, chain->gen[generation].set_id, XPAR_SET_ID_LEN))
     FATAL_FORMAT("The journal '%s' belongs to a different set or generation.",
                  path);
-  xpar_gchain_manifest(&chain, generation, &manifest, &owner);
-  { const char * d = chain.dir && *chain.dir ? chain.dir : ".";
+  xpar_gchain_manifest(chain, generation, &manifest, &owner);
+  { const char * d = chain->dir && *chain->dir ? chain->dir : ".";
     if (xpar_lstat(d, &setdir) != 0) xpar_memset(&setdir, 0, sizeof setdir); }
 
   /*  Validate every record before replaying any of them. The whole-file CRC
@@ -6068,7 +6413,7 @@ int xpar_op_undo(const xpar_options * o) {
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
       if (xpar_has_nul(rec + XPAR_UNDO_REC, plen) ||
-          gen_undo_entry(&chain, &manifest, (const char *) rec + XPAR_UNDO_REC,
+          gen_undo_entry(chain, &manifest, (const char *) rec + XPAR_UNDO_REC,
                          plen, &setdir) < 0)
         FATAL_FORMAT("Journal record %" PRIu64
                      " names '%.*s' outside this set directory.",
@@ -6110,8 +6455,8 @@ int xpar_op_undo(const xpar_options * o) {
     old = rec + XPAR_UNDO_REC + plen;
     at += step;
 
-    { i64 ix = gen_undo_entry(&chain, &manifest, rp, plen, &setdir);
-      const char * d = chain.dir && *chain.dir ? chain.dir : ".";
+    { i64 ix = gen_undo_entry(chain, &manifest, rp, plen, &setdir);
+      const char * d = chain->dir && *chain->dir ? chain->dir : ".";
       if (ix < 0) { skipped++;  continue; }
       /*  Rebuild paths from the selected set directory.  */
       full = xpar_path_join_n(d, manifest.entry[ix].name,
@@ -6119,10 +6464,12 @@ int xpar_op_undo(const xpar_options * o) {
     if (rflags & XPAR_UNDO_CREATED) {
       /*  The file did not exist before the repair, so putting it back
           means removing it rather than truncating it to zero.  */
-      if (xpar_remove(full) != 0)
+      if (xpar_remove(full) != 0) {
         xpar_fprintf(xpar_stderr, "xpar: cannot remove '%s': %s\n", full,
                      xpar_strerror(xpar_errno()));
-      else { removed++;  applied++; }
+        skipped++;
+      }
+      else applied++;
       xpar_free(full);
       continue;
     }
@@ -6136,34 +6483,89 @@ int xpar_op_undo(const xpar_options * o) {
     if (len && xpar_pwrite(f, old, (sz) len, off) != (sz) len) {
       xpar_fprintf(xpar_stderr, "xpar: short write to '%s'.\n", full);
       skipped++;
-    } else {
-      /*  A repair that lengthened or truncated a file is undone only
-          when the length goes back too.  */
-      if (xpar_size(f) != (i64) orig && xpar_ftruncate(f, orig) != 0)
-        xpar_fprintf(xpar_stderr, "xpar: cannot restore the length of "
-                     "'%s'.\n", full);
-      applied++;
-    }
+    } else if (xpar_size(f) != (i64) orig && xpar_ftruncate(f, orig) != 0) {
+      /*  Keep the journal if only the bytes were restored.  */
+      xpar_fprintf(xpar_stderr, "xpar: cannot resize '%s': %s\n",
+                   full, xpar_strerror(xpar_errno()));
+      skipped++;
+    } else applied++;
     xpar_fsync(f);
     xpar_xclose(f);
     xpar_free(full);
   }
 
   xpar_fprintf(xpar_stderr,
-               "xpar: replayed %" PRIu32 " of %" PRIu64 " journal records%s%s.\n",
-               applied, count,
-               removed ? ", removing files the repair had created" : "",
-               skipped ? "; the rest could not be applied" : "");
-  if (!skipped && !o->keep_journal && xpar_remove(path) != 0)
-    xpar_fprintf(xpar_stderr, "xpar: cannot remove '%s'.\n", path);
-  gen_json_result(o, "undo", chain.gen[generation].set_id,
-                  chain.gen[generation].sd.generation,
-                  skipped ? "unrepairable" : "ok",
-                  skipped ? XPAR_EXIT_UNREPAIRABLE : XPAR_EXIT_OK);
-  xpar_free(j);  xpar_free(path);
+               "xpar: replayed %" PRIu32 "/%" PRIu64 " journal records "
+               "from '%s'%s.\n",
+               applied, count, path, skipped ? "; some failed" : "");
+  if (!skipped && !o->keep_journal && !xpar_journal_drop(path))
+    FATAL_IO("Cannot retire journal '%s'; it remains replayable.", path);
+  xpar_free(j);
   xpar_free(owner);  xpar_manifest_free(&manifest);
-  xpar_gchain_free(&chain);
   return skipped ? XPAR_EXIT_UNREPAIRABLE : XPAR_EXIT_OK;
+}
+
+int xpar_op_undo(const xpar_options * o) {
+  xpar_chain chain;
+  u32 * order;  char ** paths;
+  u32 order_n = 0, played = 0, i, k;
+  int worst = XPAR_EXIT_OK;
+
+  if (o->set && xpar_path_ends_with(o->set, ".xparundo"))
+    FATAL("undo requires a set path, not a journal.");
+  xpar_gchain_load(o, &chain);
+  if (!o->set_ref.base) FATAL("undo needs a set with a resolvable base name.");
+  FATAL_UNLESS("This set has no readable generation to undo.",
+               chain.gen_count > 0);
+
+  order = (u32 *) xpar_calloc(chain.gen_count, sizeof *order);
+  if (o->gen_count) {
+    order[order_n++] = xpar_gchain_select(&chain, &o->gens[0]);
+  } else {
+    /*  Replay each generation's journal newest first.  */
+    bool * taken = (bool *) xpar_calloc(chain.gen_count, sizeof *taken);
+    for (k = 0; k < chain.gen_count; k++) {
+      u32 best = XPAR_GEN_NONE;
+      for (i = 0; i < chain.gen_count; i++)
+        if (!taken[i] && (best == XPAR_GEN_NONE ||
+                          chain.gen[i].sd.generation >
+                            chain.gen[best].sd.generation))
+          best = i;
+      taken[best] = true;  order[order_n++] = best;
+    }
+    xpar_free(taken);
+  }
+
+  paths = (char **) xpar_calloc(order_n, sizeof *paths);
+  for (k = 0; k < order_n; k++) {
+    bool present = false, seen = false;
+    int rc;
+    paths[k] = gen_undo_path(o, &chain, order[k]);
+    /*  Fork branches can share a generation number, hence a journal.  */
+    for (i = 0; i < k; i++)
+      if (!xpar_strcmp(paths[i], paths[k])) seen = true;
+    if (seen) continue;
+    rc = gen_undo_one(o, &chain, order[k], paths[k], &present);
+    if (!present) continue;
+    played++;
+    worst = gen_undo_worse(worst, rc);
+  }
+
+  if (!played) {
+    xpar_fprintf(xpar_stderr, "xpar: no journal at '%s'; nothing to undo.\n",
+                 paths[0]);
+    worst = XPAR_EXIT_NOTFOUND;
+  }
+  gen_json_result(o, "undo", chain.gen[order[0]].set_id,
+                  chain.gen[order[0]].sd.generation,
+                  worst == XPAR_EXIT_OK ? "ok"
+                    : worst == XPAR_EXIT_NOTFOUND ? "not-found"
+                    : worst == XPAR_EXIT_IO ? "failed" : "unrepairable",
+                  worst);
+  for (k = 0; k < order_n; k++) xpar_free(paths[k]);
+  xpar_free(paths);  xpar_free(order);
+  xpar_gchain_free(&chain);
+  return worst;
 }
 
 /*  Recover armour parameters by requiring all-zero frame syndromes. Field
@@ -6406,8 +6808,8 @@ int xpar_op_recover_prologue(const xpar_options * o) {
   if (!o->dry_run) {
     xpar_armour_params ap;
     xpar_armour * a;
+    gen_addrec_file * pub;
     u8 copy[ARM_COPY_LEN];
-    xpar_file * out;
     int i;
     /*  Each 96-byte prologue is zero-extended to RS(255,223) data and
         followed by its 32 parity bytes.  */
@@ -6423,14 +6825,14 @@ int xpar_op_recover_prologue(const xpar_options * o) {
       xpar_free(fr);
     }
     xpar_armour_free(a);
-    out = xpar_open(o->set, XPAR_O_RDWR);
-    if (!out) FATAL_PERROR(o->set);
+    /*  Publish all three prologue copies atomically.  */
     for (i = 0; i < 3; i++)
-      if (xpar_pwrite(out, copy, sizeof copy, (u64) i * ARM_COPY_LEN) !=
-          sizeof copy)
-        FATAL_IO("Short write to '%s'.", o->set);
-    xpar_fsync(out);
-    xpar_xclose(out);
+      xpar_memcpy(f + (sz) i * ARM_COPY_LEN, copy, sizeof copy);
+    pub = (gen_addrec_file *) xpar_calloc(1, sizeof *pub);
+    pub[0].stage = gen_stage_whole(o->set, f, n);
+    pub[0].final = o->set;
+    pub[0].replace = true;
+    gen_addrec_publish(pub, 1);
     xpar_fprintf(xpar_stderr, "xpar: wrote three repaired prologue copies "
                  "to %s.\n", o->set);
   }

@@ -16,6 +16,7 @@
 
 #include "ops.h"
 #include "chain.h"
+#include "volimg.h"
 #include "vset.h"
 
 #include "armour.h"
@@ -49,9 +50,8 @@ typedef struct {
 
   /*  Volume images opened here: the recovery volumes LAYT names. Index
       volumes are already mapped by the set reader.  */
-  xpar_mmap * rmap;
-  char **     rpath;
-  u32         rcount;
+  xpar_volimg * rvol;
+  u32           rcount;
 
   scrub_rcvs * rcvs;            /*  Indexed by exponent.  */
   u64          rcvs_count, rcvs_present;
@@ -70,6 +70,7 @@ typedef struct {
   u64  rcvs_wrong, rcvs_unchecked;
   u64  cells_rebuilt, cells_unseeded;
   u64  link_drift;
+  u64  append_skipped;          /*  Index volumes that would not open.  */
   bool write_failed;
 } scrub;
 
@@ -140,23 +141,27 @@ static void load_recovery(scrub * c) {
   }
   if (!l) return;
 
-  c->rmap  = (xpar_mmap *) xpar_calloc(l->count ? l->count : 1,
-                                       sizeof(xpar_mmap));
-  c->rpath = (char **) xpar_calloc(l->count ? l->count : 1, sizeof(char *));
+  c->rvol = (xpar_volimg *) xpar_calloc(l->count ? l->count : 1,
+                                        sizeof(xpar_volimg));
   for (i = 0; i < l->count; i++) {
     const xpar_vol * v = &l->vol[i];
+    xpar_volimg_status vs;
     char * path;
+    int err = 0;
     if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
     path = xpar_path_vol(dir, v->name);
-    c->rmap[c->rcount] = xpar_map(path);
-    if (!c->rmap[c->rcount].valid) {
-      xpar_fprintf(xpar_stderr, "xpar: cannot read recovery volume '%s'\n",
+    vs = xpar_volimg_read(&c->rvol[c->rcount], path, &err);
+    if (vs == XPAR_VOLIMG_IO)
+      FATAL_IO("Cannot read recovery volume '%s': %s.", path,
+               xpar_strerror(err ? err : xpar_errno()));
+    if (vs != XPAR_VOLIMG_OK) {
+      xpar_fprintf(xpar_stderr, "xpar: recovery volume '%s' is missing\n",
                    v->name);
       xpar_free(path);
       continue;
     }
-    c->rpath[c->rcount] = path;
-    scan_image(c, c->rmap[c->rcount].map, c->rmap[c->rcount].size);
+    xpar_free(path);
+    scan_image(c, c->rvol[c->rcount].data, c->rvol[c->rcount].size);
     c->rcount++;
   }
   take_rcvs_decoded(c);
@@ -238,10 +243,48 @@ static void scrub_frames(scrub * c, const xpar_armour * ar, u8 * region,
   xpar_pool_destroy(pool);
 }
 
+/*  Lazily opened rewrite handle, flushed once per volume.  */
+typedef struct { const char * path;  xpar_file * f;  bool failed; } rw_sink;
+
+static void sink_init(rw_sink * k, const char * path) {
+  k->path = path;  k->f = NULL;  k->failed = false;
+}
+
+static void sink_write(scrub * c, rw_sink * k, const u8 * p, u64 n,
+                       u64 off) {
+  if (k->failed || !k->path) return;
+  if (!k->f) {
+    k->f = xpar_open(k->path, XPAR_O_RDWR);
+    if (!k->f) {
+      xpar_fprintf(xpar_stderr, "xpar: --rewrite: cannot open '%s': %s\n",
+                   k->path, xpar_strerror(xpar_errno()));
+      k->failed = true;  c->write_failed = true;
+      return;
+    }
+  }
+  if (xpar_pwrite(k->f, p, (sz) n, off) != (sz) n) {
+    xpar_fprintf(xpar_stderr, "xpar: --rewrite: short write to '%s' at %"
+                 PRIu64 "\n", k->path, off);
+    k->failed = true;  c->write_failed = true;
+    return;
+  }
+  c->regions_rewritten++;
+}
+
+static void sink_close(scrub * c, rw_sink * k) {
+  if (!k->f) return;
+  if (xpar_fsync(k->f) != 0) {
+    xpar_fprintf(xpar_stderr, "xpar: --rewrite: cannot flush '%s': %s\n",
+                 k->path, xpar_strerror(xpar_errno()));
+    c->write_failed = true;
+  }
+  xpar_close(k->f);  k->f = NULL;
+}
+
 /*  One armoured packet group: every frame, then the plaintext parse that
     decides whether a rewrite is authorised.  */
 static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
-                       const char * path) {
+                       rw_sink * k) {
   xpar_armg a;
   xpar_armour_params p;
   xpar_armour * ar;
@@ -292,15 +335,8 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
   }
   xpar_free(plain);
 
-  if (c->o->rewrite && ok && st.symbols && path) {
-    xpar_file * f = xpar_open(path, XPAR_O_RDWR);
-    u64 off = (u64) (a.data - base);
-    if (f) {
-      if (xpar_pwrite(f, region, (sz) a.armoured_length, off) ==
-          (sz) a.armoured_length) c->regions_rewritten++;
-      xpar_close(f);
-    }
-  }
+  if (c->o->rewrite && ok && st.symbols)
+    sink_write(c, k, region, a.armoured_length, (u64) (a.data - base));
   xpar_free(region);
   xpar_armour_free(ar);
 }
@@ -312,9 +348,12 @@ static void scrub_image(scrub * c, const u8 * buf, u64 size,
                         const char * path) {
   const u8 * body;
   u64 pos = 0, blen = 0;
+  rw_sink k;
+  sink_init(&k, path);
   while (xpar_verify_next_armg(buf, size, xpar_vset_key(c->s),
                                &pos, &body, &blen))
-    scrub_armg(c, body, (sz) blen, buf, path);
+    scrub_armg(c, body, (sz) blen, buf, &k);
+  sink_close(c, &k);
 }
 
 /*  Whole-file armour is not an ARMG packet. The 384-byte prologue gives
@@ -362,15 +401,11 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
   xpar_armour_extract(ar, plain, pr.plain_length, region);
   ok = xpar_verify_packets_ok(plain, pr.plain_length,
                               xpar_vset_key(c->s));
-  if (c->o->rewrite && ok && st.symbols && path) {
-    xpar_file * f = xpar_open(path, XPAR_O_RDWR);
-    if (f) {
-      if (xpar_pwrite(f, region, (sz) pr.armoured_length, 384) ==
-          (sz) pr.armoured_length) {
-        if (xpar_fsync(f) == 0) c->regions_rewritten++;
-      }
-      xpar_close(f);
-    }
+  if (c->o->rewrite && ok && st.symbols) {
+    rw_sink k;
+    sink_init(&k, path);
+    sink_write(c, &k, region, pr.armoured_length, 384);
+    sink_close(c, &k);
   }
   xpar_free(plain); xpar_free(region); xpar_armour_free(ar);
 }
@@ -389,7 +424,7 @@ static void scrub_armour(scrub * c) {
       scrub_image(c, p, n, xpar_vset_volume_path(c->s, i));
   }
   for (i = 0; i < c->rcount; i++)
-    scrub_image(c, c->rmap[i].map, c->rmap[i].size, c->rpath[i]);
+    scrub_image(c, c->rvol[i].data, c->rvol[i].size, c->rvol[i].path);
 }
 
 /*  Hard-link structure.  */
@@ -708,7 +743,13 @@ static void rebuild_cells(scrub * c) {
               !xpar_strcmp(base, layt->vol[q].name)) { is_data = true; break; }
         if (is_data) continue;
         f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
-        if (!f) continue;
+        if (!f) {
+          c->append_skipped++;
+          xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: cannot append "
+                       "to '%s': %s\n", path,
+                       xpar_strerror(xpar_errno()));
+          continue;
+        }
         if (xpar_write(f, cr.out.data, cr.out.len) != cr.out.len ||
             xpar_fsync(f) != 0) {
           c->write_failed = true;
@@ -797,6 +838,10 @@ static void report(const scrub * c, int rc) {
     xpar_fprintf(xpar_stderr, "xpar: %" PRIu64
                  " link-structure-drift reports\n",
                  c->link_drift);
+  if (c->append_skipped)
+    xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: %" PRIu64 " index "
+                 "volume%s could not be opened for writing\n",
+                 c->append_skipped, PLURAL(c->append_skipped));
   xpar_fprintf(xpar_stderr, "xpar: scrub: exit %d\n", rc);
 }
 
@@ -835,7 +880,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   /*  Parity-side rot and a recovery slice that was computed wrong are
       both repairable conditions and neither is data loss, so they raise a
       clean verdict to "there is work to do" and never past it.  */
-  if (c.write_failed) rc = XPAR_EXIT_IO;
+  if (c.write_failed || xpar_vset_io_errors(c.s)) rc = XPAR_EXIT_IO;
   else if (rc == XPAR_EXIT_OK &&
       (c.pkt_bad || c.rcvs_wrong || c.failed ||
        c.rcvs_present < c.rcvs_count || c.cells_unseeded))
@@ -862,6 +907,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     xpar_json_u64(js, "worst_codeword", c.worst);
     xpar_json_u64(js, "recovery_wrong", c.rcvs_wrong);
     xpar_json_u64(js, "link_drift", c.link_drift);
+    xpar_json_u64(js, "index_volumes_unwritable", c.append_skipped);
     xpar_json_u64(js, "cells_rebuilt", c.cells_rebuilt);
     xpar_json_u64(js, "syndromes", xpar_verify_syndromes());
     xpar_json_end(js);
@@ -875,11 +921,8 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   }
 
   { u32 i;
-    for (i = 0; i < c.rcount; i++) {
-      xpar_unmap(&c.rmap[i]);
-      xpar_free(c.rpath[i]);
-    } }
-  xpar_free(c.rmap);  xpar_free(c.rpath);
+    for (i = 0; i < c.rcount; i++) xpar_volimg_close(&c.rvol[i]); }
+  xpar_free(c.rvol);
   xpar_free(c.rcvs);  xpar_free(c.hist);
   /*  Chain walks close shared heads after all generations.  */
   if (!opened) xpar_vset_close(c.s);

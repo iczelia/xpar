@@ -63,6 +63,8 @@ typedef struct {
   u8 *      data;
   u64       size;
   u64       pkt_dropped;  /*  Stored packets of this volume that failed.  */
+  u64       pkt_stale;    /*  Packets outranked by the index.  */
+  bool      is_index;     /*  Index-volume header.  */
   bool      armoured;
   bool      has_volh;     /*  A volume header parsed in this image.  */
   u8        volh_id[XPAR_SET_ID_LEN];
@@ -91,9 +93,13 @@ static void vimg_load(xpar_vimg * v, const char * path) {
                v->size <= (u64) (sz) -1, path);
   v->data = (u8 *) xpar_alloc_raw(v->size ? (sz) v->size : 1);
   if (v->size) {
-    /* Ignore bytes beyond a short read. */
     sz got = xpar_xread(f, v->data, (sz) v->size);
     if (got != (sz) v->size) {
+      /*  Accept a short read only if the file shrank.  */
+      i64 now = xpar_size(f);
+      if (now < 0 || (u64) now != (u64) got)
+        FATAL_IO("Reading '%s' stopped after %" PRIu64 " of %" PRIu64
+                 " bytes.", path, (u64) got, v->size);
       xpar_memset(v->data + got, 0, (sz) v->size - got);
       v->size = (u64) got;
     }
@@ -130,13 +136,25 @@ static void vimg_remap(xpar_vimg * v) {
   v->map = xpar_map(v->path);
   if (v->map.valid) { v->data = v->map.map;  v->size = v->map.size;  return; }
   f = xpar_open(v->path, XPAR_O_RDONLY);
-  if (!f) return;
+  if (!f) {
+    if (!xpar_errno_absent(xpar_errno()))
+      FATAL_IO("Cannot reopen '%s': %s.", v->path,
+               xpar_strerror(xpar_errno()));
+    return;
+  }
   n = xpar_size(f);
-  if (n < 0 || (u64) n > (u64) (sz) -1) { xpar_xclose(f);  return; }
+  if (n < 0) FATAL_IO("Cannot size '%s'.", v->path);
+  if ((u64) n > (u64) (sz) -1) { xpar_xclose(f);  return; }
   v->data = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
   got = n ? xpar_xread(f, v->data, (sz) n) : 0;
-  /* Ignore bytes beyond a short read. */
-  if (got != (sz) n) xpar_memset(v->data + got, 0, (sz) n - got);
+  if (got != (sz) n) {
+    /*  Accept a short read only if the file shrank.  */
+    i64 now = xpar_size(f);
+    if (now < 0 || (u64) now != (u64) got)
+      FATAL_IO("Reading '%s' stopped after %" PRIu64 " of %" PRIu64
+               " bytes.", v->path, (u64) got, (u64) n);
+    xpar_memset(v->data + got, 0, (sz) n - got);
+  }
   v->size = (u64) got;
   xpar_xclose(f);
 }
@@ -204,6 +222,7 @@ struct xpar_vset {
   u64           ragged_vols;   /*  Volumes packets do not tile exactly.  */
   const char *  ragged_first;
   u64           unreadable_entries; /*  Present, but the host refused them.  */
+  u64           io_errors;     /*  Host refusals on any path this run read.  */
   /*  Stream read-ahead, derived from -m rather than fixed.  */
   sz            io_buf;
   sz            io_span;      /*  Whole buffer, including the slice floor.  */
@@ -211,6 +230,7 @@ struct xpar_vset {
 
   xpar_erasures er;
   u64 bad_slices, bad_entries, alias_bad, opaque_bad, missing_entries;
+  u64 link_drift;             /*  Entries whose recorded structure differs.  */
   u64 inherited_bad;          /*  Damaged in bytes an ancestor owns.  */
   u64 gone_cells, gone_slices;/*  Superseded; erased for the decoder.  */
   u32 lost_gens, lost_gen_first;  /*  Named on disk, no descriptor left.  */
@@ -235,6 +255,14 @@ struct xpar_vset {
   u32         fh_entry;
   bool        fh_open;
 };
+
+static void vset_io_error(xpar_vset * s, const char * path, int err) {
+  s->io_errors++;
+  xpar_fprintf(xpar_stderr, "xpar: cannot read '%s': %s\n", path,
+               xpar_strerror(err));
+}
+
+u64 xpar_vset_io_errors(const xpar_vset * s) { return s->io_errors; }
 
 static void keep_plain(xpar_vset * s, u8 * p, u64 len, bool owned) {
   if (s->plain_count == s->plain_cap) {
@@ -749,6 +777,19 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
     } }
 }
 
+static bool vimg_is_index(const xpar_vimg * v, const xpar_key * key) {
+  xpar_pkt h;
+  xpar_volh vh;
+  if (v->size < XPAR_PKT_HDR || xpar_memcmp(v->data, XPAR_PKT_MAGIC, 8))
+    return false;
+  if (xpar_pkt_read(v->data, v->size, key, &h) != XPAR_OK ||
+      !xpar_pkt_is(&h, XPAR_T_VOLH) ||
+      xpar_volh_read(v->data + XPAR_PKT_HDR, (sz) (h.length - XPAR_PKT_HDR),
+                     &vh) != XPAR_OK)
+    return false;
+  return vh.volume_kind == XPAR_VOL_INDEX;
+}
+
 static void collect_gens(xpar_vset * s) {
   u32 i, j, n = 0;
   s->gen = (xpar_genid *) xpar_calloc(s->crit.count ? s->crit.count : 1,
@@ -1058,7 +1099,11 @@ static char * find_renamed_volume(xpar_vset * s, u32 index, u32 kind,
   xpar_dir * d = xpar_opendir(s->dir);
   const xpar_dirent * de;
   *found_name = NULL;
-  if (!d) return NULL;
+  if (!d) {
+    if (!xpar_errno_absent(xpar_errno()))
+      vset_io_error(s, s->dir, xpar_errno());
+    return NULL;
+  }
   while ((de = xpar_readdir(d)) != NULL) {
     char * candidate;
     if (!de->is_regular) continue;
@@ -1131,9 +1176,12 @@ static void load_layt(xpar_vset * s) {
       const xpar_vol * v = &s->layt.vol[i];
       xpar_stat_t vst;
       char * path;
+      int err;
       if (v->kind != XPAR_VOL_INDEX || !v->name) continue;
       path = xpar_path_vol(s->dir, v->name);
-      if (xpar_lstat(path, &vst) != 0 || !vst.is_regular) {
+      err = xpar_lstat(path, &vst) == 0 ? 0 : xpar_errno();
+      if (err && !xpar_errno_absent(err)) vset_io_error(s, path, err);
+      if (err || !vst.is_regular) {
         char * found_name = NULL;
         char * found = find_renamed_volume(s, XPAR_VOL_STANDALONE,
                                            XPAR_VOL_INDEX, &found_name);
@@ -1154,6 +1202,7 @@ static void load_layt(xpar_vset * s) {
       char * path;
       xpar_stat_t st;
       u64 minimum;
+      int err;
       if (v->kind != XPAR_VOL_RECOVERY) continue;
       if (v->byte_length > axis || v->recovery_first > axis - v->byte_length ||
           s->recovery > axis - v->byte_length)
@@ -1167,8 +1216,9 @@ static void load_layt(xpar_vset * s) {
                                   (s->setd.slice_size + 64)
                   ? (u64) -1
                   : v->byte_length * (s->setd.slice_size + 64);
-      if (xpar_lstat(path, &st) != 0 || !st.is_regular ||
-          st.size < minimum) {
+      err = xpar_lstat(path, &st) == 0 ? 0 : xpar_errno();
+      if (err && !xpar_errno_absent(err)) vset_io_error(s, path, err);
+      if (err || !st.is_regular || st.size < minimum) {
         char * found_name = NULL;
         char * found = find_renamed_volume(s, i, XPAR_VOL_RECOVERY,
                                            &found_name);
@@ -1483,6 +1533,11 @@ static const u8 * replica_bytes(const xpar_vset * s, u32 skip,
   return NULL;
 }
 
+/*  Preserve the first failure reason.  */
+static void first_reason(const char ** reason, const char * why) {
+  if (reason && !*reason) *reason = why;
+}
+
 /*  Replace failed packets from replicas, then publish the volume.  */
 static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
                                   const char ** reason) {
@@ -1494,7 +1549,7 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
   u64 pos = 0;
   bool ok = true;
   if (!v->data || v->size < XPAR_PKT_HDR || v->size > (u64) (sz) -1) {
-    if (reason) *reason = "the volume is too short to hold a packet";
+    first_reason(reason, "the volume is too short to hold a packet");
     return false;
   }
   copy = (u8 *) xpar_alloc_raw((sz) v->size);
@@ -1510,7 +1565,7 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     if (st == XPAR_E_CHECKSUM) {
       const u8 * raw = replica_bytes(s, idx, copy + pos, h.length);
       if (!raw) {
-        if (reason) *reason = "no other volume holds an intact replica";
+        first_reason(reason, "no other volume holds an intact replica");
         ok = false;  break;
       }
       xpar_memcpy(copy + pos, raw, (sz) h.length);
@@ -1524,7 +1579,7 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     sc.accept_unverified_keyed = false;
     while (xpar_scan_next(&sc, &h, &body, &off)) { }
     if (sc.skip_checksum) {
-      if (reason) *reason = "the rewritten volume still fails a checksum";
+      first_reason(reason, "the rewritten volume still fails a checksum");
       ok = false;
     }
   }
@@ -1532,22 +1587,22 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     f = xpar_stage_open(v->path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
     if (!f) {
-      if (reason) *reason = "staging failed";
+      first_reason(reason, "staging failed");
       ok = false;
     } else {
       xpar_xwrite(f, copy, (sz) v->size);
       if (xpar_fsync(f) != 0) {
-        if (reason) *reason = "flush failed";
+        first_reason(reason, "flush failed");
         ok = false;
-      }
-      xpar_xclose(f);
+        xpar_close(f);
+      } else xpar_xclose(f);
       /*  The replacement is wholly in `copy`, so the image is only a
           lock on the name from here on. Callers close or reopen the set
           after a rewrite, so the reread below is for coherence alone.  */
       if (ok) vset_release_path(s, v->path);
       if (ok && (xpar_rename(stage, v->path) != 0 ||
                  xpar_fsync_dir(v->path) != 0)) {
-        if (reason) *reason = "publish failed";
+        first_reason(reason, "publish failed");
         ok = false;
       }
       vset_remap_path(s, v->path);
@@ -1562,16 +1617,18 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
 
 /*  Cut a volume back to its last whole packet. A volume that lost packets
     is left to the regeneration paths, which can restore what is gone.  */
-bool xpar_vset_trim_ragged(xpar_vset * s, u64 * volumes,
+bool xpar_vset_trim_ragged(xpar_vset * s, u64 * volumes, u64 * failures,
                            const char ** reason) {
   u32 i;
-  u64 done = 0;
-  bool ok = true;
+  u64 done = 0, failed = 0;
   if (reason) *reason = NULL;
+  if (volumes) *volumes = 0;
+  if (failures) *failures = 0;
   for (i = 0; i < s->img_count; i++) {
     xpar_vimg * v = &s->img[i];
     xpar_file * f;
     char * path;
+    bool vok = true;
     if (!v->ragged || !v->pkt_end || v->pkt_end >= v->size || !v->path)
       continue;
     /*  A packet that starts but does not finish means lost bytes, which
@@ -1583,24 +1640,38 @@ bool xpar_vset_trim_ragged(xpar_vset * s, u64 * volumes,
     vset_release_path(s, path);
     f = xpar_open(path, XPAR_O_RDWR);
     if (!f) {
-      if (reason) *reason = "the volume could not be opened for writing";
-      ok = false;
+      first_reason(reason, "the volume could not be opened for writing");
+      vok = false;
     } else {
       if (xpar_ftruncate(f, v->pkt_end) != 0) {
-        if (reason) *reason = "the volume could not be truncated";
-        ok = false;
-      } else { done++;  v->ragged = false; }
-      if (xpar_fsync(f) != 0) ok = false;
+        first_reason(reason, "the volume could not be truncated");
+        vok = false;
+      }
+      /*  An unflushed truncation is not a trimmed volume.  */
+      if (xpar_fsync(f) != 0) {
+        first_reason(reason, "the trimmed volume could not be flushed");
+        vok = false;
+      }
       xpar_close(f);
+      if (vok) { done++;  v->ragged = false; }
     }
+    if (!vok) failed++;
     vset_remap_path(s, path);
     xpar_free(path);
   }
   if (volumes) *volumes = done;
-  return ok;
+  if (failures) *failures = failed;
+  return failed == 0;
 }
 
 u64 xpar_vset_volumes_ragged(const xpar_vset * s) { return s->ragged_vols; }
+
+u64 xpar_vset_volumes_stale(const xpar_vset * s) {
+  u64 n = 0;
+  For(u32, i, s->img_count,
+      if (s->img[i].pkt_stale && !s->img[i].armoured) n++)
+  return n;
+}
 
 u64 xpar_vset_volumes_dropped(const xpar_vset * s) {
   u64 n = 0;
@@ -1609,37 +1680,41 @@ u64 xpar_vset_volumes_dropped(const xpar_vset * s) {
   return n;
 }
 
-bool xpar_vset_rewrite_dropped(xpar_vset * s, u64 * volumes,
+bool xpar_vset_rewrite_dropped(xpar_vset * s, u64 * volumes, u64 * failures,
                                const char ** reason) {
   u32 i;
-  bool ok = true;
+  u64 done = 0, failed = 0;
   if (volumes) *volumes = 0;
+  if (failures) *failures = 0;
   if (reason) *reason = NULL;
-  for (i = 0; i < s->img_count && ok; i++) {
+  for (i = 0; i < s->img_count; i++) {
     if (!s->img[i].pkt_dropped || s->img[i].armoured) continue;
-    ok = rewrite_dropped_image(s, i, reason);
-    if (ok && volumes) (*volumes)++;
+    if (rewrite_dropped_image(s, i, reason)) done++;
+    else failed++;
   }
-  return ok;
+  if (volumes) *volumes = done;
+  if (failures) *failures = failed;
+  return failed == 0;
 }
 
 /*  Rewrite damaged named volumes from their intact substitutes.  */
 /*  Put a copy of an adopted packet-bearing volume under its recorded name.
     The file it was found as belongs to whoever put it there, so it stays
     where it is.  */
-bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes,
+bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
                              const char ** reason) {
   u32 i;
-  u64 done = 0;
-  bool ok = true;
+  u64 done = 0, failed = 0;
   u8 * buf = NULL;
   if (reason) *reason = NULL;
   if (volumes) *volumes = 0;
+  if (failures) *failures = 0;
   if (!s->subst_count || !s->have_layt) return true;
   for (i = 0; i < s->subst_count; i++) {
     char * want, * stage = NULL;
     xpar_file * in, * out;
     const xpar_vimg * src = NULL;
+    i64 found;
     u64 at = 0;
     if (s->subst[i].vol >= s->layt.count) continue;
     if (s->layt.vol[s->subst[i].vol].kind == XPAR_VOL_DATA) continue;
@@ -1652,17 +1727,23 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes,
       in = xpar_open(got, XPAR_O_RDONLY);
       xpar_free(got); }
     if (!in) {
-      if (reason) *reason = "the volume found could not be read";
-      ok = false;  xpar_free(want);  continue;
+      first_reason(reason, "the volume found could not be read");
+      failed++;  xpar_free(want);  continue;
+    }
+    /*  Refuse unknown or empty source lengths.  */
+    found = src ? (i64) src->size : xpar_size(in);
+    if (found <= 0) {
+      first_reason(reason, "the volume found has no readable length");
+      failed++;  xpar_close(in);  xpar_free(want);  continue;
     }
     out = xpar_stage_open(want, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                           1, &stage);
     if (!out) {
-      if (reason) *reason = "staging failed";
-      ok = false;  xpar_close(in);  xpar_free(want);  continue;
+      first_reason(reason, "staging failed");
+      failed++;  xpar_close(in);  xpar_free(want);  continue;
     }
     if (!buf) buf = (u8 *) xpar_alloc_raw(1u << 16);
-    { u64 left = src ? src->size : (u64) MAX(xpar_size(in), 0);
+    { u64 left = (u64) found;
       bool good = true;
       while (left) {
         sz take = (sz) MIN(left, (u64) (1u << 16));
@@ -1674,13 +1755,13 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes,
         xpar_xclose(out);
         vset_release_path(s, want);
         if (xpar_rename(stage, want) != 0 || xpar_fsync_dir(want) != 0) {
-          if (reason) *reason = "publishing failed";
-          ok = false;
+          first_reason(reason, "publishing failed");
+          failed++;
         } else done++;
         vset_remap_path(s, want);
       } else {
-        if (reason) *reason = "copying failed";
-        ok = false;
+        first_reason(reason, "copying failed");
+        failed++;
         xpar_close(out);
         xpar_remove(stage);
       }
@@ -1691,21 +1772,28 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes,
   }
   xpar_free(buf);
   if (volumes) *volumes = done;
-  return ok;
+  if (failures) *failures = failed;
+  return failed == 0;
 }
 
-bool xpar_vset_rewrite_substituted(xpar_vset * s, const char ** reason) {
+bool xpar_vset_rewrite_substituted(xpar_vset * s, u64 * rewritten,
+                                   u64 * relengthed, u64 * failures,
+                                   const char ** reason) {
   u32 i;
   u8 * buf;
-  bool ok = true;
+  u64 wrote = 0, sized = 0, failed = 0;
   if (reason) *reason = NULL;
+  if (rewritten) *rewritten = 0;
+  if (relengthed) *relengthed = 0;
+  if (failures) *failures = 0;
   if (!s->subst_damaged || !s->have_layt) return true;
   buf = (u8 *) xpar_alloc_raw(1u << 16);
-  for (i = 0; i < s->subst_count && ok; i++) {
+  for (i = 0; i < s->subst_count; i++) {
     const xpar_vol * v;
     char * path, * stage = NULL;
     xpar_file * f;
     u64 at = 0, left;
+    bool vok = true;
     if (s->subst[i].vol >= s->layt.count) continue;
     v = &s->layt.vol[s->subst[i].vol];
     /*  A packet-bearing volume is restored by name, not rebuilt.  */
@@ -1720,54 +1808,60 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, const char ** reason) {
       t = xpar_open(path, XPAR_O_RDWR | XPAR_O_NOFOLLOW);
       if (!t || xpar_ftruncate(t, v->byte_length) != 0 ||
           xpar_fsync(t) != 0) {
-        if (reason) *reason = "resizing failed";
-        ok = false;
+        first_reason(reason, "resizing failed");
+        vok = false;
       }
-      if (t) xpar_xclose(t);
+      if (t) { if (vok) xpar_xclose(t); else xpar_close(t); }
       vset_remap_path(s, path);
       xpar_free(path);
+      if (vok) sized++; else failed++;
       continue;
     }
     f = xpar_stage_open(path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
     if (!f) {
-      if (reason) *reason = "staging failed";
-      ok = false;
+      first_reason(reason, "staging failed");
+      vok = false;
     }
-    left = ok ? v->byte_length : 0;
+    left = vok ? v->byte_length : 0;
     while (left) {
       sz take = (sz) MIN(left, (u64) (1u << 16));
       /*  LAYT offsets are relative to the generation; xpar_vset_read takes
           a chain-space offset, as every other caller supplies.  */
       if (!xpar_vset_read(s, s->geom.stream_base + v->stream_offset + at,
                           buf, take)) {
-        if (reason) *reason = "stream read failed";
-        ok = false;  break;
+        first_reason(reason, "stream read failed");
+        vok = false;  break;
       }
       xpar_xwrite(f, buf, take);
       at += take;  left -= take;
     }
     if (f) {
-      if (ok && xpar_fsync(f) != 0) {
-        if (reason) *reason = "flush failed";
-        ok = false;
+      if (vok && xpar_fsync(f) != 0) {
+        first_reason(reason, "flush failed");
+        vok = false;
       }
-      xpar_xclose(f);
+      if (vok) xpar_xclose(f); else xpar_close(f);
       /*  The recorded name is normally absent or unopened here, but it is
           a set volume when the caller named it, and renaming over an open
           one is refused on Windows.  */
-      if (ok) vset_release_path(s, path);
-      if (ok && (xpar_rename(stage, path) != 0 || xpar_fsync_dir(path) != 0)) {
-        if (reason) *reason = "publish failed";
-        ok = false;
+      if (vok) vset_release_path(s, path);
+      if (vok && (xpar_rename(stage, path) != 0 ||
+                  xpar_fsync_dir(path) != 0)) {
+        first_reason(reason, "publish failed");
+        vok = false;
       }
       vset_remap_path(s, path);
-      if (!ok) xpar_remove(stage);
+      if (!vok) xpar_remove(stage);
     }
     xpar_free(stage);  xpar_free(path);
+    if (vok) wrote++; else failed++;
   }
   xpar_free(buf);
-  return ok;
+  if (rewritten) *rewritten = wrote;
+  if (relengthed) *relengthed = sized;
+  if (failures) *failures = failed;
+  return failed == 0;
 }
 
 /*  Extent canonicality is uniform, so its first byte classifies it.  */
@@ -1802,6 +1896,8 @@ typedef struct {
   xpar_file * f;
   const xpar_resync_probe * probe;
   u8 * buf;
+  const char * path;
+  bool io_seen;               /*  Report a refused probe read once.  */
 } v_confirm;
 
 static bool v_confirm_at(void * user, u32 at, u64 physical) {
@@ -1809,8 +1905,14 @@ static bool v_confirm_at(void * user, u32 at, u64 physical) {
   const xpar_resync_probe * p = &c->probe[at];
   u8 got[XPAR_BLAKE3_OUT_LEN];
   u64 z = c->s->geom.slice_size;
-  if (physical > UINT64_MAX - z ||
-      xpar_pread(c->f, c->buf, (sz) z, physical) != (sz) z) return false;
+  if (physical > UINT64_MAX - z) return false;
+  if (xpar_pread(c->f, c->buf, (sz) z, physical) != (sz) z) {
+    if (xpar_error(c->f) && !c->io_seen) {
+      c->io_seen = true;
+      vset_io_error(c->s, c->path, xpar_error(c->f));
+    }
+    return false;
+  }
   if (c->s->keyed)
     xpar_slice_tag_keyed(&c->s->setd, p->slice, c->buf, c->s->key.k_slice,
                          got, c->s->tagset.t.tag_len);
@@ -1880,6 +1982,7 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
   p = v_entry_probes(s, entry, &n);
   if (!n) { xpar_free(p);  return; }
   confirm.s = s;  confirm.f = f;  confirm.probe = p;
+  confirm.path = path;  confirm.io_seen = false;
   confirm.buf = (u8 *) xpar_alloc_raw((sz) z);
   located = (u64 *) xpar_alloc_raw((sz) n * sizeof(u64));
 
@@ -1891,6 +1994,10 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
                    s->tagset.t.slice_tag != NULL;
   xpar_resync_entry(f, file_size, z, e->length, p, n, &opt,
                     v_confirm_at, &confirm, confirm.buf, located, &got);
+  if (xpar_error(f) && !confirm.io_seen) {
+    confirm.io_seen = true;
+    vset_io_error(s, path, xpar_error(f));
+  }
 
   if (got.candidates && !o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: %s: no dominant displacement among %"
@@ -2111,32 +2218,50 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
   s->dir = o->set_ref.dir  ? xpar_strdup(o->set_ref.dir)
          : o->set_ref.home ? xpar_strdup(o->set_ref.home)
                            : xpar_path_dir(o->set_ref.vol[0]);
-  for (i = 0; i < s->img_count; i++)
-    if (!s->img[i].armoured) {
-      s->scan_img = i;
-      scan_into(s, s->img[i].data, s->img[i].size,
-                o->resync == XPAR_RESYNC_ALWAYS, false);
-      /*  A volume the packets do not tile exactly is nonconforming.  */
-      s->img[i].pkt_end = volume_packets_end(s->img[i].data, s->img[i].size,
-                                             s->keyed ? &s->key : NULL);
-      if (!tail_is_padding(s->img[i].data, s->img[i].pkt_end,
-                           s->img[i].size)) {
-        s->img[i].ragged = true;
-        if (!s->ragged_vols) s->ragged_first = s->img[i].path;
-        s->ragged_vols++;
-      }
-    }
+  /*  Scan authoritative archives and index volumes first.  */
   s->scan_img = s->img_count;
+  s->crit.rank = 2;
   for (i = 0; i < s->archive_plain; i++) {
     scan_into(s, s->plain[i], s->plain_len[i], false, false);
   }
+  for (i = 0; i < s->img_count; i++)
+    if (!s->img[i].armoured)
+      s->img[i].is_index = vimg_is_index(&s->img[i],
+                                         s->keyed ? &s->key : NULL);
+  { u32 pass;
+    for (pass = 0; pass < 2; pass++)
+      for (i = 0; i < s->img_count; i++) {
+        u32 stale = s->crit.stale;
+        if (s->img[i].armoured || (pass == 0) != s->img[i].is_index)
+          continue;
+        s->crit.rank = s->img[i].is_index ? 2 : 1;
+        s->scan_img = i;
+        scan_into(s, s->img[i].data, s->img[i].size,
+                  o->resync == XPAR_RESYNC_ALWAYS, false);
+        s->img[i].pkt_stale = s->crit.stale - stale;
+        /*  A volume the packets do not tile exactly is nonconforming.  */
+        s->img[i].pkt_end = volume_packets_end(s->img[i].data,
+                                               s->img[i].size,
+                                               s->keyed ? &s->key : NULL);
+        if (!tail_is_padding(s->img[i].data, s->img[i].pkt_end,
+                             s->img[i].size)) {
+          s->img[i].ragged = true;
+          if (!s->ragged_vols) s->ragged_first = s->img[i].path;
+          s->ragged_vols++;
+        }
+      } }
+  s->scan_img = s->img_count;
   if (s->crit.conflicts)
     FATAL_FORMAT("Replicated packets verify but disagree.");
+  if (s->crit.stale && !o->quiet && !o->json)
+    xpar_fprintf(xpar_stderr, "xpar: stale critical packets in %" PRIu64
+                 " volume%s; run repair.\n",
+                 xpar_vset_volumes_stale(s),
+                 PLURAL(xpar_vset_volumes_stale(s)));
   /*  Replicas keep the set readable, but the source volume is stale.  */
   if (s->pkt_dropped && !o->quiet && !o->json)
     xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " stored packet%s failed "
-                 "a checksum; replicas were used. Run repair to rewrite "
-                 "stale volumes.\n", s->pkt_dropped,
+                 "checksum; replicas used. Run repair.\n", s->pkt_dropped,
                  PLURAL(s->pkt_dropped));
 
   collect_gens(s);
@@ -2333,9 +2458,10 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
   u64 size, pos = 0, found = 0;
   bool have_volh = false, ok = true;
   i64 signed_size;
-  if (!f) return false;
+  if (!f) FATAL_IO("Cannot read back '%s': %s.", path,
+                   xpar_strerror(xpar_errno()));
   signed_size = xpar_size(f);
-  if (signed_size < 0) { xpar_close(f); return false; }
+  if (signed_size < 0) FATAL_IO("Cannot size '%s' for read-back.", path);
   size = (u64) signed_size;
   while (pos < size) {
     xpar_pkt h;
@@ -2400,7 +2526,7 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
     pos += len;
   }
   if (!have_volh || found != count) ok = false;
-  if (xpar_close(f) != 0) ok = false;
+  (void) xpar_close(f);
   return ok;
 }
 
@@ -2531,6 +2657,8 @@ static void verify_written_set_at(const xpar_options * o,
   xpar_free(ro.set);
   xpar_vset_close(s);
   xpar_setref_free(&ro.set_ref);
+  if (rc == XPAR_EXIT_IO)
+    FATAL_IO("Cannot verify written set '%s': read-back failed.", index_path);
   if (!wrote_ok)
     FATAL_CODE(XPAR_EXIT_INTERNAL,
                "internal: the set just written does not verify through "
@@ -2645,8 +2773,13 @@ static xpar_file * entry_handle(xpar_vset * s, u32 entry) {
   if (s->fh_open) { xpar_close(s->fh);  s->fh_open = false; }
   path = entry_path(s, entry);
   s->fh = xpar_open(path, XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
+  if (!s->fh) {
+    if (!xpar_errno_absent(xpar_errno()))
+      vset_io_error(s, path, xpar_errno());
+    xpar_free(path);
+    return NULL;
+  }
   xpar_free(path);
-  if (!s->fh) return NULL;
   s->fh_open = true;  s->fh_entry = entry;
   return s->fh;
 }
@@ -2728,6 +2861,11 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
     physical = sp.file_offset;
     xpar_resync_map_shift(&s->resync[sp.entry], sp.file_offset, &physical);
     if (!f || xpar_pread(f, buf, (sz) take, physical) != take) {
+      if (f && xpar_error(f)) {
+        char * p = entry_path(s, sp.entry);
+        vset_io_error(s, p, xpar_error(f));
+        xpar_free(p);
+      }
       xpar_memset(buf, 0, (sz) take);
       ok = false;
     }
@@ -2949,15 +3087,19 @@ typedef struct {
   u64  size;
 } entry_result;
 
-static void hash_range(xpar_vset * s, xpar_file * f, u64 off, u64 n,
+static bool hash_range(xpar_vset * s, xpar_file * f, u64 off, u64 n,
                        xpar_blake3_t * h, u8 * buf, xpar_pool * pool) {
   while (n) {
     sz take = (sz) MIN(n, (u64) s->io_span);
-    if (xpar_pread(f, buf, take, off) != take) xpar_memset(buf, 0, take);
+    if (xpar_pread(f, buf, take, off) != take) {
+      if (xpar_error(f)) return false;
+      xpar_memset(buf, 0, take);
+    }
     xpar_blake3_update_parallel(h, buf, take, pool);
     s->bytes_read += take;
     off += take;  n -= take;
   }
+  return true;
 }
 
 /*  Confirm hard-link aliases by (dev, ino), or hash where unavailable.  */
@@ -2987,10 +3129,22 @@ static void check_link(xpar_vset * s, u32 i, const char * path,
     }
   }
   f = xpar_open(path, XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
-  if (!f) { r->exists = false;  return; }
+  if (!f) {
+    r->exists = false;
+    if (!xpar_errno_absent(xpar_errno())) {
+      r->unreadable = true;
+      vset_io_error(s, path, xpar_errno());
+    }
+    return;
+  }
   if (s->auth_only) xpar_blake3_init_keyed(&h, s->key.k_file);
   else              xpar_blake3_init(&h);
-  hash_range(s, f, 0, te->length, &h, buf, pool);
+  if (!hash_range(s, f, 0, te->length, &h, buf, pool)) {
+    r->unreadable = true;  r->exists = false;
+    vset_io_error(s, path, xpar_error(f));
+    xpar_close(f);
+    return;
+  }
   xpar_close(f);
   xpar_blake3_final(&h, got, XPAR_BLAKE3_OUT_LEN);
   if (xpar_memcmp(got, te->content_hash, XPAR_BLAKE3_OUT_LEN) != 0)
@@ -3012,6 +3166,12 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
 
   xpar_memset(r, 0, sizeof *r);
   r->exists = xpar_lstat(path, &st) == 0;
+  if (!r->exists && !xpar_errno_absent(xpar_errno())) {
+    r->unreadable = true;
+    vset_io_error(s, path, xpar_errno());
+    xpar_free(path);
+    return;
+  }
   r->size   = r->exists ? st.size : 0;
 
   if (e->entry_type == XPAR_ENTRY_DIR) {
@@ -3043,12 +3203,14 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
   if (r->exists) {
     f = xpar_open(path, XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
     /*  A file the host will not open is an I/O error, not an absence.  */
-    if (!f) r->unreadable = true;
+    if (!f && !xpar_errno_absent(xpar_errno())) {
+      r->unreadable = true;
+      vset_io_error(s, path, xpar_errno());
+    }
   }
   if (!f) r->exists = false;
   if (r->exists)
     v_resync_entry(s, i, o, f, r->size, path);
-  xpar_free(path);
   if (hashing) {
     if (s->auth_only) xpar_blake3_init_keyed(&h, s->key.k_file);
     else              xpar_blake3_init(&h);
@@ -3086,6 +3248,19 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
       if (sample) io_start = xpar_usec_now();
       xpar_pread_batch(req, count);
       if (sample) io_usec = xpar_usec_now() - io_start;
+      /*  Retry short batched reads to distinguish I/O errors from EOF.  */
+      for (b = 0; b < count; b++) {
+        if (!req[b].file || req[b].result == req[b].length) continue;
+        req[b].result += xpar_pread(req[b].file,
+                                    (u8 *) req[b].buf + req[b].result,
+                                    req[b].length - req[b].result,
+                                    req[b].offset + req[b].result);
+        if (req[b].result != req[b].length && xpar_error(req[b].file)) {
+          r->unreadable = true;
+          vset_io_error(s, path, xpar_error(req[b].file));
+          goto io_stop;
+        }
+      }
       {
         bool packed = true, all_got = true;
         sz packed_len = 0;
@@ -3138,8 +3313,10 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
     fo += len;
   }
 
+io_stop:
+  xpar_free(path);
   if (f) xpar_close(f);
-  if (!hashing) return;
+  if (!hashing || r->unreadable) return;
   { u8 got[XPAR_BLAKE3_OUT_LEN];
     xpar_blake3_final(&h, got, XPAR_BLAKE3_OUT_LEN);
     if (xpar_memcmp(got, e->content_hash, XPAR_BLAKE3_OUT_LEN) != 0)
@@ -3412,13 +3589,15 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
       if (t >= 0) inherit[i] = entry_inherited(s, (u32) t);
     } else inherit[i] = entry_inherited(s, i);
     check_entry(s, i, &acc, o, &nix, buf, &r, &pg, pool);
-    damaged = !r.exists || r.wrong_length || r.hash_bad || r.prefix_bad ||
-              r.link_broken;
+    damaged = !r.exists || r.unreadable || r.wrong_length || r.hash_bad ||
+              r.prefix_bad || r.link_broken;
     if (r.unreadable) s->unreadable_entries++;
     else if (!r.exists) s->missing_entries++;
+    if (r.link_broken) s->link_drift++;
     if (damaged) s->bad_entries++;
     /*  Defer alias-local classification until the erasure table is final.  */
-    if (damaged && r.exists && !r.wrong_length && !r.link_broken)
+    if (damaged && r.exists && !r.unreadable && !r.wrong_length &&
+        !r.link_broken)
       shape[i] = 1;
     if (js) {
       xpar_json_begin(js, "file_result");
@@ -3495,6 +3674,8 @@ scanned:
   if (s->index_gone && rc == XPAR_EXIT_OK) rc = XPAR_EXIT_REPAIRABLE;
   /*  So does a volume whose bytes are not exactly its packets.  */
   if (s->ragged_vols && rc == XPAR_EXIT_OK) rc = XPAR_EXIT_REPAIRABLE;
+  if (xpar_vset_volumes_stale(s) && rc == XPAR_EXIT_OK)
+    rc = XPAR_EXIT_REPAIRABLE;
   /*  Prologue mismatches are repairable.  */
   if (xpar_vset_archive_stale(s) && rc == XPAR_EXIT_OK)
     rc = XPAR_EXIT_REPAIRABLE;
@@ -3505,7 +3686,7 @@ scanned:
   /*  Missing descriptors make their generations unreadable.  */
   if (s->lost_gens) rc = XPAR_EXIT_UNREPAIRABLE;
   /*  A file the host refused is an I/O error, not a verdict on the data.  */
-  if (s->unreadable_entries) rc = XPAR_EXIT_IO;
+  if (s->unreadable_entries || s->io_errors) rc = XPAR_EXIT_IO;
   return rc;
 }
 
@@ -3706,11 +3887,11 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  color ? "\033[31m" : "", color ? "\033[0m" : "");
   else if (rc == XPAR_EXIT_IO)
     xpar_fprintf(xpar_stderr,
-                 "xpar: status: %sI/O error%s, %" PRIu64 " entr%s could not "
+                 "xpar: status: %sI/O error%s, %" PRIu64 " path%s could not "
                  "be read\n",
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
-                 s->unreadable_entries,
-                 s->unreadable_entries == 1 ? "y" : "ies");
+                 MAX(s->io_errors, s->unreadable_entries),
+                 PLURAL(MAX(s->io_errors, s->unreadable_entries)));
   else
     xpar_fprintf(xpar_stderr, "xpar: status: %srepairable%s\n",
                  color ? "\033[33m" : "", color ? "\033[0m" : "");
@@ -3752,7 +3933,18 @@ void xpar_vset_json_summary(const xpar_vset * s, xpar_json * js,
   xpar_json_u64(js, "volumes_to_rewrite", s->subst_damaged);
   xpar_json_u64(js, "index_volumes_missing", s->index_gone);
   xpar_json_u64(js, "volumes_nonconforming", s->ragged_vols);
+  xpar_json_u64(js, "volumes_stale", xpar_vset_volumes_stale(s));
+  xpar_json_u64(js, "volumes_dropped", xpar_vset_volumes_dropped(s));
+  xpar_json_u64(js, "packets_dropped", s->pkt_dropped);
+  xpar_json_u64(js, "recovery_gone", s->recovery_gone);
+  xpar_json_u64(js, "recovery_bad", s->recovery_bad);
+  xpar_json_u64(js, "entries_missing", s->missing_entries);
+  xpar_json_u64(js, "link_drift", s->link_drift);
+  xpar_json_bool(js, "archive_resized", s->archive_resized);
+  xpar_json_bool(js, "archive_prologue_bad", s->archive_prologue_bad);
+  xpar_json_bool(js, "degraded", s->degraded);
   xpar_json_u64(js, "entries_unreadable", s->unreadable_entries);
+  xpar_json_u64(js, "read_failures", s->io_errors);
   xpar_json_u64(js, "syndromes", syndromes);
   xpar_json_u64(js, "bytes_read", s->bytes_read);
   xpar_json_u64(js, "bytes_written", 0);

@@ -391,6 +391,7 @@ static const yarg_options t_repair[] = {
   { O_REPLACE_JOURNAL, no_argument,      "replace-journal"   },
   { O_DRY_RUN,        no_argument,       "dry-run"           },
   { O_EXIT_ON_CHANGE, no_argument,       "exit-on-change"    },
+  { O_REQUIRE,        required_argument, "require"           },
   /*  Repair runs the same resynchronising pass and prints the same advice
       to widen it, so it has to take the options that advice names.  */
   { O_RESYNC,         required_argument, "resync"            },
@@ -491,6 +492,12 @@ static const yarg_options t_none[] = {
   { 0, no_argument, NULL }
 };
 
+static const yarg_options t_undo[] = {
+  { O_SCAN,       required_argument, "scan"       },
+  { O_GENERATION, required_argument, "generation" },
+  { 0,            no_argument,       NULL         }
+};
+
 static const yarg_options t_benchmark[] = {
   { O_TIERS, no_argument, "tiers" },
   { 0,       no_argument, NULL    }
@@ -511,7 +518,7 @@ static const yarg_verb verbs[] = {
   { XPAR_VERB_LIST,        "list",        t_list,        NULL     },
   { XPAR_VERB_INFO,        "info",        t_info,        NULL     },
   { XPAR_VERB_EXPLAIN,     "explain",     t_explain,     NULL     },
-  { XPAR_VERB_UNDO,        "undo",        t_none,        NULL     },
+  { XPAR_VERB_UNDO,        "undo",        t_undo,        NULL     },
   { XPAR_VERB_RECOVER_PROLOGUE, "recover-prologue", t_none, NULL  },
   { XPAR_VERB_BENCHMARK,   "benchmark",   t_benchmark,   NULL     },
   { 0,                     NULL,          NULL,          NULL     }
@@ -662,6 +669,7 @@ static const char * const verb_opts[] = {
   "      --replace-journal      Overwrite a journal an earlier repair left\n"
   "      --dry-run              Report what would change\n"
   "      --exit-on-change       Exit 1 if anything was or would be repaired\n"
+  "      --require=LIST         Turn a degradation into an error\n"
   "      --resync=WHICH         off, auto (default), always\n"
   "      --resync-step=N        Sample every Nth offset\n"
   "      --resync-window=SIZE   Displacement searched either way\n"
@@ -726,7 +734,8 @@ static const char * const verb_opts[] = {
   "      --scan=DIR             Also look for volumes in DIR\n"
   "      --generation=G         Number, or a set-id prefix\n",
   /*  undo  */
-  "",
+  "      --scan=DIR             Also look for volumes in DIR\n"
+  "      --generation=G         Undo only G; every journal by default\n",
   /*  recover-prologue  */
   "",
   /*  benchmark  */
@@ -822,6 +831,72 @@ static char * join_path(const char * dir, const char * name) {
     char * out = cat_str(mid, name);
     xpar_free(mid);
     return out; }
+}
+
+/*  Strip a rollback suffix; return 0 if absent.  */
+static sz rollback_stem(const char * name) {
+  static const char * const tag[2] = { ".xpar-old-", ".xpar-prune-old-" };
+  sz n = xpar_strlen(name), at = n, t;
+  while (at && name[at - 1] >= '0' && name[at - 1] <= '9') at--;
+  if (at == n) return 0;
+  for (t = 0; t < 2; t++) {
+    sz tl = xpar_strlen(tag[t]);
+    if (at > tl && !xpar_strncmp(name + at - tl, tag[t], tl))
+      return at - tl;
+  }
+  return 0;
+}
+
+/*  Report rollback names left by interrupted consolidation or pruning.  */
+static void say_rollback_residue(const char * arg) {
+  char * dir = xpar_path_dir(arg);
+  const char * leaf = xpar_path_base(arg);
+  sz leaf_len = xpar_strlen(leaf);
+  char ** name = NULL;
+  if (leaf_len > XPAR_EXT_LEN &&
+      !xpar_strcmp(leaf + leaf_len - XPAR_EXT_LEN, XPAR_EXT))
+    leaf_len -= XPAR_EXT_LEN;
+  u32 count = 0, i, j;
+  bool a_set = false;
+  xpar_dir * d = xpar_opendir(dir && *dir ? dir : ".");
+  const xpar_dirent * e;
+  if (d) {
+    while ((e = xpar_readdir(d)) != NULL) {
+      sz stem = rollback_stem(e->name);
+      if (e->is_dir || stem < leaf_len) continue;
+      if (xpar_strncmp(e->name, leaf, leaf_len)) continue;
+      if (stem > leaf_len && e->name[leaf_len] != '.') continue;
+      if (stem > XPAR_EXT_LEN &&
+          !xpar_strncmp(e->name + stem - XPAR_EXT_LEN, XPAR_EXT,
+                        XPAR_EXT_LEN)) a_set = true;
+      name = (char **) xpar_realloc(name, (count + 1) * sizeof(char *));
+      name[count++] = dup_str(e->name);
+    }
+    xpar_closedir(d);
+  }
+  for (i = 1; i < count; i++) {
+    char * k = name[i];
+    for (j = i; j && xpar_strcmp(name[j - 1], k) > 0; j--) name[j] = name[j - 1];
+    name[j] = k;
+  }
+  if (a_set) {
+    xpar_fprintf(xpar_stderr,
+                 "xpar: interrupted consolidate or prune left rollback "
+                 "volumes for '%s':\n",
+                 xpar_name_escape(arg));
+    for (i = 0; i < count; i++) {
+      char * back = xpar_strndup(name[i], rollback_stem(name[i]));
+      char * from = join_path(dir, name[i]);
+      char * to   = join_path(dir, back);
+      xpar_fprintf(xpar_stderr, "xpar:   mv '%s' '%s'\n", from, to);
+      xpar_free(back);  xpar_free(from);  xpar_free(to);
+    }
+  }
+  for (i = 0; i < count; i++) xpar_free(name[i]);
+  xpar_free(name);  xpar_free(dir);
+  if (a_set)
+    FATAL_FORMAT("No xpar set found for '%s'; restore the rollback names "
+                 "above.", xpar_name_escape(arg));
 }
 
 static void push_vol(xpar_setref * s, char * path) {
@@ -994,6 +1069,7 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     if (is_file(a)) { push_vol(out, a);  out->base = dup_str(arg); }
     else {
       xpar_free(a);
+      say_rollback_residue(arg);
       FATAL_FORMAT("No xpar set found for '%s'; use 'xpar --help' to list "
                    "verbs.", xpar_name_escape(arg));
     }
@@ -1467,6 +1543,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
       bool looks = (al > XPAR_EXT_LEN &&
                     !xpar_strcmp(a + al - XPAR_EXT_LEN, XPAR_EXT)) ||
                    xpar_path_base(a) != a;
+      if (looks) say_rollback_residue(a);
       FATAL_CODE(looks ? XPAR_EXIT_NOTFOUND : XPAR_EXIT_USAGE,
                  looks ? "No xpar set found for '%s'; use 'xpar --help' to "
                          "list verbs."

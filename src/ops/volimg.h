@@ -32,7 +32,15 @@ typedef struct {
   char *     path;
 } xpar_volimg;
 
-bool xpar_volimg_open (xpar_volimg *, const char * path);
+/*  Distinguish absent volumes from read failures.  */
+typedef enum {
+  XPAR_VOLIMG_OK = 0,
+  XPAR_VOLIMG_ABSENT,
+  XPAR_VOLIMG_IO
+} xpar_volimg_status;
+
+xpar_volimg_status xpar_volimg_read(xpar_volimg *, const char * path,
+                                    int * err);
 void xpar_volimg_close(xpar_volimg *);
 
 typedef void (* xpar_armg_plain_fn)(void * user, u8 * plain, u64 length);

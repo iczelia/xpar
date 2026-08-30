@@ -1618,7 +1618,17 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
           xpar_pkt_is(hdr, XPAR_T_CMNT)) return false;
       if (s->pkt[slot].body_len != n ||
           xpar_memcmp(s->pkt[slot].body, body, (sz) n) != 0) {
-        s->pkt[slot].conflicts++;  s->conflicts++;
+        if (s->rank < s->pkt[slot].rank) {
+          s->pkt[slot].stale++;  s->stale++;
+        } else if (s->rank > s->pkt[slot].rank) {
+          s->pkt[slot].hdr      = *hdr;
+          s->pkt[slot].body     = body;
+          s->pkt[slot].body_len = n;
+          s->pkt[slot].rank     = s->rank;
+          s->pkt[slot].stale++;  s->stale++;
+        } else {
+          s->pkt[slot].conflicts++;  s->conflicts++;
+        }
       }
       return false;
     }
@@ -1630,6 +1640,8 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
   s->pkt[s->count].body_len  = n;
   s->pkt[s->count].copies    = 1;
   s->pkt[s->count].conflicts = 0;
+  s->pkt[s->count].rank      = s->rank;
+  s->pkt[s->count].stale     = 0;
   s->count++;  s->copies++;
   return true;
 }

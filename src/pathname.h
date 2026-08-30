@@ -67,4 +67,9 @@ char * xpar_stage_dir(const char * stem);
 /*  Trim STEM's final component to leave room for a SUFFIX-byte tail.  */
 char * xpar_stage_stem(const char * stem, sz suffix);
 
+/*  Keep PATH reachable as BACKUP while replacing it.  */
+int xpar_keep_aside(const char * path, const char * backup);
+/*  Restore PATH and remove BACKUP.  */
+int xpar_put_back(const char * path, const char * backup);
+
 #endif

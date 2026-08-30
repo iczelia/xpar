@@ -325,6 +325,8 @@ typedef struct {
   u64 body_len;
   u32 copies;                 /*  Verifying copies seen, this one included.  */
   u32 conflicts;              /*  Verifying copies that disagreed.  */
+  u32 rank;                   /*  Authority rank of the held copy.  */
+  u32 stale;                  /*  Outranked verifying copies.  */
 } xpar_crit_pkt;
 
 typedef struct {
@@ -333,13 +335,14 @@ typedef struct {
   u32 * idx;                  /*  Open addressed; 0 empty, slot+1 otherwise.  */
   u32 mask;
   u32 copies, conflicts;
+  u32 rank, stale;            /*  Current rank; total outranked copies.  */
 } xpar_critset;
 
 void xpar_critset_init(xpar_critset *);
 void xpar_critset_free(xpar_critset *);
 
-/*  True when the packet was new. A repeat bumps `copies`, and `conflicts`
-    when its bytes differ from the copy already held.
+/*  True for a new packet. Repeats update `copies`, `conflicts`, and `stale`;
+    the highest-ranked copy is retained.
 
     The set keeps `body` rather than copying it, and reads it again on
     every later add and find. It shall point into storage that outlives

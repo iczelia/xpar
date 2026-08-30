@@ -1417,10 +1417,10 @@ test -n "$off" || hard_error "no SETD in index"
 #  intact replicas.
 damage s.xpa "rand=`expr $off + 4`,1"
 run 0 "$XPAR" verify s.xpa
-grep -q 'replicas were used' "$log" || bad "verify did not report replica use"
+grep -q 'replicas used' "$log" || bad "verify did not report replica use"
 run 0 "$XPAR" repair --in-place s.xpa
 run 0 "$XPAR" verify s.xpa
-if grep -q 'replicas were used' "$log"; then
+if grep -q 'replicas used' "$log"; then
   bad "verify still reports a stale volume after repair"
 else ok; fi
 same s.xpa s.keep
@@ -1645,7 +1645,7 @@ test -n "$off" || hard_error "no SETD in index"
 damage t.xpa "rand=`expr $off + 4`,1"
 run 0 "$XPAR" repair --in-place t.xpa
 run 0 "$XPAR" verify t.xpa
-if grep -q 'replicas were used' "$log"; then
+if grep -q 'replicas used' "$log"; then
   bad "the stale volume was not rewritten under a mapped-file lock"
 else ok; fi
 
@@ -2171,6 +2171,106 @@ grep -q 'would be regenerated' "$log" ||
 equal "the dry run wrote nothing" "`cat "$victim" | nbytes`" "$before"
 run 1 "$XPAR" repair --in-place --exit-on-change s.xpa
 cdto ..
+
+#  Owned layouts use the same recovery plan.
+mkdir -p split && cdto split
+mkfile d.bin 300000 5
+run 0 "$XPAR" create --layout=split -r 2 -o s d.bin
+victim=`ls s.v*.xpa | tail -1`
+mkdir keep && cp "$victim" keep/
+rm -f "$victim"
+run 0 "$XPAR" verify s.xpa
+run 1 "$XPAR" repair --dry-run --exit-on-change s.xpa
+grep -q 'would be regenerated' "$log" ||
+  bad "the split dry run did not plan the recovery rewrite"
+if test -e "$victim"; then bad "the dry run wrote a volume"; else ok; fi
+run 0 "$XPAR" repair --dry-run s.xpa
+run 1 "$XPAR" repair --exit-on-change s.xpa
+exists "$victim"
+same "$victim" "keep/$victim"
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" repair --dry-run --exit-on-change s.xpa
+cdto ..
+cdto ..
+
+step "scrub --rewrite reports write failures"
+
+mkdir -p rwro && cdto rwro
+mkfile p.bin 100000 63
+run 0 "$XPAR" create --armour=all -o a p.bin
+off=`"$DAMAGE" a.xpa find=ARMG | head -1`
+test -n "$off" || hard_error "no ARMG in a.xpa"
+damage a.xpa "flip=`expr $off + 300`,6"
+cp a.xpa a.hurt
+chmod 444 a.xpa
+if ( : >> a.xpa ) 2> /dev/null; then
+  note "mode 444 is writable; skipped the refused rewrite"
+else
+  run 5 "$XPAR" scrub --rewrite a.xpa
+  grep -q 'cannot open' "$log" || bad "the unwritable volume was not named"
+  if grep -q 'refreshed' "$log"; then
+    bad "a refused rewrite was still called a refresh"
+  else ok; fi
+  same a.xpa a.hurt
+fi
+chmod 644 a.xpa
+run_any "0 1" "$XPAR" scrub --rewrite a.xpa
+grep -q 'refreshed' "$log" || bad "the rewrite did not report the refresh"
+run 0 "$XPAR" scrub a.xpa
+grep -q ' 0 corrected' "$log" ||
+  bad "the refreshed region still needs correction"
+cdto ..
+
+step "an interrupted addrecovery leaves a set every verb still reads"
+
+mkdir -p halfadd && cdto halfadd
+mkfile d.bin 300000 17
+run 0 "$XPAR" create -r 2 -o s d.bin
+mkdir pre post
+cp s.xpa s.v*.xpa pre/
+run 0 "$XPAR" addrecovery -r 4 s.xpa
+cp s.xpa s.v*.xpa post/
+new=`cd post && ls s.v*.xpa | while read f; do test -e ../pre/$f || echo $f; done`
+test -n "$new" || hard_error "addrecovery added no volume"
+reset_set() { rm -f s.xpa s.v*; cp pre/* .; }
+
+#  Before index replacement, its old layout makes replacements stale.
+reset_set
+for f in post/s.v*.xpa; do
+  b=`basename "$f"`
+  test -e "pre/$b" && cp "$f" "$b"
+done
+run 1 "$XPAR" verify s.xpa
+grep -q 'stale' "$log" || bad "stale volumes were not reported"
+run 1 "$XPAR" repair --dry-run --exit-on-change --in-place s.xpa
+grep -q 'would be rewritten' "$log" ||
+  bad "the dry run did not plan the stale rewrite"
+run 0 "$XPAR" repair --in-place s.xpa
+grep -q 'stale volume' "$log" || bad "repair did not report the rewrite"
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" addrecovery -r 4 s.xpa
+run 0 "$XPAR" verify s.xpa
+for f in $new; do exists "$f"; done
+
+#  A new volume published before the index is also stale.
+reset_set
+for f in $new; do cp "post/$f" .; done
+run 1 "$XPAR" verify s.xpa
+grep -q 'stale' "$log" || bad "the early volume was not called stale"
+run 0 "$XPAR" repair --in-place s.xpa
+run 0 "$XPAR" verify s.xpa
+run 0 "$XPAR" addrecovery -r 4 s.xpa
+run 0 "$XPAR" verify s.xpa
+
+#  After index replacement, repair regenerates missing new volumes.
+reset_set
+cp post/* .
+for f in $new; do rm -f "$f"; done
+run 0 "$XPAR" verify s.xpa
+grep -q 'not on disk' "$log" || bad "the missing new volumes went unreported"
+run 0 "$XPAR" repair --in-place s.xpa
+for f in $new; do exists "$f"; done
+run 0 "$XPAR" verify s.xpa
 cdto ..
 
 step "a nonconforming volume is reported, and repair restores it"
@@ -2238,6 +2338,30 @@ if ln t/a.bin t/b.bin 2> /dev/null; then
   run 1 "$XPAR" verify s.xpa
   run 0 "$XPAR" repair --in-place s.xpa
   run 0 "$XPAR" verify s.xpa
+
+  #  A failed link preserves the copy and makes repair fail.
+  rm -f t/b.bin && cp t/a.bin t/b.bin
+  if perms_bite .; then
+    chmod 555 t
+    run 5 "$XPAR" repair --in-place s.xpa
+    grep -q 'cannot link' "$log" || bad "the refused link was not reported"
+    grep -q 'failed to link' "$log" ||
+      bad "the summary hid the refused link"
+    if grep -q 'no damage found' "$log"; then
+      bad "a refused link was reported as no damage"
+    else ok; fi
+    chmod 755 t
+    exists t/b.bin
+    same t/b.bin t/a.bin
+    if ls t/b.bin.xpar-link-* > /dev/null 2>&1; then
+      bad "a link stage was left behind"
+    else ok; fi
+    run 1 "$XPAR" verify s.xpa
+    run 0 "$XPAR" repair --in-place s.xpa
+    run 0 "$XPAR" verify s.xpa
+  else
+    note "mode 555 is writable; skipped the refused link"
+  fi
 
   #  Bytes that differ are never discarded to make the link.
   rm -f t/b.bin && mkfile t/b.bin 40000 6
@@ -2392,6 +2516,220 @@ mkfile d.bin 300000 11
 run 0 "$XPAR" create -r 20% -o lv d.bin
 run 0 "$XPAR" recover --volume=0 --to=fresh lv.xpa
 exists fresh/lv.xpa
+cdto ..
+
+step "a generation whose data volume landed before its index still reads"
+
+#  An interrupted add may publish data before its index.
+mkdir -p splitadd && cdto splitadd
+mkfile a.bin 200000 21
+mkfile b.bin 100000 22
+run 0 "$XPAR" create -q --layout=split -r 20% -o s a.bin
+run 0 "$XPAR" add -q -r 20% s.xpa b.bin
+exists s.g001.d00
+exists s.g001.xpa
+
+#  Hand-build the interrupted publish: everything but the newest index.
+mkdir hb
+for f in s.xpa s.d00 s.g001.d00 s.v*.xpa s.g001.v*.xpa; do cp "$f" hb/; done
+cdto hb
+run 1 "$XPAR" verify s.xpa
+grep -q "s.g001.xpa' is missing" "$log" ||
+  bad "the missing newest index was not reported"
+run 0 "$XPAR" repair --in-place s.xpa
+exists s.g001.xpa
+run 0 "$XPAR" verify s.xpa
+rm -rf out
+run 0 "$XPAR" extract --to=out s.xpa
+same out/a.bin ../a.bin
+same out/b.bin ../b.bin
+cdto ..
+cdto ..
+
+step "a refused pipe publish keeps the piped bytes"
+
+#  A failed publish must preserve staged pipe input.
+mkdir -p pipefail && cdto pipefail
+if perms_bite .; then
+  mkfile src.bin 300000 57
+  mkdir -p out/sub
+  chmod 555 out/sub
+  run 5 "$XPAR" create -r 20% --spool --stdin-name=sub/data.bin -o out/q \
+      - < src.bin
+  grep -q "set remains in" "$log" ||
+    bad "the refusal did not say where the set is"
+  stage=`ls -d out/.xpar-create-* 2> /dev/null | head -1`
+  if test -n "$stage"; then
+    exists "$stage/.stdin-data"
+    same "$stage/.stdin-data" src.bin
+    exists "$stage/q.xpa"
+  else
+    bad "the staging directory named in the refusal is gone"
+  fi
+  #  Nothing reached a final name.
+  test -e out/q.xpa && bad "an index was published by a refused create"
+  test -e out/sub/data.bin && bad "the pipe input was published"
+  chmod 755 out/sub
+else
+  note "mode 555 is writable; skipping the refused-publish test"
+fi
+cdto ..
+
+step "recover-prologue republishes the archive whole"
+
+#  Publish all three prologue copies atomically.
+mkdir -p prol2 && cdto prol2
+mkfile d.bin 200000 61
+run 0 "$XPAR" create --layout=armoured -r 20% -o a d.bin
+cp a.xpa a.keep
+damage a.xpa "zero=0,384"
+run 0 "$XPAR" recover-prologue a.xpa
+same a.xpa a.keep
+run 0 "$XPAR" verify a.xpa
+equal "no staging or rollback residue" \
+      "`ls a.xpa.xpar-tmp-* a.xpa.xpar-old-* 2> /dev/null | nlines`" 0
+cdto ..
+
+step "undo replays every generation's journal of a chain repair"
+
+#  A chain repair creates one journal per affected generation.
+mkdir -p chundo && cdto chundo
+mkdir t
+mkfile t/a.bin 120000 11
+mkfile t/b.bin 80000 12
+run 0 "$XPAR" create -R -r 30% -o s t
+mkfile extra.bin 30000 14
+cat extra.bin >> t/a.bin
+run 0 "$XPAR" add -r 30% s.xpa -R t
+cp t/a.bin pa.bin;  cp t/b.bin pb.bin
+damage t/a.bin "rand=130000,64"
+damage t/b.bin "rand=4096,64"
+cp t/a.bin da.bin;  cp t/b.bin db.bin
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+same t/a.bin pa.bin
+same t/b.bin pb.bin
+exists s.xparundo
+exists s.g001.xparundo
+run 0 "$XPAR" undo s.xpa
+same t/a.bin da.bin
+same t/b.bin db.bin
+equal "both journals were replayed and dropped" \
+      "`ls *.xparundo 2> /dev/null | nlines`" 0
+
+#  An interrupted chain repair leaves only the older generation's journal.
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+rm -f s.g001.xparundo
+run 0 "$XPAR" undo s.xpa
+same t/b.bin db.bin
+same t/a.bin pa.bin
+equal "the surviving journal was replayed" \
+      "`ls *.xparundo 2> /dev/null | nlines`" 0
+
+#  --generation still replays exactly one.
+cp da.bin t/a.bin
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+run 0 "$XPAR" undo --generation=1 s.xpa
+same t/a.bin da.bin
+same t/b.bin pb.bin
+equal "only the selected generation's journal was replayed" \
+      "`ls *.xparundo 2> /dev/null | nlines`" 1
+run 0 "$XPAR" undo s.xpa
+same t/b.bin db.bin
+cdto ..
+
+step "a journal that cannot be read is an I/O error, not an absent one"
+
+#  An unreadable journal is an I/O error, not an absent journal.
+mkdir -p junread && cdto junread
+mkfile d.bin 200000 21
+run 0 "$XPAR" create -r 50% -o s d.bin
+damage d.bin "rand=4096,64"
+run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+exists s.xparundo
+if chmod 000 s.xparundo 2> /dev/null &&
+   ! cat s.xparundo > /dev/null 2>&1; then
+  run 5 "$XPAR" undo s.xpa
+  grep -q "s.xparundo" "$log" || bad "the I/O error did not name the journal"
+  chmod 600 s.xparundo
+else
+  note "this host reads a mode 000 file; skipping the unreadable journal"
+  chmod 600 s.xparundo 2> /dev/null
+fi
+run 0 "$XPAR" undo s.xpa
+run 3 "$XPAR" undo s.xpa
+grep -q "nothing to undo" "$log" ||
+  bad "an absent journal was not reported as absent"
+cdto ..
+
+step "extract names the destination it could not publish"
+
+#  A destination without a usable backup name is reported and uncounted.
+mkdir -p exname && cdto exname
+long=`awk 'BEGIN { s = "";  while (length(s) < 244) s = s "n";  print s }'`
+mkdir t
+mkfile "t/$long.bin" 20000 31
+mkfile t/other.bin 5000 32
+run 0 "$XPAR" create -R --layout=split -r 20% -o s t
+mkdir -p out/t
+: > "out/t/$long.bin"
+if ( : > "out/t/$long.bin.xpar-old-000" ) 2> /dev/null; then
+  rm -f "out/t/$long.bin.xpar-old-000"
+  note "this filesystem allows the longer backup name; skipping"
+else
+  run 5 "$XPAR" extract -f --to=out s.xpa
+  grep -q "$long" "$log" || bad "the refusal did not name the file"
+  grep -q "1 entry, 5000 bytes" "$log" ||
+    bad "an entry that never reached its final name was counted"
+fi
+cdto ..
+
+step "extract --stdout folds exit codes and reports like a directory extract"
+
+#  --stdout honors --require, exit-code folding, and summaries.
+mkdir -p exso && cdto exso
+mkfile d.bin 60000 41
+run 0 "$XPAR" create --layout=split --preserve=all -r 20% -o s d.bin
+capture out.bin "$XPAR" extract --stdout s.xpa
+equal "the stream extracted cleanly" "$status" 0
+same out.bin d.bin
+grep -q "1 entry, 60000 bytes" "$log" || bad "--stdout printed no summary"
+capture out2.bin "$XPAR" extract --stdout --require=mode s.xpa
+equal "--require is fatal under --stdout" "$status" 5
+grep -q "require" "$log" || bad "--require said nothing under --stdout"
+same out2.bin d.bin
+cdto ..
+
+step "an input the host will not read is an error, not an unchanged entry"
+
+#  Read failures are neither unchanged data nor forced mismatches.
+mkdir -p unread && cdto unread
+mkfile a.bin 100000 51
+mkfile d.bin 50000 52
+run 0 "$XPAR" create -r 20% -o s a.bin d.bin
+mkfile new.bin 30000 53
+: > probe.bin
+if chmod 000 probe.bin 2> /dev/null && ! cat probe.bin > /dev/null 2>&1; then
+  rm -f probe.bin
+  chmod 000 d.bin
+  run 5 "$XPAR" add --rescan=hash -r 20% s.xpa new.bin
+  grep -q "d.bin" "$log" || bad "the refusal did not name the input"
+  equal "nothing was published" "`ls s.g001*.xpa 2> /dev/null | nlines`" 0
+
+  #  consolidate must not call it damage, with or without -f.
+  chmod 600 d.bin
+  run 0 "$XPAR" add -r 20% s.xpa new.bin
+  chmod 000 a.bin
+  run 5 "$XPAR" consolidate --replace s.xpa
+  grep -q "a.bin" "$log" || bad "consolidate did not name the input"
+  run 5 "$XPAR" consolidate --replace -f s.xpa
+  grep -q "could not be read" "$log" ||
+    bad "--force treated a host refusal as damage to bake in"
+  exists s.g001.xpa
+  chmod 600 a.bin
+else
+  rm -f probe.bin
+  note "this host reads a mode 000 file; skipping the unreadable-input test"
+fi
 cdto ..
 
 summary

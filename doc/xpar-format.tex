@@ -1621,6 +1621,21 @@ $\Theta(\log N)$ copies rather than $N$.
 another schedule, however it shall reject conflicting copies of the critical
 group.
 
+\specp Copies that verify but differ conflict only between volumes of equal
+standing. The copy carried by a generation's index volume, or by its
+whole-file archive, is authoritative for that generation: a reader holding it
+shall treat a differing copy on any other volume of the generation as stale
+rather than conflicting, and may rewrite that volume to the authoritative
+copy. Differing copies on two index volumes of one generation, or on other
+volumes when no index copy is readable, conflict and shall be rejected.
+
+\specp A writer that replaces a generation's critical group in place shall
+publish the index volume after the other existing volumes and before any
+volume that only the new group names. A writer interrupted between two files
+then leaves a set a reader accepts: before the index is replaced the other
+volumes are stale, and after it the volumes the new group names are at worst
+absent.
+
 \subsection{File naming}\label{file-naming}
 \begin{longtable}{@{}p{.20\linewidth}p{.29\linewidth}p{.43\linewidth}@{}}
 \toprule

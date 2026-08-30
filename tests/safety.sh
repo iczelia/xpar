@@ -509,6 +509,28 @@ if test -e tree/a.bin; then bad "undo kept a repair-created file"
 else ok; fi
 cd ..
 
+# A failed undo keeps the journal for retry.
+if perms_bite .; then
+  jrt held
+  rm -f tree/a.bin
+  run 0 "$XPAR" repair --in-place --keep-journal s.xpa
+  chmod 555 tree
+  run 2 "$XPAR" undo s.xpa
+  grep -q 'cannot remove' "$log" || bad "the refused removal was not reported"
+  grep -q 'some failed' "$log" ||
+    bad "the summary hid the refused removal"
+  chmod 755 tree
+  exists s.xparundo
+  exists tree/a.bin
+  run 0 "$XPAR" undo s.xpa
+  if test -e tree/a.bin; then bad "undo kept a repair-created file"
+  else ok; fi
+  if test -e s.xparundo; then bad "a replayed journal was kept"; else ok; fi
+  cd ..
+else
+  note "mode 555 is writable; skipped the refused undo"
+fi
+
 # Undo restores a truncated file's length.
 jrt cut
 head -c 120000 keep/a.bin > tree/a.bin
@@ -1212,6 +1234,27 @@ run 0 "$XPAR" repair --in-place s.xpa
 exists tree/empty.bin
 exists tree/d
 run 0 "$XPAR" verify s.xpa
+
+#  A recreation failure makes repair fail.
+rm tree/empty.bin
+if perms_bite .; then
+  chmod 555 tree
+  run 5 "$XPAR" repair --in-place s.xpa
+  grep -q 'cannot recreate' "$log" || bad "the refused name was not reported"
+  if grep -q 'no damage found' "$log"; then
+    bad "a refused name was reported as no damage"
+  else ok; fi
+  chmod 755 tree
+  run 1 "$XPAR" verify s.xpa
+  if ls s.xparundo > /dev/null 2>&1; then
+    bad "a journal with nothing to undo was kept"
+  else ok; fi
+else
+  note "mode 555 is writable; skipped the refused name"
+fi
+run 0 "$XPAR" repair --in-place s.xpa
+exists tree/empty.bin
+run 0 "$XPAR" verify s.xpa
 cd ..
 
 step "a dry run answers whether anything would change"
@@ -1254,5 +1297,149 @@ else
   note "mode 555 is writable; skipping the read-only stage test"
 fi
 cd ..
+
+step "a data file the host will not read is an I/O error, not damage"
+
+#  Read failures must not trigger reconstruction or leave a journal.
+mkdir -p ioread && cdto ioread
+mkfile d.bin 40000 91
+run 0 "$XPAR" create -s 4096 -r 12 -o s d.bin
+#  Keep the reference copy outside the volume search path.
+mkdir -p keep && cp d.bin keep/d.bin
+if chmod 000 d.bin 2> /dev/null && ! ( : < d.bin ) 2> /dev/null; then
+  run 5 "$XPAR" verify s.xpa
+  grep -q 'read failed' "$log" || bad "the refused file was not named"
+  run 5 "$XPAR" scrub s.xpa
+  run 5 "$XPAR" repair --in-place s.xpa
+  run 5 "$XPAR" repair --in-place --no-journal s.xpa
+  chmod 644 d.bin
+  same d.bin keep/d.bin
+  if ls s.xparundo > /dev/null 2>&1
+  then bad "an I/O error left an undo journal behind"
+  else ok; fi
+  run 0 "$XPAR" verify s.xpa
+else
+  note "this user can read mode 000 files; skipped"
+  chmod 644 d.bin 2> /dev/null
+fi
+cdto ..
+
+step "a recovery volume the host will not read is an I/O error"
+
+#  An unreadable volume is an I/O error, not absent recovery.
+mkdir -p iovol && cdto iovol
+mkfile d.bin 300000 92
+run 0 "$XPAR" create -s 4096 -r 30 -o s d.bin
+mkdir -p keep && cp d.bin keep/d.bin
+vol=`ls s.v*.xpa | tail -1`
+if chmod 000 "$vol" 2> /dev/null && ! ( : < "$vol" ) 2> /dev/null; then
+  run 5 "$XPAR" verify s.xpa
+  grep -q "$vol" "$log" || bad "the refused volume was not named"
+  run 5 "$XPAR" scrub s.xpa
+  run 5 "$XPAR" repair --in-place s.xpa
+  chmod 644 "$vol"
+  same d.bin keep/d.bin
+  if ls s.xparundo > /dev/null 2>&1
+  then bad "an I/O error left an undo journal behind"
+  else ok; fi
+  run 0 "$XPAR" verify s.xpa
+else
+  note "this user can read mode 000 files; skipped"
+  chmod 644 "$vol" 2> /dev/null
+fi
+cdto ..
+
+step "a split data volume the host will not read is an I/O error"
+
+#  Extract must report an unreadable split data volume.
+mkdir -p iosplit && cdto iosplit
+mkfile d.bin 300000 93
+run 0 "$XPAR" create --layout=split -s 4096 -r 3 -o s d.bin
+mkdir -p keep && mv d.bin keep/d.bin
+if chmod 000 s.d00 2> /dev/null && ! ( : < s.d00 ) 2> /dev/null; then
+  run 5 "$XPAR" verify s.xpa
+  run 5 "$XPAR" extract --to=out s.xpa
+  run 5 "$XPAR" scrub s.xpa
+  run 5 "$XPAR" repair --in-place s.xpa
+  chmod 644 s.d00
+  if ls s.xparundo > /dev/null 2>&1
+  then bad "an I/O error left an undo journal behind"
+  else ok; fi
+  run 0 "$XPAR" verify s.xpa
+  run 0 "$XPAR" extract --to=good s.xpa
+  same good/d.bin keep/d.bin
+else
+  note "this user can read mode 000 files; skipped"
+  chmod 644 s.d00 2> /dev/null
+fi
+cdto ..
+
+step "an owned-layout ragged volume is trimmed, not called unrepairable"
+
+#  Owned-layout repair trims nonconforming volumes.
+mkdir -p ragged && cdto ragged
+mkfile d.bin 300000 94
+run 0 "$XPAR" create --layout=split -s 4096 -r 3 -o s d.bin
+mkdir -p keep && cp d.bin keep/d.bin
+vol=`ls s.v*.xpa | tail -1`
+printf 'ragged-tail' >> "$vol"
+run 1 "$XPAR" verify s.xpa
+"$XPAR" verify --json s.xpa > v.json 2> "$log"
+equal "volumes the layout calls nonconforming" \
+      "`json_num v.json volumes_nonconforming summary`" 1
+#  A plan carries the keys of a result, so the two can be diffed.
+"$XPAR" repair --dry-run --json s.xpa > p.json 2> "$log"
+equal "the plan counts the trim" "`json_num p.json volumes_trimmed repair`" 1
+"$XPAR" repair --json s.xpa > r.json 2> "$log"
+equal "the run counts the trim" "`json_num r.json volumes_trimmed repair`" 1
+equal "repair verdict" "`json_str r.json status summary`" clean
+run 0 "$XPAR" verify s.xpa
+same d.bin keep/d.bin
+cdto ..
+
+step "repair --backup converges after a crash between its two renames"
+
+#  A rerun converges after a crash between backup publication renames.
+mkdir -p bakcrash && cdto bakcrash
+mkdir t
+mkfile t/a.bin 200000 95
+mkfile t/b.bin 60000 96
+run 0 "$XPAR" create -R -r 30% -o s t
+mkdir -p keep && cp t/a.bin keep/a.bin
+damage t/a.bin rand=4096,64
+cp t/a.bin a.dmg
+if ln t/a.bin t/a.bin.1 2> /dev/null; then
+  mkfile t/a.bin.xpar-repair-probe 4096 97
+  run 0 "$XPAR" repair --backup s.xpa
+  same t/a.bin keep/a.bin
+  same t/a.bin.1 a.dmg
+  run 0 "$XPAR" verify s.xpa
+else
+  note "this filesystem has no hard links; skipped"
+fi
+cdto ..
+
+step "skipped metadata restorations are counted under -q and --json"
+
+#  Count skipped metadata even in quiet and JSON modes.
+mkdir -p metacount && cdto metacount
+mkdir t
+mkfile t/a.bin 100000 98
+run 0 "$XPAR" create -R --preserve=all -r 30% -o s t
+damage t/a.bin rand=4096,64
+"$XPAR" repair --to=out -q --json s.xpa > m.json 2> "$log"
+total=`json_num m.json skipped metadata_skipped_total`
+if test -n "$total" && test "$total" -gt 0
+then ok
+else bad "-q --json reported no metadata skip counts"; fi
+if test -n "`json_num m.json owner metadata_skipped_total`"
+then ok
+else bad "the JSON counts carry no per-class breakdown"; fi
+rm -rf out2
+"$XPAR" repair --to=out2 -q s.xpa > "$log" 2>&1
+if grep -q 'metadata restorations skipped' "$log"
+then ok
+else bad "--quiet hid the metadata summary"; fi
+cdto ..
 
 summary

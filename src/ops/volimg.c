@@ -18,28 +18,48 @@
 
 #include "gf.h"
 
-bool xpar_volimg_open(xpar_volimg * v, const char * path) {
+xpar_volimg_status xpar_volimg_read(xpar_volimg * v, const char * path,
+                                    int * err) {
+  if (err) *err = 0;
   xpar_memset(v, 0, sizeof *v);
   v->map = xpar_map(path);
   if (v->map.valid) { v->data = v->map.map;  v->size = v->map.size; }
   else {
     xpar_file * f = xpar_open(path, XPAR_O_RDONLY);
+    sz got;
     i64 n;
-    if (!f) return false;
+    if (!f) {
+      if (err) *err = xpar_errno();
+      return xpar_errno_absent(xpar_errno()) ? XPAR_VOLIMG_ABSENT
+                                             : XPAR_VOLIMG_IO;
+    }
     n = xpar_size(f);
     /*  Half the address space, so that a later copy of the image still
         has somewhere to live on a 32-bit host.  */
-    if (n < 0 || (u64) n > (u64) (sz) -1 / 2) { xpar_close(f);  return false; }
+    if (n < 0) {
+      if (err) *err = xpar_error(f);
+      xpar_close(f);  return XPAR_VOLIMG_IO;
+    }
+    if ((u64) n > (u64) (sz) -1 / 2) { xpar_close(f);  return XPAR_VOLIMG_IO; }
     v->heap = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
-    if (xpar_read(f, v->heap, (sz) n) != (sz) n) {
-      xpar_close(f);  xpar_free(v->heap);  v->heap = NULL;  return false;
+    got = xpar_read(f, v->heap, (sz) n);
+    if (got != (sz) n) {
+      /*  Accept a short read only if the file shrank.  */
+      i64 now = xpar_size(f);
+      if (now < 0 || (u64) now != (u64) got) {
+        if (err) *err = xpar_error(f);
+        xpar_close(f);  xpar_free(v->heap);  v->heap = NULL;
+        return XPAR_VOLIMG_IO;
+      }
+      n = (i64) got;
     }
     xpar_close(f);
     v->data = v->heap;  v->size = (u64) n;
   }
   v->path = xpar_strdup(path);
-  return true;
+  return XPAR_VOLIMG_OK;
 }
+
 
 void xpar_volimg_close(xpar_volimg * v) {
   if (v->map.valid) xpar_unmap(&v->map);

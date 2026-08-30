@@ -68,7 +68,20 @@ typedef struct {
   u8    trunc;                /*  Remove [off, off+len) instead.  */
   u8    link;                 /*  Link from canon[entry] instead.  */
   u8    relink;               /*  A copy stands where the link belongs.  */
+  u8    shadow;               /*  Applied only if the copy could not be linked.  */
 } rp_write;
+
+/*  Metadata a run could not restore, counted whatever the output mode.  */
+typedef enum {
+  RP_META_OWNER, RP_META_MODE, RP_META_SETID, RP_META_TIMES, RP_META_ATIME,
+  RP_META_BTIME, RP_META_CTIME, RP_META_ATTRS, RP_META_XATTR,
+  RP_META_XATTR_NS, RP_META_SYMLINK, RP_META_COPY, RP_META_CLASSES
+} rp_meta_cls;
+
+static const char * const rp_meta_name[RP_META_CLASSES] = {
+  "owner", "mode", "setid", "times", "atime", "btime", "ctime", "attrs",
+  "xattr", "xattr-namespace", "symlink-unsafe", "materialised-as-copy"
+};
 
 typedef struct {
   const xpar_options * o;
@@ -136,9 +149,19 @@ typedef struct {
   u64 opaque;                 /*  Hash fails and nothing can be written.  */
   u64 structure_bad;          /*  Recorded type or link target differs.  */
   u64 names_made;             /*  Empty names the manifest fully describes.  */
+  u64 names_failed;           /*  Names the run could not recreate.  */
+  u64 links_failed;           /*  Hard-link names that stayed unlinked.  */
   u64 rec_regen, rec_regen_vols;  /*  Recovery slices re-encoded, and where. */
   u64 index_regen;            /*  Index volumes rebuilt from replicas.  */
+  u64 stale_regen;            /*  Volumes rewritten to the index's copies.  */
+  u64 names_restored;         /*  Volumes put back under their name.  */
+  u64 ragged_trimmed;         /*  Volumes cut back to their last packet.  */
+  u64 vols_dropped;           /*  Volumes rewritten from packet replicas.  */
+  u64 meta_skip[RP_META_CLASSES];  /*  See rp_meta_name.  */
   u8 * hash_bad;              /*  Per entry; owned.  */
+  u8 * link_failed;           /*  Per entry; the copy keeps its name.  */
+  u8 * io_bad;                /*  Per entry; the host refused its bytes.  */
+  u64  io_errors;             /*  Host refusals; they force exit 5.  */
   bool changed;
 } rp;
 
@@ -152,16 +175,82 @@ static void rp_note(rp * r, const char * fmt, ...) {
   va_end(ap);
 }
 
-static void rp_meta_skip(const xpar_options * o, const xpar_entry * e,
-                         const char * cls, const char * reason) {
+static void rp_io_error(rp * r, u32 entry, int err) {
+  if (r->io_bad && r->io_bad[entry]) return;
+  if (r->io_bad) r->io_bad[entry] = 1;
+  r->io_errors++;
+  xpar_fprintf(xpar_stderr, "xpar: cannot read '%s': %s\n", r->path[entry],
+               xpar_strerror(err));
+}
+
+static const struct { u32 bit;  rp_meta_cls cls; } rp_require_map[] = {
+  { XPAR_PRES_OWNER, RP_META_OWNER }, { XPAR_PRES_MODE,  RP_META_MODE  },
+  { XPAR_PRES_SETID, RP_META_SETID }, { XPAR_PRES_MTIME, RP_META_TIMES },
+  { XPAR_PRES_ATIME, RP_META_ATIME }, { XPAR_PRES_BTIME, RP_META_BTIME },
+  { XPAR_PRES_CTIME, RP_META_CTIME }, { XPAR_PRES_ATTRS, RP_META_ATTRS },
+  { XPAR_PRES_XATTR, RP_META_XATTR },
+  { XPAR_PRES_XATTR_ALL, RP_META_XATTR_NS },
+  { XPAR_PRES_LINKS, RP_META_SYMLINK }, { XPAR_PRES_LINKS, RP_META_COPY }
+};
+
+static bool rp_require_lost(const xpar_options * o, const u64 * counts,
+                            bool say) {
+  u32 q;
+  bool lost = false;
+  for (q = 0; q < ARRAY_LEN(rp_require_map); q++) {
+    rp_meta_cls cls = rp_require_map[q].cls;
+    if (!(o->require & rp_require_map[q].bit) || !counts[cls]) continue;
+    if (say)
+      xpar_fprintf(xpar_stderr, "xpar: --require: %" PRIu64 " entr%s lost "
+                   "%s.\n", counts[cls], counts[cls] == 1 ? "y" : "ies",
+                   rp_meta_name[cls]);
+    lost = true;
+  }
+  return lost;
+}
+
+static int rp_code(const rp * r, int code) {
+  if (r->io_errors) return XPAR_EXIT_IO;
+  if (rp_require_lost(r->o, r->meta_skip, false)) return XPAR_EXIT_IO;
+  return code;
+}
+
+static void rp_meta_skip(u64 * counts, const xpar_options * o,
+                         const xpar_entry * e, rp_meta_cls cls,
+                         const char * reason) {
   xpar_json js;
+  counts[cls]++;
   if (!o->json) return;
   xpar_json_init(&js, xpar_stdout, true);
   xpar_json_begin(&js, "metadata_skipped");
   xpar_json_name(&js, "entry", e->name, e->name_len);
-  xpar_json_str(&js, "class", cls);
+  xpar_json_str(&js, "class", rp_meta_name[cls]);
   xpar_json_str(&js, "reason", reason);
   xpar_json_end(&js);
+}
+
+static void rp_meta_report(const xpar_options * o, const u64 * counts,
+                           xpar_json * js) {
+  u64 total = 0;
+  u32 k, shown = 0;
+  for (k = 0; k < RP_META_CLASSES; k++) total += counts[k];
+  if (o->json) {
+    xpar_json_begin(js, "metadata_skipped_total");
+    xpar_json_u64(js, "skipped", total);
+    for (k = 0; k < RP_META_CLASSES; k++)
+      xpar_json_u64(js, rp_meta_name[k], counts[k]);
+    xpar_json_end(js);
+    return;
+  }
+  if (!total) return;
+  xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " metadata restoration%s "
+               "skipped: ", total, PLURAL(total));
+  for (k = 0; k < RP_META_CLASSES; k++) {
+    if (!counts[k]) continue;
+    xpar_fprintf(xpar_stderr, "%s%s=%" PRIu64, shown++ ? ", " : "",
+                 rp_meta_name[k], counts[k]);
+  }
+  xpar_fputs("\n", xpar_stderr);
 }
 
 static void rp_tag(const rp * r, u64 slice, const u8 * bytes,
@@ -213,7 +302,12 @@ static void rp_tree_preflight(const xpar_options * o, const xpar_manifest * m,
 
 static bool rp_vol_open(rp * r, const char * path) {
   xpar_volimg v;
-  if (!xpar_volimg_open(&v, path)) return false;
+  int err = 0;
+  xpar_volimg_status st = xpar_volimg_read(&v, path, &err);
+  if (st == XPAR_VOLIMG_IO)
+    FATAL_IO("Cannot read volume '%s': %s.", path,
+             xpar_strerror(err ? err : xpar_errno()));
+  if (st != XPAR_VOLIMG_OK) return false;
   if (r->vol_count == r->vol_cap) {
     r->vol_cap = r->vol_cap ? r->vol_cap * 2 : 8;
     r->vol = (xpar_volimg *)
@@ -577,7 +671,10 @@ static xpar_file * rp_entry_file(rp * r, u32 entry) {
   for (i = 0; i < RP_FD_CACHE; i++)
     if (r->fd[i].used && r->fd[i].entry == entry) return r->fd[i].f;
   f = xpar_open(r->path[entry], XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
-  if (!f) return NULL;
+  if (!f) {
+    if (!xpar_errno_absent(xpar_errno())) rp_io_error(r, entry, xpar_errno());
+    return NULL;
+  }
   i = r->fd_next++ % RP_FD_CACHE;
   if (r->fd[i].used) xpar_close(r->fd[i].f);
   r->fd[i].used = true;  r->fd[i].entry = entry;  r->fd[i].f = f;
@@ -590,6 +687,15 @@ static void rp_close_files(rp * r) {
     if (r->fd[i].used) { xpar_close(r->fd[i].f);  r->fd[i].used = false; }
 }
 
+/*  Close cached descriptors before replacing an entry.  */
+static void rp_close_entry(rp * r, u32 entry) {
+  u32 i;
+  for (i = 0; i < RP_FD_CACHE; i++)
+    if (r->fd[i].used && r->fd[i].entry == entry) {
+      xpar_close(r->fd[i].f);  r->fd[i].used = false;
+    }
+}
+
 /*  Read an entry range, zero-filling gaps; false distinguishes missing
     bytes from stored zeros.  */
 static bool rp_read_entry_raw(rp * r, u32 entry, u64 off, u64 len,
@@ -600,6 +706,7 @@ static bool rp_read_entry_raw(rp * r, u32 entry, u64 off, u64 len,
   if (!f) return false;
   if (len > (u64) (sz) -1) return false;
   got = xpar_pread(f, dst, (sz) len, off);
+  if (got != (sz) len && xpar_error(f)) rp_io_error(r, entry, xpar_error(f));
   return got == (sz) len;
 }
 
@@ -616,6 +723,7 @@ static bool rp_read_entry_resynced(rp * r, u32 entry, u64 off, u64 len,
   f = rp_entry_file(r, entry);
   if (!f) return false;
   got = xpar_pread(f, dst, (sz) len, physical);
+  if (got != (sz) len && xpar_error(f)) rp_io_error(r, entry, xpar_error(f));
   return got == (sz) len;
 }
 
@@ -624,6 +732,7 @@ typedef struct {
   xpar_file * f;
   const xpar_resync_probe * probe;
   u8 * buf;
+  u32 entry;
 } rp_confirm;
 
 static bool rp_confirm_at(void * user, u32 at, u64 physical) {
@@ -631,8 +740,11 @@ static bool rp_confirm_at(void * user, u32 at, u64 physical) {
   const xpar_resync_probe * p = &c->probe[at];
   u8 got[XPAR_BLAKE3_OUT_LEN];
   u64 z = c->r->geom.slice_size;
-  if (physical > UINT64_MAX - z ||
-      xpar_pread(c->f, c->buf, (sz) z, physical) != (sz) z) return false;
+  if (physical > UINT64_MAX - z) return false;
+  if (xpar_pread(c->f, c->buf, (sz) z, physical) != (sz) z) {
+    if (xpar_error(c->f)) rp_io_error(c->r, c->entry, xpar_error(c->f));
+    return false;
+  }
   rp_tag(c->r, p->slice, c->buf, got, c->r->tags.t.tag_len);
   return xpar_blake3_tag_equal(
     got, c->r->tags.t.slice_tag + p->slice * c->r->tags.t.tag_len,
@@ -697,6 +809,7 @@ static void rp_resync_entry(rp * r, u32 entry) {
   f = rp_entry_file(r, entry);
   if (!f) { xpar_free(p);  return; }
   confirm.r = r;  confirm.f = f;  confirm.probe = p;
+  confirm.entry = entry;
   confirm.buf = (u8 *) xpar_alloc_raw((sz) z);
   located = (u64 *) xpar_alloc_raw((sz) n * sizeof(u64));
 
@@ -716,6 +829,7 @@ static void rp_resync_entry(rp * r, u32 entry) {
                       rp_confirm_at, &confirm, confirm.buf, located, &got);
   }
 
+  if (xpar_error(f)) rp_io_error(r, entry, xpar_error(f));
   if (got.need_tags && r->verbose)
     rp_note(r, "xpar: %s: resync needs strong slice tags; using erasures.\n",
             r->path[entry]);
@@ -1531,13 +1645,14 @@ static void rp_build_writes(rp * r) {
       /*  Only an identical copy may be replaced by the link.  */
       if (!rp_same_content(r, i, t)) {
         r->structure_bad++;
-        rp_note(r, "xpar: %.*s: recorded as a hard link to '%.*s' but holds "
-                "different bytes; repair will not discard them\n",
+        rp_note(r, "xpar: %.*s differs from hard-link target '%.*s'; copy "
+                "left unchanged\n",
                 (int) r->mf.entry[i].name_len, r->mf.entry[i].name,
                 (int) r->mf.entry[t].name_len, r->mf.entry[t].name);
         continue;
       }
       relink = true;
+      r->fstate[i] |= 1;  r->fsize[i] = st.size;
     }
     if (r->wr_count == r->wr_cap) {
       r->wr_cap = r->wr_cap ? r->wr_cap * 2 : 16;
@@ -1548,6 +1663,25 @@ static void rp_build_writes(rp * r) {
     xpar_memset(w, 0, sizeof *w);
     /*  Record the absent name; rp_read_old allocates its empty payload.  */
     w->entry = i;  w->link = 1;  w->relink = relink ? 1 : 0;
+    /*  Repair the copy if relinking fails.  */
+    if (relink) {
+      u32 n = r->wr_count, k;
+      for (k = 0; k < n; k++) {
+        rp_write d = r->wr[k];
+        if (d.entry != t || d.link || d.shadow) continue;
+        d.entry = i;  d.shadow = 1;  d.old = NULL;
+        if (d.data) {
+          d.data = (u8 *) xpar_alloc_raw((sz) d.len);
+          xpar_memcpy(d.data, r->wr[k].data, (sz) d.len);
+        }
+        if (r->wr_count == r->wr_cap) {
+          r->wr_cap *= 2;
+          r->wr = (rp_write *) xpar_realloc(r->wr,
+                                            r->wr_cap * sizeof(rp_write));
+        }
+        r->wr[r->wr_count++] = d;
+      }
+    }
   }
 
   /*  A hash failure with no corresponding write is unrepairable.  */
@@ -1595,14 +1729,16 @@ static void rp_journal(rp * r) {
   xpar_wr64(hdr + 40, payload);
   xpar_wr64(hdr + 48, (u64) xpar_wall_ns());
   xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
-  /*  Create journals privately without following links.  */
+  /*  Create the journal privately without following links.  */
   f = xpar_open(r->journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
-                            XPAR_O_NOFOLLOW);
-  if (!f) FATAL_IO("Cannot write undo journal '%s': %s; use --no-journal "
-                   "to continue without one.", r->journal,
+                            XPAR_O_NOFOLLOW | XPAR_O_PRIVATE);
+  if (!f) FATAL_IO("Cannot write journal '%s': %s; use --no-journal to "
+                   "continue.", r->journal,
                    xpar_strerror(xpar_errno()));
-  if (xpar_set_mode(r->journal, 1, 0600) != 0 && r->verbose)
-    rp_note(r, "xpar: could not restrict '%s' to its owner.\n", r->journal);
+  if (xpar_set_mode(r->journal, 1, 0600) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot restrict journal '%s' "
+                 "to its owner: %s\n", r->journal,
+                 xpar_strerror(xpar_errno()));
   xpar_xwrite(f, hdr, sizeof hdr);
   all = xpar_crc32c(0, hdr, sizeof hdr);
   for (i = 0; i < r->wr_count; i++) {
@@ -1636,7 +1772,12 @@ static void rp_journal(rp * r) {
   if (xpar_fsync(f) != 0) FATAL_IO("Cannot flush the undo journal.");
   xpar_xclose(f);
   /*  Make the journal directory entry durable before data writes.  */
-  xpar_fsync_dir(r->journal);
+  if (xpar_fsync_dir(r->journal) != 0) {
+    int err = xpar_errno();
+    xpar_remove(r->journal);
+    FATAL_IO("Cannot persist journal '%s': %s; use --no-journal to continue.",
+             r->journal, xpar_strerror(err));
+  }
   if (r->verbose)
     rp_note(r, "xpar: journalled %" PRIu32 " ranges (%" PRIu64
             " bytes) to '%s'.\n",
@@ -1657,7 +1798,7 @@ static void rp_read_old(rp * r) {
              ? MIN(w->len, r->fsize[w->entry] - w->off) : 0;
     if (have && !rp_read_entry_raw(r, w->entry, w->off, have, w->old))
       FATAL_IO("Cannot journal '%.*s' at offset %" PRIu64
-               ": read failed. Use --no-journal to repair without undo.",
+               ": read failed; use --no-journal to continue.",
                (int) r->mf.entry[w->entry].name_len,
                r->mf.entry[w->entry].name, w->off);
   }
@@ -1671,6 +1812,7 @@ static bool rp_recreatable(const rp * r, u32 i) {
   const xpar_entry * e = &r->mf.entry[i];
   xpar_stat_t st;
   if (xpar_lstat(r->path[i], &st) == 0) return false;
+  if (!xpar_errno_absent(xpar_errno())) return false;
   if (e->entry_type == XPAR_ENTRY_HARDLINK) return false;
   if (e->entry_type == XPAR_ENTRY_REGULAR &&
       (e->length || rp_foreign(r, i))) return false;
@@ -1690,27 +1832,105 @@ static void rp_restore_missing(rp * r) {
   for (i = 0; i < r->scan_entry_count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
     char * dir;
+    int made, err = 0;
     if (!rp_recreatable(r, i)) continue;
     dir = xpar_path_dir(r->path[i]);
     xpar_mkdir_p(dir, 0777);
     xpar_free(dir);
-    if (e->entry_type == XPAR_ENTRY_DIR) {
-      if (xpar_mkdir_p(r->path[i], 0777) != 0) continue;
-    } else if (e->entry_type == XPAR_ENTRY_SYMLINK) {
+    if (e->entry_type == XPAR_ENTRY_DIR)
+      made = xpar_mkdir_p(r->path[i], 0777);
+    else if (e->entry_type == XPAR_ENTRY_SYMLINK) {
       char * tgt = xpar_strndup((const char *) e->extra, e->extra_len);
-      int ok = xpar_symlink(tgt, r->path[i]);
+      made = xpar_symlink(tgt, r->path[i]);
+      if (made != 0) err = xpar_errno();
       xpar_free(tgt);
-      if (ok != 0) continue;
     } else {
       xpar_file * f = xpar_open(r->path[i], XPAR_O_WRONLY | XPAR_O_CREAT |
                                             XPAR_O_EXCL | XPAR_O_NOFOLLOW);
-      if (!f) continue;
-      xpar_xclose(f);
+      made = f ? 0 : -1;
+      if (f) xpar_xclose(f);
+    }
+    if (made != 0) {
+      rp_note(r, "xpar: cannot recreate '%s': %s\n", r->path[i],
+              xpar_strerror(err ? err : xpar_errno()));
+      r->names_failed++;
+      continue;
     }
     rp_basic_meta(r, i, r->path[i],
                   e->entry_type == XPAR_ENTRY_SYMLINK);
     r->writes++;  r->names_made++;
   }
+}
+
+static char * rp_link_stage(const char * path) {
+  xpar_stat_t st;
+  char * out = NULL;
+  u32 n;
+  for (n = 1; ; n++) {
+    xpar_free(out);
+    xpar_asprintf(&out, "%s.xpar-link-%" PRIu32, path, n);
+    if (xpar_lstat(out, &st) != 0) return out;
+    FATAL_UNLESS("Too many link stages beside '%s'.", n != 1000, path);
+  }
+}
+
+/*  Stage a hard link beside PATH.  */
+static char * rp_link_aside(const char * canon, const char * path,
+                            int * err) {
+  u32 n;
+  *err = 0;
+  for (n = 0; n < 64; n++) {
+    xpar_stat_t st;
+    char * stage = rp_link_stage(path);
+    if (xpar_link(canon, stage) == 0) return stage;
+    *err = xpar_errno();
+    if (xpar_lstat(stage, &st) != 0) { xpar_free(stage);  return NULL; }
+    xpar_free(stage);
+  }
+  return NULL;
+}
+
+/*  Stage a symbolic link beside PATH.  */
+static char * rp_symlink_aside(const char * target, const char * path,
+                               int * err) {
+  u32 n;
+  *err = 0;
+  for (n = 0; n < 64; n++) {
+    xpar_stat_t st;
+    char * stage = rp_link_stage(path);
+    if (xpar_symlink(target, stage) == 0) return stage;
+    *err = xpar_errno();
+    if (xpar_lstat(stage, &st) != 0) { xpar_free(stage);  return NULL; }
+    xpar_free(stage);
+  }
+  return NULL;
+}
+
+/*  Create or atomically replace an alias with a hard link.  */
+static int rp_relink(rp * r, const rp_write * w) {
+  const char * path = r->path[w->entry];
+  const char * canon = r->path[r->canon[w->entry]];
+  char * d = xpar_path_dir(path);
+  int ok, err = 0;
+  xpar_mkdir_p(d, 0777);
+  xpar_free(d);
+  if (!w->relink) {
+    ok = xpar_link(canon, path);
+    if (ok != 0) err = xpar_errno();
+  } else {
+    char * stage = rp_link_aside(canon, path, &err);
+    ok = stage ? 0 : -1;
+    if (stage) {
+      rp_close_entry(r, w->entry);
+      ok = xpar_rename(stage, path);
+      if (ok != 0) { err = xpar_errno();  xpar_remove(stage); }
+      xpar_free(stage);
+    }
+  }
+  if (ok != 0)
+    rp_note(r, "xpar: cannot link '%s' to '%s': %s\n", path, canon,
+            xpar_strerror(err));
+  return ok;
 }
 
 static void rp_apply(rp * r) {
@@ -1721,22 +1941,26 @@ static void rp_apply(rp * r) {
     u32 entry = r->wr[i].entry, j;
     xpar_file * f;
     bool made = false;
+    if (r->io_bad && r->io_bad[entry]) {
+      for (j = i; j < r->wr_count && r->wr[j].entry == entry; j++) {}
+      rp_note(r, "xpar: %s: not rewritten; its bytes could not be read\n",
+              r->path[entry]);
+      i = j;
+      continue;
+    }
     if (r->wr[i].link) {
-      /*  Do not create the missing path before linking it.  */
-      char * d = xpar_path_dir(r->path[entry]);
-      xpar_mkdir_p(d, 0777);
-      xpar_free(d);
-      /*  An identical copy is removed first so the link can take its
-          name; rp_build_writes proved the bytes match.  */
-      if (r->wr[i].relink) xpar_remove(r->path[entry]);
-      if (xpar_link(r->path[r->canon[entry]], r->path[entry]) == 0) {
-        r->writes++;  r->links_made++;
+      if (rp_relink(r, &r->wr[i]) == 0) { r->writes++;  r->links_made++; }
+      else if (r->wr[i].relink) {
+        if (!r->link_failed)
+          r->link_failed = (u8 *) xpar_calloc(r->mf.count ? r->mf.count : 1, 1);
+        r->link_failed[entry] = 1;
       }
-      else
-        rp_note(r, "xpar: cannot link '%s' to '%s': %s\n",
-                r->path[entry], r->path[r->canon[entry]],
-                xpar_strerror(xpar_errno()));
       i++;
+      continue;
+    }
+    if (r->wr[i].shadow && !(r->link_failed && r->link_failed[entry])) {
+      for (j = i; j < r->wr_count && r->wr[j].entry == entry; j++) {}
+      i = j;
       continue;
     }
     f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_NOFOLLOW);
@@ -1748,13 +1972,14 @@ static void rp_apply(rp * r) {
       f = xpar_open(r->path[entry], XPAR_O_RDWR | XPAR_O_CREAT |
                                          XPAR_O_NOFOLLOW);
       if (!f) {
+        int err = xpar_errno();
         /*  Remove an unused journal.  */
         if (!r->writes && !r->o->no_journal && !r->o->keep_journal) {
           xpar_remove(r->journal);
           xpar_fsync_dir(r->journal);
         }
         FATAL_IO("Cannot open '%s' for repair: %s.", r->path[entry],
-                 xpar_strerror(xpar_errno()));
+                 xpar_strerror(err));
       }
       made = true;
     }
@@ -1778,10 +2003,9 @@ static void rp_apply(rp * r) {
         continue;
       }
       if (xpar_pwrite(f, w->data, (sz) w->len, w->off) != (sz) w->len)
-        FATAL_IO("Write to '%s' failed at offset %" PRIu64
-                 ": %s. Undo journal: "
-                 "'%s'.", r->path[entry],
-                 w->off, xpar_strerror(xpar_errno()),
+        FATAL_IO("Write failed at offset %" PRIu64 " in '%s': %s (journal: "
+                 "'%s').", w->off, r->path[entry],
+                 xpar_strerror(xpar_errno()),
                  r->journal);
       r->bytes_written += w->len;  r->writes++;
     }
@@ -1796,41 +2020,65 @@ static void rp_apply(rp * r) {
   rp_close_files(r);
 }
 
+/*  Compare alias and canonical inodes where available.  */
+static bool rp_linked(const rp * r, u32 i) {
+  xpar_stat_t lst, cst;
+  if (xpar_lstat(r->path[i], &lst) != 0) return false;
+  if (xpar_lstat(r->path[r->canon[i]], &cst) != 0) return false;
+  if (!(lst.dev | lst.ino) || !(cst.dev | cst.ino)) return true;
+  return lst.dev == cst.dev && lst.ino == cst.ino;
+}
+
+/*  Hash file `file` over `e`'s extents against its certificate.  */
+static bool rp_hash_ok(rp * r, u32 file, const xpar_entry * e, u8 * buf) {
+  xpar_blake3_t h;
+  u8 got[32];
+  u64 fo = 0, z = r->geom.slice_size;
+  u32 k;
+  if (r->auth_only) xpar_blake3_init_keyed(&h, r->key.k_file);
+  else              xpar_blake3_init(&h);
+  for (k = 0; k < e->extent_count; k++) {
+    u64 left = e->extents[k].length, at = fo;
+    while (left) {
+      u64 take = MIN(left, z);
+      rp_read_entry_raw(r, file, at, take, buf);
+      xpar_blake3_update(&h, buf, (sz) take);
+      at += take;  left -= take;
+    }
+    fo += e->extents[k].length;
+  }
+  xpar_blake3_final(&h, got, 32);
+  return xpar_memcmp(got, e->content_hash, 32) == 0;
+}
+
 /*  Re-read every changed entry and alias under its 256-bit certificate.  */
 static bool rp_reverify(rp * r) {
-  u32 i, k;
+  u32 i;
   u8 * seen = (u8 *) xpar_calloc(r->mf.count ? r->mf.count : 1, 1);
   u64 z = r->geom.slice_size;
   u8 * buf = (u8 *) xpar_alloc_raw((sz) z);
   bool ok = true;
-  for (i = 0; i < r->wr_count; i++) seen[r->wr[i].entry] = 1;
+  /*  Bit 1: bytes were written; bit 2: a link was attempted.  */
+  for (i = 0; i < r->wr_count; i++)
+    seen[r->wr[i].entry] |= r->wr[i].link ? 2 : 1;
   for (i = 0; i < r->mf.count; i++) {
     const xpar_entry * e = &r->mf.entry[i];
-    xpar_blake3_t h;
-    u8 got[32];
-    u64 fo = 0;
     if (r->alias[i]) {
-      if (seen[r->canon[i]]) r->links_repaired++;
+      if (seen[r->canon[i]] & 1) r->links_repaired++;
+      if ((seen[i] & 2) && !rp_linked(r, i)) r->links_failed++;
+      /*  A copy given the canonical writes must certify like it.  */
+      if ((seen[i] & 1) && r->link_failed && r->link_failed[i] &&
+          !rp_hash_ok(r, i, &r->mf.entry[r->canon[i]], buf)) {
+        rp_note(r, "xpar: %.*s: the copy does not verify after repair\n",
+                (int) e->name_len, e->name);
+        ok = false;
+      }
       continue;
     }
-    if (!seen[i]) continue;
-    if (r->auth_only) xpar_blake3_init_keyed(&h, r->key.k_file);
-    else              xpar_blake3_init(&h);
-    for (k = 0; k < e->extent_count; k++) {
-      u64 left = e->extents[k].length, at = fo;
-      while (left) {
-        u64 take = MIN(left, z);
-        rp_read_entry_raw(r, i, at, take, buf);
-        xpar_blake3_update(&h, buf, (sz) take);
-        at += take;  left -= take;
-      }
-      fo += e->extents[k].length;
-    }
-    xpar_blake3_final(&h, got, 32);
-    if (xpar_memcmp(got, e->content_hash, 32)) {
+    if (!(seen[i] & 1)) continue;
+    if (!rp_hash_ok(r, i, e, buf)) {
       ok = false;
-      rp_note(r, "xpar: '%s' still does not match its recorded hash after "
-                 "repair.\n", r->path[i]);
+      rp_note(r, "xpar: '%s' still fails its recorded hash\n", r->path[i]);
     } else r->entries_repaired++;
   }
   xpar_free(seen);  xpar_free(buf);
@@ -2000,6 +2248,7 @@ static void rp_entry_state_alloc(rp * r) {
   r->fsize = (u64 *) xpar_calloc(n, sizeof(u64));
   r->fstate = (u8 *) xpar_calloc(n, 1);
   r->hash_bad = (u8 *) xpar_calloc(n, 1);
+  r->io_bad = (u8 *) xpar_calloc(n, 1);
   r->resync = (xpar_resync_map *)
                 xpar_calloc(n, sizeof(xpar_resync_map));
   rp_find_aliases(r);
@@ -2007,10 +2256,13 @@ static void rp_entry_state_alloc(rp * r) {
     const xpar_entry * e = &r->mf.entry[i];
     xpar_stat_t st;
     if (e->entry_type != XPAR_ENTRY_REGULAR || r->alias[i]) continue;
-    if (xpar_lstat(r->path[i], &st) == 0 && st.is_regular) {
+    if (xpar_lstat(r->path[i], &st) == 0) {
+      if (!st.is_regular) continue;
       r->fstate[i] = 1;
       r->fsize[i] = st.size;
       if (st.size > e->length && !rp_foreign(r, i)) r->fstate[i] |= 2;
+    } else if (!xpar_errno_absent(xpar_errno())) {
+      rp_io_error(r, i, xpar_errno());
     }
   }
 }
@@ -2024,10 +2276,10 @@ static void rp_entry_state_free(rp * r) {
   }
   xpar_free(r->path);  xpar_free(r->alias);  xpar_free(r->canon);
   xpar_free(r->fsize);  xpar_free(r->fstate);  xpar_free(r->resync);
-  xpar_free(r->hash_bad);
+  xpar_free(r->hash_bad);  xpar_free(r->io_bad);
   r->path = NULL;  r->alias = NULL;  r->canon = NULL;
   r->fsize = NULL;  r->fstate = NULL;  r->resync = NULL;
-  r->hash_bad = NULL;
+  r->hash_bad = NULL;  r->io_bad = NULL;
   xpar_occindex_free(&r->ox);
   xpar_nameidx_free(&r->nix);
   xpar_free(r->owner);  r->owner = NULL;
@@ -2075,12 +2327,14 @@ static bool rp_read_repaired(rp * r, u32 entry, u64 off, u64 len, u8 * dst) {
 static xpar_file * rp_tree_stage(const char * path, char ** stage) {
   char * stem = NULL;
   xpar_file * f;
+  int err;
   xpar_asprintf(&stem, "%s.xpar-repair-", path);
   f = xpar_stage_open(stem, XPAR_O_WRONLY | XPAR_O_NOFOLLOW, 1, stage);
+  err = xpar_errno();
   xpar_free(stem);
   if (!f)
-    FATAL_IO("Cannot create a secure repair stage beside '%s': %s.", path,
-             xpar_strerror(xpar_errno()));
+    FATAL_IO("Cannot stage repair beside '%s': %s.", path,
+             xpar_strerror(err));
   return f;
 }
 
@@ -2096,26 +2350,48 @@ static char * rp_backup_name(const char * path) {
   }
 }
 
+/*  Keep PATH reachable under a fresh adjacent name.  */
+static char * rp_keep_aside_name(const char * path, int * err) {
+  u32 n;
+  *err = 0;
+  for (n = 0; n < 64; n++) {
+    xpar_stat_t st;
+    char * bak = rp_backup_name(path);
+    if (xpar_link(path, bak) == 0) return bak;
+    *err = xpar_errno();
+    if (xpar_lstat(bak, &st) == 0) { xpar_free(bak);  continue; }
+    if (xpar_keep_aside(path, bak) == 0) return bak;
+    *err = xpar_errno();
+    xpar_free(bak);
+    return NULL;
+  }
+  return NULL;
+}
+
+
 static void rp_publish_tree_stage(const xpar_options * o, char * stage,
                                   const char * path) {
   xpar_stat_t st;
   char * backup = NULL;
   bool had = xpar_lstat(path, &st) == 0;
   if (had) {
+    int err = 0;
     FATAL_UNLESS("Refusing to replace destination directory '%s'.",
                  !st.is_dir, path);
     FATAL_UNLESS("Destination '%s' exists; -f overwrites it.",
                  o->force, path);
-    backup = rp_backup_name(path);
-    if (xpar_rename(path, backup) != 0)
+    backup = rp_keep_aside_name(path, &err);
+    if (!backup)
       FATAL_IO("Cannot stage old destination '%s': %s.", path,
-               xpar_strerror(xpar_errno()));
+               xpar_strerror(err));
   }
   if (xpar_rename(stage, path) != 0 || xpar_fsync_dir(path) != 0) {
     int saved = xpar_errno();
-    if (xpar_lstat(path, &st) == 0) (void) xpar_rename(path, stage);
-    if (backup) (void) xpar_rename(backup, path);
-    FATAL_IO("Publishing repaired '%s' failed: %s.", path,
+    (void) xpar_remove(stage);
+    if (backup && xpar_put_back(path, backup) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: original '%s' remains at '%s'.\n",
+                   path, backup);
+    FATAL_IO("Cannot publish repaired '%s': %s.", path,
              xpar_strerror(saved));
   }
   if (backup && xpar_remove(backup) != 0)
@@ -2128,23 +2404,25 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
                           const xpar_posix_rec * pr, const char * path,
                           bool link, u32 caps) {
   if (link && !(caps & XPAR_FS_NOFOLLOW)) {
-    rp_meta_skip(r->o, e, "symlink-unsafe",
+    rp_meta_skip(r->meta_skip, r->o, e, RP_META_SYMLINK,
                  "the host has no symlink-safe metadata call");
-    rp_note(r, "xpar: %.*s: symlink metadata skipped because this host has "
-               "no no-follow metadata calls.\n", (int) e->name_len, e->name);
+    rp_note(r, "xpar: %.*s: symlink metadata skipped; no safe host API\n",
+            (int) e->name_len, e->name);
     return;
   }
   /*  Set ownership before mode because chown clears set-ID bits.  */
   if (pr && (pr->uid != XPAR_ID_NONE || pr->gid != XPAR_ID_NONE ||
              pr->owner || pr->group)) {
     if (!(r->o->preserve & XPAR_PRES_OWNER))
-      rp_meta_skip(r->o, e, "owner", "--preserve=owner was not given");
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_OWNER,
+                   "--preserve=owner was not given");
     else if (xpar_set_owner(
                path, 1, pr->uid, pr->gid,
                r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->owner : NULL,
                r->o->owner_map == XPAR_OWNERMAP_NAME ? pr->group : NULL)
              != 0) {
-      rp_meta_skip(r->o, e, "owner", xpar_strerror(xpar_errno()));
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_OWNER,
+                   xpar_strerror(xpar_errno()));
       rp_note(r, "xpar: %.*s: owner restoration skipped: %s.\n",
               (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
     }
@@ -2159,11 +2437,12 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
                       XPAR_MODE_STICKY);
       if (e->mode & (XPAR_MODE_SETUID | XPAR_MODE_SETGID |
                      XPAR_MODE_STICKY))
-        rp_meta_skip(r->o, e, "setid",
+        rp_meta_skip(r->meta_skip, r->o, e, RP_META_SETID,
                      "setuid, setgid and sticky bits cleared");
     }
     if (xpar_set_mode(path, 1, mode) != 0) {
-      rp_meta_skip(r->o, e, "mode", xpar_strerror(xpar_errno()));
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_MODE,
+                   xpar_strerror(xpar_errno()));
       rp_note(r, "xpar: %.*s: mode restoration skipped: %s.\n",
               (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
     }
@@ -2173,23 +2452,26 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
     if ((r->o->preserve & XPAR_PRES_ATIME) &&
         e->atime_ns != XPAR_ABSENT_TIME) at = e->atime_ns;
     else if (e->atime_ns != XPAR_ABSENT_TIME)
-      rp_meta_skip(r->o, e, "atime", "--preserve=atime was not given");
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_ATIME,
+                   "--preserve=atime was not given");
     if ((r->o->preserve & XPAR_PRES_MTIME) &&
         e->mtime_ns != XPAR_ABSENT_TIME) mt = e->mtime_ns;
     if ((r->o->preserve & XPAR_PRES_BTIME) &&
         e->btime_ns != XPAR_ABSENT_TIME) {
       if (caps & XPAR_FS_BTIME) bt = e->btime_ns;
-      else rp_meta_skip(r->o, e, "btime",
+      else rp_meta_skip(r->meta_skip, r->o, e, RP_META_BTIME,
                         "this host cannot set a birth time");
     }
     if ((at != XPAR_TIME_NONE || mt != XPAR_TIME_NONE ||
          bt != XPAR_TIME_NONE) && xpar_set_times(path, 1, at, mt, bt) != 0) {
-      rp_meta_skip(r->o, e, "times", xpar_strerror(xpar_errno()));
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_TIMES,
+                   xpar_strerror(xpar_errno()));
       rp_note(r, "xpar: %.*s: time restoration skipped: %s.\n",
               (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
     }
     if (e->ctime_ns != XPAR_ABSENT_TIME) {
-      rp_meta_skip(r->o, e, "ctime", "ctime cannot be set on any host");
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_CTIME,
+                   "ctime cannot be set on any host");
       if (r->o->preserve & XPAR_PRES_CTIME)
       rp_note(r, "xpar: %.*s: ctime cannot be restored.\n",
               (int) e->name_len, e->name);
@@ -2198,24 +2480,27 @@ static void rp_apply_meta(rp * r, const xpar_entry * e,
   if ((r->o->preserve & XPAR_PRES_ATTRS) &&
       (e->attrs & XPAR_ATTR_SETTABLE) &&
       xpar_set_attrs(path, 1, (u16) (e->attrs & XPAR_ATTR_SETTABLE)) != 0) {
-    rp_meta_skip(r->o, e, "attrs", xpar_strerror(xpar_errno()));
+    rp_meta_skip(r->meta_skip, r->o, e, RP_META_ATTRS,
+                 xpar_strerror(xpar_errno()));
     rp_note(r, "xpar: %.*s: attribute restoration skipped: %s.\n",
             (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
   }
   if (pr && pr->xattr_count && !(r->o->preserve & XPAR_PRES_XATTR))
-    rp_meta_skip(r->o, e, "xattr", "--preserve=xattr was not given");
+    rp_meta_skip(r->meta_skip, r->o, e, RP_META_XATTR,
+                 "--preserve=xattr was not given");
   if (pr && (r->o->preserve & XPAR_PRES_XATTR)) {
     u32 k;
     for (k = 0; k < pr->xattr_count; k++) {
       const xpar_xattr * a = &pr->xattrs[k];
       bool user = a->name && !xpar_strncmp(a->name, "user.", 5);
       if (!user && !(r->o->preserve & XPAR_PRES_XATTR_ALL)) {
-        rp_meta_skip(r->o, e, "xattr-namespace",
+        rp_meta_skip(r->meta_skip, r->o, e, RP_META_XATTR_NS,
                      "outside user. and --preserve=xattr-all was not given");
         continue;
       }
       if (xpar_setxattr(path, 1, a->name, a->value, a->value_len) != 0) {
-        rp_meta_skip(r->o, e, "xattr", xpar_strerror(xpar_errno()));
+        rp_meta_skip(r->meta_skip, r->o, e, RP_META_XATTR,
+                     xpar_strerror(xpar_errno()));
         rp_note(r, "xpar: %.*s: xattr restoration skipped: %s.\n",
                 (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
       }
@@ -2255,16 +2540,23 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       FATAL_UNLESS("Refusing repair output '%.*s': %s.", out != NULL,
                    (int) e->name_len, e->name, xpar_path_reason(why));
       if (xpar_mkdir_p(out, 0777) != 0) {
+        int err = xpar_errno();
         xpar_stat_t st;
         if (xpar_lstat(out, &st) != 0 || !st.is_dir)
-          FATAL_IO("Cannot create '%s': %s.", out,
-                   xpar_strerror(xpar_errno()));
+          FATAL_IO("Cannot create '%s': %s.", out, xpar_strerror(err));
       }
       xpar_free(out);
       continue;
     }
     if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
     if (backup && !hit[i]) continue;
+    /*  --backup leaves unreadable originals untouched.  */
+    if (backup && r->io_bad && r->io_bad[i]) {
+      r->unrecovered++;
+      rp_note(r, "xpar: %s: not rewritten; its bytes could not be read\n",
+              r->path[i]);
+      continue;
+    }
     if (backup) {
       out = xpar_strdup(r->path[i]);
     } else {
@@ -2273,10 +2565,10 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
                    (int) e->name_len, e->name, xpar_path_reason(why));
       { char * d = xpar_path_dir(out);
         if (xpar_mkdir_p(d, 0777) != 0) {
+          int err = xpar_errno();
           xpar_stat_t st;
           if (xpar_lstat(d, &st) != 0 || !st.is_dir)
-            FATAL_IO("Cannot create '%s': %s.", d,
-                     xpar_strerror(xpar_errno()));
+            FATAL_IO("Cannot create '%s': %s.", d, xpar_strerror(err));
         }
         xpar_free(d); }
     }
@@ -2315,15 +2607,20 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
         xpar_stat_t bst;
         /*  Missing entries have no original to back up.  */
         if (xpar_lstat(out, &bst) == 0) {
-          bak = rp_backup_name(out);
-          if (xpar_rename(out, bak) != 0)
-            FATAL_IO("Cannot preserve '%s' as '%s': %s.", out, bak,
-                     xpar_strerror(xpar_errno()));
+          int err = 0;
+          bak = rp_keep_aside_name(out, &err);
+          if (!bak)
+            FATAL_IO("Cannot back up '%s': %s.", out,
+                     xpar_strerror(err));
         }
         if (xpar_rename(stage, out) != 0) {
-          if (bak) (void) xpar_rename(bak, out);
-          FATAL_IO("Publishing repaired '%s' failed: %s.", out,
-                   xpar_strerror(xpar_errno()));
+          int saved = xpar_errno();
+          (void) xpar_remove(stage);
+          if (bak && xpar_put_back(out, bak) != 0)
+            xpar_fprintf(xpar_stderr, "xpar: original '%s' remains at "
+                         "'%s'.\n", out, bak);
+          FATAL_IO("Cannot publish repaired '%s': %s.", out,
+                   xpar_strerror(saved));
         }
         if (xpar_fsync_dir(out) != 0)
           FATAL_IO("Flushing repaired '%s' failed: %s.", out,
@@ -2353,10 +2650,11 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
                    (int) e->name_len, e->name, xpar_path_reason(why));
       if (e->extra) {
         char * tgt = xpar_strndup((const char *) e->extra, e->extra_len);
-        char * stage = rp_backup_name(out);
-        if (xpar_symlink(tgt, stage) != 0)
+        int err = 0;
+        char * stage = rp_symlink_aside(tgt, out, &err);
+        if (!stage)
           FATAL_IO("Cannot stage symbolic link '%s': %s.", out,
-                   xpar_strerror(xpar_errno()));
+                   xpar_strerror(err));
         rp_publish_tree_stage(r->o, stage, out);
         xpar_free(stage);
         xpar_free(tgt);
@@ -2378,14 +2676,14 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
                  src != NULL, (int) r->mf.entry[t].name_len,
                  r->mf.entry[t].name, xpar_path_reason(src_why));
     {
-      char * link_stage = rp_backup_name(out);
-      if (xpar_link(src, link_stage) == 0) {
+      int err = 0;
+      char * link_stage = rp_link_aside(src, out, &err);
+      if (link_stage) {
         rp_publish_tree_stage(r->o, link_stage, out);
         xpar_free(link_stage);
         xpar_free(out);  xpar_free(src);
         continue;
       }
-      xpar_free(link_stage);
     }
     {
       u64 at = 0;
@@ -2405,7 +2703,7 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
       xpar_xclose(f);
       rp_publish_tree_stage(r->o, stage, out);
       xpar_free(stage);
-      rp_meta_skip(r->o, e, "materialised-as-copy",
+      rp_meta_skip(r->meta_skip, r->o, e, RP_META_COPY,
                    "the destination cannot create the hard link");
       rp_note(r, "xpar: %.*s: materialised-as-copy.\n", (int) e->name_len,
               e->name);
@@ -2440,12 +2738,22 @@ static void rp_report(rp * r, const char * status, int code) {
     xpar_json_u64(&r->js, "links_relinked", r->links_made);
     xpar_json_u64(&r->js, "entries_opaque", r->opaque);
     xpar_json_u64(&r->js, "names_recreated", r->names_made);
+    xpar_json_u64(&r->js, "names_failed", r->names_failed);
+    xpar_json_u64(&r->js, "links_failed", r->links_failed);
     xpar_json_u64(&r->js, "recovery_regenerated", r->rec_regen);
     xpar_json_u64(&r->js, "index_volumes_recreated", r->index_regen);
+    xpar_json_u64(&r->js, "volumes_stale_rewritten", r->stale_regen);
+    xpar_json_u64(&r->js, "volumes_restored", r->names_restored);
+    xpar_json_u64(&r->js, "volumes_trimmed", r->ragged_trimmed);
+    xpar_json_u64(&r->js, "volumes_dropped_rewritten", r->vols_dropped);
     xpar_json_u64(&r->js, "inner_corrected", r->armg_corrected);
     xpar_json_end(&r->js);
+    rp_meta_report(r->o, r->meta_skip, &r->js);
     xpar_json_summary(&r->js, status, code);
-  } else if (!r->quiet) {
+    return;
+  }
+  rp_meta_report(r->o, r->meta_skip, NULL);
+  if (!r->quiet) {
     if (r->links_made)
       rp_note(r, "xpar: relinked %" PRIu64 " hard-link name%s.\n",
               r->links_made, r->links_made == 1 ? "" : "s");
@@ -2460,6 +2768,12 @@ static void rp_report(rp * r, const char * status, int code) {
                      "the manifest.\n"
                    : "xpar: recreated %" PRIu64 " missing name%s from the "
                      "manifest.\n", r->names_made, PLURAL(r->names_made));
+    if (r->names_failed)
+      rp_note(r, "xpar: failed to recreate %" PRIu64 " missing name%s.\n",
+              r->names_failed, PLURAL(r->names_failed));
+    if (r->links_failed)
+      rp_note(r, "xpar: failed to link %" PRIu64 " hard-link name%s.\n",
+              r->links_failed, PLURAL(r->links_failed));
     if (r->index_regen)
       rp_note(r, r->o->dry_run
                    ? "xpar: %" PRIu64 " index volume%s would be recreated "
@@ -2474,12 +2788,19 @@ static void rp_report(rp * r, const char * status, int code) {
                      PRIu64 " volume%s\n",
               r->rec_regen, PLURAL(r->rec_regen),
               r->rec_regen_vols, PLURAL(r->rec_regen_vols));
+    if (r->stale_regen)
+      rp_note(r, r->o->dry_run
+                   ? "xpar: %" PRIu64 " stale volume%s would be rewritten\n"
+                   : "xpar: rewrote %" PRIu64 " stale volume%s\n",
+              r->stale_regen, PLURAL(r->stale_regen));
     if (r->armg_corrected)
       rp_note(r, "xpar: the inner code corrected %" PRIu64
               " armoured region%s\n", r->armg_corrected,
               PLURAL(r->armg_corrected));
     if (!r->cell_count && !r->overlong && !r->links_made && !r->opaque &&
         !r->names_made && !r->rec_regen && !r->index_regen &&
+        !r->stale_regen && !r->names_failed && !r->links_failed &&
+        !r->names_restored && !r->ragged_trimmed && !r->vols_dropped &&
         !r->o->chain_member)
       rp_note(r, "xpar: no damage found.\n");
     else if (r->cell_count)
@@ -2512,6 +2833,7 @@ static void rp_free(rp * r) {
     { xpar_free(r->wr[i].data);  xpar_free(r->wr[i].old); }
   xpar_free(r->wr);
   rp_entry_state_free(r);
+  xpar_free(r->link_failed);
   xpar_free(r->susp);
   xpar_free((void *) r->rec);  xpar_free(r->rec_present);
   if (r->have_layt) xpar_layt_free(&r->layt);
@@ -2545,15 +2867,29 @@ static bool owned_open(owned_vol * v, const char * path) {
   v->map = xpar_map(path);
   if (v->map.valid) { v->data = v->map.map; v->len = v->map.size; return true; }
   f = xpar_open(path, XPAR_O_RDONLY);
-  if (!f) { xpar_free(v->path); v->path = NULL; return false; }
+  if (!f) {
+    if (!xpar_errno_absent(xpar_errno()))
+      FATAL_IO("Cannot read recovery volume '%s': %s.", path,
+               xpar_strerror(xpar_errno()));
+    xpar_free(v->path); v->path = NULL; return false;
+  }
   n = xpar_size(f);
-  if (n < 0 || (u64) n > (u64) (sz) -1) {
+  if (n < 0) FATAL_IO("Cannot size '%s': %s.", path,
+                      xpar_strerror(xpar_error(f)));
+  if ((u64) n > (u64) (sz) -1) {
     xpar_close(f); xpar_free(v->path); v->path = NULL; return false;
   }
   v->heap = (u8 *) xpar_alloc_raw(n ? (sz) n : 1);
-  if (n && xpar_read(f, v->heap, (sz) n) != (sz) n) {
-    xpar_close(f); xpar_free(v->heap); v->heap = NULL;
-    xpar_free(v->path); v->path = NULL; return false;
+  if (n) {
+    sz got = xpar_read(f, v->heap, (sz) n);
+    if (got != (sz) n) {
+      /*  Accept a short read only if the file shrank.  */
+      i64 now = xpar_size(f);
+      if (now < 0 || (u64) now != (u64) got)
+        FATAL_IO("Reading '%s' stopped after %" PRIu64 " of %" PRIu64
+                 " bytes.", path, (u64) got, (u64) n);
+      n = (i64) got;
+    }
   }
   xpar_close(f); v->data = v->heap; v->len = (u64) n; return true;
 }
@@ -2623,10 +2959,11 @@ static bool owned_chain_read(const xpar_chain * c, xpar_manifest * mf,
 static char * owned_chain_stage_new(const char * destination) {
   xpar_stat_t st;
   char * stem, * path;
-  if (xpar_mkdir_p(destination, 0777) != 0 &&
-      xpar_lstat(destination, &st) != 0)
-    FATAL_IO("Cannot create '%s': %s.", destination,
-             xpar_strerror(xpar_errno()));
+  if (xpar_mkdir_p(destination, 0777) != 0) {
+    int err = xpar_errno();
+    if (xpar_lstat(destination, &st) != 0)
+      FATAL_IO("Cannot create '%s': %s.", destination, xpar_strerror(err));
+  }
   FATAL_UNLESS("The repair destination '%s' is a symbolic link; refusing "
                "to write through it.",
                xpar_lstat(destination, &st) == 0 && !st.is_symlink,
@@ -2697,10 +3034,12 @@ static void owned_backup_path(const char * path) {
   xpar_hex(hex, rnd, sizeof rnd);
   xpar_asprintf(&stage, "%s.backup-%s.tmp", path, hex);
   src = xpar_open(path, XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
-  dst = xpar_open(stage, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
-                         XPAR_O_NOFOLLOW);
-  if (!src || !dst) FATAL_IO("Cannot stage backup of '%s': %s.", path,
-                             xpar_strerror(xpar_errno()));
+  { int err = src ? 0 : xpar_errno();
+    dst = xpar_open(stage, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
+                           XPAR_O_NOFOLLOW);
+    if (!dst && !err) err = xpar_errno();
+    if (!src || !dst) FATAL_IO("Cannot stage backup of '%s': %s.", path,
+                               xpar_strerror(err)); }
   buf = (u8 *) xpar_alloc_raw(1u << 20);
   while (at < st.size) {
     sz take = (sz) MIN(st.size - at, (u64) 1 << 20);
@@ -2930,10 +3269,11 @@ static xpar_file * owned_stage_open(const char * dir, char ** path) {
   char * stem = xpar_path_join(dir, ".xpar-repair-");
   xpar_file * f = xpar_stage_open(stem, XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
                                   path);
+  int err = xpar_errno();
   xpar_free(stem);
   if (!f)
     FATAL_IO("Cannot create a secure repair stage in '%s': %s.", dir,
-             xpar_strerror(xpar_errno()));
+             xpar_strerror(err));
   return f;
 }
 
@@ -2978,9 +3318,6 @@ static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
   }
 }
 
-static void owned_write_tree(const xpar_options *, xpar_vset *,
-                             xpar_file *, const u64 *);
-
 /*  Owned-layout repair summary.  */
 typedef struct {
   u64  cells_bad;
@@ -2993,8 +3330,15 @@ typedef struct {
   u64  recovery_volumes;     /*  Recovery volumes rewritten to carry them.  */
   u64  index_regen;          /*  Index volumes rebuilt from replicas.  */
   u64  names_restored;       /*  Volumes put back under their name.  */
+  u64  stale_regen;          /*  Volumes rewritten to the index's copies.  */
+  u64  ragged_trimmed;       /*  Volumes cut back to their last packet.  */
+  u64  volumes_dropped;      /*  Volumes rewritten from packet replicas.  */
+  u64  meta_skip[RP_META_CLASSES];  /*  See rp_meta_name.  */
   bool inner_corrected;
 } owned_acct;
+
+static void owned_write_tree(const xpar_options *, xpar_vset *,
+                             xpar_file *, const u64 *, owned_acct *);
 
 /*  Decode owned cells into a sparse stage. Recovery rows stay mapped and
     column width shrinks until the complete footprint fits -m.  */
@@ -3184,7 +3528,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
         }
   }
   if (ok && o->dest == XPAR_DEST_TO) {
-    owned_write_tree(o, s, stage, slot);
+    owned_write_tree(o, s, stage, slot, acct);
   } else if (ok && armoured) {
     /*  As above: release the image before the rebuilt archive replaces it.  */
     xpar_vset_release_volume(s, arm_path);
@@ -3214,13 +3558,15 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
   xpar_free(stage_path); xpar_free(slot); xpar_free(present);
   xpar_free(io); xpar_free(rptr); xpar_free(data);
   xpar_free_aligned(storage);
+  if (!ok && xpar_vset_io_errors(s)) return XPAR_EXIT_IO;
   return ok ? XPAR_EXIT_OK : XPAR_EXIT_UNREPAIRABLE;
 }
 
 /*  `repair --to` materialises the protected tree without publishing the
     reconstructed owned stream.  */
 static void owned_write_tree(const xpar_options * o, xpar_vset * s,
-                             xpar_file * staged, const u64 * slot) {
+                             xpar_file * staged, const u64 * slot,
+                             owned_acct * acct) {
   const xpar_manifest * m = xpar_vset_manifest(s);
   const xpar_geom * g = xpar_vset_geom(s);
   xpar_chain ancestry;
@@ -3235,7 +3581,10 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
   bool have_ancestry = o->repair_chain_stage != NULL;
   xpar_nameidx nix;
   xpar_stat_t st;
+  rp meta;
   u32 i;
+  xpar_memset(&meta, 0, sizeof meta);
+  meta.o = o;  meta.quiet = o->quiet;
   if (have_ancestry) {
     xpar_gchain_load(o, &ancestry);
     ancestor_mf = (xpar_manifest *)
@@ -3245,9 +3594,11 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
       xpar_calloc(ancestry.gen_count ? ancestry.gen_count : 1, 1);
   }
   FATAL_UNLESS("repair --to needs a destination directory.", o->to_dir);
-  if (xpar_mkdir_p(o->to_dir, 0777) != 0 && xpar_lstat(o->to_dir, &st) != 0)
-    FATAL_IO("Cannot create '%s': %s.", o->to_dir,
-             xpar_strerror(xpar_errno()));
+  if (xpar_mkdir_p(o->to_dir, 0777) != 0) {
+    int err = xpar_errno();
+    if (xpar_lstat(o->to_dir, &st) != 0)
+      FATAL_IO("Cannot create '%s': %s.", o->to_dir, xpar_strerror(err));
+  }
   FATAL_UNLESS("The repair destination '%s' is a symbolic link; refusing "
                "to write through it.",
                xpar_lstat(o->to_dir, &st) == 0 && !st.is_symlink, o->to_dir);
@@ -3275,8 +3626,11 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     FATAL_UNLESS("Refusing repair output '%.*s': %s.", p != NULL,
                  (int) m->entry[i].name_len, m->entry[i].name,
                  xpar_path_reason(why));
-    if (xpar_mkdir_p(p, 0777) != 0 && xpar_lstat(p, &st) != 0)
-      FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(xpar_errno()));
+    if (xpar_mkdir_p(p, 0777) != 0) {
+      int err = xpar_errno();
+      if (xpar_lstat(p, &st) != 0)
+        FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(err));
+    }
     xpar_free(p);
   }
   for (i = 0; i < m->count; i++) if (m->entry[i].entry_type ==
@@ -3293,8 +3647,11 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     FATAL_UNLESS("Refusing repair output '%.*s': %s.", p != NULL,
                  (int) e->name_len, e->name, xpar_path_reason(why));
     { char * d = xpar_path_dir(p);
-      if (xpar_mkdir_p(d, 0777) != 0 && xpar_lstat(d, &st) != 0)
-        FATAL_IO("Cannot create '%s': %s.", d, xpar_strerror(xpar_errno()));
+      if (xpar_mkdir_p(d, 0777) != 0) {
+        int err = xpar_errno();
+        if (xpar_lstat(d, &st) != 0)
+          FATAL_IO("Cannot create '%s': %s.", d, xpar_strerror(err));
+      }
       xpar_free(d); }
     f = rp_tree_stage(p, &stage);
     if (xpar_vset_key(s)) xpar_blake3_init_keyed(&h,
@@ -3362,10 +3719,11 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
                  (int) e->name_len, e->name, xpar_path_reason(why));
     target = xpar_strndup((const char *) e->extra, e->extra_len);
     {
-      char * link_stage = rp_backup_name(p);
-      if (xpar_symlink(target, link_stage) != 0)
+      int err = 0;
+      char * link_stage = rp_symlink_aside(target, p, &err);
+      if (!link_stage)
         FATAL_IO("Cannot stage symbolic link '%s': %s.", p,
-                 xpar_strerror(xpar_errno()));
+                 xpar_strerror(err));
       rp_publish_tree_stage(o, link_stage, p);
       xpar_free(link_stage);
     }
@@ -3392,23 +3750,25 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
                  src != NULL, (int) m->entry[t].name_len, m->entry[t].name,
                  xpar_path_reason(src_why));
     {
-      char * link_stage = rp_backup_name(p);
-      if (xpar_link(src, link_stage) == 0) {
+      int err = 0;
+      char * link_stage = rp_link_aside(src, p, &err);
+      if (link_stage) {
         rp_publish_tree_stage(o, link_stage, p);
         xpar_free(link_stage);
         xpar_free(src); xpar_free(p);
         continue;
       }
-      xpar_free(link_stage);
     }
     {
       char * stage = NULL;
       xpar_file * in = xpar_open(src, XPAR_O_RDONLY);
-      xpar_file * out = rp_tree_stage(p, &stage);
+      int err = xpar_errno();
+      xpar_file * out;
       u8 buf[65536];
       u64 at = 0;
       if (!in) FATAL_IO("Cannot read canonical hard-link '%s': %s.", src,
-                        xpar_strerror(xpar_errno()));
+                        xpar_strerror(err));
+      out = rp_tree_stage(p, &stage);
       while (at < e->length) {
         sz take = (sz) MIN(e->length - at, (u64) sizeof buf);
         if (xpar_pread(in, buf, take, at) != take)
@@ -3419,7 +3779,7 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
         FATAL_IO("Flushing hard-link copy '%s' failed.", p);
       xpar_xclose(in); xpar_xclose(out);
       rp_publish_tree_stage(o, stage, p);
-      rp_meta_skip(o, e, "materialised-as-copy",
+      rp_meta_skip(meta.meta_skip, o, e, RP_META_COPY,
                    "the destination cannot create the hard link");
       xpar_fprintf(xpar_stderr, "xpar: %.*s: materialised-as-copy.\n",
                    (int) e->name_len, e->name);
@@ -3430,9 +3790,6 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
   /*  Apply directory metadata deepest-first using reversed name order.  */
   {
     u32 caps = xpar_fs_caps(o->to_dir);
-    rp meta;
-    xpar_memset(&meta, 0, sizeof meta);
-    meta.o = o;  meta.quiet = o->quiet;
     for (i = 0; i < m->count; i++) {
       u32 idx = nix.order[m->count - 1 - i], owner = metadata_owner[idx];
       const xpar_entry * e = &m->entry[idx];
@@ -3443,7 +3800,7 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
                                    link ? XPAR_PATH_LEAF_LINK : 0, &why);
       if (!p) continue;
       if (link && !(caps & XPAR_FS_NOFOLLOW)) {
-        rp_meta_skip(o, e, "symlink-unsafe",
+        rp_meta_skip(meta.meta_skip, o, e, RP_META_SYMLINK,
                      "the host has no symlink-safe metadata call");
         xpar_free(p); continue;
       }
@@ -3456,6 +3813,8 @@ static void owned_write_tree(const xpar_options * o, xpar_vset * s,
     }
   }
   xpar_nameidx_free(&nix);
+  for (i = 0; i < RP_META_CLASSES; i++)
+    acct->meta_skip[i] += meta.meta_skip[i];
   for (i = 0; i < metadata.gen_count; i++)
     xpar_gchain_posix_free(metadata_posix[i], metadata_posix_count[i]);
   xpar_free(metadata_posix);  xpar_free(metadata_posix_count);
@@ -3488,6 +3847,7 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
                "Repairing an authenticated set requires --auth-key=FILE; "
                "keyless access is read-only.");
   if (checked == XPAR_EXIT_UNREPAIRABLE) return checked;
+  if (checked == XPAR_EXIT_IO || xpar_vset_io_errors(s)) return XPAR_EXIT_IO;
   /*  A clean owned set needs no codec storage; inner corrections still
       require publication.  */
   if (checked == XPAR_EXIT_OK && o->dest != XPAR_DEST_TO &&
@@ -3523,17 +3883,19 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
   if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
       o->dest != XPAR_DEST_TO) {
     const char * why = NULL;
-    acct->volumes_rewritten  = xpar_vset_volumes_to_rewrite(s);
-    acct->volumes_relengthed = xpar_vset_volumes_to_relength(s);
-    if (!xpar_vset_rewrite_substituted(s, &why)) {
-      acct->volumes_rewritten = acct->volumes_relengthed = 0;
+    u64 failed = 0;
+    if (!xpar_vset_rewrite_substituted(s, &acct->volumes_rewritten,
+                                       &acct->volumes_relengthed, &failed,
+                                       &why)) {
       if (!o->quiet)
         xpar_fprintf(xpar_stderr,
-                     "xpar: could not rewrite a data volume: %s\n",
+                     "xpar: %" PRIu64 " data volume%s could not be "
+                     "rewritten: %s\n", failed, PLURAL(failed),
                      why ? why : "unknown error");
       out = XPAR_EXIT_UNREPAIRABLE;
     }
   }
+  if (out != XPAR_EXIT_OK && xpar_vset_io_errors(s)) out = XPAR_EXIT_IO;
   for (u32 q = 0; q < rv_count; q++) owned_close(&rv[q]);
   xpar_free(rv); xpar_free(rpresent); xpar_free((void *) rec);
   return out;
@@ -3565,11 +3927,12 @@ static void rp_release_vols(rp * r) {
 /*  Put a volume found under another name back where the layout says.  */
 static u64 repair_restore_names(const xpar_options * o, xpar_vset * s) {
   const char * why = NULL;
-  u64 n = 0;
+  u64 n = 0, failed = 0;
   if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
-  if (!xpar_vset_restore_names(s, &n, &why) && !o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: could not restore a volume's recorded "
-                 "name: %s\n", why ? why : "unknown error");
+  if (!xpar_vset_restore_names(s, &n, &failed, &why) && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " volume%s could not be "
+                 "restored to the recorded name: %s\n", failed,
+                 PLURAL(failed), why ? why : "unknown error");
   if (n && !o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: restored %" PRIu64 " volume%s to the "
                  "name the layout records\n", n, PLURAL(n));
@@ -3579,12 +3942,13 @@ static u64 repair_restore_names(const xpar_options * o, xpar_vset * s) {
 /*  Cut trailing bytes that are not packets off the set's volumes.  */
 static u64 repair_trim_ragged(const xpar_options * o, xpar_vset * s) {
   const char * why = NULL;
-  u64 n = 0;
+  u64 n = 0, failed = 0;
   if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
   if (!xpar_vset_volumes_ragged(s)) return 0;
-  if (!xpar_vset_trim_ragged(s, &n, &why) && !o->quiet)
-    xpar_fprintf(xpar_stderr, "xpar: could not trim a nonconforming "
-                 "volume: %s\n", why ? why : "unknown error");
+  if (!xpar_vset_trim_ragged(s, &n, &failed, &why) && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: %" PRIu64 " nonconforming volume%s "
+                 "could not be trimmed: %s\n", failed, PLURAL(failed),
+                 why ? why : "unknown error");
   if (n && !o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: trimmed %" PRIu64 " nonconforming "
                  "volume%s back to its last packet\n", n, PLURAL(n));
@@ -3594,23 +3958,39 @@ static u64 repair_trim_ragged(const xpar_options * o, xpar_vset * s) {
 /*  Recreate index volumes the layout names but disk has lost.  */
 static u64 repair_regen_index(const xpar_options * o) {
   const char * why = NULL;
-  u64 vols = 0;
+  u64 vols = 0, done;
   if (o->dest == XPAR_DEST_TO) return 0;
-  return xpar_gen_regen_index(o, &vols, &why, o->dry_run);
+  done = xpar_gen_regen_index(o, &vols, &why, o->dry_run);
+  if (why && !o->quiet)
+    xpar_fprintf(xpar_stderr,
+                 "xpar: index volumes could not be recreated: %s\n", why);
+  return done;
+}
+
+static u64 repair_rewrite_stale(const xpar_options * o) {
+  const char * why = NULL;
+  u64 vols = 0, n;
+  if (o->dest == XPAR_DEST_TO) return 0;
+  n = xpar_gen_rewrite_stale(o, &vols, &why, o->dry_run);
+  if (why && !o->quiet)
+    xpar_fprintf(xpar_stderr, "xpar: could not rewrite all stale volumes: "
+                 "%s\n", why);
+  return n;
 }
 
 /*  Rewrite stale volumes from intact packet replicas.  */
-static void repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
+static u64 repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
   const char * why = NULL;
-  u64 n = 0;
-  if (o->dry_run || o->dest == XPAR_DEST_TO) return;
-  if (!xpar_vset_volumes_dropped(s)) return;
-  if (!xpar_vset_rewrite_dropped(s, &n, &why)) {
+  u64 n = 0, failed = 0;
+  if (o->dry_run || o->dest == XPAR_DEST_TO) return 0;
+  if (!xpar_vset_volumes_dropped(s)) return 0;
+  if (!xpar_vset_rewrite_dropped(s, &n, &failed, &why)) {
     /*  Recovery and index regeneration handle lost packets separately.  */
     if (!o->quiet && !xpar_vset_recovery_bad(s) &&
         !xpar_vset_volumes_ragged(s)) {
       xpar_fprintf(xpar_stderr,
-                   "xpar: could not rewrite a stale volume: %s\n",
+                   "xpar: %" PRIu64 " stale volume%s could not be "
+                   "rewritten: %s\n", failed, PLURAL(failed),
                    why ? why : "unknown error");
       /*  Inner-coded regions need no replicas.  */
       if (xpar_vset_inner_corrected(s))
@@ -3618,20 +3998,46 @@ static void repair_rewrite_dropped(const xpar_options * o, xpar_vset * s) {
                      "xpar: inner-code corrections remain; run "
                      "`xpar scrub --rewrite` to persist them\n");
     }
-    return;
   }
   if (n && !o->quiet)
     xpar_fprintf(xpar_stderr, "xpar: rewrote %" PRIu64 " volume%s from "
                  "intact packet replicas\n", n, PLURAL(n));
+  return n;
+}
+
+static void owned_json_repair(xpar_json * js, u8 layout, bool changed,
+                              const owned_acct * a,
+                              const xpar_options * o) {
+  xpar_json_begin(js, "repair");
+  xpar_json_str(js, "layout", xpar_layout_name(layout));
+  xpar_json_bool(js, "changed", changed);
+  xpar_json_str(js, "destination", o->dest == XPAR_DEST_TO ? "tree" : "set");
+  xpar_json_u64(js, "cells_damaged", a->cells_bad);
+  xpar_json_u64(js, "slices_rebuilt", a->slices_rebuilt);
+  xpar_json_u64(js, "bytes_rebuilt", a->bytes_rebuilt);
+  xpar_json_u64(js, "volumes_rebuilt", a->volumes_rebuilt);
+  xpar_json_u64(js, "volumes_rewritten", a->volumes_rewritten);
+  xpar_json_u64(js, "volumes_relengthed", a->volumes_relengthed);
+  xpar_json_u64(js, "volumes_trimmed", a->ragged_trimmed);
+  xpar_json_u64(js, "volumes_dropped_rewritten", a->volumes_dropped);
+  xpar_json_u64(js, "recovery_regenerated", a->recovery_regen);
+  xpar_json_u64(js, "recovery_volumes", a->recovery_volumes);
+  xpar_json_u64(js, "index_volumes_recreated", a->index_regen);
+  xpar_json_u64(js, "volumes_restored", a->names_restored);
+  xpar_json_u64(js, "volumes_stale_rewritten", a->stale_regen);
+  xpar_json_bool(js, "inner_corrected", a->inner_corrected);
+  xpar_json_end(js);
 }
 
 int xpar_op_repair(const xpar_options * o) {
   rp r;
   u32 i, chunk;
   u64 depth;
+  u64 pre_restored = 0, pre_trimmed = 0, pre_dropped = 0;
   xpar_progress_t pg;
   xpar_plan pl;
   int rc = XPAR_EXIT_OK;
+  bool content_ok;
   xpar_vset * owned = NULL;
   bool walk = o->chain, partial = false;
 
@@ -3753,9 +4159,43 @@ int xpar_op_repair(const xpar_options * o) {
       if (o->json) xpar_vset_json_set(owned, &owned_js);
       if (o->dry_run) {
         xpar_vset_report(owned, o, before);
-        if (o->json)
+        acct.stale_regen = repair_rewrite_stale(o);
+        acct.index_regen = repair_regen_index(o);
+        acct.recovery_regen =
+          repair_regen_recovery(o, &acct.recovery_volumes);
+        if (o->dest != XPAR_DEST_TO)
+          acct.ragged_trimmed = xpar_vset_volumes_ragged(owned);
+        if (acct.index_regen || acct.recovery_regen || acct.stale_regen ||
+            acct.ragged_trimmed)
+          changed = true;
+        if (!o->quiet && acct.ragged_trimmed)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: %" PRIu64 " nonconforming volume%s would be "
+                       "trimmed back to the last packet\n",
+                       acct.ragged_trimmed, PLURAL(acct.ragged_trimmed));
+        if (!o->quiet && acct.stale_regen)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: %" PRIu64 " stale volume%s would be rewritten\n",
+                       acct.stale_regen, PLURAL(acct.stale_regen));
+        if (!o->quiet && acct.index_regen)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: %" PRIu64 " index volume%s would be recreated "
+                       "from packet replicas\n",
+                       acct.index_regen, PLURAL(acct.index_regen));
+        if (!o->quiet && acct.recovery_regen)
+          xpar_fprintf(xpar_stderr,
+                       "xpar: %" PRIu64 " recovery slice%s would be "
+                       "regenerated in %" PRIu64 " volume%s\n",
+                       acct.recovery_regen, PLURAL(acct.recovery_regen),
+                       acct.recovery_volumes, PLURAL(acct.recovery_volumes));
+        if (o->json) {
+          owned_json_repair(&owned_js, owned_layout, changed, &acct, o);
+          rp_meta_report(o, acct.meta_skip, &owned_js);
           xpar_json_summary(&owned_js, xpar_status_word(before), before);
+        }
         xpar_vset_close(owned);
+        if (before == XPAR_EXIT_OK && changed && o->exit_on_change)
+          return XPAR_EXIT_REPAIRABLE;
         return before;
       }
       /*  --to extracts an intact stream without rewriting the source set.  */
@@ -3773,49 +4213,43 @@ int xpar_op_repair(const xpar_options * o) {
         return xpar_op_extract(&ex);
       }
       out = repair_owned(o, owned, before, &acct);
-      /*  Packet-bearing volumes are restored by name, as for a sidecar.  */
+      /*  Repair packet-bearing volumes as for a sidecar.  */
       if (out == XPAR_EXIT_OK) {
-        acct.names_restored = repair_restore_names(o, owned);
-        repair_rewrite_dropped(o, owned);
+        acct.names_restored  = repair_restore_names(o, owned);
+        acct.ragged_trimmed  = repair_trim_ragged(o, owned);
+        acct.volumes_dropped = repair_rewrite_dropped(o, owned);
       }
       xpar_vset_close(owned);
       if (out == XPAR_EXIT_OK && o->dest != XPAR_DEST_TO) {
+        acct.stale_regen = repair_rewrite_stale(o);
         acct.index_regen = repair_regen_index(o);
         acct.recovery_regen =
           repair_regen_recovery(o, &acct.recovery_volumes);
-        if (acct.recovery_regen || acct.index_regen || acct.names_restored)
+        if (acct.recovery_regen || acct.index_regen || acct.names_restored ||
+            acct.stale_regen)
           changed = true;
         owned = xpar_vset_open(o);
         out = xpar_vset_check(owned, o, NULL);
         xpar_vset_close(owned);
-        /*  Damage that outlived the repair is what repair could not fix.  */
-        if (out != XPAR_EXIT_OK) out = XPAR_EXIT_UNREPAIRABLE;
+        if (out != XPAR_EXIT_OK && out != XPAR_EXIT_IO)
+          out = XPAR_EXIT_UNREPAIRABLE;
       }
+      if (acct.slices_rebuilt || acct.volumes_rebuilt ||
+          acct.volumes_rewritten || acct.volumes_relengthed ||
+          acct.ragged_trimmed || acct.volumes_dropped ||
+          acct.inner_corrected)
+        changed = true;
+      if (rp_require_lost(o, acct.meta_skip, true) && out == XPAR_EXIT_OK)
+        out = XPAR_EXIT_IO;
       if (out == XPAR_EXIT_OK && changed && o->exit_on_change)
         out = XPAR_EXIT_REPAIRABLE;
       if (o->json) {
-        xpar_json_begin(&owned_js, "repair");
-        xpar_json_str(&owned_js, "layout", xpar_layout_name(owned_layout));
-        xpar_json_bool(&owned_js, "changed", changed);
-        xpar_json_str(&owned_js, "destination",
-                      o->dest == XPAR_DEST_TO ? "tree" : "set");
-        xpar_json_u64(&owned_js, "cells_damaged", acct.cells_bad);
-        xpar_json_u64(&owned_js, "slices_rebuilt", acct.slices_rebuilt);
-        xpar_json_u64(&owned_js, "bytes_rebuilt", acct.bytes_rebuilt);
-        xpar_json_u64(&owned_js, "volumes_rebuilt", acct.volumes_rebuilt);
-        xpar_json_u64(&owned_js, "volumes_rewritten", acct.volumes_rewritten);
-        xpar_json_u64(&owned_js, "volumes_relengthed",
-                      acct.volumes_relengthed);
-        xpar_json_u64(&owned_js, "recovery_regenerated",
-                      acct.recovery_regen);
-        xpar_json_u64(&owned_js, "index_volumes_recreated", acct.index_regen);
-        xpar_json_u64(&owned_js, "volumes_restored", acct.names_restored);
-        xpar_json_bool(&owned_js, "inner_corrected", acct.inner_corrected);
-        xpar_json_end(&owned_js);
+        owned_json_repair(&owned_js, owned_layout, changed, &acct, o);
+        rp_meta_report(o, acct.meta_skip, &owned_js);
         xpar_json_summary(&owned_js,
                           out == XPAR_EXIT_OK ? "clean" :
                           out == XPAR_EXIT_REPAIRABLE ? "changed" :
-                                                       "unrepairable",
+                          out == XPAR_EXIT_IO ? "io-error" : "unrepairable",
                           out);
       }
       if (!o->quiet && out == XPAR_EXIT_UNREPAIRABLE)
@@ -3824,7 +4258,9 @@ int xpar_op_repair(const xpar_options * o) {
                !acct.volumes_rebuilt &&
                !acct.volumes_rewritten && !acct.volumes_relengthed &&
                !acct.recovery_regen && !acct.index_regen &&
-               !acct.names_restored && !acct.inner_corrected)
+               !acct.names_restored && !acct.stale_regen &&
+               !acct.ragged_trimmed && !acct.volumes_dropped &&
+               !acct.inner_corrected)
         xpar_fprintf(xpar_stderr,
                      "xpar: owned-layout repair: no repair needed\n");
       /*  Index and name work is reported on its own line below.  */
@@ -3855,15 +4291,25 @@ int xpar_op_repair(const xpar_options * o) {
                      PRIu64 " volume%s\n",
                      acct.recovery_regen, PLURAL(acct.recovery_regen),
                      acct.recovery_volumes, PLURAL(acct.recovery_volumes));
+      if (!o->quiet && acct.stale_regen)
+        xpar_fprintf(xpar_stderr,
+                     "xpar: rewrote %" PRIu64 " stale volume%s\n",
+                     acct.stale_regen, PLURAL(acct.stale_regen));
+      if (!o->json) rp_meta_report(o, acct.meta_skip, NULL);
       return out;
     }
-    repair_restore_names(o, owned);
-    repair_trim_ragged(o, owned);
-    repair_rewrite_dropped(o, owned);
+    pre_restored = repair_restore_names(o, owned);
+    pre_trimmed  = repair_trim_ragged(o, owned);
+    pre_dropped  = repair_rewrite_dropped(o, owned);
+    if (o->dry_run && o->dest != XPAR_DEST_TO)
+      pre_trimmed = xpar_vset_volumes_ragged(owned);
     xpar_vset_close(owned);
   }
 
   xpar_memset(&r, 0, sizeof r);
+  r.names_restored = pre_restored;
+  r.ragged_trimmed = pre_trimmed;
+  r.vols_dropped   = pre_dropped;
   r.o = o;  r.verbose = o->verbose;  r.quiet = o->quiet;
   xpar_json_init(&r.js, o->json ? xpar_stdout : xpar_stderr, o->json);
   xpar_crc32c_init();
@@ -3940,9 +4386,11 @@ int xpar_op_repair(const xpar_options * o) {
             depth, r.rec_avail,
             (depth - r.rec_avail));
     if (!partial) {
-      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-      rp_free(&r);
-      return XPAR_EXIT_UNREPAIRABLE;
+      { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+        rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                           : "unrepairable", code);
+        rp_free(&r);
+        return code; }
     }
     rp_note(&r, "xpar: writing the entries that can still be "
             "reproduced\n");
@@ -3975,9 +4423,17 @@ int xpar_op_repair(const xpar_options * o) {
         !r.structure_bad) {
       bool regen;
       rp_release_vols(&r);
+      r.stale_regen = repair_rewrite_stale(o);
       r.index_regen = repair_regen_index(o);
       r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
-      regen = r.rec_regen != 0 || r.index_regen != 0;
+      regen = r.rec_regen != 0 || r.index_regen != 0 || r.stale_regen != 0 ||
+              r.names_restored != 0 || r.ragged_trimmed != 0 ||
+              r.vols_dropped != 0;
+      if (r.io_errors) {
+        rp_report(&r, "io-error", XPAR_EXIT_IO);
+        rp_free(&r);
+        return XPAR_EXIT_IO;
+      }
       rp_report(&r, "clean", XPAR_EXIT_OK);
       rp_free(&r);
       if (regen && o->exit_on_change) return XPAR_EXIT_REPAIRABLE;
@@ -4006,9 +4462,11 @@ int xpar_op_repair(const xpar_options * o) {
   rp_solve_copies(&r);
   if (!rp_solve_decode(&r, chunk, partial)) {
     rp_note(&r, "xpar: decoded data does not match the recorded cell tags\n");
-    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-    rp_free(&r);
-    return XPAR_EXIT_UNREPAIRABLE;
+    { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+      rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                         : "unrepairable", code);
+      rp_free(&r);
+      return code; }
   }
   { bool widened = false;
     bool gated = rp_slice_gate(&r, &widened);
@@ -4028,15 +4486,19 @@ int xpar_op_repair(const xpar_options * o) {
     }
     if (!gated) {
       rp_note(&r, "xpar: a reconstructed slice failed its strong tag\n");
-      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-      rp_free(&r);
-      return XPAR_EXIT_UNREPAIRABLE;
+      { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+        rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                           : "unrepairable", code);
+        rp_free(&r);
+        return code; }
     }
   }
   if (o->paranoid && !rp_paranoid(&r, chunk)) {
-    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-    rp_free(&r);
-    return XPAR_EXIT_UNREPAIRABLE;
+    { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+      rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                         : "unrepairable", code);
+      rp_free(&r);
+      return code; }
   }
   if (o->repair_head_set) rp_select_head_output(&r);
 
@@ -4045,49 +4507,61 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dest != XPAR_DEST_TO) r.opaque += r.structure_bad;
   /*  A separate destination still reproduces everything else.  */
   if (r.opaque && !partial) {
-    rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-    rp_free(&r);
-    return XPAR_EXIT_UNREPAIRABLE;
+    { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+      rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                         : "unrepairable", code);
+      rp_free(&r);
+      return code; }
   }
   if (o->dest == XPAR_DEST_TO || o->dest == XPAR_DEST_BACKUP) {
     if (!o->dry_run)
       rp_write_tree(&r, o->dest == XPAR_DEST_TO ? o->to_dir : r.dir,
                     o->dest == XPAR_DEST_BACKUP);
-    r.changed = r.writes > 0;
+    r.changed = r.writes > 0 || r.names_restored > 0 ||
+                r.ragged_trimmed > 0 || r.vols_dropped > 0;
     if (r.unrecovered || r.opaque) {
       u64 lost = r.unrecovered ? r.unrecovered : r.opaque;
       rp_note(&r, "xpar: %" PRIu64 " entr%s unrecoverable; repaired the "
               "rest of the tree\n",
               lost, lost == 1 ? "y is" : "ies are");
-      rp_report(&r, "unrepairable", XPAR_EXIT_UNREPAIRABLE);
-      rp_free(&r);
-      return XPAR_EXIT_UNREPAIRABLE;
+      { int code = rp_code(&r, XPAR_EXIT_UNREPAIRABLE);
+        rp_report(&r, code == XPAR_EXIT_IO ? "io-error"
+                                           : "unrepairable", code);
+        rp_free(&r);
+        return code; }
     }
-    rp_report(&r, "repaired", XPAR_EXIT_OK);
-    rp_free(&r);
-    return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE
-                                          : XPAR_EXIT_OK;
+    { int code;
+      rp_require_lost(o, r.meta_skip, true);
+      code = rp_code(&r, XPAR_EXIT_OK);
+      rp_report(&r, code == XPAR_EXIT_IO ? "io-error" : "repaired", code);
+      rp_free(&r);
+      if (code != XPAR_EXIT_OK) return code;
+      return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE
+                                            : XPAR_EXIT_OK; }
   }
 
   if (o->dry_run) {
     u64 total = 0;
-    for (i = 0; i < r.wr_count; i++) if (!r.wr[i].trunc) total += r.wr[i].len;
+    for (i = 0; i < r.wr_count; i++)
+      if (!r.wr[i].trunc && !r.wr[i].shadow) total += r.wr[i].len;
     rp_note(&r, "xpar: --dry-run: %" PRIu32 " writes totalling %" PRIu64
             " bytes would "
                 "be made.\n", r.wr_count,
             total);
-    /*  The names a real run would recreate, and the recovery it would
-        re-encode, are actions the dry run must plan as well.  */
+    /*  Include name and volume work in the plan.  */
     r.names_made  = rp_missing_names(&r);
+    r.stale_regen = repair_rewrite_stale(o);
     r.index_regen = repair_regen_index(o);
     r.rec_regen   = repair_regen_recovery(o, &r.rec_regen_vols);
-    rp_report(&r, "dry-run", XPAR_EXIT_OK);
-    r.changed = r.wr_count || r.names_made || r.rec_regen ||
-                r.index_regen || r.links_missing;
-    rp_free(&r);
-    /*  Preserve --exit-on-change in dry runs.  */
-    return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE
-                                          : XPAR_EXIT_OK;
+    { int code = rp_code(&r, XPAR_EXIT_OK);
+      rp_report(&r, code == XPAR_EXIT_IO ? "io-error" : "dry-run", code);
+      r.changed = r.wr_count || r.names_made || r.rec_regen ||
+                  r.index_regen || r.links_missing || r.stale_regen ||
+                  r.names_restored || r.ragged_trimmed || r.vols_dropped;
+      rp_free(&r);
+      if (code != XPAR_EXIT_OK) return code;
+      return o->exit_on_change && r.changed ? XPAR_EXIT_REPAIRABLE
+                                            : XPAR_EXIT_OK; }
   }
 
   /*  Nothing may change protected data before the journal is durable.  */
@@ -4104,7 +4578,7 @@ int xpar_op_repair(const xpar_options * o) {
   /*  Only --replace-journal replaces an existing journal path.  */
   { xpar_stat_t st;
     if (!o->no_journal && xpar_lstat(r.journal, &st) == 0) {
-      if (!o->replace_journal)
+      if (xpar_journal_live(r.journal) && !o->replace_journal)
         FATAL("Undo journal '%s' exists; run xpar undo or pass "
               "--replace-journal.", r.journal);
       if (xpar_remove(r.journal) != 0)
@@ -4115,22 +4589,26 @@ int xpar_op_repair(const xpar_options * o) {
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);
   rp_apply(&r);
-  if (!rp_reverify(&r)) rc = XPAR_EXIT_UNREPAIRABLE;
-  /*  Remove journals after success or when nothing was written.  */
-  if ((rc == XPAR_EXIT_OK || !r.writes) &&
-      !o->keep_journal && !o->no_journal) {
-    xpar_remove(r.journal);
-    /*  Make journal removal durable.  */
-    xpar_fsync_dir(r.journal);
-  }
-  if (rc == XPAR_EXIT_OK) {
+  content_ok = rp_reverify(&r);
+  if (!content_ok) rc = XPAR_EXIT_UNREPAIRABLE;
+  else if (r.names_failed || r.links_failed) rc = XPAR_EXIT_IO;
+  rp_require_lost(o, r.meta_skip, true);
+  rc = rp_code(&r, rc);
+  if ((content_ok || !r.writes) && !o->keep_journal && !o->no_journal &&
+      !xpar_journal_drop(r.journal) && rc == XPAR_EXIT_OK)
+    rc = XPAR_EXIT_IO;
+  if (content_ok) {
     rp_release_vols(&r);
+    r.stale_regen = repair_rewrite_stale(o);
     r.index_regen = repair_regen_index(o);
     r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);
   }
-  r.changed = r.writes > 0 || r.rec_regen > 0 || r.index_regen > 0;
+  r.changed = r.writes > 0 || r.rec_regen > 0 || r.index_regen > 0 ||
+              r.stale_regen > 0 || r.names_restored > 0 ||
+              r.ragged_trimmed > 0 || r.vols_dropped > 0;
 
-  rp_report(&r, rc == XPAR_EXIT_OK ? "repaired" : "unrepairable", rc);
+  rp_report(&r, rc == XPAR_EXIT_OK ? "repaired" :
+                rc == XPAR_EXIT_IO ? "io-error" : "unrepairable", rc);
   rp_free(&r);
   if (rc == XPAR_EXIT_OK && o->exit_on_change && r.changed)
     return XPAR_EXIT_REPAIRABLE;

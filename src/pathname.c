@@ -199,3 +199,16 @@ char * xpar_stage_dir(const char * stem) {
   xpar_free(trimmed);
   return NULL;
 }
+
+int xpar_keep_aside(const char * path, const char * backup) {
+  if (xpar_link(path, backup) == 0) return 0;
+  return xpar_rename(path, backup);
+}
+
+int xpar_put_back(const char * path, const char * backup) {
+  xpar_stat_t st;
+  /*  The same inode under both names makes the rename a no-op.  */
+  if (xpar_rename(backup, path) != 0) return -1;
+  if (xpar_lstat(backup, &st) == 0 && xpar_remove(backup) != 0) return -1;
+  return 0;
+}

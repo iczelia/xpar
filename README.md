@@ -159,8 +159,10 @@ finished file.
 damaged: empty files, directories and symbolic links are recreated from the
 manifest with their recorded mode and times, a packet-bearing volume whose
 packets fail their checksums is rewritten from intact replicas in the other
-volumes, and a split data volume that was renamed or is the wrong length is
-restored to its recorded name and length.  `repair --dry-run
+volumes, a volume whose critical packets the index volume supersedes (what an
+interrupted `addrecovery` leaves behind) is rewritten to the index's copies,
+and a split data volume that was renamed or is the wrong length is restored to
+its recorded name and length.  `repair --dry-run
 --exit-on-change` exits 1 when writes would be made and 0 when they would
 not, which is what a monitoring check wants.
 

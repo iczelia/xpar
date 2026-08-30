@@ -22,10 +22,23 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/*  Portable absence error values.  */
+#ifdef ENOENT
+#define XPAR_ENOENT ENOENT
+#else
+#define XPAR_ENOENT 2
+#endif
+#ifdef ENOTDIR
+#define XPAR_ENOTDIR ENOTDIR
+#else
+#define XPAR_ENOTDIR XPAR_ENOENT
+#endif
 
 /*  Types.  */
 
@@ -227,6 +240,15 @@ int xpar_fputs    (const char * s, xpar_file *);
 const char * xpar_strerror(int err);
 int          xpar_errno(void);
 u64          xpar_usec_now(void);
+
+/*  True only when a path is absent.  */
+static inline bool xpar_errno_absent(int err) {
+#if defined(_WIN32)
+  /*  ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_INVALID_NAME.  */
+  if (err == 2 || err == 3 || err == 123) return true;
+#endif
+  return err == XPAR_ENOENT || err == XPAR_ENOTDIR;
+}
 
 /*  Wall-clock time in nanoseconds since the Unix epoch, for CRTR and for
     default timestamps. Distinct from xpar_usec_now, which is monotonic

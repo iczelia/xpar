@@ -54,16 +54,22 @@ bool xpar_vset_armoured(const xpar_vset *, const u8 **, u64 *, u64 *,
 /*  Release a volume's image so its file can be replaced or resized.  */
 void xpar_vset_release_volume(xpar_vset *, const char * path);
 
+/*  Fix every eligible volume, returning counts and the first failure.  */
+
 /*  Trim trailing bytes that are not packets; volumes that lost packets
     are left for the regeneration paths.  */
-bool xpar_vset_trim_ragged(xpar_vset *, u64 * volumes, const char ** reason);
+bool xpar_vset_trim_ragged(xpar_vset *, u64 * volumes, u64 * failures,
+                           const char ** reason);
 u64 xpar_vset_volumes_ragged(const xpar_vset *);
 
 /*  Put an adopted packet-bearing volume back under its recorded name.  */
-bool xpar_vset_restore_names(xpar_vset *, u64 * volumes, const char ** reason);
+bool xpar_vset_restore_names(xpar_vset *, u64 * volumes, u64 * failures,
+                             const char ** reason);
 
-/*  Rewrite damaged named split volumes from intact substitutes.  */
-bool xpar_vset_rewrite_substituted(xpar_vset *, const char ** reason);
+/*  Rewrite or resize damaged split volumes from intact substitutes.  */
+bool xpar_vset_rewrite_substituted(xpar_vset *, u64 * rewritten,
+                                   u64 * relengthed, u64 * failures,
+                                   const char ** reason);
 
 /*  Reconstruct one bare split data-volume range from the other data and
     recovery slices, writing bytes relative to the start of the volume.
@@ -83,12 +89,16 @@ u64 xpar_vset_recovery_total(const xpar_vset *);
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);
 u64 xpar_vset_volumes_to_relength(const xpar_vset *);
 u64 xpar_vset_volumes_dropped(const xpar_vset *);
-bool xpar_vset_rewrite_dropped(xpar_vset *, u64 * volumes,
+/*  Volumes with critical packets superseded by the index.  */
+u64 xpar_vset_volumes_stale(const xpar_vset *);
+bool xpar_vset_rewrite_dropped(xpar_vset *, u64 * volumes, u64 * failures,
                                const char ** reason);
 /*  Whether archive length or prologue copies are stale.  */
 bool xpar_vset_archive_stale(const xpar_vset *);
 bool xpar_vset_stream_intact(const xpar_vset *, int rc);
 u64 xpar_vset_inner_corrected(const xpar_vset *);
+/*  Read failures that force exit 5.  */
+u64 xpar_vset_io_errors(const xpar_vset *);
 
 u64 xpar_verify_syndromes(void);
 void xpar_verify_written_set(const xpar_options *, const char * index_path);

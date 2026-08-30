@@ -678,7 +678,7 @@ int xpar_fsync_dir(const char * path) {
       lost that a different call could have saved, so this is not a
       failure the caller can act on.  */
   if (r != 0 && (errno == EINVAL || errno == ENOTSUP)) r = 0;
-  close(fd);
+  { int e = errno;  close(fd);  errno = e; }
   return r;
 }
 

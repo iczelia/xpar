@@ -58,6 +58,13 @@ u64 xpar_gen_regen_recovery(const xpar_options *, u64 * volumes,
 /*  Recreate missing index volumes from the surviving critical packets.  */
 u64 xpar_gen_regen_index(const xpar_options *, u64 * volumes,
                          const char ** reason, bool dry);
+/*  Remove or empty a spent undo journal; false when it still replays.  */
+bool xpar_journal_drop(const char * path);
+/*  Whether the journal at `path` would replay (or is not a journal).  */
+bool xpar_journal_live(const char * path);
+/*  Rewrite critical packets superseded by the index.  */
+u64 xpar_gen_rewrite_stale(const xpar_options *, u64 * volumes,
+                           const char ** reason, bool dry);
 char * xpar_spool_stdin(const xpar_options *);
 char * xpar_publish_spooled_stdin(const xpar_options *, const char *);
 

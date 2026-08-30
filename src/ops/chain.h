@@ -37,6 +37,8 @@ typedef struct {
   const u8 * layt_body;
   sz layt_len;
   u8 set_id[XPAR_SET_ID_LEN];
+  bool scan_first;            /*  Authoritative volume; scanned first.  */
+  u64 stale_packets;          /*  Verifying packets the index outranks.  */
 } xpar_chain_vol;
 
 typedef struct {

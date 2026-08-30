@@ -121,7 +121,6 @@ typedef struct {
   u64 substituted;             /*  Data volumes read from a spare copy.  */
   u64 vol_damaged;             /*  Data volumes read despite a bad tag.  */
   u64 hash_bad;                /*  Entries whose content hash still fails.  */
-  bool owner_failed, xattr_failed;
 } ex;
 
 static void ex_note(ex * x, const char * fmt, ...) XPAR_PRINTF(2, 3);
@@ -185,7 +184,12 @@ static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename,
 
 static bool ex_vol_open(ex * x, const char * path) {
   xpar_volimg v;
-  if (!xpar_volimg_open(&v, path)) return false;
+  int err = 0;
+  xpar_volimg_status st = xpar_volimg_read(&v, path, &err);
+  if (st == XPAR_VOLIMG_IO)
+    FATAL_IO("Cannot read volume '%s': %s.", path,
+             xpar_strerror(err ? err : xpar_errno()));
+  if (st != XPAR_VOLIMG_OK) return false;
   if (x->vol_count == x->vol_cap) {
     x->vol_cap = x->vol_cap ? x->vol_cap * 2 : 8;
     x->vol = (xpar_volimg *)
@@ -529,10 +533,8 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
       bool by_name = o->owner_map == XPAR_OWNERMAP_NAME;
       if (xpar_set_owner(path, 1, pr->uid, pr->gid,
                          by_name ? pr->owner : NULL,
-                         by_name ? pr->group : NULL) != 0) {
+                         by_name ? pr->group : NULL) != 0)
         ex_skip(x, e, EX_SK_OWNER, xpar_strerror(xpar_errno()));
-        x->owner_failed = true;
-      }
     }
   }
 
@@ -584,10 +586,8 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
                 "was not given");
         continue;
       }
-      if (xpar_setxattr(path, 1, a->name, a->value, a->value_len) != 0) {
+      if (xpar_setxattr(path, 1, a->name, a->value, a->value_len) != 0)
         ex_skip(x, e, EX_SK_XATTR, xpar_strerror(xpar_errno()));
-        x->xattr_failed = true;
-      }
     }
   }
 }
@@ -642,27 +642,47 @@ static char * ex_stage_name(const char * path) {
   return NULL;
 }
 
+static void ex_put_back(ex * x, const char * path, const char * backup) {
+  if (xpar_put_back(path, backup) == 0) return;
+  xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; old copy at "
+               "'%s'.\n", path, xpar_strerror(xpar_errno()), backup);
+}
+
+/*  Publish STAGE while keeping any old copy reachable.  */
 static bool ex_replace(ex * x, char * stage, const char * path) {
   xpar_stat_t st;
   char * backup = NULL;
+  const char * why;
+  int err = 0;
   bool had = xpar_lstat(path, &st) == 0;
   u32 i;
-  if (had && (st.is_dir || !x->o->force)) goto refuse;
+  if (had && st.is_dir) { why = "it is a directory";  goto refuse; }
+  if (had && !x->o->force) {
+    why = "it exists and -f was not given";  goto refuse;
+  }
   if (had) {
     for (i = 0; i < 1000; i++) {
       xpar_asprintf(&backup, "%s.xpar-old-%03" PRIu32, path, i);
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }
-    if (!backup || xpar_rename(path, backup) != 0) goto refuse;
+    if (!backup) {
+      why = "no backup name available";  goto refuse;
+    }
+    if (xpar_keep_aside(path, backup) != 0) {
+      err = xpar_errno();  why = "cannot preserve old copy";
+      goto refuse;
+    }
   }
   if (xpar_rename(stage, path) != 0) {
-    if (backup) (void) xpar_rename(backup, path);
+    err = xpar_errno();  why = "cannot publish staged copy";
+    if (backup) ex_put_back(x, path, backup);
     goto refuse;
   }
   if (xpar_fsync_dir(path) != 0) {
+    err = xpar_errno();  why = "cannot sync parent directory";
     (void) xpar_rename(path, stage);
-    if (backup) (void) xpar_rename(backup, path);
+    if (backup) ex_put_back(x, path, backup);
     goto refuse;
   }
   if (backup && xpar_remove(backup) != 0)
@@ -671,6 +691,8 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
   return true;
 
 refuse:
+  xpar_fprintf(xpar_stderr, "xpar: cannot write '%s': %s%s%s.\n", path, why,
+               err ? ": " : "", err ? xpar_strerror(err) : "");
   xpar_remove(stage);
   xpar_free(backup);
   x->io_failures++;
@@ -756,11 +778,11 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
     xpar_free(stage);
     return false;
   }
-  x->entries++;  x->bytes += fo;
   if (!ex_replace(x, stage, path)) {
     xpar_free(stage);
     return false;
   }
+  x->entries++;  x->bytes += fo;
   xpar_free(stage);
   return true;
 }
@@ -780,18 +802,19 @@ static void ex_link_entry(ex * x, u32 idx, const char * path) {
   { char * d = xpar_path_dir(path);
     xpar_mkdir_p(d, 0777);
     xpar_free(d); }
-  if (x->caps & XPAR_FS_HARDLINK) {
-    char * stage = ex_stage_name(path);
-    if (stage && xpar_link(src, stage) == 0 && ex_replace(x, stage, path)) {
-      x->links++;
-      xpar_free(stage);  xpar_free(src);
-      return;
+  { const char * why = "this filesystem has no links";
+    if (x->caps & XPAR_FS_HARDLINK) {
+      char * stage = ex_stage_name(path);
+      if (!stage) why = "no staging name is free";
+      else if (xpar_link(src, stage) != 0) why = xpar_strerror(xpar_errno());
+      else if (ex_replace(x, stage, path)) {
+        x->links++;
+        xpar_free(stage);  xpar_free(src);
+        return;
+      } else why = "the staged link could not be published";
+      xpar_free(stage);
     }
-    xpar_free(stage);
-  }
-  ex_skip(x, e, EX_SK_LINKCOPY,
-          (x->caps & XPAR_FS_HARDLINK) ? xpar_strerror(xpar_errno())
-                                       : "this filesystem has no links");
+    ex_skip(x, e, EX_SK_LINKCOPY, why); }
   ex_note(x, "xpar: %.*s: materialised-as-copy.\n", (int) e->name_len,
           e->name);
   x->copies++;
@@ -1042,7 +1065,7 @@ int xpar_op_extract(const xpar_options * o) {
   }
 
   if (o->to_stdout) {
-    u64 chunk = 1 << 20;
+    u64 chunk = 1 << 20, wrote = 0;
     u8 * buf;
     u32 regs = 0, only = 0, k, pass;
     const xpar_entry * e;
@@ -1056,6 +1079,12 @@ int xpar_op_extract(const xpar_options * o) {
     x.path_flags = 0;
     ex_validate(&x);
     e = &x.mf.entry[only];
+    /*  Standard output cannot preserve metadata.  */
+    { u32 q;
+      for (q = 0; q < ARRAY_LEN(ex_require_map); q++)
+        if (o->require & ex_require_map[q].bit)
+          ex_skip(&x, e, ex_require_map[q].cls,
+                  "standard output carries no metadata"); }
     buf = (u8 *) xpar_alloc_raw((sz) chunk);
     /*  Hash before emitting: a pipe cannot be taken back, so the bytes
         are proved against the manifest first and written second. The
@@ -1103,18 +1132,24 @@ int xpar_op_extract(const xpar_options * o) {
                    ").", at, at + take);
         }
         xpar_xwrite(xpar_stdout, buf, (sz) take);
-        at += take;  left -= take;
+        at += take;  left -= take;  wrote += take;
       }
     }
     xpar_free(buf);
-    xpar_flush(xpar_stdout);
-    ex_free(&x);
-    return XPAR_EXIT_OK;
+    if (xpar_flush(xpar_stdout) != 0 || xpar_error(xpar_stdout)) {
+      xpar_fprintf(xpar_stderr, "xpar: cannot flush standard output: %s\n",
+                   xpar_strerror(xpar_errno()));
+      x.io_failures++;
+    } else {
+      x.entries++;  x.bytes += wrote;
+    }
+    goto summary;
   }
 
-  if (xpar_mkdir_p(x.dest, 0777) != 0 && xpar_lstat(x.dest, &st) != 0)
-    FATAL_IO("Cannot create '%s': %s.", x.dest,
-             xpar_strerror(xpar_errno()));
+  { int err;
+    if (xpar_mkdir_p(x.dest, 0777) != 0 && (err = xpar_errno(),
+                                            xpar_lstat(x.dest, &st) != 0))
+      FATAL_IO("Cannot create '%s': %s.", x.dest, xpar_strerror(err)); }
   FATAL_UNLESS("Extraction directory '%s' is a symbolic link; use its "
                "target path.",
                xpar_lstat(x.dest, &st) == 0 && !st.is_symlink, x.dest);
@@ -1152,8 +1187,10 @@ int xpar_op_extract(const xpar_options * o) {
     if (e->entry_type != XPAR_ENTRY_DIR) continue;
     p = ex_resolve(&x, e);
     if (!p) continue;
-    if (xpar_mkdir_p(p, 0777) != 0 && xpar_lstat(p, &st) != 0)
-      FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(xpar_errno()));
+    { int err;
+      if (xpar_mkdir_p(p, 0777) != 0 && (err = xpar_errno(),
+                                         xpar_lstat(p, &st) != 0))
+        FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(err)); }
     /*  Restrict private directories before populating them.  */
     if ((o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32)
       (void) xpar_set_mode(p, 1,
@@ -1180,11 +1217,16 @@ int xpar_op_extract(const xpar_options * o) {
     target = xpar_strndup((const char *) e->extra, e->extra_len);
     {
       char * stage = ex_stage_name(p);
-      if (!stage || xpar_symlink(target, stage) != 0 ||
-          !ex_replace(&x, stage, p))
-      { ex_note(&x, "xpar: cannot create the symbolic link '%.*s': %s.\n",
-                (int) e->name_len, e->name, xpar_strerror(xpar_errno()));
-        x.io_failures++; }
+      const char * why = NULL;
+      if (!stage) why = "no staging name is free";
+      else if (xpar_symlink(target, stage) != 0) why =
+        xpar_strerror(xpar_errno());
+      if (why) {
+        xpar_fprintf(xpar_stderr,
+                     "xpar: cannot create symlink '%.*s': %s.\n",
+                     (int) e->name_len, e->name, why);
+        x.io_failures++;
+      } else (void) ex_replace(&x, stage, p);
       xpar_free(stage);
     }
     xpar_free(target);  xpar_free(p);
@@ -1210,6 +1252,7 @@ int xpar_op_extract(const xpar_options * o) {
     xpar_free(p);
   }
 
+summary:
   { u32 q;
     for (q = 0; q < ARRAY_LEN(ex_require_map); q++) {
       u8 cls = ex_require_map[q].cls;
