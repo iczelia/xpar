@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -315,6 +316,40 @@ int fchownat(int d, const char * p, uid_t u, gid_t g, int f) {
   if (before(CHOWN, p)) { errno = err_no;  return -1; }
   r = r_fchownat(d, p, u, g, f);  if (r == 0) after(CHOWN, p);  return r;
 }
+/*  Truncate matching files after mapping to trigger SIGBUS.  */
+static void short_map(void * r, int fd) {
+  const char * want;
+  init();
+  want = getenv("XPAR_FI_SHORT_MAP");
+  want = getenv("XPAR_FI_SHORT_MAP");
+  if (r != MAP_FAILED && fd >= 0 && want && *want) {
+    char buf[512];
+    const char * p = fd_path(fd, buf, sizeof buf);
+    if (p && matches(p) && strstr(p, want)) {
+      static const char m[] = "FI SHORT_MAP truncated\n";
+      if (truncate(p, 0) == 0) real_write(2, m, sizeof m - 1);
+    }
+  }
+}
+
+void * mmap(void * addr, size_t len, int prot, int flags, int fd,
+            off_t off) {
+  void * r;
+  REAL(mmap);
+  r = r_mmap(addr, len, prot, flags, fd, off);
+  short_map(r, fd);
+  return r;
+}
+
+void * mmap64(void * addr, size_t len, int prot, int flags, int fd,
+              off64_t off) {
+  void * r;
+  REAL(mmap64);
+  r = r_mmap64(addr, len, prot, flags, fd, off);
+  short_map(r, fd);
+  return r;
+}
+
 int close(int fd) {
   char buf[512];  const char * p;  int r;  REAL(close);
   if (fd <= 2) return r_close(fd);

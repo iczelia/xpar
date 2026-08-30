@@ -1442,4 +1442,34 @@ then ok
 else bad "--quiet hid the metadata summary"; fi
 cdto ..
 
+step "a split repair stopped mid-publish is undone by its journal"
+
+fi_pre=
+fault_shim "$work/faultio-safety.so" && fi_pre=$fault_pre
+
+if test -z "$fi_pre"; then
+  note "the fault shim cannot be preloaded here; skipped"
+else
+  mkdir -p splitcrash && cdto splitcrash
+  mkfile d.bin 400000 99
+  run 0 "$XPAR" create --layout=split --volumes=4 -s 4096 -r 30 -o s d.bin
+  rm -f d.bin
+  damage s.d00 rand=1000,64
+  damage s.d01 rand=2000,64
+  damage s.d02 rand=3000,64
+  damage s.d03 rand=5000,64
+  mkdir dmg && cp s.d0* dmg/
+  #  Crash after the first write to the third volume.
+  run 97 env XPAR_FI_PATH="`pwd`/s.d02" XPAR_FI_CRASH_PWRITE=1 \
+      LD_PRELOAD="$fi_pre" "$XPAR" repair --in-place s.xpa
+  exists s.xparundo
+  differs s.d00 dmg/s.d00
+  run 0 "$XPAR" undo s.xpa
+  for v in s.d00 s.d01 s.d02 s.d03; do same $v dmg/$v; done
+  run 0 "$XPAR" repair --in-place s.xpa
+  run 0 "$XPAR" verify s.xpa
+  if test -s s.xparundo; then bad "a spent journal was left live"; else ok; fi
+  cdto ..
+fi
+
 summary

@@ -1655,6 +1655,7 @@ label volume of data volume $j$ &
 \verb|base.d<j>.xpa| & \verb|BASE.D<nn>| with the label written in place of
 the bare data volume \\
 armoured archive & \verb|base.xpa| & \verb|BASE.XPA| \\
+maintenance journal & \verb|base.xparmaint| & \verb|BASE.XPM| \\
 \end{longtable}
 
 \specp The placeholders \verb|<f>|, \verb|<c>| and \verb|<j>| are zero-padded
@@ -1794,6 +1795,35 @@ path against the effective manifest, opens that file without following a
 symbolic link, writes the recorded bytes back at \verb|offset|, restores
 \verb|original_size| when the length changed, and removes rather than truncates
 a file whose \verb|rflags| bit 0 is set.
+
+\subsection{The maintenance journal}\label{maintenance-journal}
+
+\specp \verb|consolidate --replace| and \verb|prune| rename every volume of a
+chain, the index included, out of the way before they publish the set that
+replaces it, so that for a time no set stands under a canonical name. A writer
+shall record that plan in \verb|<base>.xparmaint| before the first rename: a
+versioned, CRC-covered record naming, in the order the operation will perform
+them, every move it will make, every publication of a staged volume, and which
+publication is its \textit{commit point}, the rename that makes the new index
+visible. A writer shall flush both the file and its directory entry before the
+first rename, and shall remove it, durably, only once the operation has fully
+succeeded. Its framing follows the undo journal, so that a journal written
+only in part is detectably incomplete and describes an operation that had not
+yet moved anything.
+
+\specp The maintenance journal is a writer-side recovery record. It carries no
+recovery data, describes no packet, and belongs to no set; a reader shall not
+require its contents to interpret a set, and may ignore them.
+
+\specp A reader that finds a maintenance journal beside a base name under
+which no set resolves shall report an interrupted maintenance operation and
+name the journal, rather than reporting that no set is present: every volume is
+still on disk under a name the journal records. The commit point decides what
+completing it means. Once that rename has run the operation is committed and
+shall be finished forward, by publishing whatever remains staged and dropping
+the copies moved aside; until it has run, the operation shall be rolled back,
+by returning every moved file to the name it came from and discarding the
+staged set.
 
 \chapter{Armouring}\label{armouring}
 

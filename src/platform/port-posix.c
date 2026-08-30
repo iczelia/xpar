@@ -629,6 +629,50 @@ static void maplock_drop(const void * at) {
 }
 #endif
 
+/*  Track mapped paths for SIGBUS diagnostics.  */
+
+#define MAPREG_MAX   64
+#define MAPREG_PATH  256
+
+typedef struct { const u8 * at;  sz size;  char path[MAPREG_PATH]; } mapreg;
+
+static mapreg mapreg_held[MAPREG_MAX];
+static volatile u32 mapreg_count;
+
+#if defined(HAVE_MMAP)
+static void mapreg_add(const u8 * at, sz size, const char * path) {
+  sz n = xpar_strlen(path);
+  if (mapreg_count >= MAPREG_MAX) return;
+  if (n >= MAPREG_PATH) n = MAPREG_PATH - 1;
+  xpar_memcpy(mapreg_held[mapreg_count].path, path, n);
+  mapreg_held[mapreg_count].path[n] = 0;
+  mapreg_held[mapreg_count].at   = at;
+  mapreg_held[mapreg_count].size = size;
+  mapreg_count++;
+}
+
+static void mapreg_drop(const u8 * at) {
+  u32 i;
+  for (i = 0; i < mapreg_count; i++)
+    if (mapreg_held[i].at == at) {
+      mapreg_held[i] = mapreg_held[mapreg_count - 1];
+      mapreg_count--;
+      return;
+    }
+}
+#endif
+
+/*  Safe to call from the signal handler.  */
+static const char * mapreg_find(const void * addr) {
+  const u8 * a = (const u8 *) addr;
+  u32 i, n = mapreg_count;
+  for (i = 0; i < n && i < MAPREG_MAX; i++)
+    if (mapreg_held[i].at && a >= mapreg_held[i].at &&
+        (sz) (a - mapreg_held[i].at) < mapreg_held[i].size)
+      return mapreg_held[i].path;
+  return NULL;
+}
+
 bool xpar_maplock_blocks(const char * path) {
   struct stat st;
   if (!maplock_count || !maplock_on()) return false;
@@ -780,6 +824,7 @@ xpar_mmap xpar_map(const char * path) {
     if (p == MAP_FAILED) { m.size = 0;  return m; }
     m.map = (u8 *) p;  m.valid = true;
     maplock_add(p, (u64) st.st_dev, (u64) st.st_ino);
+    mapreg_add(m.map, m.size, path);
   }
 #else
   (void) path;
@@ -789,7 +834,10 @@ xpar_mmap xpar_map(const char * path) {
 
 void xpar_unmap(xpar_mmap * m) {
 #if defined(HAVE_MMAP)
-  if (m->map) { maplock_drop(m->map);  munmap(m->map, m->size); }
+  if (m->map) {
+    maplock_drop(m->map);  mapreg_drop(m->map);
+    munmap(m->map, m->size);
+  }
 #endif
   m->map = NULL;  m->size = 0;  m->valid = false;
 }
@@ -1053,6 +1101,18 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
                   (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL ||
                    sig == SIGFPE);
   if (xpar_crash_entered()) _exit(XPAR_EXIT_INTERNAL);
+  /*  Treat SIGBUS in a tracked mapping as an I/O error.  */
+  if (sig == SIGBUS && have_addr) {
+    const char * path = mapreg_find(si->si_addr);
+    if (path) {
+      static const char pre[] = "xpar: mapped read failed for '";
+      static const char post[] = "': file truncated or media error.\n";
+      (void) write(2, pre, sizeof pre - 1);
+      (void) write(2, path, xpar_strlen(path));
+      (void) write(2, post, sizeof post - 1);
+      _exit(XPAR_EXIT_IO);
+    }
+  }
 #if defined(HAVE_BACKTRACE)
   { int got = backtrace(frames, XPAR_CRASH_FRAMES);
     if (got > 0) n = (unsigned) got; }

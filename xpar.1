@@ -895,6 +895,15 @@ Optional volume label written beside each bare data volume by
 An in-place repair journal. Its presence means a repair was interrupted;
 .B xpar undo
 replays it.
+.TP
+.IB base .xparmaint
+A maintenance journal. Its presence means a
+.B consolidate \-\-replace
+or
+.B prune
+was interrupted before it could publish the new set;
+.B xpar repair
+completes or rolls it back.
 .SH SEE ALSO
 .BR par2 (1)
 .PP

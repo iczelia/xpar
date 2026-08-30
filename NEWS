@@ -26,6 +26,13 @@ v2.0 (26-08-2026)
   only damaged cells. A durable undo journal precedes destructive writes;
   'xpar undo' replays journals left by interruption. Other policies use
   '--backup', '--to', '--dry-run' and '--paranoid'.
+- 'consolidate --replace' and 'prune' write a durable maintenance journal,
+  'base.xparmaint', before renaming a chain aside: an interrupted run is
+  reported as such rather than as a missing set, and 'xpar repair'
+  completes or rolls it back.
+- A read the host refuses is an I/O error (status 5) and never damage: a
+  volume that fails under its mapping names its file instead of dying as
+  a defect, and repair never writes over a file it could not read.
 - 'verify' and 'repair' can resynchronise after inserted or deleted bytes
   with '--resync'.
 - Layouts: sidecar (default) leaves data in place; split writes bare data

@@ -21,23 +21,9 @@ case `uname -s 2> /dev/null` in
   Linux) ;;
   *) skip_all "the fault shim needs Linux and LD_PRELOAD" ;;
 esac
-so=$work/faultio.so
-${CC:-cc} -shared -fPIC -O1 -o "$so" "$srcdir/faultio.c" -ldl \
-  > /dev/null 2>&1 || skip_all "no C compiler builds the fault shim"
-printf x > probe.txt
-env LD_PRELOAD="$so" XPAR_FI_TRACE=1 cat probe.txt 2>&1 | grep -q 'FI OPENR' ||
-  skip_all "LD_PRELOAD is not honoured here"
-#  A sanitized binary wants its runtime ahead of any other preload.
-preload=$so
-if ! env LD_PRELOAD="$so" "$XPAR" --version > /dev/null 2>&1; then
-  asan=`${CC:-cc} -print-file-name=libasan.so 2> /dev/null`
-  if test -f "$asan" &&
-     env LD_PRELOAD="$asan:$so" "$XPAR" --version > /dev/null 2>&1; then
-    preload="$asan:$so"
-  else
-    skip_all "the fault shim cannot be preloaded into this binary"
-  fi
-fi
+fault_shim "$work/faultio.so" ||
+  skip_all "the fault shim cannot intercept this binary"
+preload=$fault_pre
 
 ino() { ls -i "$1" | awk '{print $1}'; }
 
@@ -176,6 +162,31 @@ test "$n" -gt 0 || hard_error "create renamed nothing"
 run 5 inject XPAR_FI_RENAME=$n -- "$XPAR" create -R -r 20% -o s t
 if test -e s.xpa; then bad "a half-published set stands under its name"; else ok; fi
 run 0 "$XPAR" create -f -R -r 20% -o s t
+run 0 "$XPAR" verify s.xpa
+cdto ..
+
+step "a volume that fails under its mapping is an I/O error, not a defect"
+
+mkdir -p bus && cdto bus
+mkfile d.bin 300000 9
+run 0 "$XPAR" create -r 20% -o s d.bin
+mkdir keep && cp s.xpa s.v*.xpa keep/
+#  Truncating a mapped file simulates a mapped-read fault.
+attempt inject XPAR_FI_SHORT_MAP=s.v -- "$XPAR" verify s.xpa
+if grep -q 'SHORT_MAP truncated' "$log"; then
+  if test "$status" -eq 5; then ok
+  else bad "a fault under a mapping exited $status, not 5"
+  fi
+  grep -q 'mapped read failed' "$log" ||
+    bad "the failing file was not named"
+  if grep -q 'report this bug' "$log"; then
+    bad "a media error was reported as a defect"
+  else ok
+  fi
+else
+  note "the mapping was not truncated here; skipped"
+fi
+cp keep/* .
 run 0 "$XPAR" verify s.xpa
 cdto ..
 

@@ -16,6 +16,7 @@
 
 #include "cli.h"
 #include "json.h"
+#include "ops/ops.h"
 #include "manifest.h"
 #include "pathname.h"
 #include "slice.h"
@@ -493,9 +494,10 @@ static const yarg_options t_none[] = {
 };
 
 static const yarg_options t_undo[] = {
-  { O_SCAN,       required_argument, "scan"       },
-  { O_GENERATION, required_argument, "generation" },
-  { 0,            no_argument,       NULL         }
+  { O_SCAN,         required_argument, "scan"         },
+  { O_GENERATION,   required_argument, "generation"   },
+  { O_KEEP_JOURNAL, no_argument,       "keep-journal" },
+  { 0,              no_argument,       NULL           }
 };
 
 static const yarg_options t_benchmark[] = {
@@ -735,7 +737,8 @@ static const char * const verb_opts[] = {
   "      --generation=G         Number, or a set-id prefix\n",
   /*  undo  */
   "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Undo only G; every journal by default\n",
+  "      --generation=G         Undo only G; every journal by default\n"
+  "      --keep-journal         Replay the journal but leave it in place\n",
   /*  recover-prologue  */
   "",
   /*  benchmark  */
@@ -1015,10 +1018,60 @@ static void gather_chain_siblings(xpar_setref * s) {
   xpar_free(dir);
 }
 
+static xpar_verb resolve_verb = XPAR_VERB_NONE;
+
+static bool set_absent(const char * arg) {
+  bool none = true;
+  char * a;
+  if (is_dir(arg)) {
+    xpar_dir * d = xpar_opendir(arg);
+    const xpar_dirent * e;
+    if (d) {
+      while (none && (e = xpar_readdir(d)) != NULL)
+        if (!e->is_dir && xpar_vname_has_ext(e->name)) none = false;
+      xpar_closedir(d);
+    }
+    return none;
+  }
+  if (is_file(arg)) return false;
+  a = cat_str(arg, XPAR_EXT);
+  if (is_file(a)) none = false;
+  xpar_free(a);
+  if (none) {
+    char * b = swap_ext(arg);
+    if (b && is_file(b)) none = false;
+    xpar_free(b);
+  }
+  return none;
+}
+
+/*  Recover maintenance journals before resolving a missing set.  */
+static void maint_gate(const char * arg) {
+  const char * op = "maintenance operation";
+  xpar_verb verb = resolve_verb;
+  char * j;
+  resolve_verb = XPAR_VERB_NONE;
+  if (verb != XPAR_VERB_REPAIR && !set_absent(arg)) return;
+  j = xpar_maint_pending(arg, &op);
+  if (!j) return;
+  if (verb == XPAR_VERB_REPAIR) {
+    int rc = xpar_maint_recover(j, false);
+    if (rc != XPAR_EXIT_OK)
+      FATAL_CODE(rc, "Cannot recover interrupted %s from '%s'.", op, j);
+    xpar_free(j);
+    return;
+  }
+  FATAL_CODE(XPAR_EXIT_REPAIRABLE,
+             "Interrupted %s left no set at '%s' (journal: '%s'); run "
+             "'xpar repair %s'.", op, xpar_name_escape(arg), j,
+             xpar_name_escape(arg));
+}
+
 void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   out->vol = NULL;  out->count = 0;  out->base = NULL;  out->dir = NULL;
   out->home = NULL;
   FATAL_UNLESS("A set argument is required.", arg && *arg);
+  maint_gate(arg);
   /*  --scan supplies volumes, not protected entries.  */
   out->home = is_dir(arg) ? dup_str(arg) : xpar_path_dir(arg);
 
@@ -1543,6 +1596,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
       bool looks = (al > XPAR_EXT_LEN &&
                     !xpar_strcmp(a + al - XPAR_EXT_LEN, XPAR_EXT)) ||
                    xpar_path_base(a) != a;
+      maint_gate(a);
       if (looks) say_rollback_residue(a);
       FATAL_CODE(looks ? XPAR_EXIT_NOTFOUND : XPAR_EXIT_USAGE,
                  looks ? "No xpar set found for '%s'; use 'xpar --help' to "
@@ -1575,6 +1629,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
                    leaf[i - 2] == '.'), o->output);
   }
   xpar_path_scan_set(o->scan_dir);
+  resolve_verb = o->verb;
   if (takes_set(o->verb)) xpar_cli_resolve_set(o->set, &o->set_ref);
   if (o->verb == XPAR_VERB_RECOVER_PROLOGUE) xpar_v1_refuse_if_v1(o->set);
 }

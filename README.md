@@ -366,6 +366,10 @@ Some drawbacks of xpar:
   nowhere, not even in the replicas its own recovery volumes carry, is
   reported as damaged rather than dropped; `consolidate` and `prune` refuse
   to rewrite a chain around it.
+  Both rename the whole chain aside before publishing, so both first write a
+  maintenance journal, `base.xparmaint`: if the machine dies inside that
+  window, `verify` reports the interrupted operation instead of a missing set
+  and `xpar repair` completes or rolls it back.
 ```
 % xpar add -r 15% photos.xpa -R pics
 xpar: generation 1, set 09817e407913ea82a05c5cf7ebf32144: 10 entries (1 added, 2 changed, 7 inherited, 0 dropped), 500000 new stream bytes, 18 recovery slices in 5 volumes.

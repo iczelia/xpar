@@ -1714,75 +1714,158 @@ static void rp_build_writes(rp * r) {
   }
 }
 
-static void rp_journal(rp * r) {
+static char * rp_journal_name(const xpar_options * o, const char * dir,
+                              u32 generation) {
+  char * base = o->set_ref.base ? xpar_strdup(o->set_ref.base)
+                                : xpar_path_join(dir, "xpar");
+  char * out;
+  if (generation)
+    xpar_asprintf(&out, "%s.g%03" PRIu32 ".xparundo", base, generation);
+  else
+    xpar_asprintf(&out, "%s.xparundo", base);
+  xpar_free(base);
+  return out;
+}
+
+/*  A journal range backed by memory or a source file.  */
+typedef struct {
+  const char * path;
+  u64  off, len, orig;
+  u32  rflags;
+  const u8 *  old;
+  xpar_file * src;
+  u64  size;                  /*  Bytes available from src.  */
+} rp_jrange;
+
+#define RP_JOURNAL_BUF  (1u << 16)
+
+/*  Zero-fill beyond the source.  */
+static void rp_journal_read(const rp_jrange * w, u8 * buf, u64 at, u64 n) {
+  u64 have = w->size > w->off + at ? MIN(n, w->size - w->off - at) : 0;
+  if (have && xpar_pread(w->src, buf, (sz) have, w->off + at) != (sz) have)
+    FATAL_IO("Cannot read '%s' at offset %" PRIu64
+             " for the journal; use --no-journal to continue.",
+             w->path, w->off + at);
+  if (have < n) xpar_memset(buf + have, 0, (sz) (n - have));
+}
+
+/*  Write the shared undo-journal format.  */
+static void rp_journal_write(const xpar_options * o, const char * journal,
+                             const u8 * set_id, const rp_jrange * rng,
+                             u32 count) {
   xpar_file * f;
   u8 hdr[XPAR_UNDO_HDR], rec[XPAR_UNDO_REC], foot[XPAR_UNDO_FOOT], pad[8];
+  u8 * buf = NULL;
   u32 i, all = 0;
-  u64 payload = 0;
+  u64 payload = 0, cap = 0, done;
   xpar_memset(pad, 0, sizeof pad);
-  for (i = 0; i < r->wr_count; i++) payload += r->wr[i].len;
+  for (i = 0; i < count; i++) {
+    payload += rng[i].len;
+    if (rng[i].src && rng[i].len) cap = RP_JOURNAL_BUF;
+  }
+  if (cap) buf = (u8 *) xpar_alloc_raw((sz) cap);
   xpar_memset(hdr, 0, sizeof hdr);
   xpar_memcpy(hdr, XPAR_UNDO_MAGIC, 8);
   xpar_wr32(hdr + 8, XPAR_UNDO_VER);
-  xpar_memcpy(hdr + 16, r->set_id, XPAR_SET_ID_LEN);
-  xpar_wr64(hdr + 32, r->wr_count);
+  xpar_memcpy(hdr + 16, set_id, XPAR_SET_ID_LEN);
+  xpar_wr64(hdr + 32, count);
   xpar_wr64(hdr + 40, payload);
   xpar_wr64(hdr + 48, (u64) xpar_wall_ns());
   xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
-  /*  Create the journal privately without following links.  */
-  f = xpar_open(r->journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
-                            XPAR_O_NOFOLLOW | XPAR_O_PRIVATE);
+  f = xpar_open(journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
+                         XPAR_O_NOFOLLOW | XPAR_O_PRIVATE);
   if (!f) FATAL_IO("Cannot write journal '%s': %s; use --no-journal to "
-                   "continue.", r->journal,
+                   "continue.", journal,
                    xpar_strerror(xpar_errno()));
-  if (xpar_set_mode(r->journal, 1, 0600) != 0)
+  if (xpar_set_mode(journal, 1, 0600) != 0)
     xpar_fprintf(xpar_stderr, "xpar: warning: cannot restrict journal '%s' "
-                 "to its owner: %s\n", r->journal,
+                 "to its owner: %s\n", journal,
                  xpar_strerror(xpar_errno()));
   xpar_xwrite(f, hdr, sizeof hdr);
   all = xpar_crc32c(0, hdr, sizeof hdr);
-  for (i = 0; i < r->wr_count; i++) {
-    rp_write * w = &r->wr[i];
-    const char * path = r->path[w->entry];
-    u32 plen = (u32) xpar_strlen(path);
+  for (i = 0; i < count; i++) {
+    const rp_jrange * w = &rng[i];
+    u32 plen = (u32) xpar_strlen(w->path);
     u32 tail = (u32) ((8 - ((XPAR_UNDO_REC + plen + w->len) & 7)) & 7);
+    u32 crc = 0;
+    /*  Stream twice: checksum, then write.  */
+    if (w->src) for (done = 0; done < w->len; done += cap) {
+      u64 n = MIN(cap, w->len - done);
+      rp_journal_read(w, buf, done, n);
+      crc = xpar_crc32c(crc, buf, (sz) n);
+    } else if (w->len) crc = xpar_crc32c(0, w->old, (sz) w->len);
     xpar_memset(rec, 0, sizeof rec);
     xpar_wr32(rec, plen);
-    xpar_wr32(rec + 4, (r->fstate[w->entry] & 1) ? 0 : XPAR_UNDO_CREATED);
+    xpar_wr32(rec + 4, w->rflags);
     xpar_wr64(rec + 8, w->off);
     xpar_wr64(rec + 16, w->len);
-    xpar_wr64(rec + 24, r->fsize[w->entry]);
-    xpar_wr32(rec + 32, xpar_crc32c(0, w->old, (sz) w->len));
+    xpar_wr64(rec + 24, w->orig);
+    xpar_wr32(rec + 32, crc);
     xpar_wr32(rec + 36, xpar_crc32c(0, rec, 36));
     xpar_xwrite(f, rec, sizeof rec);
-    xpar_xwrite(f, path, plen);
-    xpar_xwrite(f, w->old, (sz) w->len);
-    if (tail) xpar_xwrite(f, pad, tail);
+    xpar_xwrite(f, w->path, plen);
     all = xpar_crc32c(all, rec, sizeof rec);
-    all = xpar_crc32c(all, path, plen);
-    all = xpar_crc32c(all, w->old, (sz) w->len);
+    all = xpar_crc32c(all, w->path, plen);
+    if (w->src) for (done = 0; done < w->len; done += cap) {
+      u64 n = MIN(cap, w->len - done);
+      rp_journal_read(w, buf, done, n);
+      xpar_xwrite(f, buf, (sz) n);
+      all = xpar_crc32c(all, buf, (sz) n);
+    } else if (w->len) {
+      xpar_xwrite(f, w->old, (sz) w->len);
+      all = xpar_crc32c(all, w->old, (sz) w->len);
+    }
+    if (tail) xpar_xwrite(f, pad, tail);
     if (tail) all = xpar_crc32c(all, pad, tail);
   }
-  /*  The footer CRC makes incomplete journals non-replayable.  */
+  xpar_free(buf);
+  /*  The footer CRC marks a complete journal.  */
   xpar_memset(foot, 0, sizeof foot);
   xpar_memcpy(foot, XPAR_UNDO_END, 8);
-  xpar_wr64(foot + 8, r->wr_count);
+  xpar_wr64(foot + 8, count);
   xpar_wr32(foot + 16, all);
   xpar_xwrite(f, foot, sizeof foot);
   if (xpar_fsync(f) != 0) FATAL_IO("Cannot flush the undo journal.");
   xpar_xclose(f);
-  /*  Make the journal directory entry durable before data writes.  */
-  if (xpar_fsync_dir(r->journal) != 0) {
+  /*  Persist the journal before modifying data.  */
+  if (xpar_fsync_dir(journal) != 0) {
     int err = xpar_errno();
-    xpar_remove(r->journal);
+    xpar_remove(journal);
     FATAL_IO("Cannot persist journal '%s': %s; use --no-journal to continue.",
-             r->journal, xpar_strerror(err));
+             journal, xpar_strerror(err));
   }
-  if (r->verbose)
-    rp_note(r, "xpar: journalled %" PRIu32 " ranges (%" PRIu64
-            " bytes) to '%s'.\n",
-            r->wr_count,
-            payload, r->journal);
+  if (o->verbose && !o->quiet)
+    xpar_fprintf(o->json ? xpar_stderr : xpar_stdout,
+                 "xpar: journalled %" PRIu32 " ranges (%" PRIu64
+                 " bytes) to '%s'.\n", count, payload, journal);
+}
+
+static void rp_journal_clear(const xpar_options * o, const char * journal) {
+  xpar_stat_t st;
+  if (o->no_journal || xpar_lstat(journal, &st) != 0) return;
+  if (xpar_journal_live(journal) && !o->replace_journal)
+    FATAL("Undo journal '%s' exists; run xpar undo or pass "
+          "--replace-journal.", journal);
+  if (xpar_remove(journal) != 0)
+    FATAL_IO("Cannot replace undo journal '%s': %s.", journal,
+             xpar_strerror(xpar_errno()));
+}
+
+static void rp_journal(rp * r) {
+  rp_jrange * rng = (rp_jrange *)
+    xpar_calloc(r->wr_count ? r->wr_count : 1, sizeof *rng);
+  u32 i;
+  for (i = 0; i < r->wr_count; i++) {
+    rp_write * w = &r->wr[i];
+    rng[i].path   = r->path[w->entry];
+    rng[i].off    = w->off;
+    rng[i].len    = w->len;
+    rng[i].orig   = r->fsize[w->entry];
+    rng[i].rflags = (r->fstate[w->entry] & 1) ? 0 : XPAR_UNDO_CREATED;
+    rng[i].old    = w->old;
+  }
+  rp_journal_write(r->o, r->journal, r->set_id, rng, r->wr_count);
+  xpar_free(rng);
 }
 
 /*  Refuse journals that would replace unread existing bytes with zeroes.  */
@@ -3272,50 +3355,148 @@ static xpar_file * owned_stage_open(const char * dir, char ** path) {
   int err = xpar_errno();
   xpar_free(stem);
   if (!f)
-    FATAL_IO("Cannot create a secure repair stage in '%s': %s.", dir,
+    FATAL_IO("Cannot stage repair in '%s': %s.", dir,
              xpar_strerror(err));
   return f;
 }
 
-static void owned_publish_split_stage(const xpar_vset * s, xpar_file * stage,
-                                      u64 stage_off, u64 stream_off,
-                                      u64 len, u8 * buf, u64 cap) {
-  const xpar_layt * l = xpar_vset_layt(s);
-  const char * dir = xpar_vset_dir(s);
+/*  A rebuilt range fragment within one volume.  */
+typedef struct {
+  u32 vol;
+  u64 vol_off, stage_off, len;
+} owned_piece;
+
+static void owned_split_pieces(const xpar_layt * l, u64 stage_off,
+                               u64 stream_off, u64 len, owned_piece ** out,
+                               u32 * count, u32 * cap) {
   u64 copied = 0;
   while (copied < len) {
     const xpar_vol * v = NULL;
-    xpar_file * dst;
-    char * path;
-    u64 in_stream = stream_off + copied, part, done = 0;
-    u32 q;
+    owned_piece * p;
+    u64 in_stream = stream_off + copied, part;
+    u32 q, at = 0;
     for (q = 0; q < l->count; q++)
       if (l->vol[q].kind == XPAR_VOL_DATA &&
           in_stream >= l->vol[q].stream_offset &&
           in_stream - l->vol[q].stream_offset < l->vol[q].byte_length) {
-        v = &l->vol[q]; break;
+        v = &l->vol[q]; at = q; break;
       }
     FATAL_UNLESS("The split layout has no data volume for stream offset "
                  "%" PRIu64 ".", v != NULL, in_stream);
     part = MIN(len - copied,
                v->byte_length - (in_stream - v->stream_offset));
-    path = xpar_path_join(dir, v->name);
-    dst = xpar_open(path, XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
-    if (!dst) FATAL_PERROR(path);
-    while (done < part) {
-      u64 take = MIN(part - done, cap);
-      if (xpar_pread(stage, buf, (sz) take,
-                     stage_off + copied + done) != (sz) take ||
-          xpar_pwrite(dst, buf, (sz) take,
-                      in_stream - v->stream_offset + done) != (sz) take)
-        FATAL_IO("Publishing repaired split data to '%s' failed.", path);
-      done += take;
+    if (*count == *cap) {
+      *cap = *cap ? *cap * 2 : 16;
+      *out = (owned_piece *) xpar_realloc(*out, *cap * sizeof(**out));
     }
-    if (xpar_fsync(dst) != 0)
-      FATAL_IO("Flushing repaired split data volume '%s' failed.", path);
-    xpar_xclose(dst); xpar_free(path);
+    p = &(*out)[(*count)++];
+    p->vol = at;
+    p->vol_off = in_stream - v->stream_offset;
+    p->stage_off = stage_off + copied;
+    p->len = part;
     copied += part;
   }
+}
+
+/*  Publish rebuilt data under an undo journal.  */
+static void owned_publish_split(const xpar_options * o, const xpar_vset * s,
+                                xpar_file * stage, const u64 * slot,
+                                u8 * buf, u64 cap, char ** journal) {
+  const xpar_geom * g = xpar_vset_geom(s);
+  const xpar_layt * l = xpar_vset_layt(s);
+  const char * dir = xpar_vset_dir(s);
+  owned_piece * pc = NULL;
+  char ** path;
+  xpar_file ** fd;
+  u64 * size, * cover, i;
+  u8 * made;
+  u32 pc_count = 0, pc_cap = 0, k, q;
+
+  for (i = 0; i < g->slice_count; i++) if (slot[i] != UINT64_MAX)
+    owned_split_pieces(l, slot[i] * g->slice_size, i * g->slice_size,
+                       xpar_slice_bytes(g, i), &pc, &pc_count, &pc_cap);
+  path = (char **) xpar_calloc(l->count ? l->count : 1, sizeof *path);
+  fd = (xpar_file **) xpar_calloc(l->count ? l->count : 1, sizeof *fd);
+  size = (u64 *) xpar_calloc(l->count ? l->count : 1, sizeof *size);
+  cover = (u64 *) xpar_calloc(l->count ? l->count : 1, sizeof *cover);
+  made = (u8 *) xpar_calloc(l->count ? l->count : 1, 1);
+  for (k = 0; k < pc_count; k++) cover[pc[k].vol] += pc[k].len;
+  for (k = 0; k < pc_count; k++) {
+    i64 n;
+    q = pc[k].vol;
+    if (fd[q] || made[q]) continue;
+    path[q] = xpar_path_join(dir, l->vol[q].name);
+    fd[q] = xpar_open(path[q], XPAR_O_RDWR | XPAR_O_NOFOLLOW);
+    if (!fd[q] && xpar_errno_absent(xpar_errno())) {
+      if (cover[q] != l->vol[q].byte_length)
+        FATAL_IO("Data volume '%s' is missing; recover it before a partial "
+                 "repair.", path[q]);
+      made[q] = 1;
+      continue;
+    }
+    if (!fd[q]) FATAL_IO("%s: %s", path[q], xpar_strerror(xpar_errno()));
+    n = xpar_size(fd[q]);
+    if (n < 0)
+      FATAL_IO("Cannot size '%s': %s.", path[q],
+               xpar_strerror(xpar_errno()));
+    size[q] = (u64) n;
+  }
+
+  if (!o->no_journal && pc_count && o->dest != XPAR_DEST_BACKUP) {
+    char * jp = rp_journal_name(o, dir, xpar_vset_setd(s)->generation);
+    rp_jrange * rng = (rp_jrange *)
+      xpar_calloc(pc_count + l->count, sizeof *rng);
+    u32 n = 0;
+    rp_journal_clear(o, jp);
+    for (k = 0; k < pc_count; k++) {
+      q = pc[k].vol;
+      /*  Undo removes volumes created by this run.  */
+      if (made[q]) {
+        if (made[q] == 2) continue;
+        made[q] = 2;
+        rng[n].path = path[q];
+        rng[n++].rflags = XPAR_UNDO_CREATED;
+        continue;
+      }
+      rng[n].path = path[q];
+      rng[n].off  = pc[k].vol_off;
+      rng[n].len  = pc[k].len;
+      rng[n].orig = size[q];
+      rng[n].size = size[q];
+      rng[n++].src = fd[q];
+    }
+    rp_journal_write(o, jp, xpar_vset_id(s), rng, n);
+    xpar_free(rng);
+    *journal = jp;
+  }
+
+  /*  Create missing volumes only after journaling.  */
+  for (q = 0; q < l->count; q++) if (made[q] && !fd[q]) {
+    fd[q] = xpar_open(path[q], XPAR_O_RDWR | XPAR_O_CREAT | XPAR_O_NOFOLLOW);
+    if (!fd[q]) FATAL_IO("%s: %s", path[q], xpar_strerror(xpar_errno()));
+  }
+
+  for (k = 0; k < pc_count; k++) {
+    u64 done = 0;
+    while (done < pc[k].len) {
+      u64 take = MIN(pc[k].len - done, cap);
+      if (xpar_pread(stage, buf, (sz) take,
+                     pc[k].stage_off + done) != (sz) take ||
+          xpar_pwrite(fd[pc[k].vol], buf, (sz) take,
+                      pc[k].vol_off + done) != (sz) take)
+        FATAL_IO("Cannot write repaired split data to '%s'.",
+                 path[pc[k].vol]);
+      done += take;
+    }
+  }
+  for (q = 0; q < l->count; q++) if (fd[q]) {
+    if (xpar_fsync(fd[q]) != 0)
+      FATAL_IO("Cannot flush repaired data volume '%s'.", path[q]);
+    xpar_xclose(fd[q]);
+    xpar_free(path[q]);
+  }
+  xpar_free(path);  xpar_free(fd);  xpar_free(size);  xpar_free(cover);
+  xpar_free(made);  xpar_free(pc);
 }
 
 /*  Owned-layout repair summary.  */
@@ -3334,6 +3515,7 @@ typedef struct {
   u64  ragged_trimmed;       /*  Volumes cut back to their last packet.  */
   u64  volumes_dropped;      /*  Volumes rewritten from packet replicas.  */
   u64  meta_skip[RP_META_CLASSES];  /*  See rp_meta_name.  */
+  char * journal;            /*  Split-publish undo journal.  */
   bool inner_corrected;
 } owned_acct;
 
@@ -3536,10 +3718,7 @@ static int owned_repair_stream(const xpar_options * o, xpar_vset * s,
                             g->stream_length, stage, slot,
                             g->slice_count, g->slice_size);
   } else if (ok) {
-    for (i = 0; i < g->slice_count; i++) if (slot[i] != UINT64_MAX)
-      owned_publish_split_stage(s, stage, slot[i] * g->slice_size,
-                                i * g->slice_size,
-                                xpar_slice_bytes(g, i), io, chunk);
+    owned_publish_split(o, s, stage, slot, io, chunk, &acct->journal);
     /*  Count every volume receiving rebuilt slices.  */
     if (l) for (u32 q = 0; q < l->count; q++) {
       if (l->vol[q].kind != XPAR_VOL_DATA) continue;
@@ -4234,6 +4413,13 @@ int xpar_op_repair(const xpar_options * o) {
         if (out != XPAR_EXIT_OK && out != XPAR_EXIT_IO)
           out = XPAR_EXIT_UNREPAIRABLE;
       }
+      if (acct.journal) {
+        if (out == XPAR_EXIT_OK && !o->keep_journal &&
+            !xpar_journal_drop(acct.journal))
+          out = XPAR_EXIT_IO;
+        xpar_free(acct.journal);
+        acct.journal = NULL;
+      }
       if (acct.slices_rebuilt || acct.volumes_rebuilt ||
           acct.volumes_rewritten || acct.volumes_relengthed ||
           acct.ragged_trimmed || acct.volumes_dropped ||
@@ -4565,27 +4751,9 @@ int xpar_op_repair(const xpar_options * o) {
   }
 
   /*  Nothing may change protected data before the journal is durable.  */
-  r.journal = o->set_ref.base ? xpar_strdup(o->set_ref.base)
-                              : xpar_path_join(r.dir, "xpar");
-  { char * j;
-    if (r.sd.generation)
-      xpar_asprintf(&j, "%s.g%03" PRIu32 ".xparundo", r.journal, r.sd.generation);
-    else
-      xpar_asprintf(&j, "%s.xparundo", r.journal);
-    xpar_free(r.journal);
-    r.journal = j;
-  }
+  r.journal = rp_journal_name(o, r.dir, r.sd.generation);
   /*  Only --replace-journal replaces an existing journal path.  */
-  { xpar_stat_t st;
-    if (!o->no_journal && xpar_lstat(r.journal, &st) == 0) {
-      if (xpar_journal_live(r.journal) && !o->replace_journal)
-        FATAL("Undo journal '%s' exists; run xpar undo or pass "
-              "--replace-journal.", r.journal);
-      if (xpar_remove(r.journal) != 0)
-        FATAL_IO("Cannot replace undo journal '%s': %s.", r.journal,
-                 xpar_strerror(xpar_errno()));
-    }
-  }
+  rp_journal_clear(o, r.journal);
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);
   rp_apply(&r);

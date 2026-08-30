@@ -203,6 +203,359 @@ static char * gen_unused_path(const char * path, const char * label) {
   return NULL;
 }
 
+/*  Maintenance journals make multi-volume publication recoverable.  */
+
+#define XPAR_MAINT_MAGIC   "XPARMNTJ"
+#define XPAR_MAINT_END     "XPARMNTN"
+#define XPAR_MAINT_VER     1u
+#define XPAR_MAINT_HDR     64u
+#define XPAR_MAINT_REC     24u
+#define XPAR_MAINT_FOOT    24u
+#define XPAR_MAINT_EXT     ".xparmaint"
+#define XPAR_MAINT_CONSOL  1u
+#define XPAR_MAINT_PRUNE   2u
+#define XPAR_MAINT_MOVE    1u        /*  from -> to  */
+#define XPAR_MAINT_PUBLISH 2u        /*  stage -> final.  */
+#define XPAR_MAINT_DISCARD 3u        /*  remove after commit  */
+#define XPAR_MAINT_COMMIT  1u        /*  commit point  */
+#define XPAR_MAINT_KEEP    2u        /*  stage holds an original  */
+
+typedef struct {
+  char * from, * to;
+  u32 kind, flags;
+} gen_maint_rec;
+
+typedef struct {
+  gen_maint_rec * rec;
+  u32 count, cap, op;
+  char * path;
+  bool written;
+} gen_maint;
+
+static void gen_maint_free(gen_maint * j) {
+  u32 i;
+  for (i = 0; i < j->count; i++) {
+    xpar_free(j->rec[i].from);  xpar_free(j->rec[i].to);
+  }
+  xpar_free(j->rec);  xpar_free(j->path);
+  xpar_memset(j, 0, sizeof *j);
+}
+
+static void gen_maint_add(gen_maint * j, u32 kind, const char * from,
+                          const char * to, u32 flags) {
+  gen_maint_rec * r;
+  if (j->count == j->cap) {
+    j->cap = j->cap ? j->cap * 2 : 16;
+    j->rec = (gen_maint_rec *) xpar_realloc(j->rec,
+                                            (sz) j->cap * sizeof *j->rec);
+  }
+  r = &j->rec[j->count++];
+  xpar_memset(r, 0, sizeof *r);
+  r->kind = kind;  r->flags = flags;
+  r->from = xpar_strdup(from);
+  r->to   = xpar_strdup(to ? to : "");
+}
+
+static bool gen_maint_is_stage(const gen_maint * j, const char * path) {
+  For(u32, i, j->count,
+      if (j->rec[i].kind == XPAR_MAINT_PUBLISH &&
+          !xpar_strcmp(j->rec[i].from, path)) return true)
+  return false;
+}
+
+/*  Only rollback copies not reused as stages prove all moves finished.  */
+static bool gen_maint_moves_done(const gen_maint * j) {
+  bool any = false;
+  For(u32, i, j->count,
+      if (j->rec[i].kind != XPAR_MAINT_MOVE ||
+          gen_maint_is_stage(j, j->rec[i].to)) continue;
+      any = true;
+      if (!gen_exists(j->rec[i].to)) return false)
+  return any;
+}
+
+static bool gen_maint_load(const char * path, gen_maint * j) {
+  sz n = 0;
+  u8 * b = gen_read_whole(path, &n, false);
+  u64 count = 0, i, at = XPAR_MAINT_HDR, avail;
+  bool ok = false;
+  xpar_memset(j, 0, sizeof *j);
+  if (!b) return false;
+  if ((u64) n < (u64) XPAR_MAINT_HDR + XPAR_MAINT_FOOT ||
+      xpar_memcmp(b, XPAR_MAINT_MAGIC, 8) ||
+      xpar_rd32(b + 8) != XPAR_MAINT_VER || xpar_rd32(b + 12) ||
+      xpar_rd32(b + 56) || xpar_crc32c(0, b, 60) != xpar_rd32(b + 60))
+    goto out;
+  avail = (u64) n - XPAR_MAINT_FOOT;
+  count = xpar_rd64(b + 32);
+  { const u8 * foot = b + n - XPAR_MAINT_FOOT;
+    if (xpar_memcmp(foot, XPAR_MAINT_END, 8) || xpar_rd64(foot + 8) != count ||
+        xpar_rd32(foot + 20) ||
+        xpar_crc32c(0, b, (sz) avail) != xpar_rd32(foot + 16))
+      goto out; }
+  j->op = xpar_rd32(b + 16);
+  j->path = xpar_strdup(path);
+  for (i = 0; i < count; i++) {
+    u32 fl, tl, kind, flags, tail, k;
+    if (at > avail || avail - at < XPAR_MAINT_REC) goto out;
+    kind  = xpar_rd32(b + at);      flags = xpar_rd32(b + at + 4);
+    fl    = xpar_rd32(b + at + 8);  tl    = xpar_rd32(b + at + 12);
+    if (xpar_rd32(b + at + 16) ||
+        xpar_crc32c(0, b + at, 20) != xpar_rd32(b + at + 20)) goto out;
+    at += XPAR_MAINT_REC;
+    if (avail - at < (u64) fl + tl || !fl) goto out;
+    for (k = 0; k < fl + tl; k++) if (!b[at + k]) goto out;
+    { char * from = xpar_strndup((const char *) b + at, fl);
+      char * to   = xpar_strndup((const char *) b + at + fl, tl);
+      gen_maint_add(j, kind, from, to, flags);
+      xpar_free(from);  xpar_free(to); }
+    at += (u64) fl + tl;
+    tail = (u32) ((8 - ((XPAR_MAINT_REC + fl + tl) & 7)) & 7);
+    if (avail - at < tail) goto out;
+    at += tail;
+  }
+  ok = at == avail;
+out:
+  xpar_free(b);
+  if (!ok) gen_maint_free(j);
+  return ok;
+}
+
+static bool gen_maint_describe(const char * path, const char ** op) {
+  gen_maint j;
+  if (!gen_maint_load(path, &j)) return false;
+  if (op) *op = j.op == XPAR_MAINT_PRUNE ? "prune" : "consolidate";
+  gen_maint_free(&j);
+  return true;
+}
+
+/*  Commit at the final publish.  */
+static void gen_maint_commit_point(gen_maint * j) {
+  u32 i = j->count;
+  while (i--) if (j->rec[i].kind == XPAR_MAINT_PUBLISH) {
+    j->rec[i].flags |= XPAR_MAINT_COMMIT;  return;
+  }
+}
+
+/*  Persist the plan before moving files.  */
+static bool gen_maint_write(gen_maint * j, const char * base) {
+  xpar_file * f;
+  u8 hdr[XPAR_MAINT_HDR], rec[XPAR_MAINT_REC], foot[XPAR_MAINT_FOOT], pad[8];
+  u32 all, i;
+  u64 bytes = 0;
+  xpar_memset(pad, 0, sizeof pad);
+  gen_maint_commit_point(j);
+  for (i = 0; i < j->count; i++)
+    bytes += xpar_strlen(j->rec[i].from) + xpar_strlen(j->rec[i].to);
+  xpar_asprintf(&j->path, "%s" XPAR_MAINT_EXT, base);
+  if (gen_exists(j->path)) {
+    if (gen_maint_describe(j->path, NULL)) {
+      xpar_fprintf(xpar_stderr, "xpar: journal '%s' is pending; run "
+                   "'xpar repair'.\n", j->path);
+      return false;
+    }
+    xpar_remove(j->path);
+  }
+  xpar_memset(hdr, 0, sizeof hdr);
+  xpar_memcpy(hdr, XPAR_MAINT_MAGIC, 8);
+  xpar_wr32(hdr + 8, XPAR_MAINT_VER);
+  xpar_wr32(hdr + 16, j->op);
+  xpar_wr64(hdr + 32, j->count);
+  xpar_wr64(hdr + 40, bytes);
+  xpar_wr64(hdr + 48, (u64) xpar_wall_ns());
+  xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
+  f = xpar_open(j->path, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
+                         XPAR_O_NOFOLLOW | XPAR_O_PRIVATE);
+  if (!f) {
+    xpar_fprintf(xpar_stderr, "xpar: cannot write journal '%s': %s\n",
+                 j->path, xpar_strerror(xpar_errno()));
+    return false;
+  }
+  xpar_xwrite(f, hdr, sizeof hdr);
+  all = xpar_crc32c(0, hdr, sizeof hdr);
+  for (i = 0; i < j->count; i++) {
+    u32 fl = (u32) xpar_strlen(j->rec[i].from);
+    u32 tl = (u32) xpar_strlen(j->rec[i].to);
+    u32 tail = (u32) ((8 - ((XPAR_MAINT_REC + fl + tl) & 7)) & 7);
+    xpar_memset(rec, 0, sizeof rec);
+    xpar_wr32(rec, j->rec[i].kind);      xpar_wr32(rec + 4, j->rec[i].flags);
+    xpar_wr32(rec + 8, fl);              xpar_wr32(rec + 12, tl);
+    xpar_wr32(rec + 20, xpar_crc32c(0, rec, 20));
+    xpar_xwrite(f, rec, sizeof rec);
+    xpar_xwrite(f, j->rec[i].from, fl);
+    xpar_xwrite(f, j->rec[i].to, tl);
+    if (tail) xpar_xwrite(f, pad, tail);
+    all = xpar_crc32c(all, rec, sizeof rec);
+    all = xpar_crc32c(all, j->rec[i].from, fl);
+    all = xpar_crc32c(all, j->rec[i].to, tl);
+    if (tail) all = xpar_crc32c(all, pad, tail);
+  }
+  /*  The footer CRC marks a complete journal.  */
+  xpar_memset(foot, 0, sizeof foot);
+  xpar_memcpy(foot, XPAR_MAINT_END, 8);
+  xpar_wr64(foot + 8, j->count);
+  xpar_wr32(foot + 16, all);
+  xpar_xwrite(f, foot, sizeof foot);
+  if (xpar_fsync(f) != 0) {
+    int err = xpar_errno();
+    xpar_close(f);  xpar_remove(j->path);
+    xpar_fprintf(xpar_stderr, "xpar: cannot flush journal '%s': %s\n",
+                 j->path, xpar_strerror(err));
+    return false;
+  }
+  xpar_xclose(f);
+  if (xpar_fsync_dir(j->path) != 0) {
+    int err = xpar_errno();
+    xpar_remove(j->path);
+    xpar_fprintf(xpar_stderr, "xpar: cannot persist journal '%s': %s\n",
+                 j->path, xpar_strerror(err));
+    return false;
+  }
+  j->written = true;
+  return true;
+}
+
+static void gen_maint_done(gen_maint * j) {
+  if (j->written) (void) xpar_journal_drop(j->path);
+  gen_maint_free(j);
+}
+
+static void gen_maint_stuck(const char * verb, const char * from,
+                            const char * to) {
+  if (to) xpar_fprintf(xpar_stderr, "xpar: cannot %s '%s' to '%s': %s\n",
+                       verb, from, to, xpar_strerror(xpar_errno()));
+  else xpar_fprintf(xpar_stderr, "xpar: cannot %s '%s': %s\n", verb, from,
+                    xpar_strerror(xpar_errno()));
+}
+
+/*  Finish a committed operation; otherwise restore the original files.  */
+int xpar_maint_recover(const char * path, bool quiet) {
+  gen_maint j;
+  u32 i;
+  bool committed = false, stuck = false;
+  const char * op;
+
+  if (!gen_maint_load(path, &j)) {
+    /*  Incomplete journals predate all moves.  */
+    if (!quiet)
+      xpar_fprintf(xpar_stderr, "xpar: incomplete journal '%s'; nothing "
+                   "to recover.\n", path);
+    return xpar_journal_drop(path) ? XPAR_EXIT_OK : XPAR_EXIT_IO;
+  }
+  op = j.op == XPAR_MAINT_PRUNE ? "prune" : "consolidate";
+  for (i = 0; i < j.count; i++)
+    if ((j.rec[i].flags & XPAR_MAINT_COMMIT) && gen_exists(j.rec[i].to) &&
+        !gen_exists(j.rec[i].from))
+      committed = true;
+  if (!quiet)
+    xpar_fprintf(xpar_stderr, "xpar: %s interrupted %s from '%s'.\n",
+                 committed ? "completing" : "rolling back", op, path);
+
+  if (committed) {
+    for (i = 0; i < j.count; i++) {
+      gen_maint_rec * r = &j.rec[i];
+      if (r->kind != XPAR_MAINT_PUBLISH || gen_exists(r->to)) continue;
+      if (!gen_exists(r->from)) {
+        xpar_fprintf(xpar_stderr, "xpar: missing both '%s' and '%s'.\n",
+                     r->from, r->to);
+        stuck = true;  continue;
+      }
+      if (xpar_rename(r->from, r->to) != 0) {
+        gen_maint_stuck("publish", r->from, r->to);  stuck = true;
+      }
+    }
+    if (!stuck && xpar_fsync_dir(path) != 0)
+      xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync maintenance "
+                   "directory: %s\n", xpar_strerror(xpar_errno()));
+    for (i = 0; !stuck && i < j.count; i++) {
+      gen_maint_rec * r = &j.rec[i];
+      const char * gone = r->kind == XPAR_MAINT_MOVE ? r->to
+                        : r->kind == XPAR_MAINT_DISCARD ? r->from : NULL;
+      if (!gone || !gen_exists(gone)) continue;
+      if (r->kind == XPAR_MAINT_MOVE && gen_maint_is_stage(&j, gone)) continue;
+      if (xpar_remove(gone) != 0) {
+        gen_maint_stuck("remove", gone, NULL);  stuck = true;
+      }
+    }
+  } else {
+    /*  Until all moves finish, canonical names still hold originals.  */
+    bool moved = gen_maint_moves_done(&j);
+    for (i = j.count; i-- > 0;) {
+      gen_maint_rec * r = &j.rec[i];
+      if (r->kind != XPAR_MAINT_PUBLISH || !moved || !gen_exists(r->to))
+        continue;
+      if (r->flags & XPAR_MAINT_KEEP) {
+        if (!gen_exists(r->from) && xpar_rename(r->to, r->from) != 0) {
+          gen_maint_stuck("move", r->to, r->from);  stuck = true;
+        }
+      } else if (xpar_remove(r->to) != 0) {
+        gen_maint_stuck("remove", r->to, NULL);  stuck = true;
+      }
+    }
+    for (i = j.count; !stuck && i-- > 0;) {
+      gen_maint_rec * r = &j.rec[i];
+      if (r->kind != XPAR_MAINT_MOVE || !gen_exists(r->to)) continue;
+      if (gen_exists(r->from)) {
+        xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': '%s' exists.\n",
+                     r->to, r->from);
+        stuck = true;  continue;
+      }
+      if (xpar_rename(r->to, r->from) != 0) {
+        gen_maint_stuck("restore", r->to, r->from);  stuck = true;
+      }
+    }
+    /*  Discard stages last so failed rollbacks remain recognizable.  */
+    for (i = 0; !stuck && i < j.count; i++) {
+      gen_maint_rec * r = &j.rec[i];
+      if (r->kind != XPAR_MAINT_PUBLISH || (r->flags & XPAR_MAINT_KEEP))
+        continue;
+      if (gen_exists(r->from) && xpar_remove(r->from) != 0) {
+        gen_maint_stuck("remove", r->from, NULL);  stuck = true;
+      }
+    }
+  }
+  if (xpar_fsync_dir(path) != 0)
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync maintenance "
+                 "directory: %s\n", xpar_strerror(xpar_errno()));
+  if (stuck) {
+    xpar_fprintf(xpar_stderr, "xpar: kept journal '%s' for retry.\n", path);
+    gen_maint_free(&j);
+    return XPAR_EXIT_IO;
+  }
+  if (!xpar_journal_drop(path)) { gen_maint_free(&j);  return XPAR_EXIT_IO; }
+  gen_maint_free(&j);
+  return XPAR_EXIT_OK;
+}
+
+char * xpar_maint_pending(const char * arg, const char ** op) {
+  char * cand[2];
+  char * found = NULL;
+  u32 n = 0, i;
+  sz al = xpar_strlen(arg);
+  xpar_dir * d = xpar_opendir(arg);
+  if (d) {
+    const xpar_dirent * e;
+    while (!found && (e = xpar_readdir(d)) != NULL) {
+      char * p;
+      if (e->is_dir || !xpar_path_ends_with(e->name, XPAR_MAINT_EXT)) continue;
+      p = xpar_path_join(arg, e->name);
+      if (gen_maint_describe(p, op)) found = p;  else xpar_free(p);
+    }
+    xpar_closedir(d);
+    return found;
+  }
+  xpar_asprintf(&cand[n++], "%s" XPAR_MAINT_EXT, arg);
+  if (al > XPAR_EXT_LEN && !xpar_strcmp(arg + al - XPAR_EXT_LEN, XPAR_EXT)) {
+    char * stem = xpar_strndup(arg, al - XPAR_EXT_LEN);
+    xpar_asprintf(&cand[n++], "%s" XPAR_MAINT_EXT, stem);
+    xpar_free(stem);
+  }
+  for (i = 0; i < n; i++)
+    if (!found && gen_maint_describe(cand[i], op)) found = cand[i];
+    else xpar_free(cand[i]);
+  return found;
+}
+
 /*  The cache is regenerable, so failure to publish it does not invalidate
     an already durable set. It is nevertheless staged before encoding so
     the dedup index does not remain resident alongside the codec plan.  */
@@ -2320,6 +2673,27 @@ static bool gen_chain_data_names(const xpar_chain * c, const char * path) {
   return false;
 }
 
+/*  Record superseded bare data volumes for removal after commit.  */
+static void gen_maint_superseded(gen_maint * j, const xpar_chain * c,
+                                 char * const * final_data, u32 data_n) {
+  u32 g, k, d;
+  for (g = 0; g < c->gen_count; g++) {
+    xpar_layt l;
+    if (!c->gen[g].layt_body ||
+        xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, &l) !=
+          XPAR_OK) continue;
+    for (k = 0; k < l.count; k++) if (l.vol[k].kind == XPAR_VOL_DATA) {
+      char * old = xpar_path_join(c->dir, l.vol[k].name);
+      for (d = 0; d < data_n; d++)
+        if (!xpar_strcmp(old, final_data[d])) break;
+      if (d == data_n && gen_exists(old))
+        gen_maint_add(j, XPAR_MAINT_DISCARD, old, NULL, 0);
+      xpar_free(old);
+    }
+    xpar_layt_free(&l);
+  }
+}
+
 /*  Consolidation rollback state.  */
 typedef struct {
   const xpar_chain * c;
@@ -2329,6 +2703,7 @@ typedef struct {
   char ** final_data;
   char * final_base;
   u32 vol_count, data_n;
+  gen_maint j;
 } gen_consol_tx;
 
 static void gen_commit_consolidation(const xpar_chain * c,
@@ -2343,6 +2718,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   char ** stage_label = NULL, ** final_label = NULL;
   bool * published, * data_published = NULL, * data_moved = NULL;
   bool * label_published = NULL;
+  gen_maint j;
   u32 ns, nf, data_n = 0, i, moved = 0;
   int saved = 0;
 
@@ -2422,6 +2798,35 @@ static void gen_commit_consolidation(const xpar_chain * c,
       FATAL("Cannot choose a rollback name for '%s'.", final_data[i]);
   }
 
+  /*  Journal the transaction before its first move.  */
+  xpar_memset(&j, 0, sizeof j);
+  j.op = XPAR_MAINT_CONSOL;
+  for (i = 0; i < c->vol_count; i++)
+    gen_maint_add(&j, XPAR_MAINT_MOVE, c->vol[i].path, backup[i], 0);
+  for (i = 0; i < data_n; i++) if (data_backup[i])
+    gen_maint_add(&j, XPAR_MAINT_MOVE, final_data[i], data_backup[i], 0);
+  for (i = 0; i < nf; i++) {
+    u32 k = i + 1 < nf ? i + 1 : 0;
+    if (k == 0) for (u32 d = 0; d < data_n; d++) {
+      gen_maint_add(&j, XPAR_MAINT_PUBLISH, stage_data[d], final_data[d], 0);
+      if (o->labels)
+        gen_maint_add(&j, XPAR_MAINT_PUBLISH, stage_label[d], final_label[d],
+                      0);
+    }
+    gen_maint_add(&j, XPAR_MAINT_PUBLISH, stage[k].name, final[k].name, 0);
+  }
+  gen_maint_superseded(&j, c, final_data, data_n);
+  if (!gen_maint_write(&j, final_base)) {
+    gen_maint_free(&j);
+    for (i = 0; i < ns; i++) xpar_remove(stage[i].name);
+    for (i = 0; i < data_n; i++) {
+      xpar_remove(stage_data[i]);
+      if (o->labels) xpar_remove(stage_label[i]);
+    }
+    FATAL_IO("Cannot journal consolidation of '%s'; no files moved.",
+             final_base);
+  }
+
   for (i = 0; i < c->vol_count; i++) {
     if (xpar_rename(c->vol[i].path, backup[i]) != 0) {
       saved = xpar_errno();  break;
@@ -2472,6 +2877,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   tx->data_backup = data_backup;  tx->final_data = final_data;
   tx->data_n = data_n;
   tx->final_base = xpar_strdup(final_base);
+  tx->j = j;  xpar_memset(&j, 0, sizeof j);
   backup = NULL;  data_backup = NULL;  final_data = NULL;
   goto done;
 
@@ -2503,6 +2909,7 @@ rollback:
   if (xpar_fsync_dir(final_base) != 0)
     xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
                  "after rollback: %s.\n", xpar_strerror(xpar_errno()));
+  gen_maint_done(&j);
   FATAL_IO("Cannot publish the consolidated set: %s.",
            xpar_strerror(saved));
 
@@ -2562,6 +2969,7 @@ static void gen_consol_finish(gen_consol_tx * tx) {
   for (i = 0; i < tx->data_n; i++) xpar_free(tx->final_data[i]);
   xpar_free(tx->backup);  xpar_free(tx->data_backup);
   xpar_free(tx->final_data);  xpar_free(tx->final_base);
+  gen_maint_done(&tx->j);
   xpar_memset(tx, 0, sizeof *tx);
 }
 
@@ -4903,6 +5311,7 @@ static void gen_prune_discard_stages(gen_prune_tx * t) {
 static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
   u32 i, j;
   int saved = 0;
+  gen_maint m;
   /*  If a crash lands between two index renames, every visible child must
       already have a visible parent. Keep index publication oldest first
       regardless of readdir order in the chain collector.  */
@@ -4935,6 +5344,29 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
       gen_prune_discard_stages(t);
       FATAL("Cannot choose a rollback name for '%s'.", t->f[i].old_path);
     }
+  }
+  /*  Journal the transaction before its first move.  */
+  xpar_memset(&m, 0, sizeof m);
+  m.op = XPAR_MAINT_PRUNE;
+  for (i = 0; i < t->count; i++) if (t->f[i].backup)
+    gen_maint_add(&m, XPAR_MAINT_MOVE, t->f[i].old_path, t->f[i].backup, 0);
+  for (j = 0; j < 2; j++)
+    for (i = 0; i < t->count; i++) if (t->f[i].new_path) {
+      if ((j == 0 && t->f[i].index) || (j == 1 && !t->f[i].index)) continue;
+      /*  A rotated volume is also its rollback stage.  */
+      if (t->f[i].move) {
+        if (t->f[i].backup)
+          gen_maint_add(&m, XPAR_MAINT_PUBLISH, t->f[i].backup,
+                        t->f[i].new_path, XPAR_MAINT_KEEP);
+      } else if (t->f[i].stage)
+        gen_maint_add(&m, XPAR_MAINT_PUBLISH, t->f[i].stage,
+                      t->f[i].new_path, 0);
+    }
+  if (!gen_maint_write(&m, sync_path)) {
+    gen_maint_free(&m);
+    gen_prune_discard_stages(t);
+    FATAL_IO("Cannot journal pruning of '%s'; no files moved.",
+             sync_path);
   }
   for (i = 0; i < t->count; i++) if (t->f[i].backup)
     if (xpar_rename(t->f[i].old_path, t->f[i].backup) != 0) {
@@ -4969,6 +5401,7 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
     xpar_fprintf(xpar_stderr, "xpar: cannot sync the directory after "
                  "removing rollback volumes: %s\n",
                  xpar_strerror(xpar_errno()));
+  gen_maint_done(&m);
   return;
 
 rollback:
@@ -4994,6 +5427,7 @@ rollback:
   if (xpar_fsync_dir(sync_path) != 0)
     xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
                  "after rollback: %s\n", xpar_strerror(xpar_errno()));
+  gen_maint_done(&m);
   FATAL_IO("Cannot publish the pruned chain: %s.", xpar_strerror(saved));
 }
 
@@ -6180,17 +6614,39 @@ int xpar_op_recover(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-/*  Replay complete, checked repair journals. Missing footers prove pass 4
-    never began; invalid records are never applied.  */
-
-
-/*  Compare directory identities for alternate path spellings.  */
 static bool gen_same_dir(const char * a, const xpar_stat_t * b) {
   xpar_stat_t sa;
   if (!b->is_dir || !(b->dev | b->ino)) return false;
   if (xpar_lstat(a, &sa) != 0 || !sa.is_dir) return false;
   if (!(sa.dev | sa.ino)) return false;
   return sa.dev == b->dev && sa.ino == b->ino;
+}
+
+/*  Match a journal path to generation G's volume in the set directory.  */
+static const char * gen_undo_volume(const xpar_chain * c, u32 g,
+                                    const char * path, u32 plen,
+                                    const xpar_stat_t * setdir) {
+  xpar_layt l;
+  const char * base;
+  char * head;
+  u32 i, cut;
+  bool named = false, here;
+  if (!c->gen[g].layt_body ||
+      xpar_layt_read(c->gen[g].layt_body, c->gen[g].layt_len, &l) != XPAR_OK)
+    return NULL;
+  for (base = path + plen; base > path && !xpar_path_sep(base[-1]); base--) {}
+  cut = (u32) (base - path);
+  for (i = 0; i < l.count && !named; i++)
+    if (l.vol[i].name && xpar_strlen(l.vol[i].name) == (sz) (plen - cut) &&
+        !xpar_memcmp(l.vol[i].name, base, (sz) (plen - cut))) named = true;
+  xpar_layt_free(&l);
+  if (!named) return NULL;
+  while (cut && xpar_path_sep(path[cut - 1])) cut--;
+  head = cut ? xpar_strndup(path, cut)
+             : xpar_strdup(plen && xpar_path_sep(path[0]) ? "/" : ".");
+  here = gen_same_dir(head, setdir);
+  xpar_free(head);
+  return here ? base : NULL;
 }
 
 /*  Resolve a journal path to an entry in setdir, or return -1.  */
@@ -6374,9 +6830,7 @@ static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
   { const char * d = chain->dir && *chain->dir ? chain->dir : ".";
     if (xpar_lstat(d, &setdir) != 0) xpar_memset(&setdir, 0, sizeof setdir); }
 
-  /*  Validate every record before replaying any of them. The whole-file CRC
-      detects a torn write, but it does not make attacker-controlled lengths
-      or paths safe to use.  */
+  /*  Validate all record bounds and paths before replay.  */
   {
     u64 payload = 0;
     at = XPAR_UNDO_HDR;
@@ -6412,13 +6866,13 @@ static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
       if (payload + len < payload)
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
-      if (xpar_has_nul(rec + XPAR_UNDO_REC, plen) ||
-          gen_undo_entry(chain, &manifest, (const char *) rec + XPAR_UNDO_REC,
-                         plen, &setdir) < 0)
-        FATAL_FORMAT("Journal record %" PRIu64
-                     " names '%.*s' outside this set directory.",
-                     i, (int) plen,
-                     (const char *) rec + XPAR_UNDO_REC);
+      { const char * rp = (const char *) rec + XPAR_UNDO_REC;
+        if (xpar_has_nul(rec + XPAR_UNDO_REC, plen) ||
+            (gen_undo_entry(chain, &manifest, rp, plen, &setdir) < 0 &&
+             !gen_undo_volume(chain, generation, rp, plen, &setdir)))
+          FATAL_FORMAT("Journal record %" PRIu64
+                       " names '%.*s' outside this set directory.",
+                       i, (int) plen, rp); }
       old = rec + XPAR_UNDO_REC + plen;
       if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
           xpar_crc32c(0, old, (sz) len) != xpar_rd32(rec + 32))
@@ -6457,13 +6911,18 @@ static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
 
     { i64 ix = gen_undo_entry(chain, &manifest, rp, plen, &setdir);
       const char * d = chain->dir && *chain->dir ? chain->dir : ".";
-      if (ix < 0) { skipped++;  continue; }
-      /*  Rebuild paths from the selected set directory.  */
-      full = xpar_path_join_n(d, manifest.entry[ix].name,
-                              manifest.entry[ix].name_len); }
+      if (ix >= 0)
+        full = xpar_path_join_n(d, manifest.entry[ix].name,
+                                manifest.entry[ix].name_len);
+      else {
+        const char * vol = gen_undo_volume(chain, generation, rp, plen,
+                                           &setdir);
+        /*  VOL is not NUL-terminated.  */
+        if (!vol) { skipped++;  continue; }
+        full = xpar_path_join_n(d, vol, plen - (u32) (vol - rp));
+      } }
     if (rflags & XPAR_UNDO_CREATED) {
-      /*  The file did not exist before the repair, so putting it back
-          means removing it rather than truncating it to zero.  */
+      /*  Undo newly created files by removing them.  */
       if (xpar_remove(full) != 0) {
         xpar_fprintf(xpar_stderr, "xpar: cannot remove '%s': %s\n", full,
                      xpar_strerror(xpar_errno()));

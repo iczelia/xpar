@@ -2732,4 +2732,122 @@ else
 fi
 cdto ..
 
+step "an interrupted consolidate or prune heals from its maintenance journal"
+
+#  Maintenance journals recover the window before a new index is published.
+mpreload=
+fault_shim "$work/faultio-maint.so" && mpreload=$fault_pre
+
+if test -z "$mpreload"; then
+  note "the fault shim cannot be preloaded here; skipping the crash walk"
+else
+  crash_at() {   # crash_at <rename ordinal> <cmd>...
+    _k=$1;  shift
+    status=0
+    env XPAR_FI_PATH="$work" XPAR_FI_CRASH_RENAME="$_k" \
+        LD_PRELOAD="$mpreload" "$@" > "$log" 2>&1 || status=$?
+  }
+  residue() { ls *.xparmaint *.xpar-old-[0-9]* *.xpar-prune-old-[0-9]* \
+                 2> /dev/null | nlines; }
+  tree_matches() {
+    rm -rf out
+    run 0 "$XPAR" extract --to=out s.xpa
+    for _f in $files; do same "out/$_f" "keep/`basename $_f`"; done
+    rm -rf out
+  }
+
+  #  Verify recovery from a missing canonical set.
+  heals() {   # heals <what>
+    run 1 "$XPAR" verify s.xpa
+    grep -qi 'interrupted' "$log" ||
+      bad "$1: verify did not report the interrupted operation"
+    grep -q 'xparmaint' "$log" || bad "$1: verify did not name the journal"
+    grep -q 'repair' "$log" || bad "$1: verify did not point at repair"
+    run 0 "$XPAR" repair --in-place s.xpa
+    run 0 "$XPAR" verify s.xpa
+    tree_matches
+    equal "$1: no journal or rollback name is left" "`residue`" 0
+  }
+
+  mkdir -p maintc && cdto maintc
+  files="t/a.bin t/b.bin t/c.bin"
+  mkdir tmpl && cdto tmpl
+  mkdir t
+  mkfile t/a.bin 120000 71
+  mkfile t/b.bin 50000 72
+  run 0 "$XPAR" create -R --layout=split -r 20% -o s t
+  mkfile t/c.bin 40000 73
+  run 0 "$XPAR" add -r 20% s.xpa -R t
+  mkdir keep && cp t/a.bin t/b.bin t/c.bin keep/
+  cdto ..
+
+  #  Scan crash points inside the missing-set window.
+  hits=0
+  k=1
+  while test "$hits" -lt 4 && test "$k" -le 30; do
+    rm -rf run && cp -R tmpl run && cdto run
+    crash_at "$k" "$XPAR" consolidate --replace s.xpa
+    if test -f s.xparmaint && test ! -f s.xpa; then
+      hits=`expr $hits + 1`
+      heals "consolidate crashed at rename $k"
+      #  Retry the interrupted operation.
+      run_any "0 4" "$XPAR" consolidate --replace s.xpa
+      run 0 "$XPAR" verify s.xpa
+    elif test -f s.xparmaint; then
+      #  The journal exists before any rename.
+      run 0 "$XPAR" repair --in-place s.xpa
+      run 0 "$XPAR" verify s.xpa
+      equal "rename $k: no journal is left" "`residue`" 0
+    fi
+    cdto ..
+    k=`expr $k + 1`
+  done
+  if test "$hits" -lt 4; then
+    bad "only $hits consolidate crashes landed in the rename window"
+  else ok; fi
+  cdto ..
+
+  #  Repeat the crash walk for prune.
+  mkdir -p maintp && cdto maintp
+  files="a.bin b.bin"
+  mkdir tmpl && cdto tmpl
+  mkfile a.bin 100000 74
+  mkfile b.bin 40000 75
+  run 0 "$XPAR" create --layout=split -r 20% -o s a.bin b.bin
+  mkfile a.bin 100000 76
+  mkfile b.bin 40000 77
+  run 0 "$XPAR" add -r 20% s.xpa a.bin b.bin
+  mkfile a.bin 100000 78
+  mkfile b.bin 40000 79
+  run 0 "$XPAR" add -r 20% s.xpa a.bin b.bin
+  mkdir keep && cp a.bin b.bin keep/
+  cdto ..
+
+  hits=0
+  k=1
+  while test "$hits" -lt 4 && test "$k" -le 30; do
+    rm -rf run && cp -R tmpl run && cdto run
+    crash_at "$k" "$XPAR" prune --before=1 s.xpa
+    if test -f s.xparmaint && test ! -f s.xpa; then
+      hits=`expr $hits + 1`
+      heals "prune crashed at rename $k"
+    elif test -f s.xparmaint; then
+      run 0 "$XPAR" repair --in-place s.xpa
+      run 0 "$XPAR" verify s.xpa
+      equal "rename $k: no journal is left" "`residue`" 0
+    fi
+    cdto ..
+    k=`expr $k + 1`
+  done
+  if test "$hits" -lt 4; then
+    bad "only $hits prune crashes landed in the rename window"
+  else ok; fi
+  cdto ..
+
+  #  No set or journal remains a not-found case.
+  mkdir -p maintn && cdto maintn
+  run 3 "$XPAR" verify nothing.xpa
+  cdto ..
+fi
+
 summary

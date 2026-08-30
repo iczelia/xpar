@@ -327,3 +327,28 @@ mkfile() {   # mkfile <path> <bytes> [<seed>] [<pattern>]
   "$MKDATA" "${3:-$XPAR_TEST_SEED}" "$2" "$1" --pattern="${4:-random}" ||
     hard_error "mkdata failed for $1"
 }
+
+# Fault injection.
+
+#  Build and validate the LD_PRELOAD fault shim. Sets fault_pre.
+fault_shim() {   # fault_shim <so path>
+  fault_pre=
+  case `uname -s 2> /dev/null` in  Linux) ;;  *) return 1 ;;  esac
+  test -f "${srcdir:-.}/faultio.c" || return 1
+  ${CC:-cc} -shared -fPIC -O1 -o "$1" "${srcdir:-.}/faultio.c" -ldl \
+    > /dev/null 2>&1 || return 1
+  printf 'xxxxxxxxxxxxxxxx' > fault-probe.xpa
+  #  Sanitized binaries may need their runtime preloaded first.
+  _asan=`${CC:-cc} -print-file-name=libasan.so 2> /dev/null`
+  for _p in "$1" "$_asan:$1"; do
+    case $_p in  :*) continue ;;  esac
+    if env XPAR_FI_TRACE=1 LD_PRELOAD="$_p" "$XPAR" verify fault-probe.xpa \
+         2>&1 | grep -q '^FI '; then
+      fault_pre=$_p
+      rm -f fault-probe.xpa
+      return 0
+    fi
+  done
+  rm -f fault-probe.xpa
+  return 1
+}
