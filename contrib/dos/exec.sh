@@ -28,6 +28,31 @@ esac
 guest_dir=$(printf '%s' "$guest_dir" | sed 's|/|\\|g')
 
 mkdir -p "$DOSBOX_REQUEST_ROOT"
+server_lock=
+release_server() {
+  test -z "$server_lock" || rmdir "$server_lock" 2>/dev/null || true
+  server_lock=
+}
+if test -n "${DOSBOX_SERVER_LIST:-}"; then
+  while test -z "$server_lock"; do
+    alive=0
+    while read candidate candidate_pid; do
+      if kill -0 "$candidate_pid" 2>/dev/null; then
+        alive=`expr "$alive" + 1`
+        if mkdir "$candidate/LOCK" 2>/dev/null; then
+          DOSBOX_SERVER_DIR=$candidate
+          DOSBOX_SERVER_PID=$candidate_pid
+          server_lock=$candidate/LOCK
+          break
+        fi
+      fi
+    done < "$DOSBOX_SERVER_LIST"
+    test "$alive" -gt 0 || fail "all DOSBox-X workers exited"
+    test -n "$server_lock" || sleep 0.01
+  done
+  trap 'release_server' EXIT
+  trap 'exit 1' HUP INT TERM
+fi
 if test -n "${DOSBOX_SERVER_DIR:-}"; then
   request=$DOSBOX_SERVER_DIR
   test -f "$request/STARTED" || fail "DOSBox-X worker is not ready"
