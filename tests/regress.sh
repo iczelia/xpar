@@ -2667,19 +2667,23 @@ step "extract names the destination it could not publish"
 mkdir -p exname && cdto exname
 long=`awk 'BEGIN { s = "";  while (length(s) < 244) s = s "n";  print s }'`
 mkdir t
-mkfile "t/$long.bin" 20000 31
-mkfile t/other.bin 5000 32
-run 0 "$XPAR" create -R --layout=split -r 20% -o s t
 mkdir -p out/t
-: > "out/t/$long.bin"
-if ( : > "out/t/$long.bin.xpar-old-000" ) 2> /dev/null; then
-  rm -f "out/t/$long.bin.xpar-old-000"
-  note "this filesystem allows the longer backup name; skipping"
+if can_hold "t/$long.bin" && can_hold "out/t/$long.bin"; then
+  mkfile "t/$long.bin" 20000 31
+  mkfile t/other.bin 5000 32
+  run 0 "$XPAR" create -R --layout=split -r 20% -o s t
+  : > "out/t/$long.bin"
+  if ( : > "out/t/$long.bin.xpar-old-000" ) 2> /dev/null; then
+    rm -f "out/t/$long.bin.xpar-old-000"
+    note "this filesystem allows the longer backup name; skipping"
+  else
+    run 5 "$XPAR" extract -f --to=out s.xpa
+    grep -q "$long" "$log" || bad "the refusal did not name the file"
+    grep -q "1 entry, 5000 bytes" "$log" ||
+      bad "an entry that never reached its final name was counted"
+  fi
 else
-  run 5 "$XPAR" extract -f --to=out s.xpa
-  grep -q "$long" "$log" || bad "the refusal did not name the file"
-  grep -q "1 entry, 5000 bytes" "$log" ||
-    bad "an entry that never reached its final name was counted"
+  note "248-byte components unsupported at this test path; skipping"
 fi
 cdto ..
 
