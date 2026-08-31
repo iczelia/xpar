@@ -15,6 +15,7 @@
 /*  Run a program with arguments read from a file and preserve its status.  */
 
 #include <fcntl.h>
+#include <dpmi.h>
 #include <process.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +75,21 @@ static char ** read_args(const char * path, const char * program,
   return out;
 }
 
+static int serve(const char * ready, const char * stop, const char * command) {
+  const char * shell = getenv("COMSPEC");
+  if (!shell || !*shell) shell = "COMMAND.COM";
+  while (access(stop, F_OK) != 0) {
+    if (access(ready, F_OK) == 0) {
+      spawnlp(P_WAIT, shell, shell, "/C", command, NULL);
+      unlink(ready);
+    } else {
+      __dpmi_yield();
+      usleep(10000);
+    }
+  }
+  return 0;
+}
+
 int main(int argc, char ** argv) {
   const char * status_path = NULL;
   const char * args_path = NULL;
@@ -83,6 +99,8 @@ int main(int argc, char ** argv) {
   char * storage = NULL;
   char ** child;
   int i = 1, status;
+  if (argc == 5 && !strcmp(argv[1], "--server"))
+    return serve(argv[2], argv[3], argv[4]);
   while (i < argc) {
     const char ** value;
     if      (!strcmp(argv[i], "--status")) value = &status_path;
@@ -95,6 +113,7 @@ int main(int argc, char ** argv) {
   }
   if (i >= argc) {
     fprintf(stderr,
+            "usage: run2 --server READY STOP COMMAND\n"
             "usage: run2 [--status FILE] [--stdout FILE] [--stderr FILE] "
             "[--args FILE] PROGRAM [ARGUMENT...]\n");
     return 2;
