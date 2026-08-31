@@ -255,25 +255,37 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
 # Test matrix.
 
 n=`rounds_for 5`
+cell=64K
+large_bytes=8388608; mid_bytes=4194304; ragged_bytes=2686976
+z_large=1M; z_mid=512K; z_small=256K; z_narrow=128K
+if xpar_config_defined XPAR_DOS; then
+  cell=4K
+  large_bytes=524288; mid_bytes=262144; ragged_bytes=167936
+  z_large=64K; z_mid=32K; z_small=16K; z_narrow=8K
+fi
 
-family_cells  "matrix, GF(2^8)"  8388608 "$n" \
-              -s 1M -r 4 --codec=matrix --field=8
-family_cells  "fft, GF(2^8)"     4194304 "$n" \
-              -s 512K -r 3 --codec=fft --field=8
-family_bursts "matrix, GF(2^8)"  8388608 "$n" \
-              -s 1M -r 4 --codec=matrix --field=8
-family_bursts "fft, GF(2^16)"    4194304 "$n" \
-              -s 512K -r 3 --codec=fft --field=16
+family_cells  "matrix, GF(2^8)" "$large_bytes" "$n" \
+              -s "$z_large" --cell="$cell" -r 4 --codec=matrix --field=8
+family_cells  "fft, GF(2^8)" "$mid_bytes" "$n" \
+              -s "$z_mid" --cell="$cell" -r 3 --codec=fft --field=8
+family_bursts "matrix, GF(2^8)" "$large_bytes" "$n" \
+              -s "$z_large" --cell="$cell" -r 4 --codec=matrix --field=8
+family_bursts "fft, GF(2^16)" "$mid_bytes" "$n" \
+              -s "$z_mid" --cell="$cell" -r 3 --codec=fft --field=16
 
-family_recovery "matrix, GF(2^8)" 4194304 -s 512K -r 4 --codec=matrix
+family_recovery "matrix, GF(2^8)" "$mid_bytes" \
+                -s "$z_mid" --cell="$cell" -r 4 --codec=matrix
 
 if test "$XPAR_TEST_LEVEL" != quick; then
-  family_cells  "matrix, GF(2^16), narrow cells" 4194304 "$n" \
-                -s 128K -r 5 --codec=matrix --field=16
-  family_bursts "matrix, GF(2^16), ragged tail"  2686976 "$n" \
-                -s 256K -r 5 --codec=matrix --field=16
-  family_recovery "fft, GF(2^8), ladder volumes" 8388608 \
-                  -s 1M -r 6 --codec=fft --volumes=ladder
+  family_cells  "matrix, GF(2^16), narrow cells" "$mid_bytes" "$n" \
+                -s "$z_narrow" --cell="$cell" -r 5 \
+                --codec=matrix --field=16
+  family_bursts "matrix, GF(2^16), ragged tail" "$ragged_bytes" "$n" \
+                -s "$z_small" --cell="$cell" -r 5 \
+                --codec=matrix --field=16
+  family_recovery "fft, GF(2^8), ladder volumes" "$large_bytes" \
+                  -s "$z_large" --cell="$cell" -r 6 \
+                  --codec=fft --volumes=ladder
 fi
 
 summary

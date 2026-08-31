@@ -5,6 +5,20 @@ set -e
 
 prog=$(basename "$0")
 fail() { echo "$prog: $*" >&2; exit 99; }
+show_dosbox_log() {
+  test -f "$1" || return
+  ioctl=`grep -c 'IOCTL Query 11:71' "$1" 2>/dev/null || true`
+  cache=`grep -c 'DIRCACHE: FindFirst/Next: All slots full' "$1" \
+         2>/dev/null || true`
+  times=`grep -c 'DOS:57:Unsupported subfunction' "$1" 2>/dev/null || true`
+  test "${ioctl:-0}" -eq 0 || echo "dosbox-x: $ioctl ignored IOCTL probes" >&2
+  test "${cache:-0}" -eq 0 || echo "dosbox-x: $cache directory-cache resets" >&2
+  test "${times:-0}" -eq 0 || echo "dosbox-x: $times unsupported time probes" >&2
+  awk '!/IOCTL Query 11:71/ &&
+       !/DIRCACHE: FindFirst\/Next: All slots full/ &&
+       !/DOS:57:Unsupported subfunction/' "$1" |
+    tail -80 | sed 's/^/dosbox-x: /' >&2
+}
 
 guest=${1:?usage: exec.sh PROGRAM.EXE [ARGUMENT...]}
 shift
@@ -47,7 +61,12 @@ if test -n "${DOSBOX_SERVER_LIST:-}"; then
         fi
       fi
     done < "$DOSBOX_SERVER_LIST"
-    test "$alive" -gt 0 || fail "all DOSBox-X workers exited"
+    if test "$alive" -eq 0; then
+      while read candidate candidate_pid; do
+        show_dosbox_log "$candidate/dosbox.log"
+      done < "$DOSBOX_SERVER_LIST"
+      fail "all DOSBox-X workers exited"
+    fi
     test -n "$server_lock" || sleep 0.01
   done
   trap 'release_server' EXIT
@@ -123,7 +142,7 @@ if test -n "${DOSBOX_SERVER_DIR:-}"; then
   : > "$request/READY"
   while test -f "$request/READY"; do
     if ! kill -0 "$DOSBOX_SERVER_PID" 2>/dev/null; then
-      sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
+      show_dosbox_log "$request/dosbox.log"
       fail "DOSBox-X worker exited"
     fi
     sleep 0.01
@@ -146,13 +165,13 @@ EOF
   SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy} \
     dosbox-x -conf "$request/exec.conf" -exit \
              > "$request/dosbox.log" 2>&1 || {
-      sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
+      show_dosbox_log "$request/dosbox.log"
       fail "dosbox-x exited non-zero"
     }
 fi
 
 test -f "$request/STATUS.TXT" || {
-  sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
+  show_dosbox_log "$request/dosbox.log"
   fail "$guest wrote no status"
 }
 test ! -f "$request/STDOUT.BIN" || cat "$request/STDOUT.BIN"

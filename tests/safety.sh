@@ -18,14 +18,26 @@
 
 . "${srcdir:-.}/lib.sh" 2> /dev/null || . "`dirname "$0"`/lib.sh"
 
+large_bytes=8388608; mid_bytes=4194304
+small_bytes=2097152; one_bytes=1048576
+z_large=1M; z_mid=512K; z_small=256K; z_narrow=128K
+cell=64K; shape_end=1900000; shape_extra=4096
+if xpar_config_defined XPAR_DOS; then
+  large_bytes=524288; mid_bytes=262144
+  small_bytes=131072; one_bytes=65536
+  z_large=64K; z_mid=32K; z_small=16K; z_narrow=8K
+  cell=4K; shape_end=118750; shape_extra=256
+fi
+
 # A forgery the stored checksums cannot see.
 
 step "a CRC-preserving forgery is not mistaken for intact data"
 
 mkdir forge;  cdto forge
-mkfile data.bin 2097152
+mkfile data.bin "$small_bytes"
 cp data.bin pristine.bin
-run 0 "$XPAR" create -s 1M -r 2 --dedup=none --align=none -o set data.bin
+run 0 "$XPAR" create -s "$z_large" --cell="$cell" -r 2 \
+    --dedup=none --align=none -o set data.bin
 read_geometry set.xpa
 note "Z=$Z S=$S Y=$Y K=$K R=$R"
 
@@ -77,10 +89,10 @@ note "the strong tag drove the write back (status $status)"
 
 # Without slice tags nothing can localise a forgery, so nothing may claim
 # to have repaired it.
-mkfile plain.bin 2097152
+mkfile plain.bin "$small_bytes"
 cp plain.bin plain.orig
-run 0 "$XPAR" create -s 1M -r 2 --dedup=none --align=none \
-    --slice-tag=none -o notag plain.bin
+run 0 "$XPAR" create -s "$z_large" --cell="$cell" -r 2 \
+    --dedup=none --align=none --slice-tag=none -o notag plain.bin
 "$DAMAGE" plain.bin -Z "$Z" -Y "$Y" -k forge cell=0,3 ||
   hard_error "forge failed"
 run 2 "$XPAR" verify notag.xpa
@@ -95,10 +107,11 @@ step "an alias-local difference is still reported as repairable"
 
 mkdir alias;  cdto alias
 mkdir tree
-mkfile tree/a.bin 1048576
+mkfile tree/a.bin "$one_bytes"
 cp tree/a.bin tree/b.bin
 cp -R tree tree.orig
-run 0 "$XPAR" create -R --dedup=file -s 256K -r 3 -o set tree
+run 0 "$XPAR" create -R --dedup=file -s "$z_small" --cell="$cell" \
+    -r 3 -o set tree
 damage tree/b.bin "rand=100,64"
 "$XPAR" verify --json set.xpa > v.json 2> "$log"
 equal "entries blamed on an alias" \
@@ -115,10 +128,11 @@ cd ..
 step "damaged metadata is never trusted"
 
 mkdir meta;  cdto meta
-mkfile data.bin 8388608
+mkfile data.bin "$large_bytes"
 cp data.bin pristine.bin
 # Small slices make checksum tables large enough to damage directly.
-run 0 "$XPAR" create -s 256K -r 4 --dedup=none -o set data.bin
+run 0 "$XPAR" create -s "$z_small" --cell="$cell" -r 4 \
+    --dedup=none -o set data.bin
 cp set.xpa index.orig
 size=`wc -c < index.orig | tr -d ' '`
 note "index volume is $size bytes"
@@ -160,9 +174,10 @@ cd ..
 step "damaged recovery is not decoded from"
 
 mkdir rec;  cdto rec
-mkfile data.bin 4194304
+mkfile data.bin "$mid_bytes"
 cp data.bin pristine.bin
-run 0 "$XPAR" create -s 512K -r 4 --dedup=none --volumes=equal -o set data.bin
+run 0 "$XPAR" create -s "$z_mid" --cell="$cell" -r 4 \
+    --dedup=none --volumes=equal -o set data.bin
 read_geometry set.xpa
 vols=`ls set.v*.xpa 2> /dev/null`
 if test -z "$vols"; then
@@ -201,25 +216,26 @@ cd ..
 step "a file of the wrong length is never called intact"
 
 mkdir shape;  cdto shape
-mkfile data.bin 2097152
+mkfile data.bin "$small_bytes"
 cp data.bin pristine.bin
-run 0 "$XPAR" create -s 256K -r 6 --dedup=none -o set data.bin
+run 0 "$XPAR" create -s "$z_small" --cell="$cell" -r 6 \
+    --dedup=none -o set data.bin
 
-"$DAMAGE" data.bin "truncate=1900000" || hard_error "truncate failed"
+"$DAMAGE" data.bin "truncate=$shape_end" || hard_error "truncate failed"
 run_any "1 2" "$XPAR" verify set.xpa
 attempt "$XPAR" repair --in-place set.xpa
 never_false_success "$status" data.bin pristine.bin "repair of a truncation"
 if test "$status" -eq 0; then same data.bin pristine.bin; fi
 
 cp pristine.bin data.bin
-"$DAMAGE" data.bin "extend=4096" || hard_error "extend failed"
+"$DAMAGE" data.bin "extend=$shape_extra" || hard_error "extend failed"
 run_any "1 2" "$XPAR" verify set.xpa
 attempt "$XPAR" repair --in-place set.xpa
 never_false_success "$status" data.bin pristine.bin "repair of an extension"
 
 # Same-length replacement exceeds this set's recovery capacity.
 cp pristine.bin data.bin
-mkfile other.bin 2097152 999999
+mkfile other.bin "$small_bytes" 999999
 cp other.bin data.bin
 attempt "$XPAR" verify set.xpa
 if test "$status" -eq 0; then bad "a wholly replaced file verified clean"
@@ -233,9 +249,10 @@ cd ..
 step "a dry run changes no bytes"
 
 mkdir dry;  cdto dry
-mkfile data.bin 1048576
+mkfile data.bin "$one_bytes"
 cp data.bin pristine.bin
-run 0 "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin
+run 0 "$XPAR" create -s "$z_narrow" --cell="$cell" -r 4 \
+    --dedup=none -o set data.bin
 damage data.bin "rand=4096,512"
 cp data.bin damaged.bin
 run_any "0 1" "$XPAR" repair --dry-run set.xpa
@@ -250,11 +267,13 @@ step "a volume from another set is refused"
 
 mkdir cross;  cdto cross
 mkdir a b
-( cd a && mkfile data.bin 1048576 1111 )
-( cd b && mkfile data.bin 1048576 2222 )
-( cd a && "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin ) \
+( cd a && mkfile data.bin "$one_bytes" 1111 )
+( cd b && mkfile data.bin "$one_bytes" 2222 )
+( cd a && "$XPAR" create -s "$z_narrow" --cell="$cell" -r 4 \
+       --dedup=none -o set data.bin ) \
   > "$log" 2>&1 || hard_error "create failed"
-( cd b && "$XPAR" create -s 128K -r 4 --dedup=none -o set data.bin ) \
+( cd b && "$XPAR" create -s "$z_narrow" --cell="$cell" -r 4 \
+       --dedup=none -o set data.bin ) \
   > "$log" 2>&1 || hard_error "create failed"
 cp a/data.bin a/pristine.bin
 avol=`cd a && ls set.v*.xpa 2> /dev/null | head -1`

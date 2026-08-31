@@ -95,7 +95,11 @@ if test "$mode" = pre; then
     # The launcher translates arguments too, so DOS sees only recorded names.
     short_actual "$short"
     if test -e "$long"; then
-      rm -f "$actual"
+      # A four-character base such as "base" differs from its DOS name only
+      # by case.  short_actual then finds the long name itself.
+      actual_name=${actual#./}
+      long_name=${long#./}
+      test "$actual_name" = "$long_name" || rm -f "$actual"
       mv "$long" "$short"
       printf '%s\t%s\n' "$short" "$long" >> "$active"
     else

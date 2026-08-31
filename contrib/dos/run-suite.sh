@@ -111,7 +111,7 @@ while read server pid; do
   n=0
   while test ! -f "$server/STARTED"; do
     if ! kill -0 "$pid" 2>/dev/null; then
-      sed 's/^/dosbox-x: /' "$server/dosbox.log" >&2
+      tail -80 "$server/dosbox.log" | sed 's/^/dosbox-x: /' >&2
       fail "DOSBox-X worker exited during startup"
     fi
     n=`expr "$n" + 1`
@@ -120,7 +120,7 @@ while read server pid; do
   done
 done < "$server_list"
 
-shell_tests=$(make -s -C "$native_build" print-shell-tests)
+shell_tests=${DOSBOX_TESTS:-`make -s -C "$native_build" print-shell-tests`}
 test -n "$shell_tests" || fail "the shell test list is empty"
 
 echo "$prog: running the shell suite through $DOSBOX_JOBS DOSBox-X workers"

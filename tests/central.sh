@@ -161,32 +161,44 @@ one_config() {
   cd ..
 }
 
+cell=64K
+probe_bytes=4194304; large_bytes=8388608; mid_bytes=4194304
+ragged_bytes=2686976; one_bytes=2097152
+z_large=1M; z_mid=512K; z_small=256K; z_narrow=128K; z_one=64K
+if xpar_config_defined XPAR_DOS; then
+  cell=4K
+  probe_bytes=262144; large_bytes=524288; mid_bytes=262144
+  ragged_bytes=167936; one_bytes=131072
+  z_large=64K; z_mid=32K; z_small=16K; z_narrow=8K; z_one=4K
+fi
+
 step "the tool reports a cell geometry at all"
-mkfile probe.bin 4194304
-run 0 "$XPAR" create -s 1M -r 2 --dedup=none -o probe probe.bin
+mkfile probe.bin "$probe_bytes"
+run 0 "$XPAR" create -s "$z_large" --cell="$cell" -r 2 \
+    --dedup=none -o probe probe.bin
 "$XPAR" info probe.xpa > info.txt 2> "$log"
 if grep -q 'erasure budget is .* per column' info.txt ||
    grep -q 'the erasure unit is' info.txt; then ok
 else bad "info does not explain the per-column erasure budget"; fi
 
-one_config "matrix, GF(2^8), Z = 1 MiB"    8388608 \
-           -s 1M -r 4 --codec=matrix --field=8
-one_config "fft, GF(2^8), Z = 512 KiB"     4194304 \
-           -s 512K -r 3 --codec=fft --field=8
-one_config "matrix, GF(2^16), ragged tail" 2686976 \
-           -s 256K -r 5 --codec=matrix --field=16
-one_config "fft, GF(2^16), Z = 1 MiB"      8388608 \
-           -s 1M -r 2 --codec=fft --field=16
+one_config "matrix, GF(2^8)" "$large_bytes" \
+           -s "$z_large" --cell="$cell" -r 4 --codec=matrix --field=8
+one_config "fft, GF(2^8)" "$mid_bytes" \
+           -s "$z_mid" --cell="$cell" -r 3 --codec=fft --field=8
+one_config "matrix, GF(2^16), ragged tail" "$ragged_bytes" \
+           -s "$z_small" --cell="$cell" -r 5 --codec=matrix --field=16
+one_config "fft, GF(2^16)" "$large_bytes" \
+           -s "$z_large" --cell="$cell" -r 2 --codec=fft --field=16
 
 #  Y = Z leaves no column structure.
-one_config "matrix, GF(2^8), one cell per slice" 2097152 \
-           -s 64K --cell=64K -r 3 --codec=matrix --field=8
+one_config "matrix, GF(2^8), one cell per slice" "$one_bytes" \
+           -s "$z_one" --cell="$z_one" -r 3 --codec=matrix --field=8
 
 if test "$XPAR_TEST_LEVEL" != quick; then
-  one_config "matrix, GF(2^8), narrow cells" 4194304 \
-             -s 128K -r 6 --codec=matrix --field=8
-  one_config "fft, GF(2^8), deep recovery"   8388608 \
-             -s 1M -r 7 --codec=fft --field=8
+  one_config "matrix, GF(2^8), narrow cells" "$mid_bytes" \
+             -s "$z_narrow" --cell="$cell" -r 6 --codec=matrix --field=8
+  one_config "fft, GF(2^8), deep recovery" "$large_bytes" \
+             -s "$z_large" --cell="$cell" -r 7 --codec=fft --field=8
 fi
 
 summary
