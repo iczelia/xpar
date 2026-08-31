@@ -139,6 +139,11 @@ D:\\RUN2.EXE --status R:\\STATUS.TXT --stdout R:\\STDOUT.BIN --stderr R:\\STDERR
 EOF
 
 if test -n "${DOSBOX_SERVER_DIR:-}"; then
+  cat >> "$command_file" <<EOF
+R:
+MOUNT -U C
+MOUNT C "$root" -nocachedir
+EOF
   : > "$request/READY"
   while test -f "$request/READY"; do
     if ! kill -0 "$DOSBOX_SERVER_PID" 2>/dev/null; then
