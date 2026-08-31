@@ -2154,8 +2154,34 @@ static int rp_relink(rp * r, const rp_write * w) {
     ok = stage ? 0 : -1;
     if (stage) {
       rp_close_entry(r, w->entry);
+#if defined(XPAR_WIN32)
+      /*  A Win32 byte-range lock prevents MoveFileEx from replacing the
+          locked name. Keep the handle open, then restore the lock if the
+          rename fails and the copy must be repaired in place.  */
+      if (r->locked[w->entry] && xpar_unlock(r->locked[w->entry]) != 0) {
+        err = xpar_error(r->locked[w->entry]);
+        ok = -1;
+      } else {
+        ok = xpar_rename(stage, path);
+        if (ok != 0) err = xpar_errno();
+        if (r->locked[w->entry]) {
+          if (ok == 0) {
+            xpar_close(r->locked[w->entry]);
+            r->locked[w->entry] = NULL;
+          } else if (xpar_lock(r->locked[w->entry], true) != 0) {
+            int lock_err = xpar_error(r->locked[w->entry]);
+            xpar_remove(stage);
+            xpar_free(stage);
+            FATAL_IO("Cannot relock '%s' after a failed relink: %s.", path,
+                     xpar_strerror(lock_err));
+          }
+        }
+      }
+#else
       ok = xpar_rename(stage, path);
-      if (ok != 0) { err = xpar_errno();  xpar_remove(stage); }
+      if (ok != 0) err = xpar_errno();
+#endif
+      if (ok != 0) xpar_remove(stage);
       xpar_free(stage);
     }
   }
@@ -4364,8 +4390,8 @@ static u64 repair_regen_recovery(const xpar_options * o, u64 * volumes) {
   return done;
 }
 
-/*  Drop volume mappings so a regenerated volume can be renamed over them;
-    nothing below reads volume-backed memory again.  */
+/*  Drop volume mappings after reconstruction and journaling have copied
+    everything needed for the repair.  */
 static void rp_release_vols(rp * r) {
   u32 i;
   for (i = 0; i < r->vol_count; i++) xpar_volimg_close(&r->vol[i]);
@@ -5095,6 +5121,8 @@ int xpar_op_repair(const xpar_options * o) {
   rp_lock_writes(&r);
   rp_read_old(&r);
   if (!o->no_journal) rp_journal(&r);
+  /*  Windows cannot truncate a file while any view of it remains mapped.  */
+  rp_release_vols(&r);
   rp_apply(&r);
   content_ok = rp_reverify(&r);
   if (!content_ok) rc = XPAR_EXIT_UNREPAIRABLE;
@@ -5105,7 +5133,6 @@ int xpar_op_repair(const xpar_options * o) {
       !xpar_journal_drop(r.journal) && rc == XPAR_EXIT_OK)
     rc = XPAR_EXIT_IO;
   if (content_ok) {
-    rp_release_vols(&r);
     r.stale_regen = repair_rewrite_stale(o);
     r.index_regen = repair_regen_index(o);
     r.rec_regen = repair_regen_recovery(o, &r.rec_regen_vols);

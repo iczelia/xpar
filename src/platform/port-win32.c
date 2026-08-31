@@ -444,9 +444,9 @@ int  xpar_error(xpar_file * f) { return (int) f->last_err; }
 
 /*  Win32 byte-range locks are mandatory, unlike the advisory whole-file
     locks used by the POSIX port.  Reserve one byte beyond any representable
-    signed file offset as the cooperating-writer marker, so holding an xpar
-    lock does not make our own pread, truncate, or rename fail.  Windows
-    permits locking a range beyond end of file.  */
+    signed file offset as the cooperating-writer marker, so ordinary reads,
+    writes, and truncation do not overlap it. Windows permits locking a range
+    beyond end of file.  */
 #define WIN_LOCK_OFF_LO  0xFFFFFFFEu
 #define WIN_LOCK_OFF_HI  0x7FFFFFFFu
 #define WIN_LOCK_LEN_LO  1u
