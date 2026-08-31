@@ -230,7 +230,7 @@ static void armour_growth_or_die(const xpar_options * o, u64 object_bytes,
                                  const xpar_armour_params * p) {
   u32 most, honoured = (p->n - p->k) / 2;
   if (o->armour_t && honoured < o->armour_t)
-    FATAL("--armour-t %" PRIu32 " exceeds the GF(2^%" PRIu8
+    FATAL("--armour-t %" PRIu32 " exceeds the GF(2^%" PRIu32
           ") maximum of %" PRIu32 ".",
           o->armour_t, p->symbol_bits, honoured);
   if (!armour_inflates(p, metadata)) return;

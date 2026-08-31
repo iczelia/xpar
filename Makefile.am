@@ -301,7 +301,8 @@ EXTRA_DIST = \
   contrib/repro-digest.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
-  contrib/dos/exec.conf contrib/dos/exec.sh contrib/dos/run-check.sh \
+  contrib/dos/exec.conf contrib/dos/exec.sh contrib/dos/name-bridge.sh \
+  contrib/dos/run-check.sh contrib/dos/test-launcher.sh \
   contrib/dos/run-suite.sh contrib/dos/run2.c \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \

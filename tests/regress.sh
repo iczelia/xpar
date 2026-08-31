@@ -684,7 +684,7 @@ mkdir -p k4 && cdto k4
 mkdir tree
 mkfile tree/a.bin 200000 98
 mkfile tree/c.bin 50000 99
-if ln tree/a.bin tree/b.bin 2> /dev/null; then
+if xpar_hardlinks_work tree/a.bin tree/b.bin; then
   run 0 "$XPAR" create --reproducible -r 20% -s 16K -o set -R tree
   rm -f tree/b.bin
   run 1 "$XPAR" verify set.xpa
@@ -868,6 +868,7 @@ step "prune: refuses a lossy removal, and performs a forced one"
 mkdir -p p1 && cdto p1
 mkdir tree
 mkfile tree/a.bin 80000 66
+mkfile tree/keep.bin 1000 67
 run 0 "$XPAR" create -r 4 -s 8K -o set -R tree
 mkfile tree/a.bin 90000 77
 run 0 "$XPAR" add -r 4 set.xpa -R tree
@@ -2352,7 +2353,7 @@ step "a copy that replaced a hard link is relinked or refused"
 mkdir -p relink && cdto relink
 mkdir t
 mkfile t/a.bin 40000 5
-if ln t/a.bin t/b.bin 2> /dev/null; then
+if xpar_hardlinks_work t/a.bin t/b.bin; then
   run 0 "$XPAR" create -r 20% -o s -R t
   rm -f t/b.bin && cp t/a.bin t/b.bin
   run 1 "$XPAR" verify s.xpa
@@ -2398,7 +2399,7 @@ step "a chain repair states one verdict, not one per generation"
 mkdir -p chainmsg && cdto chainmsg
 mkdir t
 mkfile t/a.bin 40000 7
-if ln t/a.bin t/c.bin 2> /dev/null; then
+if xpar_hardlinks_work t/a.bin t/c.bin; then
   run 0 "$XPAR" create -r 20% -o s -R t
   mkfile t/a.bin 50000 8
   rm -f t/c.bin && mkfile t/c.bin 40000 7

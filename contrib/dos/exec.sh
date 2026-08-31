@@ -33,7 +33,40 @@ trap 'rm -rf "$request"' EXIT HUP INT TERM
 
 # NUL separators preserve spaces and keep the COMMAND.COM line short.
 : > "$request/ARGS.BIN"
+output_next=
 for arg in "$@"; do
+  if test -f "${DOSBOX_NAME_STATE:-}"; then
+    lookup=$arg
+    case $lookup in "$PWD"/*) lookup=${lookup#"$PWD"/} ;; esac
+    if test -n "$output_next"; then
+      mapped=`awk -F '\t' -v v="$lookup" \
+        '$1 == "B" && $3 == v { print $2; exit }' "$DOSBOX_NAME_STATE"`
+      test -z "$mapped" || arg=$mapped
+      output_next=
+    else case $arg in
+      -o | --output) output_next=yes ;;
+      --output=*)
+        value=${arg#--output=}
+        case $value in "$PWD"/*) value=${value#"$PWD"/} ;; esac
+        mapped=`awk -F '\t' -v v="$value" \
+          '$1 == "B" && $3 == v { print $2; exit }' "$DOSBOX_NAME_STATE"`
+        test -z "$mapped" || arg=--output=$mapped
+        ;;
+      --volume=*)
+        value=${arg#--volume=}
+        case $value in "$PWD"/*) value=${value#"$PWD"/} ;; esac
+        mapped=`awk -F '\t' -v v="$value" \
+          '$1 == "F" && $3 == v { print $2; exit }' "$DOSBOX_NAME_STATE"`
+        test -z "$mapped" || arg=--volume=$mapped
+        ;;
+      *)
+        mapped=`awk -F '\t' -v v="$lookup" \
+          '$1 == "F" && $3 == v { print $2; exit }' "$DOSBOX_NAME_STATE"`
+        test -z "$mapped" || arg=$mapped
+        ;;
+    esac
+    fi
+  fi
   case $arg in
     "$root")   arg="C:\\" ;;
     "$root"/*)
@@ -48,7 +81,7 @@ cat > "$request/RUN.BAT" <<EOF
 @ECHO OFF
 C:
 CD "$guest_dir"
-D:\\RUN2.EXE --status R:\\STATUS.TXT --args R:\\ARGS.BIN D:\\$guest > R:\\OUTPUT.BIN
+D:\\RUN2.EXE --status R:\\STATUS.TXT --stdout R:\\STDOUT.BIN --stderr R:\\STDERR.BIN --args R:\\ARGS.BIN D:\\$guest
 EXIT
 EOF
 
@@ -73,7 +106,8 @@ test -f "$request/STATUS.TXT" || {
   sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
   fail "$guest wrote no status"
 }
-test ! -f "$request/OUTPUT.BIN" || cat "$request/OUTPUT.BIN"
+test ! -f "$request/STDOUT.BIN" || cat "$request/STDOUT.BIN"
+test ! -f "$request/STDERR.BIN" || cat "$request/STDERR.BIN" >&2
 status=$(tr -d '\r\n' < "$request/STATUS.TXT")
 case $status in *[!0-9]*|'') fail "$guest wrote invalid status '$status'" ;; esac
 exit "$status"

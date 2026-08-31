@@ -201,14 +201,28 @@ static char * gen_unused_base(const char * base, const char * label) {
 }
 
 static char * gen_unused_path(const char * path, const char * label,
-                              const char * dos_tag, const char * dos_ext) {
+                              const char * dos_tag, const char * dos_ext,
+                              u32 lane) {
   u32 i;
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  static const char digits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  char tag[6];
+  sz tl = xpar_strlen(dos_tag);
+  FATAL_UNLESS("Internal DOS rollback lane is out of range.",
+               tl <= 3 && lane < 36 * 36);
+  xpar_memcpy(tag, dos_tag, tl);
+  tag[tl] = digits[lane / 36];
+  tag[tl + 1] = digits[lane % 36];
+  tag[tl + 2] = 0;
+#else
+  (void) lane;
+#endif
   for (i = 0; i < 1000; i++) {
     char * candidate;
     xpar_stat_t st;
 #if defined(XPAR_DOS) || defined(__MSDOS__)
     (void) label;
-    candidate = xpar_dos_numbered(path, dos_tag, dos_ext, i);
+    candidate = xpar_dos_numbered(path, tag, dos_ext, i);
 #else
     (void) dos_tag;  (void) dos_ext;
     xpar_asprintf(&candidate, "%s.%s-%03" PRIu32, path, label, i);
@@ -924,7 +938,10 @@ static void chain_add_vol(xpar_chain * c, char * path) {
   xpar_chain_vol * v;  u8 * data;  sz len;  u32 i;
 
   for (i = 0; i < c->vol_count; i++)
-    if (!xpar_strcmp(c->vol[i].path, path)) { xpar_free(path);  return; }
+    if (xpar_path_same(c->vol[i].path, path)) {
+      xpar_free(path);
+      return;
+    }
 
   data = gen_read_whole(path, &len, true);
 
@@ -2703,9 +2720,7 @@ static bool gen_chain_names(const xpar_chain * c, const char * path) {
 }
 
 static bool gen_path_equal(const char * a, const char * b) {
-  while (a[0] == '.' && (a[1] == '/' || a[1] == '\\')) a += 2;
-  while (b[0] == '.' && (b[1] == '/' || b[1] == '\\')) b += 2;
-  return !xpar_strcmp(a, b);
+  return xpar_path_same(a, b);
 }
 
 static bool gen_chain_data_names(const xpar_chain * c, const char * path) {
@@ -2775,6 +2790,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   gen_maint j;
   u32 ns, nf, data_n = 0, i, moved = 0;
   int saved = 0;
+  const char * failed_from = NULL, * failed_to = NULL;
 
   stage = gen_volumes(o, p->recovery, stage_base, 0, &ns);
   final = gen_volumes(o, p->recovery, final_base, 0, &nf);
@@ -2839,7 +2855,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
     }
 
   for (i = 0; i < c->vol_count; i++) {
-    backup[i] = gen_unused_path(c->vol[i].path, "xpar-old", "GCO", "BAK");
+    backup[i] = gen_unused_path(c->vol[i].path, "xpar-old", "GCO", "BAK", i);
     if (!backup[i]) {
       u32 k;
       for (k = 0; k < ns; k++) xpar_remove(stage[k].name);
@@ -2848,7 +2864,7 @@ static void gen_commit_consolidation(const xpar_chain * c,
   }
   for (i = 0; i < data_n; i++) if (gen_exists(final_data[i])) {
     data_backup[i] = gen_unused_path(final_data[i], "xpar-old", "GCD",
-                                      "BAK");
+                                     "BAK", i);
     if (!data_backup[i])
       FATAL("Cannot choose a rollback name for '%s'.", final_data[i]);
   }
@@ -2884,14 +2900,18 @@ static void gen_commit_consolidation(const xpar_chain * c,
 
   for (i = 0; i < c->vol_count; i++) {
     if (xpar_rename(c->vol[i].path, backup[i]) != 0) {
-      saved = xpar_errno();  break;
+      saved = xpar_errno();
+      failed_from = c->vol[i].path;  failed_to = backup[i];
+      break;
     }
     moved++;
   }
   if (moved != c->vol_count) goto rollback;
   for (i = 0; i < data_n; i++) if (data_backup[i]) {
     if (xpar_rename(final_data[i], data_backup[i]) != 0) {
-      saved = xpar_errno(); goto rollback;
+      saved = xpar_errno();
+      failed_from = final_data[i];  failed_to = data_backup[i];
+      goto rollback;
     }
     data_moved[i] = true;
   }
@@ -2906,19 +2926,25 @@ static void gen_commit_consolidation(const xpar_chain * c,
       u32 d;
       for (d = 0; d < data_n; d++) {
         if (xpar_rename(stage_data[d], final_data[d]) != 0) {
-          saved = xpar_errno(); goto rollback;
+          saved = xpar_errno();
+          failed_from = stage_data[d];  failed_to = final_data[d];
+          goto rollback;
         }
         data_published[d] = true;
         if (o->labels) {
           if (xpar_rename(stage_label[d], final_label[d]) != 0) {
-            saved = xpar_errno(); goto rollback;
+            saved = xpar_errno();
+            failed_from = stage_label[d];  failed_to = final_label[d];
+            goto rollback;
           }
           label_published[d] = true;
         }
       }
     }
     if (xpar_rename(stage[k].name, final[k].name) != 0) {
-      saved = xpar_errno();  goto rollback;
+      saved = xpar_errno();
+      failed_from = stage[k].name;  failed_to = final[k].name;
+      goto rollback;
     }
     published[k] = true;
   }
@@ -2965,8 +2991,10 @@ rollback:
     xpar_fprintf(xpar_stderr, "xpar: warning: cannot sync the directory "
                  "after rollback: %s.\n", xpar_strerror(xpar_errno()));
   gen_maint_done(&j);
-  FATAL_IO("Cannot publish the consolidated set: %s.",
-           xpar_strerror(saved));
+  if (failed_from)
+    FATAL_IO("Cannot rename '%s' to '%s' while publishing the consolidated "
+             "set: %s.", failed_from, failed_to, xpar_strerror(saved));
+  FATAL_IO("Cannot publish the consolidated set: %s.", xpar_strerror(saved));
 
 done:
   for (i = 0; i < data_n; i++) {
@@ -3193,7 +3221,8 @@ static void gen_addrec_publish(gen_addrec_file * files, u32 count) {
     }
   for (i = 0; i < count; i++) {
     if (gen_exists(files[i].final)) {
-      backup[i] = gen_unused_path(files[i].final, "xpar-old", "GAD", "BAK");
+      backup[i] = gen_unused_path(files[i].final, "xpar-old", "GAD", "BAK",
+                                  i);
       if (!backup[i] || xpar_keep_aside(files[i].final, backup[i]) != 0) {
         err = xpar_errno();  failed = files[i].final;
         xpar_free(backup[i]);  backup[i] = NULL;
@@ -5027,7 +5056,8 @@ int xpar_op_add(const xpar_options * caller) {
   if (chunk_cache.slot) {
     u64 average = o->dedup_chunk ? o->dedup_chunk : (u64) 1 << 20;
     output_cache = xpar_vname_cache(rq.base);
-    stage_cache = gen_unused_path(output_cache, "xpar-cache", "GCA", "TMP");
+    stage_cache = gen_unused_path(output_cache, "xpar-cache", "GCA", "TMP",
+                                  0);
     if (!stage_cache ||
         !xpar_chunk_cache_write(stage_cache, c.gen[head].set_id, average,
                                 &chunk_cache)) {
@@ -5399,7 +5429,7 @@ static void gen_prune_commit(gen_prune_tx * t, const char * sync_path) {
   }
   for (i = 0; i < t->count; i++) if (gen_exists(t->f[i].old_path)) {
     t->f[i].backup = gen_unused_path(t->f[i].old_path, "xpar-prune-old",
-                                     "GPR", "BAK");
+                                     "GPR", "BAK", i);
     if (!t->f[i].backup) {
       gen_prune_discard_stages(t);
       FATAL("Cannot choose a rollback name for '%s'.", t->f[i].old_path);
@@ -6040,7 +6070,8 @@ int xpar_op_consolidate(const xpar_options * caller) {
     static const u8 unbound[XPAR_SET_ID_LEN];
     u64 average = o->dedup_chunk ? o->dedup_chunk : (u64) 1 << 20;
     cache_path = xpar_vname_cache(base);
-    stage_cache = gen_unused_path(cache_path, "xpar-cache", "GCC", "TMP");
+    stage_cache = gen_unused_path(cache_path, "xpar-cache", "GCC", "TMP",
+                                  0);
     if (!stage_cache ||
         !xpar_chunk_cache_write(stage_cache, unbound, average,
                                 &chunk_cache)) {
@@ -6674,17 +6705,62 @@ int xpar_op_recover(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-static bool gen_same_dir(const char * a, const xpar_stat_t * b) {
+static bool gen_dir_path_equal(const char * a, const char * b) {
+  char ca, cb;
+  for (;;) {
+    ca = *a++;  cb = *b++;
+    if (xpar_path_sep(ca)) ca = '/';
+    if (xpar_path_sep(cb)) cb = '/';
+#if defined(XPAR_WIN32) || defined(XPAR_DOS) || defined(__MSDOS__)
+    if (ca >= 'A' && ca <= 'Z') ca = (char) (ca - 'A' + 'a');
+    if (cb >= 'A' && cb <= 'Z') cb = (char) (cb - 'A' + 'a');
+#endif
+    if (ca != cb) return false;
+    if (!ca) return true;
+  }
+}
+
+static bool gen_path_equal_n(const char * a, sz an,
+                             const char * b, sz bn) {
+  sz i;
+  if (an != bn) return false;
+  for (i = 0; i < an; i++) {
+    char ca = a[i], cb = b[i];
+    if (xpar_path_sep(ca)) ca = '/';
+    if (xpar_path_sep(cb)) cb = '/';
+#if defined(XPAR_WIN32) || defined(XPAR_DOS) || defined(__MSDOS__)
+    if (ca >= 'A' && ca <= 'Z') ca = (char) (ca - 'A' + 'a');
+    if (cb >= 'A' && cb <= 'Z') cb = (char) (cb - 'A' + 'a');
+#endif
+    if (ca != cb) return false;
+  }
+  return true;
+}
+
+static bool gen_same_dir(const char * a, const char * bpath,
+                         const xpar_stat_t * b) {
   xpar_stat_t sa;
-  if (!b->is_dir || !(b->dev | b->ino)) return false;
+  char * aa, * bb;
+  bool same;
+  if (!b->is_dir) return false;
   if (xpar_lstat(a, &sa) != 0 || !sa.is_dir) return false;
-  if (!(sa.dev | sa.ino)) return false;
-  return sa.dev == b->dev && sa.ino == b->ino;
+  if ((sa.dev | sa.ino) && (b->dev | b->ino))
+    return sa.dev == b->dev && sa.ino == b->ino;
+
+  /*  Hosts without stable file IDs cannot prove aliases equivalent. Exact
+      lexical equivalence is still safe and accepts relative spellings.  */
+  aa = xpar_path_lex_abs(a);
+  bb = xpar_path_lex_abs(bpath);
+  if (!aa || !bb) { xpar_free(aa);  xpar_free(bb);  return false; }
+  same = gen_dir_path_equal(aa, bb);
+  xpar_free(aa);  xpar_free(bb);
+  return same;
 }
 
 /*  Match a journal path to generation G's volume in the set directory.  */
 static const char * gen_undo_volume(const xpar_chain * c, u32 g,
                                     const char * path, u32 plen,
+                                    const char * setdir_path,
                                     const xpar_stat_t * setdir) {
   xpar_layt l;
   const char * base;
@@ -6698,13 +6774,14 @@ static const char * gen_undo_volume(const xpar_chain * c, u32 g,
   cut = (u32) (base - path);
   for (i = 0; i < l.count && !named; i++)
     if (l.vol[i].name && xpar_strlen(l.vol[i].name) == (sz) (plen - cut) &&
-        !xpar_memcmp(l.vol[i].name, base, (sz) (plen - cut))) named = true;
+        gen_path_equal_n(l.vol[i].name, (sz) (plen - cut), base,
+                         (sz) (plen - cut))) named = true;
   xpar_layt_free(&l);
   if (!named) return NULL;
   while (cut && xpar_path_sep(path[cut - 1])) cut--;
   head = cut ? xpar_strndup(path, cut)
              : xpar_strdup(plen && xpar_path_sep(path[0]) ? "/" : ".");
-  here = gen_same_dir(head, setdir);
+  here = gen_same_dir(head, setdir_path, setdir);
   xpar_free(head);
   return here ? base : NULL;
 }
@@ -6712,6 +6789,7 @@ static const char * gen_undo_volume(const xpar_chain * c, u32 g,
 /*  Resolve a journal path to an entry in setdir, or return -1.  */
 static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
                           const char * path, u32 plen,
+                          const char * setdir_path,
                           const xpar_stat_t * setdir) {
   const char * dir = c->dir && *c->dir ? c->dir : ".";
   i64 best = -1;
@@ -6724,14 +6802,15 @@ static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
     bool same;
     /*  Every manifest object can be created by repair and journalled.  */
     allowed = xpar_path_join_n(dir, e->name, e->name_len);
-    same = xpar_strlen(allowed) == plen && !xpar_memcmp(allowed, path, plen);
+    same = gen_path_equal_n(allowed, xpar_strlen(allowed), path, plen);
     xpar_free(allowed);
     if (same) return (i64) i;
     /*  The longest matching tail wins, so 'a/x' beats 'x' for 'd/a/x'.  */
     if (e->name_len <= bestlen || plen < e->name_len) continue;
     if (plen > e->name_len && !xpar_path_sep(path[plen - e->name_len - 1]))
       continue;
-    if (xpar_memcmp(path + plen - e->name_len, e->name, e->name_len)) continue;
+    if (!gen_path_equal_n(path + plen - e->name_len, e->name_len,
+                          e->name, e->name_len)) continue;
     best = (i64) i;  bestlen = e->name_len;
   }
   if (best < 0) return -1;
@@ -6740,7 +6819,7 @@ static i64 gen_undo_entry(const xpar_chain * c, const xpar_manifest * m,
   /*  An empty absolute prefix means root.  */
   head = cut ? xpar_strndup(path, cut)
              : xpar_strdup(plen && xpar_path_sep(path[0]) ? "/" : ".");
-  ok = gen_same_dir(head, setdir);
+  ok = gen_same_dir(head, setdir_path, setdir);
   xpar_free(head);
   return ok ? best : -1;
 }
@@ -6892,12 +6971,14 @@ static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
         FATAL_FORMAT("Journal '%s' overflows its payload count.", path);
       payload += len;
       { const char * rp = (const char *) rec + XPAR_UNDO_REC;
-        if (xpar_has_nul(rec + XPAR_UNDO_REC, plen) ||
-            (gen_undo_entry(chain, &manifest, rp, plen, &setdir) < 0 &&
-             !gen_undo_volume(chain, generation, rp, plen, &setdir)))
+        { const char * d = chain->dir && *chain->dir ? chain->dir : ".";
+          if (xpar_has_nul(rec + XPAR_UNDO_REC, plen) ||
+              (gen_undo_entry(chain, &manifest, rp, plen, d, &setdir) < 0 &&
+               !gen_undo_volume(chain, generation, rp, plen, d, &setdir)))
           FATAL_FORMAT("Journal record %" PRIu64
                        " names '%.*s' outside this set directory.",
                        i, (int) plen, rp); }
+        }
       old = rec + XPAR_UNDO_REC + plen;
       if (xpar_crc32c(0, rec, 36) != xpar_rd32(rec + 36) ||
           xpar_crc32c(0, old, (sz) len) != xpar_rd32(rec + 32))
@@ -6934,14 +7015,14 @@ static int gen_undo_one(const xpar_options * o, xpar_chain * chain,
     old = rec + XPAR_UNDO_REC + plen;
     at += step;
 
-    { i64 ix = gen_undo_entry(chain, &manifest, rp, plen, &setdir);
-      const char * d = chain->dir && *chain->dir ? chain->dir : ".";
+    { const char * d = chain->dir && *chain->dir ? chain->dir : ".";
+      i64 ix = gen_undo_entry(chain, &manifest, rp, plen, d, &setdir);
       if (ix >= 0)
         full = xpar_path_join_n(d, manifest.entry[ix].name,
                                 manifest.entry[ix].name_len);
       else {
         const char * vol = gen_undo_volume(chain, generation, rp, plen,
-                                           &setdir);
+                                           d, &setdir);
         /*  VOL is not NUL-terminated.  */
         if (!vol) { skipped++;  continue; }
         full = xpar_path_join_n(d, vol, plen - (u32) (vol - rp));

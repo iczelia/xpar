@@ -40,14 +40,8 @@
 
 const char * xpar_getenv(const char * name) { return getenv(name); }
 
-/*  DOS keeps no standard temporary directory beyond the environment.  */
-const char * xpar_tmpdir(void) {
-#ifdef P_tmpdir
-  return P_tmpdir;
-#else
-  return "/tmp";
-#endif
-}
+/*  DOS has no standard temporary directory beyond the environment.  */
+const char * xpar_tmpdir(void) { return "."; }
 #include <time.h>
 #include <unistd.h>
 
@@ -284,12 +278,31 @@ bool xpar_maplock_blocks(const char * path) { (void) path;  return false; }
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m;
-  (void) path;
+  xpar_file * f;
+  i64 n;
   m.map = NULL;  m.size = 0;  m.valid = false;
+  f = xpar_open(path, XPAR_O_RDONLY);
+  if (!f) return m;
+  n = xpar_size(f);
+  if (n < 0 || (u64) n > (u64) (sz) -1) {
+    xpar_close(f);
+    return m;
+  }
+  m.map = (u8 *) malloc(n ? (sz) n : 1);
+  if (!m.map || (n && xpar_read(f, m.map, (sz) n) != (sz) n)) {
+    free(m.map);
+    m.map = NULL;
+    xpar_close(f);
+    return m;
+  }
+  xpar_close(f);
+  m.size = (sz) n;
+  m.valid = true;
   return m;
 }
 
 void xpar_unmap(xpar_mmap * m) {
+  free(m->map);
   m->map = NULL;  m->size = 0;  m->valid = false;
 }
 

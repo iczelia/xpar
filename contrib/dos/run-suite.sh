@@ -42,18 +42,16 @@ export DOSBOX_TOOLS="$tools"
 export DOSBOX_REQUEST_ROOT="$requests"
 export DOSBOX_EXEC_CONF="$srcdir/exec.conf"
 export DOSBOX_MOUNT_ROOT="$top_srcdir"
+export DOSBOX_NATIVE_XPAR="$native_build/xpar"
+export DOSBOX_BRIDGE="$srcdir/name-bridge.sh"
+export DOSBOX_EXEC="$srcdir/exec.sh"
 
 echo "$prog: running DOS test programs"
 "$srcdir/exec.sh" TUNIT.EXE
 "$srcdir/exec.sh" TCODEC.EXE
 "$srcdir/exec.sh" TCENTRAL.EXE
 
-launcher=$suite_root/xpar-dos
-cat > "$launcher" <<EOF
-#!/bin/sh
-exec "$srcdir/exec.sh" XPAR.EXE "\$@"
-EOF
-chmod +x "$launcher"
+launcher=$srcdir/test-launcher.sh
 
 shell_tests=$(make -s -C "$native_build" print-shell-tests)
 test -n "$shell_tests" || fail "the shell test list is empty"

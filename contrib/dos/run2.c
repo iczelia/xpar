@@ -12,10 +12,9 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Merge stderr into stdout for COMMAND.COM and preserve the exit status.
- *
- *      RUN2.EXE XPAR.EXE verify SET.XPA > LOG.TXT                        */
+/*  Run a program with arguments read from a file and preserve its status.  */
 
+#include <fcntl.h>
 #include <process.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +28,16 @@ static int save_status(const char * path, int status) {
   if (!f) return -1;
   fprintf(f, "%d\n", status);
   return fclose(f);
+}
+
+static int redirect_to(const char * path, int fd) {
+  int out;
+  if (!path) return 0;
+  out = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+  if (out < 0) return -1;
+  if (dup2(out, fd) < 0) { close(out);  return -1; }
+  close(out);
+  return 0;
 }
 
 static char ** read_args(const char * path, const char * program,
@@ -68,21 +77,26 @@ static char ** read_args(const char * path, const char * program,
 int main(int argc, char ** argv) {
   const char * status_path = NULL;
   const char * args_path = NULL;
+  const char * stdout_path = NULL;
+  const char * stderr_path = NULL;
   const char * program;
   char * storage = NULL;
   char ** child;
   int i = 1, status;
-  while (i < argc && !strcmp(argv[i], "--status")) {
+  while (i < argc) {
+    const char ** value;
+    if      (!strcmp(argv[i], "--status")) value = &status_path;
+    else if (!strcmp(argv[i], "--stdout")) value = &stdout_path;
+    else if (!strcmp(argv[i], "--stderr")) value = &stderr_path;
+    else if (!strcmp(argv[i], "--args"))   value = &args_path;
+    else break;
     if (++i == argc) break;
-    status_path = argv[i++];
-  }
-  if (i < argc && !strcmp(argv[i], "--args")) {
-    if (++i == argc) i = argc;
-    else args_path = argv[i++];
+    *value = argv[i++];
   }
   if (i >= argc) {
     fprintf(stderr,
-            "usage: run2 [--status FILE] [--args FILE] PROGRAM [ARGUMENT...]\n");
+            "usage: run2 [--status FILE] [--stdout FILE] [--stderr FILE] "
+            "[--args FILE] PROGRAM [ARGUMENT...]\n");
     return 2;
   }
   program = argv[i];
@@ -91,8 +105,8 @@ int main(int argc, char ** argv) {
     perror("run2: arguments");
     return 2;
   }
-  if (dup2(1, 2) < 0) {
-    perror("run2: dup2");
+  if (redirect_to(stdout_path, 1) != 0 || redirect_to(stderr_path, 2) != 0) {
+    perror("run2: redirect");
     free(storage);
     if (args_path) free(child);
     return 2;

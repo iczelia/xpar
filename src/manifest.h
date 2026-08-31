@@ -61,6 +61,9 @@ char * xpar_read_symlink(const char * path, u32 * length);
 char * xpar_path_resolve(const char * dir, const char * name, u32 len,
                          u32 flags, xpar_path_status * why);
 
+/*  Lexically normalize PATH as an absolute path.  */
+char * xpar_path_lex_abs(const char * path);
+
 bool xpar_utf8_valid(const u8 * p, u32 n);
 
 /*  The manifest.  */

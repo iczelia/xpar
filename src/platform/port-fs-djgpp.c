@@ -102,7 +102,6 @@ u32 xpar_fs_caps(const char * path) {
 
 struct xpar_dir {
   DIR *       d;
-  char *      path;
   xpar_dirent ent;
 };
 
@@ -112,7 +111,6 @@ xpar_dir * xpar_opendir(const char * path) {
   if (!d) return NULL;
   h = xpar_alloc_raw(sizeof(*h));
   h->d = d;
-  h->path = xpar_strdup(path);
   h->ent.name = NULL;
   h->ent.is_dir = h->ent.is_symlink = h->ent.is_regular = false;
   return h;
@@ -121,22 +119,14 @@ xpar_dir * xpar_opendir(const char * path) {
 const xpar_dirent * xpar_readdir(xpar_dir * h) {
   for (;;) {
     struct dirent * de = readdir(h->d);
-    char * full = NULL;
-    struct stat st;
     if (!de) return NULL;
     if (de->d_name[0] == '.' &&
         (de->d_name[1] == '\0' ||
          (de->d_name[1] == '.' && de->d_name[2] == '\0'))) continue;
     h->ent.name = de->d_name;
     h->ent.is_symlink = false;
-    xpar_asprintf(&full, "%s\\%s", h->path, de->d_name);
-    if (full && stat(full, &st) == 0) {
-      h->ent.is_dir     = S_ISDIR(st.st_mode) != 0;
-      h->ent.is_regular = !h->ent.is_dir;
-    } else {
-      h->ent.is_dir = false;  h->ent.is_regular = true;
-    }
-    xpar_free(full);
+    h->ent.is_dir = de->d_type == DT_DIR;
+    h->ent.is_regular = de->d_type == DT_REG;
     return &h->ent;
   }
 }
@@ -144,7 +134,6 @@ const xpar_dirent * xpar_readdir(xpar_dir * h) {
 void xpar_closedir(xpar_dir * h) {
   if (!h) return;
   closedir(h->d);
-  xpar_free(h->path);
   xpar_free(h);
 }
 

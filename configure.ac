@@ -101,6 +101,8 @@ case "$xpar_win_target" in
   win95)
     xpar_win_cppflags="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400"
     xpar_win_cppflags="$xpar_win_cppflags -DXPAR_WIN_LEGACY=1"
+    AC_DEFINE([XPAR_WIN_LEGACY], [1],
+              [Define for the Windows 95 API and loader baseline])
     dnl  Legacy crash reporting walks frame pointers.
     xpar_win_cflags="-march=i486 -mtune=i486 -mfpmath=387"
     xpar_win_cflags="$xpar_win_cflags -fno-omit-frame-pointer"

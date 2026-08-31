@@ -907,7 +907,7 @@ static void push_vol(xpar_setref * s, char * path) {
 static void push_vol_once(xpar_setref * s, char * path) {
   u32 i;
   for (i = 0; i < s->count; i++)
-    if (!xpar_strcmp(s->vol[i], path)) {
+    if (xpar_path_same(s->vol[i], path)) {
       xpar_free(path);
       return;
     }

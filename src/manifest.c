@@ -910,7 +910,7 @@ static char * path_lex_norm(const char * p) {
 
 static bool path_lex_absolute(const char * p) {
   if (p[0] && xpar_path_sep(p[0])) return true;
-#if defined(XPAR_WIN32)
+#if defined(XPAR_WIN32) || defined(XPAR_DOS) || defined(__MSDOS__)
   return ((p[0] >= 'A' && p[0] <= 'Z') ||
           (p[0] >= 'a' && p[0] <= 'z')) &&
          p[1] == ':' && xpar_path_sep(p[2]);
@@ -920,7 +920,7 @@ static bool path_lex_absolute(const char * p) {
 }
 
 /*  Normalize PATH as an absolute path.  */
-static char * path_lex_abs(const char * p) {
+char * xpar_path_lex_abs(const char * p) {
   char * cwd, * join, * abs;
   if (path_lex_absolute(p)) return path_lex_norm(p);
   cwd = xpar_getcwd();
@@ -963,9 +963,9 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
     if (blen == 0 || (blen == 1 && base[0] == '.') ||
         (blen == 2 && base[0] == '.' && base[1] == '.')) blen = 0;
     if (o->base_dir) {
-      char * ba = path_lex_abs(o->base_dir);
+      char * ba = xpar_path_lex_abs(o->base_dir);
       sz bl;
-      rooted = path_lex_abs(norm);
+      rooted = xpar_path_lex_abs(norm);
       if (!rooted || !ba) {
         xpar_free(norm);  xpar_free(rooted);  xpar_free(ba);
         FATAL("Cannot resolve '%s' against --base '%s'.",

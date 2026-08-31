@@ -205,6 +205,8 @@ mode_of() {   # mode_of <path>
 
 # Whether chmod round-trips file modes.
 modes_work() {   # modes_work <scratch dir>
+  xpar_config_defined XPAR_WIN_LEGACY && return 1
+  xpar_config_defined XPAR_DOS && return 1
   _f=$1/mode-probe
   rm -f "$_f"
   ( : > "$_f" ) 2> /dev/null || return 1
@@ -216,6 +218,8 @@ modes_work() {   # modes_work <scratch dir>
 
 # Whether the filesystem creates true symbolic links.
 symlinks_work() {   # symlinks_work <target> <link>
+  xpar_config_defined XPAR_WIN_LEGACY && return 1
+  xpar_config_defined XPAR_DOS && return 1
   ln -s "$1" "$2" 2> /dev/null || return 1
   test -L "$2" && return 0
   rm -f "$2" 2> /dev/null
@@ -225,6 +229,18 @@ symlinks_work() {   # symlinks_work <target> <link>
 xpar_host() {
   "$XPAR" --version 2> /dev/null |
     sed -n '1s/^xpar [^ ]* (\([^,)]*\).*/\1/p'
+}
+
+xpar_config_defined() {
+  _cfg=${XPAR_TEST_CONFIG_H:-$abs_top_builddir/config.h}
+  test -f "$_cfg" && grep -q "^#define $1 " "$_cfg"
+}
+
+# Whether both the target and the test filesystem support hard links.
+xpar_hardlinks_work() {   # xpar_hardlinks_work <existing> <new>
+  xpar_config_defined XPAR_WIN_LEGACY && return 1
+  xpar_config_defined XPAR_DOS && return 1
+  ln "$1" "$2" 2> /dev/null
 }
 
 # Whether this xpar build can open FIFOs.
@@ -333,6 +349,8 @@ mkfile() {   # mkfile <path> <bytes> [<seed>] [<pattern>]
 #  Build and validate the LD_PRELOAD fault shim. Sets fault_pre.
 fault_shim() {   # fault_shim <so path>
   fault_pre=
+  xpar_config_defined XPAR_WIN32 && return 1
+  xpar_config_defined XPAR_DOS && return 1
   case `uname -s 2> /dev/null` in  Linux) ;;  *) return 1 ;;  esac
   test -f "${srcdir:-.}/faultio.c" || return 1
   ${CC:-cc} -shared -fPIC -O1 -o "$1" "${srcdir:-.}/faultio.c" -ldl \

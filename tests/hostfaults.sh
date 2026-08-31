@@ -17,6 +17,10 @@
 
 . "${srcdir:-.}/lib.sh"
 
+case `xpar_host` in
+  *djgpp* | *msdos*) skip_all "LD_PRELOAD cannot instrument a DOS binary" ;;
+esac
+
 case `uname -s 2> /dev/null` in
   Linux) ;;
   *) skip_all "the fault shim needs Linux and LD_PRELOAD" ;;

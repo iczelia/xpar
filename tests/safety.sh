@@ -571,7 +571,7 @@ cd ..
 mkdir hardlink && cd hardlink
 mkdir tree
 mkfile tree/a.bin 131072
-if ln tree/a.bin tree/b.bin 2> /dev/null; then
+if xpar_hardlinks_work tree/a.bin tree/b.bin; then
   run 0 "$XPAR" create -R -r 30% -s 4K -o s tree
   rm tree/b.bin && cp tree/a.bin tree/b.bin
   if test "`ls -di tree/a.bin | awk '{print $1}'`" = \
@@ -701,7 +701,11 @@ long=`awk 'BEGIN{ s = "";  while (length(s) < 255) s = s "z";  print s }'`
 mkdir tree
 #  Probe the longest path used below.
 mkdir -p rout/tree
-can_hold "rout/tree/$long" && long_ok=yes || long_ok=no
+if xpar_config_defined XPAR_DOS; then
+  long_ok=no
+else
+  can_hold "rout/tree/$long" && long_ok=yes || long_ok=no
+fi
 rm -rf rout
 if test "$long_ok" = yes; then
   n=`printf %s "$long" | nbytes`
@@ -730,7 +734,7 @@ step "Windows naming rules reject backslashes"
 
 mkdir winrules;  cdto winrules
 mkdir tree
-if can_hold 'tree/back\slash.bin'; then
+if ! xpar_config_defined XPAR_DOS && can_hold 'tree/back\slash.bin'; then
   printf 'x' > 'tree/back\slash.bin'
   mkfile tree/ok.bin 4096
   run 0 "$XPAR" create -r 300% -s 16K --layout=armoured -o arc -R tree
@@ -834,11 +838,13 @@ step "a correctable armoured archive extracts without repair"
 
 mkdir inner;  cdto inner
 mkdir tree
+inner_slice=4K
+xpar_config_defined XPAR_DOS && inner_slice=8K
 mkfile tree/f1.bin 70000
 mkfile tree/f2.bin 70000 2222
 mkfile tree/f3.bin 70000 3333
 cp -r tree keep
-run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o arc -R tree
+run 0 "$XPAR" create -r 300% -s "$inner_slice" --layout=armoured -o arc -R tree
 cp arc.xpa pristine.xpa
 
 #  Damage correctable payload regions at several offsets.
@@ -859,7 +865,7 @@ note "verify, extract, and repair correct payload damage"
 mkfile tree/f4.bin 70000 4444
 cp tree/f4.bin keep/f4.bin
 cp pristine.xpa arc.xpa
-run 0 "$XPAR" add -r 300% -s 4K arc.xpa -R tree
+run 0 "$XPAR" add -r 300% -s "$inner_slice" arc.xpa -R tree
 cp arc.xpa chain.xpa
 damage arc.xpa "rand=20000,64"
 run 0 "$XPAR" verify arc.xpa
@@ -973,7 +979,7 @@ step "case-folded duplicates are found wherever they sort"
 
 mkdir fold;  cdto fold
 mkdir tree
-if folds_case tree; then
+if xpar_config_defined XPAR_DOS || folds_case tree; then
   #  Colliding names cannot coexist here.
   note "case-folding filesystem; skipped"
 else
@@ -1116,8 +1122,10 @@ equal "the armoured recipe is printed" \
       "`grep -c 'armoured xpar archive' arm.txt`" "1"
 #  Base names resolve to the volume actually read.
 "$XPAR" explain a > base.txt 2> "$log" || hard_error "explain failed"
+explained=a.xpa
+xpar_config_defined XPAR_DOS && explained=A___.XPA
 equal "a base name resolves to its volume" \
-      "`grep -c 'a.xpa is an armoured' base.txt`" "1"
+      "`grep -c "$explained is an armoured" base.txt`" "1"
 #  Packet-bearing volumes still require a full scan.
 "$XPAR" explain s.xpa > side.txt 2> "$log" || hard_error "explain failed"
 equal "a sidecar volume is explained too" \
@@ -1194,7 +1202,7 @@ step "a backslash in a name invents no directory"
 
 mkdir bslash;  cdto bslash
 mkdir tree
-if can_hold 'tree/a\b.bin'; then
+if ! xpar_config_defined XPAR_DOS && can_hold 'tree/a\b.bin'; then
   printf 'x' > 'tree/a\b.bin'
   mkfile tree/plain.bin 4096
   run 0 "$XPAR" create -r 300% -s 4K --layout=armoured -o a -R tree
@@ -1425,7 +1433,12 @@ mkdir -p keep && cp d.bin keep/d.bin
 vol=`ls s.v*.xpa | tail -1`
 if chmod 000 "$vol" 2> /dev/null && ! ( : < "$vol" ) 2> /dev/null; then
   run 5 "$XPAR" verify s.xpa
-  grep -q "$vol" "$log" || bad "the refused volume was not named"
+  if xpar_config_defined XPAR_DOS; then
+    grep -q "Cannot open '.*': permission denied" "$log" ||
+      bad "the refused volume was not named"
+  else
+    grep -q "$vol" "$log" || bad "the refused volume was not named"
+  fi
   run 5 "$XPAR" scrub s.xpa
   run 5 "$XPAR" repair --in-place s.xpa
   chmod 644 "$vol"

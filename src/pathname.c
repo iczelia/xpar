@@ -85,7 +85,21 @@ char * xpar_path_norm(const char * path) {
 
 bool xpar_path_same(const char * a, const char * b) {
   char * x = xpar_path_norm(a), * y = xpar_path_norm(b);
-  bool eq = xpar_strcmp(x, y) == 0;
+  sz i;
+  bool eq = true;
+  for (i = 0; x[i] || y[i]; i++) {
+#if defined(_WIN32) || defined(__CYGWIN__) || defined(__MSDOS__)
+    char xc = x[i], yc = y[i];
+    if (xpar_path_sep(xc) && xpar_path_sep(yc)) continue;
+    if (xc >= 'A' && xc <= 'Z') xc = (char) (xc - 'A' + 'a');
+    if (yc >= 'A' && yc <= 'Z') yc = (char) (yc - 'A' + 'a');
+    if (xc == yc) continue;
+#else
+    if (x[i] == y[i]) continue;
+#endif
+    eq = false;
+    break;
+  }
   xpar_free(x);  xpar_free(y);
   return eq;
 }
