@@ -106,7 +106,7 @@ Print the exact
 .BR dd (1)
 commands needed to extract the armoured region without xpar or correction.
 For
-.BR \-\-layout=armoured ;
+.BR \-\-layout=armoured ,
 this is protected data. For sidecar and split sets it is critical metadata.
 .TP
 .B undo
@@ -193,7 +193,8 @@ use five percent.
 .B add
 and
 .B consolidate
-inherit existing redundancy and warn if protection decreases.
+inherit redundancy. The former uses the current generation and the latter uses
+the chain's widest ratio. Both warn if protection decreases.
 .TP
 .BI \-\-min\-recovery= N
 Minimum derived recovery-slice count.
@@ -286,7 +287,7 @@ Choose interleave depth for this burst size. Excludes
 .BR \-\-depth .
 .TP
 .BI \-\-depth= D
-Set interleave depth. The default is 1. A depth exceeding
+Set interleave depth. The default is 1. A depth that does not fit within
 .B \-m
 is refused with the required memory and largest feasible value.
 .B \-\-burst
@@ -339,8 +340,8 @@ Store target content rather than the symbolic link.
 .BI \-\-base= DIR
 Store names relative to
 .IR DIR ,
-which must be the input or its parent. Relative and absolute spellings are
-accepted, so
+which must be the input or a directory containing it. Relative and absolute
+spellings are accepted, so
 .I DIR
 may be absolute when inputs are not.
 .TP
@@ -412,7 +413,7 @@ with this option.
 .BI \-\-scan= DIR
 Also search
 .I DIR
-for missing index and recovery volumes. Every verb that opens a set accepts it.
+for missing set volumes. Every verb that opens a set accepts it.
 .BR verify ", " repair ", " scrub ", " extract ", " recover ", "
 .BR addrecovery ", " add ", " consolidate ", " prune ", " list ", "
 .BR info " and " explain .
@@ -591,15 +592,15 @@ no damage.
 .TP
 .B 1
 .BR verify
-damage found and repairable.
+reports repairable damage.
 .BR "repair \-\-exit\-on\-change"
-something was repaired, or, under
+reports that something was repaired or, under
 .BR \-\-dry\-run ,
 would have been.
 .TP
 .B 2
-Damage exceeds the available recovery. This includes failed verification,
-repair, extraction, volume recovery, and prologue recovery.
+Damage exceeds the available recovery. This applies to verification, repair,
+extraction, volume recovery, and prologue recovery.
 .TP
 .B 3
 Set not found, not an xpar set, or an unsupported format version.

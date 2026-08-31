@@ -84,8 +84,7 @@ static int scan_decimal(const char * s, u64 * ip, u64 * fnum, u64 * fden,
     int fd = 0;
     s++;
     while (*s >= '0' && *s <= '9') {
-      /*  Stop accumulating well short of overflow; the digits past the
-          eighteenth cannot change a byte count.  */
+      /*  Later digits cannot change the resulting byte count.  */
       if (den <= 100000000000000000ull) {
         num = num * 10 + (u64) (*s - '0');  den *= 10;
       }
@@ -97,9 +96,8 @@ static int scan_decimal(const char * s, u64 * ip, u64 * fnum, u64 * fden,
   return 0;
 }
 
-/*  K, M, G, T are powers of 1024 and KB, MB, GB, TB powers of 1000
-    Case is not significant, and the suffix must be the whole
-    remainder: `1K%` is a malformed size, not a kilobyte.  */
+/*  K through T use powers of 1024. KB through TB use powers of 1000.
+    Suffixes are case-insensitive and must consume the remainder.  */
 static int size_mult(const char * s, u64 * mult) {
   static const struct { const char * suf;  u64 mult; } tab[] = {
     { "",   1                            },
@@ -118,8 +116,7 @@ int xpar_cli_parse_size(const char * s, u64 * out) {
   const char * end = "";
   if (!s || scan_decimal(s, &ip, &num, &den, &end)) return -1;
   if (size_mult(end, &mult)) return -1;
-  /*  A fraction with no unit is a typo rather than a request for a byte
-      and a half: `-m 1.5` is somebody who meant 1.5G.  */
+  /*  Reject fractional bytes, which usually indicate a missing unit.  */
   if (den > 1 && mult == 1) return -1;
   if (ip > UINT64_MAX / mult) return -1;
   base = ip * mult;
@@ -140,8 +137,7 @@ int xpar_cli_parse_recovery(const char * s, xpar_rspec * out) {
   } else if ((end[0] == 'x' || end[0] == 'X') && !end[1]) {
     r.kind = XPAR_R_TIMES;    r.factor = (f64) ip + (f64) num / (f64) den;
   } else if (!end[0]) {
-    /*  A bare number is a slice count, so a fraction of one is not a
-        smaller request but a mistake: `-r 1.5` names no whole slice.  */
+    /*  Bare values count whole slices.  */
     if (den > 1) return -1;
     r.kind = XPAR_R_COUNT;    r.count = ip;
   } else {
@@ -1164,8 +1160,6 @@ static void defaults(xpar_options * o) {
   o->owner_map    = XPAR_OWNERMAP_NAME;
   o->dest         = XPAR_DEST_DEFAULT;
 }
-
-/*  One option.  */
 
 static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
                   u32 * pres_named) {

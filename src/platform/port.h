@@ -94,10 +94,8 @@ extern xpar_file * const xpar_stdin;
 extern xpar_file * const xpar_stdout;
 extern xpar_file * const xpar_stderr;
 
-/*  The access mode is a two-bit *value*, not a set of flags, so testing it
-    with `flags & XPAR_O_RDONLY` is always false and is a silent bug. Mask
-    with XPAR_O_ACCMODE and compare, as POSIX requires of O_RDONLY for the
-    same reason. The flags above the mask are ordinary bits.  */
+/*  Access mode is a value, not a flag. Mask with XPAR_O_ACCMODE and compare;
+    XPAR_O_RDONLY is zero. Higher flags are ordinary bits.  */
 #define XPAR_O_ACCMODE 3
 #define XPAR_O_RDONLY 0
 #define XPAR_O_WRONLY 1

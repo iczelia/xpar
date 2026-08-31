@@ -26,8 +26,8 @@ xpar combines an outer Reed-Solomon code with an optional inner code. The outer
 code reconstructs missing data. The inner code corrects bit errors and supports
 interleaving for burst damage. Repairs can update only the damaged ranges.
 
-See the [format specification](doc/xpar-format.tex) and the `xpar(1)` manual for
-the full format and command reference. `make docs` builds the PDF specification.
+See the [format specification](doc/xpar-format.tex) and the [xpar(1) manual](xpar.1)
+for the full format and command reference. `make docs` builds the PDF.
 
 ## Installation
 
@@ -177,23 +177,23 @@ calling script must therefore require the key.
 
 | Capability | xpar | par2cmdline | par2cmdline-turbo | ParPar | zfec |
 | --- | --- | --- | --- | --- | --- |
-| Protect file sets or trees | yes | yes | yes | yes | one file |
-| Store names and metadata | yes | yes | yes | yes | no |
-| Correct bit errors | yes | no | no | no | no |
-| Use erasure units smaller than a block | yes | no | no | no | no |
-| Repair in place | yes | no | no | n/a | no |
-| Interleave burst errors | yes | no | no | no | no |
-| Authenticate with a key | yes | no | no | no | no |
-| Check media health | yes | no | no | no | no |
-| Resync after insertion or deletion | yes | yes | yes | n/a | no |
+| File sets and trees | yes | yes | yes | yes | one file |
+| Names and metadata | yes | yes | yes | yes | no |
+| Bit-error correction | yes | no | no | no | no |
+| Sub-block erasures | yes | no | no | no | no |
+| In-place repair | yes | no | no | n/a | no |
+| Burst interleaving | yes | no | no | no | no |
+| Keyed authentication | yes | no | no | no | no |
+| Media health check | yes | no | no | no | no |
+| Insert and delete resync | yes | yes | yes | n/a | no |
 | Add recovery later | yes | yes | yes | yes | no |
 | Incremental generations | yes | no | no | no | no |
-| Deduplicate content | yes | no | no | no | no |
+| Deduplication | yes | no | no | no | no |
 | Published format | yes | yes | yes | yes | yes |
 | GPU backend | no | no | no | yes | no |
 
-xpar is less mature than PAR2 and is not PAR2-compatible. ParPar can be faster
-and provides an OpenCL backend, which xpar does not currently plan to add.
+xpar is less mature than PAR2 and is not PAR2-compatible. ParPar provides an
+OpenCL backend, while xpar does not.
 
 ## Exit status
 
@@ -211,9 +211,8 @@ and provides an OpenCL backend, which xpar does not currently plan to add.
 
 ## Performance and portability
 
-Single-core performance is comparable to par2cmdline-turbo and ParPar. Parallel
-workloads are less optimized. xpar reads output back after writing by default.
-Use `--no-verify-after` to skip that pass.
+xpar reads output back after writing by default. Use `--no-verify-after` to skip
+that pass.
 
 Optimized kernels cover x86 SSSE3, SSE4.2, AVX2, GFNI, GFNI-512, and VBMI;
 ARM NEON, PMULL, and SVE; PowerPC VSX; and RISC-V vector extensions. The binary

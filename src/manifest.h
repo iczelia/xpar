@@ -12,11 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Manifest construction, validation, and occurrence-index interface.
-
-    Canonical extents advance a high-water mark; aliases refer backward.
-    Readers validate paths and extents as untrusted input.  Occurrence
-    indexing maps deduplicated stream ranges back to every file location.  */
+/*  Manifest construction, validation, and occurrence lookup. Canonical
+    extents advance the stream and aliases refer backward. Readers treat paths
+    and extents as untrusted.  */
 
 #ifndef XPAR_MANIFEST_H
 #define XPAR_MANIFEST_H
@@ -90,19 +88,15 @@ const xpar_entry * xpar_manifest_unreachable(const xpar_manifest *,
                                             const char * dir,
                                             const char * exempt);
 
-/*  A zeroed entry with every absent-value sentinel already in place, so
-    a caller that fills three fields does not silently record mode 0 and
-    a 1970 mtime. Invalidates pointers returned by earlier calls.  */
+/*  Append an entry with absent-value sentinels. Invalidates earlier pointers.  */
 xpar_entry * xpar_manifest_append(xpar_manifest * m);
 
 void xpar_manifest_free(xpar_manifest * m);
 
 int xpar_name_cmp(const char * a, u32 alen, const char * b, u32 blen);
 
-/*  Name lookup.
-    A reader's manifest is in SETD order, which is the stream order and
-    not sorted, so resolving a hard-link target by path needs an index.
-    Built once and shared by validation and extraction.  */
+/*  Reader manifests follow stream order, so hard-link lookup uses a shared
+    name index.  */
 
 typedef struct {
   u32 * order;    /*  Entry indices, sorted by name.  */
@@ -125,9 +119,7 @@ void xpar_set_id_update(xpar_set_id_ctx * c, const u8 * file_body, sz n);
 void xpar_set_id_final (const xpar_set_id_ctx * c,
                         u8 out[XPAR_SET_ID_LEN]);
 
-/*  Append one chunk to a growing extent list, coalescing with the last
-    extent where the two stream ranges abut. Both packers build their
-    lists this way, so neither invents a second coalescing rule.  */
+/*  Append a chunk, coalescing adjacent stream ranges.  */
 void xpar_extents_append(xpar_extent ** list, u32 * count, u32 * capacity,
                          u64 stream_offset, u32 length);
 
@@ -170,18 +162,14 @@ typedef struct {
 void xpar_walk_opts_default(xpar_walk_opts * o);
 bool xpar_manifest_name_selected(const xpar_walk_opts *, const char *);
 
-/*  Phase one: enumerate, stat, sort bytewise, resolve hard links, record
-    metadata and intern POSX records. Regular entries come back with
-    their length and nothing else; their hashes and extents are phase
-    two, because whole-entry deduplication needs content_hash and that
-    needs a read.  */
+/*  Phase one enumerates, sorts, and records metadata and hard links. Regular
+    entries receive content data in phase two.  */
 void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
                         u32 root_count, const xpar_walk_opts * o);
 
-/*  Phase two: read every regular entry, hash it, deduplicate whole
-    entries, and lay the survivors down the stream in manifest order
-    while advancing the high-water mark. Sets stream_length,
-    dedup_level, shared_bytes and every file_id. `prog` may be NULL.  */
+/*  Phase two hashes and deduplicates regular entries, then lays them out in
+    manifest order. Sets stream_length, dedup_level, shared_bytes, and file_id.
+    `prog` may be NULL.  */
 void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
                         xpar_progress_t * prog);
 
