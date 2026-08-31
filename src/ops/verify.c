@@ -74,6 +74,7 @@ typedef struct {
   u8 *      plain;
   u64       plain_len, stream_offset, stream_length;
   xpar_armour_params armour_params;
+  bool      released;     /*  Main image dropped for a namespace change.  */
 } xpar_vimg;
 
 static void vimg_load(xpar_vimg * v, const char * path) {
@@ -119,12 +120,13 @@ static void vimg_free(xpar_vimg * v) {
   xpar_memset(v, 0, sizeof *v);
 }
 
-/*  Drop an image's bytes but keep the volume. A host that locks a mapped
-    file refuses to resize, replace or unlink it until the view is gone.  */
-static void vimg_release(xpar_vimg * v) {
+/*  Drop an image while preserving packet bodies retained from it.  */
+static void vimg_release(xpar_critset * crit, xpar_vimg * v) {
+  if (!v->data) return;
+  xpar_critset_detach(crit, v->data, (sz) v->size);
   if (v->map.valid) xpar_unmap(&v->map);
   else xpar_free(v->data);
-  v->data = NULL;  v->size = 0;
+  v->data = NULL;  v->size = 0;  v->released = true;
 }
 
 /*  Read a released image back after its file changed length or content.  */
@@ -1279,8 +1281,14 @@ static void select_armoured_image(xpar_vset * s) {
 }
 
 static bool split_image_seen(const xpar_vset * s, const char * path) {
+  xpar_stat_t want;
+  bool have = xpar_lstat(path, &want) == 0;
   For(u32, i, s->img_count,
-      if (!xpar_strcmp(s->img[i].path, path)) return true)
+      xpar_stat_t got;
+      if (xpar_path_same(s->img[i].path, path)) return true;
+      if (have && (want.dev | want.ino) &&
+          xpar_lstat(s->img[i].path, &got) == 0 && (got.dev | got.ino) &&
+          want.dev == got.dev && want.ino == got.ino) return true)
   return false;
 }
 
@@ -1297,15 +1305,29 @@ static void split_image_add(xpar_vset * s, const char * path) {
 /*  Publishing over a volume the set still holds open fails on hosts that
     lock a mapped file, so every rewrite releases it first.  */
 static void vset_release_path(xpar_vset * s, const char * path) {
+  xpar_stat_t want;
+  bool have = xpar_lstat(path, &want) == 0;
   For(u32, i, s->img_count,
-      if (s->img[i].path && !xpar_strcmp(s->img[i].path, path))
-        vimg_release(&s->img[i]))
+      xpar_stat_t got;
+      bool same = s->img[i].path && xpar_path_same(s->img[i].path, path);
+      if (!same && have && (want.dev | want.ino) && s->img[i].path &&
+          xpar_lstat(s->img[i].path, &got) == 0 && (got.dev | got.ino))
+        same = want.dev == got.dev && want.ino == got.ino;
+#if defined(XPAR_WIN_LEGACY)
+      /*  Windows 9x reports no stable file identity. Releasing every view
+          is the only safe answer before changing a name.  */
+      if (!same) same = true;
+#endif
+      if (same) vimg_release(&s->crit, &s->img[i]))
 }
 
 static void vset_remap_path(xpar_vset * s, const char * path) {
+  (void) path;
   For(u32, i, s->img_count,
-      if (s->img[i].path && !xpar_strcmp(s->img[i].path, path))
-        vimg_remap(&s->img[i]))
+      if (s->img[i].released) {
+        vimg_remap(&s->img[i]);
+        s->img[i].released = false;
+      })
 }
 
 /*  Match a damaged renamed volume by its wholly contained slice
@@ -1774,8 +1796,13 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
       }
       if (good && xpar_fsync(out) == 0) {
         xpar_xclose(out);
+        xpar_close(in);  in = NULL;
         vset_release_path(s, want);
-        if (xpar_rename(stage, want) != 0 || xpar_fsync_dir(want) != 0) {
+        if (xpar_rename(stage, want) != 0) {
+          first_reason(reason, "publishing failed");
+          xpar_remove(stage);
+          failed++;
+        } else if (xpar_fsync_dir(want) != 0) {
           first_reason(reason, "publishing failed");
           failed++;
         } else done++;
@@ -1788,7 +1815,7 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
       }
     }
     xpar_free(stage);
-    xpar_close(in);
+    if (in) xpar_close(in);
     xpar_free(want);
   }
   xpar_free(buf);
@@ -2230,9 +2257,12 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
   s->img_cap = o->set_ref.count + 8;
   s->img = (xpar_vimg *) xpar_calloc(s->img_cap, sizeof(xpar_vimg));
   for (i = 0; i < o->set_ref.count; i++) {
-    vimg_load(&s->img[i], o->set_ref.vol[i]);
-    if (xpar_garm_is_archive(s->img[i].data, (sz) s->img[i].size))
-      open_armoured_image(s, &s->img[i]);
+    xpar_vimg * v;
+    if (split_image_seen(s, o->set_ref.vol[i])) continue;
+    v = &s->img[s->img_count];
+    vimg_load(v, o->set_ref.vol[i]);
+    if (xpar_garm_is_archive(v->data, (sz) v->size))
+      open_armoured_image(s, v);
     s->img_count++;
   }
   auth_preflight(s);

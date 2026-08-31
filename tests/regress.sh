@@ -1129,10 +1129,19 @@ run 0 "$XPAR" create -s 64K --cell=16K -r 25% --layout=split --volumes=4 \
     -o disc p.bin
 rm -f p.bin
 mv disc.d01 other.bin
+#  Put the wrong mapped volume at the missing name. Repair must release its
+#  other hard-link name before replacing this one.
+if ln disc.d00 disc.d01 2> /dev/null; then
+  XPAR_TEST_STRICT_MAP=1;  export XPAR_TEST_STRICT_MAP
+  mapped_alias=yes
+else
+  mapped_alias=no
+fi
 run 1 "$XPAR" verify disc.xpa
 if grep -q "restored under its recorded name" "$log"; then ok
 else bad "verify called an incomplete layout clean"; fi
 run 0 "$XPAR" repair --in-place disc.xpa
+test "$mapped_alias" = no || unset XPAR_TEST_STRICT_MAP
 exists disc.d01
 #  The user's own copy is read, never moved or removed.
 exists other.bin
@@ -1648,6 +1657,17 @@ run 0 "$XPAR" verify t.xpa
 if grep -q 'replicas used' "$log"; then
   bad "the stale volume was not rewritten under a mapped-file lock"
 else ok; fi
+
+#  A second name for the same mapped volume must not keep its inode pinned.
+if ln t.xpa t.v999+1.xpa 2> /dev/null; then
+  off=`"$DAMAGE" t.xpa find=SETD | head -1`
+  damage t.xpa "rand=`expr $off + 4`,1"
+  run 0 "$XPAR" repair --in-place t.xpa
+  run 0 "$XPAR" verify t.xpa
+  rm -f t.v999+1.xpa
+else
+  note "this filesystem has no hard links; skipped aliased volume mapping"
+fi
 
 #  An armoured archive republished in place: a rename over the archive.
 mkfile r.bin 300000 94

@@ -1554,8 +1554,28 @@ static u64 crit_hash(const u8 * set_id, const char * type, u64 disc) {
 void xpar_critset_init(xpar_critset * s) { xpar_memset(s, 0, sizeof *s); }
 
 void xpar_critset_free(xpar_critset * s) {
+  For(u32, i, s->count, xpar_free(s->pkt[i].owned_body))
   xpar_free(s->pkt);  xpar_free(s->idx);
   xpar_memset(s, 0, sizeof *s);
+}
+
+void xpar_critset_detach(xpar_critset * s, const void * base, sz size) {
+  uintptr_t lo = (uintptr_t) base;
+  uintptr_t hi = size <= UINTPTR_MAX - lo ? lo + size : UINTPTR_MAX;
+  u32 i;
+  if (!base || !size) return;
+  for (i = 0; i < s->count; i++) {
+    xpar_crit_pkt * p = &s->pkt[i];
+    uintptr_t at = (uintptr_t) p->body;
+    u8 * copy;
+    if (at < lo || at >= hi) continue;
+    FATAL_UNLESS("A retained packet body extends past its backing store.",
+                 p->body_len <= (u64) (hi - at));
+    copy = (u8 *) xpar_alloc_raw((sz) (p->body_len ? p->body_len : 1));
+    if (p->body_len) xpar_memcpy(copy, p->body, (sz) p->body_len);
+    xpar_free(p->owned_body);
+    p->body = copy;  p->owned_body = copy;
+  }
 }
 
 static bool crit_same(const xpar_critset * s, u32 slot, const u8 * set_id,
@@ -1621,8 +1641,10 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
         if (s->rank < s->pkt[slot].rank) {
           s->pkt[slot].stale++;  s->stale++;
         } else if (s->rank > s->pkt[slot].rank) {
+          xpar_free(s->pkt[slot].owned_body);
           s->pkt[slot].hdr      = *hdr;
           s->pkt[slot].body     = body;
+          s->pkt[slot].owned_body = NULL;
           s->pkt[slot].body_len = n;
           s->pkt[slot].rank     = s->rank;
           s->pkt[slot].stale++;  s->stale++;
@@ -1637,6 +1659,7 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
   s->idx[j] = s->count + 1;
   s->pkt[s->count].hdr       = *hdr;
   s->pkt[s->count].body      = body;
+  s->pkt[s->count].owned_body= NULL;
   s->pkt[s->count].body_len  = n;
   s->pkt[s->count].copies    = 1;
   s->pkt[s->count].conflicts = 0;

@@ -891,6 +891,17 @@ static void test_volume_headers(void) {
   volh_scan(&cs, &b2);
   CHECK_U64(cs.count, 3, "the repeat is not a fourth volume");
   CHECK(cs.conflicts > 0, "two headers for one volume disagree");
+
+  {
+    const u8 * borrowed = cs.pkt[0].body;
+    u8 first = borrowed[0];
+    xpar_critset_detach(&cs, b.data, b.len);
+    CHECK(cs.pkt[0].body != borrowed,
+          "detaching packet storage copies retained bodies");
+    b.data[borrowed - b.data] ^= 0xFF;
+    CHECK_U64(cs.pkt[0].body[0], first,
+              "detached packet bodies outlive their backing storage");
+  }
   xpar_critset_free(&cs);
   xpar_buf_free(&b);
   xpar_buf_free(&b2);

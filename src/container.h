@@ -322,6 +322,7 @@ bool xpar_replicate_here(u64 crit, u64 payload, u32 i, u32 count);
 typedef struct {
   xpar_pkt hdr;
   const u8 * body;
+  u8 * owned_body;             /*  Copy made before borrowed storage moves.  */
   u64 body_len;
   u32 copies;                 /*  Verifying copies seen, this one included.  */
   u32 conflicts;              /*  Verifying copies that disagreed.  */
@@ -350,6 +351,9 @@ void xpar_critset_free(xpar_critset *);
     caller owns. A growable buffer that is written to again after the add
     is not such storage.  */
 bool xpar_critset_add(xpar_critset *, const xpar_pkt *, const u8 * body);
+
+/*  Preserve bodies borrowed from a range that is about to be released.  */
+void xpar_critset_detach(xpar_critset *, const void * base, sz size);
 
 const xpar_crit_pkt * xpar_critset_find(const xpar_critset *,
                                         const u8 * set_id, const char * type,
