@@ -129,6 +129,9 @@ int xpar_lstat(const char * path, xpar_stat_t * out) {
 #if defined(XPAR_WIN_LEGACY)
   WIN32_FIND_DATAA fd;
   HANDLE fh;
+  char * find;
+  sz n;
+  bool root;
 
   out->mode  = XPAR_MODE_NONE;
   out->uid   = XPAR_ID_NONE;
@@ -137,9 +140,28 @@ int xpar_lstat(const char * path, xpar_stat_t * out) {
   out->btime_ns = XPAR_TIME_NONE;
   out->is_symlink = out->is_dir = out->is_regular = false;
 
-  fh = FindFirstFileA(path, &fd);
-  if (fh == INVALID_HANDLE_VALUE) return -1;
-  FindClose(fh);
+  find = path_conv(path);
+  if (!find) { SetLastError(ERROR_INVALID_NAME);  return -1; }
+  n = xpar_strlen(find);
+  /*  FindFirstFile rejects a trailing separator.  */
+  while (n > 1 && (find[n - 1] == '/' || find[n - 1] == '\\') &&
+         !(n == 3 && find[1] == ':'))
+    find[--n] = 0;
+  root = (n == 1 && (find[0] == '/' || find[0] == '\\')) ||
+         (n == 3 && find[1] == ':' &&
+          (find[2] == '/' || find[2] == '\\'));
+  fh = FindFirstFileA(find, &fd);
+  if (fh == INVALID_HANDLE_VALUE) {
+    DWORD attrs = root ? GetFileAttributesA(find) : INVALID_FILE_ATTRIBUTES;
+    if (attrs == INVALID_FILE_ATTRIBUTES ||
+        !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+      xpar_free(find);
+      return -1;
+    }
+    xpar_memset(&fd, 0, sizeof fd);
+    fd.dwFileAttributes = attrs;
+  } else FindClose(fh);
+  xpar_free(find);
   out->size     = ((u64) fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
   out->attrs    = attrs_of(fd.dwFileAttributes);
   out->mtime_ns = ft_ns(fd.ftLastWriteTime);
