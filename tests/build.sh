@@ -17,10 +17,11 @@
 
 . "${srcdir:-.}/lib.sh"
 
-cfg=$abs_top_builddir/config.h
+cfg=${XPAR_TEST_CONFIG_H:-$abs_top_builddir/config.h}
 test -f "$cfg" || skip_all "no config.h; nothing to check"
 
 : "${CC:=cc}"
+: "${XPAR_TEST_CC:=$CC}"
 
 # defined <MACRO>
 defined() { grep -q "^#define $1 " "$cfg"; }
@@ -31,7 +32,7 @@ compiles() {
   cat > probe.c <<EOF
 $*
 EOF
-  $CC $_flags -c -o probe.o probe.c > "$log" 2>&1
+  $XPAR_TEST_CC $_flags -c -o probe.o probe.c > "$log" 2>&1
 }
 
 # probe <MACRO> <flags> <code...>
@@ -40,7 +41,7 @@ probe() {
   _macro=$1;  _flags=$2;  shift 2
   if compiles "$_flags" "$*"; then
     if defined "$_macro"; then ok
-    else bad "$CC $_flags builds this, but config.h has no $_macro"; fi
+    else bad "$XPAR_TEST_CC $_flags builds this, but config.h has no $_macro"; fi
   else
     note "$_macro: compiler rejects the probe here, skipped"
   fi

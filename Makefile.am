@@ -218,12 +218,17 @@ xpar_LDADD += libxpar_core.a
 ## Tests define xpar_main because libxpar_core supplies the platform main.
 ## Standalone data, damage and timing tools do not link the code under test.
 
+XPAR_PROGRAM_TESTS = tests/t_unit tests/t_codec tests/t_central
+XPAR_SHELL_TESTS = tests/central.sh tests/faults.sh tests/safety.sh \
+                   tests/sanity.sh tests/build.sh tests/regress.sh \
+                   tests/perf.sh tests/bench.sh tests/hostfaults.sh
+
 if XPAR_WIN_LEGACY
 ## Legacy Windows cannot link or run the test programs.
 check_PROGRAMS =
 TESTS =
 else
-check_PROGRAMS = tests/t_unit tests/t_codec tests/t_central \
+check_PROGRAMS = $(XPAR_PROGRAM_TESTS) \
                  tests/mkdata tests/damage tests/forge bench/timeit
 
 tests_t_unit_SOURCES    = tests/t_unit.c
@@ -252,10 +257,10 @@ tests_forge_CPPFLAGS    = $(AM_CPPFLAGS)
 tests_forge_LDADD       = $(xpar_LDADD)
 
 
-TESTS = tests/t_unit tests/t_codec tests/t_central \
-        tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-        tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \
-        tests/hostfaults.sh
+TESTS = $(XPAR_PROGRAM_TESTS) $(XPAR_SHELL_TESTS)
+
+test-programs: tests/t_unit$(EXEEXT) tests/t_codec$(EXEEXT) \
+               tests/t_central$(EXEEXT)
 endif
 
 TEST_EXTENSIONS = .sh
@@ -268,7 +273,7 @@ AM_TESTS_ENVIRONMENT = \
   abs_top_builddir='$(abs_top_builddir)';  export abs_top_builddir; \
   abs_top_srcdir='$(abs_top_srcdir)';      export abs_top_srcdir; \
   srcdir='$(abs_top_srcdir)/tests';        export srcdir; \
-  XPAR='$(abs_top_builddir)/xpar$(EXEEXT)';           export XPAR; \
+  XPAR='$(XPAR_TEST_BINARY)';                         export XPAR; \
   MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
   DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
   FORGE='$(abs_top_builddir)/tests/forge$(EXEEXT)';   export FORGE; \
@@ -276,7 +281,13 @@ AM_TESTS_ENVIRONMENT = \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
   XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
   XPAR_SH='$(SHELL)';                                 export XPAR_SH; \
+  XPAR_TEST_CONFIG_H='$(XPAR_TEST_CONFIG_H)';         export XPAR_TEST_CONFIG_H; \
+  XPAR_TEST_CC='$(XPAR_TEST_CC)';                     export XPAR_TEST_CC; \
   CC='$(CC)';                                         export CC;
+
+XPAR_TEST_BINARY = $(abs_top_builddir)/xpar$(EXEEXT)
+XPAR_TEST_CONFIG_H = $(abs_top_builddir)/config.h
+XPAR_TEST_CC = $(CC)
 
 ## Benchmarks are opt-in; tests/bench.sh still requires timeit.
 
@@ -290,7 +301,8 @@ EXTRA_DIST = \
   contrib/repro-digest.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
-  contrib/dos/run-check.sh contrib/dos/run2.c \
+  contrib/dos/exec.conf contrib/dos/exec.sh contrib/dos/run-check.sh \
+  contrib/dos/run-suite.sh contrib/dos/run2.c \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
   tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \
@@ -301,7 +313,7 @@ EXTRA_DIST = \
 VENDORED = src/yarg.h
 
 .PHONY: docs win95-check check-full check-torture check-simd \
-        print-distfiles bench-tools bench
+        print-distfiles print-shell-tests test-programs bench-tools bench
 docs: doc/xpar-format.pdf
 
 ##  Print the files included in the distribution tarball.
@@ -314,6 +326,9 @@ print-distfiles:
 	    *)               echo "$$f" ;; \
 	  esac; \
 	done
+
+print-shell-tests:
+	@echo $(XPAR_SHELL_TESTS)
 
 ## Wider test matrices for nightly and release builds.
 check-full:

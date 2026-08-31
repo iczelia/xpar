@@ -167,13 +167,93 @@ jobs:
           make win95-check
 
       - name: Stage the binary
-        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+        run: |
+          make DESTDIR="$PWD/output" install-exec
+          cp config.h output/config.h
+          ls -l output
+
+      - name: Upload the Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpar-release-win-${{ matrix.target.name }}-${{ env.XPAR_VERSION }}
+          path: output
+
+  #  Run the complete suite against each exact Windows release image.
+  windows-test:
+    name: Test Windows ${{ matrix.target.name }}
+    needs: [ sources, windows ]
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: msys2 {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            msystem: UCRT64
+            host: x86_64-w64-mingw32
+            toolchain: mingw-w64-ucrt-x86_64-gcc
+          - name: i686
+            msystem: MINGW32
+            host: i686-w64-mingw32
+            toolchain: mingw-w64-i686-gcc
+          - name: i686-win95
+            msystem: MINGW32
+            host: i686-w64-mingw32
+            toolchain: mingw-w64-i686-gcc
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Download the Windows build
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-release-win-${{ matrix.target.name }}-${{ env.XPAR_VERSION }}
+          path: target
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: ${{ matrix.target.msystem }}
+          install: >-
+            make tar gzip diffutils coreutils grep sed gawk
+            ${{ matrix.target.toolchain }}
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Build the test harness
+        run: |
+          ./configure --build="`sh ./config.guess`" \
+                      --host=${{ matrix.target.host }} \
+                      CC=${{ matrix.target.host }}-gcc LDFLAGS=-static
+          make -j4 check TESTS=
+
+      - name: Full test suite
+        run: |
+          binary=`cd target && pwd`/xpar-${{ matrix.target.name }}.exe
+          cfg=`cd target && pwd`/config.h
+          chmod +x "$binary"
+          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$binary" \
+            XPAR_TEST_CONFIG_H="$cfg" \
+            XPAR_TEST_CC=${{ matrix.target.host }}-gcc
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
       - name: Publish the binary
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.XPAR_VERSION }}
-          files: output/xpar-${{ matrix.target.name }}*
+          files: target/xpar-${{ matrix.target.name }}*
 
   #  Linux binaries built on the oldest supported image.
   linux:
@@ -208,8 +288,12 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar
+      - name: Full test suite
+        run: VERBOSE=1 make -j4 check
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
       - name: Stage the binary
         run: make DESTDIR="$PWD/output" install-exec && ls -l output
@@ -253,8 +337,12 @@ jobs:
       - name: Make
         run: make -j4 all
 
-      - name: Sanity check
-        run: sh contrib/ci-check.sh ./xpar
+      - name: Full test suite
+        run: VERBOSE=1 make -j4 check
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
       - name: Stage the binary
         run: make DESTDIR="$PWD/output" install-exec && ls -l output
@@ -270,6 +358,7 @@ jobs:
     name: Publish MS-DOS i386
     needs: [ sources ]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     env:
       DJGPP_RELEASE: "v3.4"
       DJGPP_GCC: "1220"
@@ -279,15 +368,19 @@ jobs:
         with:
           name: xpar-${{ env.XPAR_VERSION }}
 
-      - name: Install the DJGPP cross-toolchain
+      - name: Install the DJGPP cross-toolchain and DOSBox-X
         run: |
           #  Required by the prebuilt ar and ranlib.
           sudo apt-get update
-          sudo apt-get install -y libfl2
+          sudo apt-get install -y libfl2 dosbox-x unzip
           curl -fL -o /tmp/djgpp.tar.bz2 \
             "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
           tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
           echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+          curl -fL -o /tmp/csdpmi.zip \
+            http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
+          unzip -j -o -d "$HOME/csdpmi" /tmp/csdpmi.zip 'bin/CWSDPMI.EXE'
+          echo "CWSDPMI=$HOME/csdpmi/CWSDPMI.EXE" >> $GITHUB_ENV
 
       - name: Extract the source package
         run: |
@@ -295,24 +388,36 @@ jobs:
           sleep 1
           touch aclocal.m4 configure config.h.in Makefile.in
 
-      - name: Configure
+      - name: Build for MS-DOS and for this host
         run: |
-          ./configure --host=i586-pc-msdosdjgpp --disable-simd \
-                      --bindir=/ --program-suffix=-dos \
-                      CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 LDFLAGS=-s
-
-      - name: Make
-        run: make -j4 all
+          mkdir build-dos build-native
+          ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp \
+                  --disable-simd --bindir=/ --program-suffix=-dos \
+                  CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 LDFLAGS=-s \
+              && make -j4 test-programs )
+          ( cd build-native && ../configure && make -j4 check TESTS= )
 
       #  objdump provides a stable BFD target name.
       - name: Verify the DOS binary format
         run: |
-          file xpar.exe
-          i586-pc-msdosdjgpp-objdump -f xpar.exe
-          i586-pc-msdosdjgpp-objdump -f xpar.exe | grep -q 'coff-go32-exe'
+          file build-dos/xpar.exe
+          i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
+          i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe \
+            | grep -q 'coff-go32-exe'
+
+      - name: Full test suite under DOSBox-X
+        run: |
+          sh contrib/dos/run-suite.sh build-dos build-native \
+             "$CWSDPMI" "$RUNNER_TEMP/dos-suite"
+
+      - name: Show the test logs
+        if: failure()
+        run: cat build-native/test-suite.log build-native/tests/*.log 2>&1 || true
 
       - name: Stage the binary
-        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+        run: |
+          make -C build-dos DESTDIR="$PWD/output" install-exec
+          ls -l output
 
       - name: Publish the binary
         uses: softprops/action-gh-release@v2

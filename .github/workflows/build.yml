@@ -457,20 +457,35 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: xpar-win-${{ matrix.target.name }}-${{ github.sha }}
-          path: xpar.exe
+          path: |
+            xpar.exe
+            config.h
 
   #  Run the cross-built binaries on Windows.
   windows-cross-test:
     name: Windows run ${{ matrix.name }}
     needs: [ dist, windows-cross ]
     runs-on: windows-latest
+    timeout-minutes: 120
     defaults:
       run:
-        shell: bash
+        shell: msys2 {0}
     strategy:
       fail-fast: false
       matrix:
-        name: [ x86_64, i686, i686-win95 ]
+        include:
+          - name: x86_64
+            msystem: UCRT64
+            host: x86_64-w64-mingw32
+            toolchain: mingw-w64-ucrt-x86_64-gcc
+          - name: i686
+            msystem: MINGW32
+            host: i686-w64-mingw32
+            toolchain: mingw-w64-i686-gcc
+          - name: i686-win95
+            msystem: MINGW32
+            host: i686-w64-mingw32
+            toolchain: mingw-w64-i686-gcc
     steps:
       - name: Download source package artifact
         uses: actions/download-artifact@v7
@@ -487,14 +502,40 @@ jobs:
           name: xpar-win-${{ matrix.name }}-${{ github.sha }}
           path: bin
 
-      #  Extract the test script; nothing is built here.
-      - name: Extract source package
-        run: tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: ${{ matrix.msystem }}
+          install: >-
+            make tar gzip diffutils coreutils grep sed gawk
+            ${{ matrix.toolchain }}
 
-      - name: Sanity check
+      - name: Extract source package
         run: |
+          tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      #  Build the harness normally even for Win95, whose minimal CRT cannot
+      #  link it. The binary under every command test remains the artifact.
+      - name: Build the test harness
+        run: |
+          ./configure --build="`sh ./config.guess`" \
+                      --host=${{ matrix.host }} \
+                      CC=${{ matrix.host }}-gcc LDFLAGS=-static
+          make -j4 check TESTS=
           chmod +x bin/xpar.exe
-          sh contrib/ci-check.sh ./bin/xpar.exe compat
+          bin=`cd bin && pwd`/xpar.exe
+          cfg=`cd bin && pwd`/config.h
+          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$bin" \
+            XPAR_TEST_CONFIG_H="$cfg" \
+            XPAR_TEST_CC=${{ matrix.host }}-gcc
+        env:
+          XPAR_COMPAT: compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
 
 
   #  Foreign architectures under qemu-user, including big-endian s390x.
@@ -675,6 +716,7 @@ jobs:
     name: MS-DOS i386 (DJGPP, under DOSBox-X)
     needs: [ dist ]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     env:
       DJGPP_RELEASE: "v3.4"
       DJGPP_GCC: "1220"
@@ -683,6 +725,11 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
+      - name: Download compatibility fixture
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-compat-${{ github.sha }}
+          path: compat
 
       - name: Install the DJGPP cross-toolchain, DOSBox-X and CWSDPMI
         run: |
@@ -711,8 +758,8 @@ jobs:
           mkdir build-dos build-native
           ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp --disable-simd \
                                          CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 \
-              && make -j4 )
-          ( cd build-native && ../configure && make -j4 )
+              && make -j4 test-programs )
+          ( cd build-native && ../configure && make -j4 check TESTS= )
 
       #  Use objdump's stable BFD target name for the assertion.
       - name: Verify the DOS binary format
@@ -721,17 +768,25 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe | grep -q 'coff-go32-exe'
 
-      - name: Run the MS-DOS check under DOSBox-X
+      - name: Run the full test suite under DOSBox-X
         run: |
-          sh contrib/dos/run-check.sh build-dos/xpar.exe build-native/xpar \
-             "$CWSDPMI" "$RUNNER_TEMP/dos-check"
+          sh contrib/dos/run-suite.sh build-dos build-native \
+             "$CWSDPMI" "$RUNNER_TEMP/dos-suite"
+        env:
+          XPAR_COMPAT: ${{ github.workspace }}/compat
+
+      - name: Show the test logs
+        if: failure()
+        run: cat build-native/test-suite.log build-native/tests/*.log 2>&1 || true
 
       - name: Upload the DOS transcript
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: xpar-dos-transcript-${{ github.sha }}
-          path: ${{ runner.temp }}/dos-check/out
+          path: |
+            build-native/test-suite.log
+            build-native/tests/*.log
           if-no-files-found: ignore
 
   docs:
