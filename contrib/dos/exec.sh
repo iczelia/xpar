@@ -28,8 +28,16 @@ esac
 guest_dir=$(printf '%s' "$guest_dir" | sed 's|/|\\|g')
 
 mkdir -p "$DOSBOX_REQUEST_ROOT"
-request=$(mktemp -d "$DOSBOX_REQUEST_ROOT/request.XXXXXX")
-trap 'rm -rf "$request"' EXIT HUP INT TERM
+if test -n "${DOSBOX_SERVER_DIR:-}"; then
+  request=$DOSBOX_SERVER_DIR
+  test -f "$request/STARTED" || fail "DOSBox-X worker is not ready"
+  test ! -f "$request/READY" || fail "DOSBox-X worker is busy"
+  rm -f "$request/STATUS.TXT" "$request/STDOUT.BIN" \
+        "$request/STDERR.BIN" "$request/COMMAND.BAT"
+else
+  request=$(mktemp -d "$DOSBOX_REQUEST_ROOT/request.XXXXXX")
+  trap 'rm -rf "$request"' EXIT HUP INT TERM
+fi
 
 # NUL separators preserve spaces and keep the COMMAND.COM line short.
 : > "$request/ARGS.BIN"
@@ -77,30 +85,46 @@ for arg in "$@"; do
   printf '%s\0' "$arg" >> "$request/ARGS.BIN"
 done
 
-cat > "$request/RUN.BAT" <<EOF
+command_file=$request/RUN.BAT
+test -z "${DOSBOX_SERVER_DIR:-}" || command_file=$request/COMMAND.BAT
+cat > "$command_file" <<EOF
 @ECHO OFF
 C:
 CD "$guest_dir"
 D:\\RUN2.EXE --status R:\\STATUS.TXT --stdout R:\\STDOUT.BIN --stderr R:\\STDERR.BIN --args R:\\ARGS.BIN D:\\$guest
+EOF
+
+if test -n "${DOSBOX_SERVER_DIR:-}"; then
+  : > "$request/READY"
+  while test -f "$request/READY"; do
+    if ! kill -0 "$DOSBOX_SERVER_PID" 2>/dev/null; then
+      sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
+      fail "DOSBox-X worker exited"
+    fi
+    sleep 0.01
+  done
+else
+  cat >> "$request/RUN.BAT" <<EOF
 EXIT
 EOF
 
-escape_sed() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
-root_sed=$(escape_sed "$root")
-tools_sed=$(escape_sed "$tools")
-request_sed=$(escape_sed "$request")
-sed -e "s|@ROOT@|$root_sed|g" \
-    -e "s|@TOOLS@|$tools_sed|g" \
-    -e "s|@REQUEST@|$request_sed|g" \
-    "$DOSBOX_EXEC_CONF" > "$request/exec.conf"
+  escape_sed() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
+  root_sed=$(escape_sed "$root")
+  tools_sed=$(escape_sed "$tools")
+  request_sed=$(escape_sed "$request")
+  sed -e "s|@ROOT@|$root_sed|g" \
+      -e "s|@TOOLS@|$tools_sed|g" \
+      -e "s|@REQUEST@|$request_sed|g" \
+      "$DOSBOX_EXEC_CONF" > "$request/exec.conf"
 
-SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-dummy} \
-SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy} \
-  dosbox-x -conf "$request/exec.conf" -exit \
-           > "$request/dosbox.log" 2>&1 || {
-    sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
-    fail "dosbox-x exited non-zero"
-  }
+  SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-dummy} \
+  SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy} \
+    dosbox-x -conf "$request/exec.conf" -exit \
+             > "$request/dosbox.log" 2>&1 || {
+      sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2
+      fail "dosbox-x exited non-zero"
+    }
+fi
 
 test -f "$request/STATUS.TXT" || {
   sed 's/^/dosbox-x: /' "$request/dosbox.log" >&2

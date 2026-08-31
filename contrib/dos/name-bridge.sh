@@ -23,6 +23,29 @@ clear_dosbox_names() {
   done
 }
 
+short_actual() {
+  actual=$1
+  test -e "$actual" && return 0
+  case $1 in
+    */*) _sa_dir=${1%/*}; _sa_leaf=${1##*/} ;;
+    *)   _sa_dir=.;       _sa_leaf=$1 ;;
+  esac
+  _sa_want=`printf '%s' "$_sa_leaf" | tr 'a-z' 'A-Z'`
+  for _sa_path in "$_sa_dir"/*; do
+    test -e "$_sa_path" || continue
+    _sa_have=`printf '%s' "${_sa_path##*/}" | tr 'a-z' 'A-Z'`
+    if test "$_sa_have" = "$_sa_want"; then actual=$_sa_path; return 0; fi
+  done
+}
+
+canonical_short() {
+  case $1 in
+    */*) _cs_dir=${1%/*}/; _cs_leaf=${1##*/} ;;
+    *)   _cs_dir=;         _cs_leaf=$1 ;;
+  esac
+  printf '%s%s' "$_cs_dir" "`printf '%s' "$_cs_leaf" | tr 'a-z' 'A-Z'`"
+}
+
 touch "$state"
 
 add_base() {
@@ -55,6 +78,7 @@ for arg in "$@"; do
   case $arg in
     -o | --output) want=yes ;;
     --output=*) add_base "${arg#--output=}" ;;
+    --volume=*) ;;
     *.xpa | *.XPA)
       base=${arg%.[xX][pP][aA]}
       base=`printf '%s' "$base" | sed 's/\.g[0-9][0-9]*$//;s/\.v[0-9][0-9]*+[0-9][0-9]*$//'`
@@ -69,22 +93,38 @@ if test "$mode" = pre; then
   while IFS="$tab" read kind short long; do
     test "$kind" = F || continue
     # The launcher translates arguments too, so DOS sees only recorded names.
+    short_actual "$short"
     if test -e "$long"; then
-      rm -f "$short"
+      rm -f "$actual"
       mv "$long" "$short"
       printf '%s\t%s\n' "$short" "$long" >> "$active"
     else
-      rm -f "$short"
+      rm -f "$actual"
     fi
   done < "$state"
   exit 0
 fi
 
 add_file() {
-  short=$1 long=$2
+  short=`canonical_short "$1"`; long=$2
   if awk -F '\t' -v s="$short" -v l="$long" \
     '$1 == "F" && $2 == s && $3 == l { found=1 } END { exit !found }' "$state"
   then return 0
+  fi
+  if awk -F '\t' -v s="$short" \
+    '$1 == "F" && $2 == s { found=1 } END { exit !found }' "$state"
+  then
+    swap=$state.swap.$$
+    awk -F '\t' -v OFS='\t' -v s="$short" -v l="$long" '
+      $1 == "F" && $2 == s {
+        if (!done) print "F", s, l
+        done=1
+        next
+      }
+      { print }
+    ' "$state" > "$swap"
+    mv "$swap" "$state"
+    return 0
   fi
   printf 'F\t%s\t%s\n' "$short" "$long" >> "$state"
 }
@@ -104,8 +144,9 @@ while IFS="$tab" read shortbase base; do
       index=$shortbase.XG$gen
       prefix=$base.g`printf '%03d' "$gen"`
     fi
-    if test -f "$index" &&
-       "$DOSBOX_NATIVE_XPAR" info --generation="$gen" "$index" > "$tmp" 2>/dev/null
+    short_actual "$index"
+    if test -f "$actual" &&
+       "$DOSBOX_NATIVE_XPAR" info --generation="$gen" "$actual" > "$tmp" 2>/dev/null
     then
       add_file "$index" "$prefix.xpa"
       awk '/^    recovery / { split($4, r, "\\.\\."); print $2, r[1], r[2] }
@@ -149,21 +190,23 @@ done
 # harness spelling and remove the extra hard-link name.
 if test -f "$active"; then
   while IFS="$tab" read short long; do
-    if test ! -e "$short"; then rm -f "$long"; fi
+    short_actual "$short"
+    if test ! -e "$actual"; then rm -f "$long"; fi
   done < "$active"
 fi
 awk -F '\t' '$1 == "F" { print $2 "\t" $3 }' "$state" |
 while IFS="$tab" read short long; do
-  test -e "$short" || continue
+  short_actual "$short"
+  test -e "$actual" || continue
   if test -e "$long"; then
-    if same_inode "$short" "$long"; then
-      rm -f "$short"
+    if same_inode "$actual" "$long"; then
+      rm -f "$actual"
     else
       rm -f "$long"
-      mv "$short" "$long"
+      mv "$actual" "$long"
     fi
   else
-    mv "$short" "$long"
+    mv "$actual" "$long"
   fi
 done
 rm -f "$active" "$tmp" "$tmp.vol"

@@ -353,6 +353,10 @@ for field in 8 16; do
                    --armour-field=$field --armour-t=16 -o p p.bin
   then
     "$XPAR" explain p.xpa 2> "$log" | sed -n '/^set -e$/,$p' > recipe.sh
+    if xpar_config_defined XPAR_DOS; then
+      sed 's/P___\.XPA/p.xpa/g' recipe.sh > recipe.host
+      mv recipe.host recipe.sh
+    fi
     fd=`sed -n 's/.*plaintext bytes per frame = \([0-9][0-9]*\).*/\1/p' \
           recipe.sh | head -1`
     if test -n "$fd" && test "$fd" -gt 65536; then big_frame=yes; fi

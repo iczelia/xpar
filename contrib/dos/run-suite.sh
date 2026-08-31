@@ -53,6 +53,61 @@ echo "$prog: running DOS test programs"
 
 launcher=$srcdir/test-launcher.sh
 
+# Keep one emulator alive for the shell suite.  Starting DOSBox-X for every
+# xpar command costs much more than most commands do.
+server=$requests/server
+mkdir -p "$server"
+rm -f "$server/READY" "$server/STARTED" "$server/STOP"
+cat > "$server/RUN.BAT" <<'EOF'
+@ECHO OFF
+ECHO READY>R:\STARTED
+:WAIT
+IF EXIST R:\STOP GOTO DONE
+IF NOT EXIST R:\READY GOTO WAIT
+CALL R:\COMMAND.BAT
+DEL R:\READY
+GOTO WAIT
+:DONE
+EXIT
+EOF
+
+escape_sed() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
+root_sed=$(escape_sed "$DOSBOX_MOUNT_ROOT")
+tools_sed=$(escape_sed "$DOSBOX_TOOLS")
+server_sed=$(escape_sed "$server")
+sed -e "s|@ROOT@|$root_sed|g" \
+    -e "s|@TOOLS@|$tools_sed|g" \
+    -e "s|@REQUEST@|$server_sed|g" \
+    "$DOSBOX_EXEC_CONF" > "$server/exec.conf"
+
+SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-dummy} \
+SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy} \
+  dosbox-x -conf "$server/exec.conf" -exit \
+           > "$server/dosbox.log" 2>&1 &
+DOSBOX_SERVER_PID=$!
+DOSBOX_SERVER_DIR=$server
+export DOSBOX_SERVER_PID DOSBOX_SERVER_DIR
+server_running=yes
+stop_server() {
+  test -n "$server_running" || return
+  : > "$server/STOP"
+  wait "$DOSBOX_SERVER_PID" || true
+  server_running=
+}
+trap 'stop_server' EXIT
+trap 'exit 1' HUP INT TERM
+
+n=0
+while test ! -f "$server/STARTED"; do
+  if ! kill -0 "$DOSBOX_SERVER_PID" 2>/dev/null; then
+    sed 's/^/dosbox-x: /' "$server/dosbox.log" >&2
+    fail "DOSBox-X worker exited during startup"
+  fi
+  n=`expr "$n" + 1`
+  test "$n" -lt 300 || fail "DOSBox-X worker did not start"
+  sleep 0.1
+done
+
 shell_tests=$(make -s -C "$native_build" print-shell-tests)
 test -n "$shell_tests" || fail "the shell test list is empty"
 
