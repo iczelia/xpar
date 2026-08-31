@@ -442,13 +442,21 @@ bool xpar_is_tty(xpar_file * f) {
 bool xpar_eof  (xpar_file * f) { return f->at_eof; }
 int  xpar_error(xpar_file * f) { return (int) f->last_err; }
 
-#define WIN_LOCK_LO  0xFFFFFFFFu
-#define WIN_LOCK_HI  0xFFFFFFFFu
+/*  Win32 byte-range locks are mandatory, unlike the advisory whole-file
+    locks used by the POSIX port.  Reserve one byte beyond any representable
+    signed file offset as the cooperating-writer marker, so holding an xpar
+    lock does not make our own pread, truncate, or rename fail.  Windows
+    permits locking a range beyond end of file.  */
+#define WIN_LOCK_OFF_LO  0xFFFFFFFEu
+#define WIN_LOCK_OFF_HI  0x7FFFFFFFu
+#define WIN_LOCK_LEN_LO  1u
+#define WIN_LOCK_LEN_HI  0u
 
 int xpar_lock(xpar_file * f, bool exclusive) {
 #if defined(XPAR_WIN_LEGACY)
   (void) exclusive;
-  if (!LockFile(f->h, 0, 0, WIN_LOCK_LO, WIN_LOCK_HI)) {
+  if (!LockFile(f->h, WIN_LOCK_OFF_LO, WIN_LOCK_OFF_HI,
+                WIN_LOCK_LEN_LO, WIN_LOCK_LEN_HI)) {
     f->last_err = GetLastError();
     return -1;
   }
@@ -456,8 +464,9 @@ int xpar_lock(xpar_file * f, bool exclusive) {
   OVERLAPPED ov;
   DWORD flags = LOCKFILE_FAIL_IMMEDIATELY;
   xpar_memset(&ov, 0, sizeof ov);
+  ov.Offset = WIN_LOCK_OFF_LO;  ov.OffsetHigh = WIN_LOCK_OFF_HI;
   if (exclusive) flags |= LOCKFILE_EXCLUSIVE_LOCK;
-  if (!LockFileEx(f->h, flags, 0, WIN_LOCK_LO, WIN_LOCK_HI, &ov)) {
+  if (!LockFileEx(f->h, flags, 0, WIN_LOCK_LEN_LO, WIN_LOCK_LEN_HI, &ov)) {
     f->last_err = GetLastError();
     return -1;
   }
@@ -470,11 +479,13 @@ int xpar_unlock(xpar_file * f) {
   BOOL ok;
   if (!f->locked) return 0;
 #if defined(XPAR_WIN_LEGACY)
-  ok = UnlockFile(f->h, 0, 0, WIN_LOCK_LO, WIN_LOCK_HI);
+  ok = UnlockFile(f->h, WIN_LOCK_OFF_LO, WIN_LOCK_OFF_HI,
+                  WIN_LOCK_LEN_LO, WIN_LOCK_LEN_HI);
 #else
   { OVERLAPPED ov;
     xpar_memset(&ov, 0, sizeof ov);
-    ok = UnlockFileEx(f->h, 0, WIN_LOCK_LO, WIN_LOCK_HI, &ov); }
+    ov.Offset = WIN_LOCK_OFF_LO;  ov.OffsetHigh = WIN_LOCK_OFF_HI;
+    ok = UnlockFileEx(f->h, 0, WIN_LOCK_LEN_LO, WIN_LOCK_LEN_HI, &ov); }
 #endif
   if (!ok) { f->last_err = GetLastError();  return -1; }
   f->locked = false;

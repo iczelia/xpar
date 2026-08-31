@@ -682,7 +682,13 @@ static xpar_file * rp_entry_file(rp * r, u32 entry) {
     if (r->fd[i].used && r->fd[i].entry == entry) return r->fd[i].f;
   f = xpar_open(r->path[entry], XPAR_O_RDONLY | XPAR_O_NOFOLLOW);
   if (!f) {
-    if (!xpar_errno_absent(xpar_errno())) rp_io_error(r, entry, xpar_errno());
+    int err = xpar_errno();
+    /*  win_open_nofollow reports a missing parent as CANT_ACCESS_FILE.
+        The scan snapshot is authoritative for an input known to be absent,
+        but do still attempt the open so a recreated file can be verified.  */
+    if (!xpar_errno_absent(err) &&
+        (r->snap_valid[entry] || (r->fstate[entry] & 1)))
+      rp_io_error(r, entry, err);
     return NULL;
   }
   i = r->fd_next++ % RP_FD_CACHE;
@@ -2642,7 +2648,14 @@ static char * rp_keep_aside_name(const char * path, int * err) {
   for (n = 0; n < 64; n++) {
     xpar_stat_t st;
     char * bak = rp_backup_name(path);
+#if defined(XPAR_WIN32)
+    /*  MoveFileEx cannot reliably replace a destination that remains under
+        its old name through a second hard link.  A rename also gives
+        --backup the independent old name its two-step protocol expects.  */
+    if (xpar_rename(path, bak) == 0) return bak;
+#else
     if (xpar_link(path, bak) == 0) return bak;
+#endif
     *err = xpar_errno();
     if (xpar_lstat(bak, &st) == 0) { xpar_free(bak);  continue; }
     if (xpar_keep_aside(path, bak) == 0) return bak;
@@ -2877,6 +2890,9 @@ static void rp_write_tree(rp * r, const char * dir, bool backup) {
     if (xpar_fsync(f) != 0)
       FATAL_IO("Flushing staged repair of '%s' failed.", out);
     xpar_xclose(f);
+      /*  Windows will not replace a path while this repair still has its
+          source open, even though the handle requested delete sharing.  */
+      if (backup) rp_close_entry(r, i);
       xpar_blake3_final(&h, got, sizeof got);
       /*  Skip unrecoverable entries without abandoning the tree.  */
       if (!xpar_ct_equal(got, e->content_hash, sizeof got)) {

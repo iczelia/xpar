@@ -908,10 +908,21 @@ static char * path_lex_norm(const char * p) {
   return out;
 }
 
+static bool path_lex_absolute(const char * p) {
+  if (p[0] && xpar_path_sep(p[0])) return true;
+#if defined(XPAR_WIN32)
+  return ((p[0] >= 'A' && p[0] <= 'Z') ||
+          (p[0] >= 'a' && p[0] <= 'z')) &&
+         p[1] == ':' && xpar_path_sep(p[2]);
+#else
+  return false;
+#endif
+}
+
 /*  Normalize PATH as an absolute path.  */
 static char * path_lex_abs(const char * p) {
   char * cwd, * join, * abs;
-  if (xpar_path_sep(p[0])) return path_lex_norm(p);
+  if (path_lex_absolute(p)) return path_lex_norm(p);
   cwd = xpar_getcwd();
   if (!cwd) return NULL;
   join = xpar_path_join(cwd, p);

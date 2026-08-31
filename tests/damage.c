@@ -30,6 +30,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #if !defined(_WIN32) && !defined(__MSDOS__)
 #include <sys/types.h>
 #endif
@@ -388,6 +393,10 @@ int main(int argc, char ** argv) {
   unsigned long long z = 0, y = 0, cell_len = 64, a, b;
   int i;
 
+#if defined(_WIN32)
+  /*  find= emits numeric records consumed by POSIX-shell arithmetic.  */
+  (void) _setmode(_fileno(stdout), _O_BINARY);
+#endif
   if (argc < 3) usage();
   path = argv[1];
   img_open(path);
