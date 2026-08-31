@@ -11,7 +11,7 @@ show_dosbox_log() {
   cache=`grep -c 'DIRCACHE: FindFirst/Next: All slots full' "$1" \
          2>/dev/null || true`
   times=`grep -c 'DOS:57:Unsupported subfunction' "$1" 2>/dev/null || true`
-  test "${ioctl:-0}" -eq 0 || echo "dosbox-x: $ioctl ignored IOCTL probes" >&2
+  test "${ioctl:-0}" -eq 0 || echo "dosbox-x: $ioctl unsupported IOCTL probes" >&2
   test "${cache:-0}" -eq 0 || echo "dosbox-x: $cache directory-cache resets" >&2
   test "${times:-0}" -eq 0 || echo "dosbox-x: $times unsupported time probes" >&2
   awk '!/IOCTL Query 11:71/ &&

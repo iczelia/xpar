@@ -95,8 +95,7 @@ if test "$mode" = pre; then
     # The launcher translates arguments too, so DOS sees only recorded names.
     short_actual "$short"
     if test -e "$long"; then
-      # A four-character base such as "base" differs from its DOS name only
-      # by case.  short_actual then finds the long name itself.
+      # A case-only DOS name may identify the source itself.
       actual_name=${actual#./}
       long_name=${long#./}
       test "$actual_name" = "$long_name" || rm -f "$actual"

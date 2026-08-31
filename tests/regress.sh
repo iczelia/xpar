@@ -136,13 +136,33 @@ mkdir tree
 mkfile tree/payload.bin 400000 44
 
 #  The threshold has a 1 MiB floor, so only a large manifest crosses it.
-pad=nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
-pad=$pad$pad$pad
-i=0
-while test "$i" -lt 3000; do
-  printf x > "tree/f$i.$pad.txt"
-  i=`expr $i + 1`
-done
+if xpar_config_defined XPAR_DOS; then
+  deep=tree
+  i=0
+  while test "$i" -lt 22; do
+    deep=$deep/`printf 'd%07d' "$i"`
+    mkdir "$deep"
+    i=`expr $i + 1`
+  done
+  i=0
+  while test "$i" -lt 3000; do
+    if test `expr $i % 100` -eq 0; then
+      group=`expr $i / 100`
+      leaf=$deep/`printf 'g%07d' "$group"`
+      mkdir "$leaf"
+    fi
+    printf x > "$leaf/`printf 'f%07d' "$i"`"
+    i=`expr $i + 1`
+  done
+else
+  pad=nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+  pad=$pad$pad$pad
+  i=0
+  while test "$i" -lt 3000; do
+    printf x > "tree/f$i.$pad.txt"
+    i=`expr $i + 1`
+  done
+fi
 
 run 0 "$XPAR" create -r 16 -s 4K --volumes=8 --layout=split -o set -R tree
 
