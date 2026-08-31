@@ -394,6 +394,7 @@ jobs:
           ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp \
                   --disable-simd --bindir=/ --program-suffix=-dos \
                   CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 LDFLAGS=-s \
+              && make -j4 all \
               && make -j4 test-programs )
           ( cd build-native && ../configure && make -j4 check TESTS= )
 
