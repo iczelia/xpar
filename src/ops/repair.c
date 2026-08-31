@@ -723,6 +723,33 @@ static bool rp_stat_same(const xpar_stat_t * a, const xpar_stat_t * b) {
   return true;
 }
 
+#if defined(XPAR_WIN32)
+/*  Restore the target lock after a failed namespace replacement.  */
+static void rp_relock_entry(rp * r, u32 entry) {
+  xpar_stat_t now;
+  xpar_file * f = xpar_open(r->path[entry],
+                            XPAR_O_RDWR | XPAR_O_NOFOLLOW);
+  if (!f)
+    FATAL_IO("Cannot reopen '%s' after a failed relink: %s.",
+             r->path[entry], xpar_strerror(xpar_errno()));
+  if (xpar_lock(f, true) != 0) {
+    int err = xpar_error(f);
+    xpar_close(f);
+    FATAL_IO("Cannot relock '%s' after a failed relink: %s.",
+             r->path[entry], xpar_strerror(err));
+  }
+  if (!r->snap_valid[entry] || xpar_lstat(r->path[entry], &now) != 0 ||
+      !rp_stat_same(&r->snapshot[entry], &now)) {
+    (void) xpar_unlock(f);
+    xpar_close(f);
+    FATAL_CODE(XPAR_EXIT_IO,
+               "'%s' changed during a failed relink; repair did not "
+               "overwrite it.", r->path[entry]);
+  }
+  r->locked[entry] = f;
+}
+#endif
+
 /*  Refuse a scan assembled across a cooperating writer's update.  */
 static void rp_snapshot_check(rp * r, const char * phase) {
   u32 i;
@@ -2155,26 +2182,26 @@ static int rp_relink(rp * r, const rp_write * w) {
     if (stage) {
       rp_close_entry(r, w->entry);
 #if defined(XPAR_WIN32)
-      /*  A Win32 byte-range lock prevents MoveFileEx from replacing the
-          locked name. Keep the handle open, then restore the lock if the
-          rename fails and the copy must be repaired in place.  */
+      /*  MoveFileEx requires the replaced file to be closed.  */
       if (r->locked[w->entry] && xpar_unlock(r->locked[w->entry]) != 0) {
         err = xpar_error(r->locked[w->entry]);
         ok = -1;
       } else {
-        ok = xpar_rename(stage, path);
-        if (ok != 0) err = xpar_errno();
         if (r->locked[w->entry]) {
-          if (ok == 0) {
-            xpar_close(r->locked[w->entry]);
-            r->locked[w->entry] = NULL;
-          } else if (xpar_lock(r->locked[w->entry], true) != 0) {
-            int lock_err = xpar_error(r->locked[w->entry]);
+          xpar_file * f = r->locked[w->entry];
+          r->locked[w->entry] = NULL;
+          if (xpar_close(f) != 0) {
+            int close_err = xpar_errno();
             xpar_remove(stage);
             xpar_free(stage);
-            FATAL_IO("Cannot relock '%s' after a failed relink: %s.", path,
-                     xpar_strerror(lock_err));
+            FATAL_IO("Cannot close '%s' for relinking: %s.", path,
+                     xpar_strerror(close_err));
           }
+        }
+        ok = xpar_rename(stage, path);
+        if (ok != 0) {
+          err = xpar_errno();
+          rp_relock_entry(r, w->entry);
         }
       }
 #else
