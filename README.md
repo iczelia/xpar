@@ -1,557 +1,246 @@
 # xpar
 
-xpar is an error and erasure correction system for guarding data integrity.
-Licensed under the GNU GPL version 3 only; see COPYING.
+xpar protects files and directories with error and erasure correction. It can
+restore data damaged by bad sectors, bit flips, truncation, media rot, or
+transmission failures.
 
-Report issues to Kamila Szewczyk <k@iczelia.net>.
-Project homepage: https://github.com/iczelia/xpar
+xpar is licensed under GNU GPL version 3 only. See [COPYING](COPYING).
+Report issues to Kamila Szewczyk <k@iczelia.net>. The project is hosted at
+<https://github.com/iczelia/xpar>.
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/xpar.svg)](https://repology.org/project/xpar/versions)
 
-## Synopsis
+## Quick start
 
-xpar creates recovery volumes for files and directories. Use them to restore
-data damaged by bad sectors, bit flips, truncated copies, media rot, or
-transmission failures.
-
-```
-% xpar create -r 10% -o backup movie.mkv     # 10% redundancy
-% xpar verify backup.xpa                     # writes nothing, exits 0/1/2
-% xpar repair --in-place backup.xpa          # fix what broke
+```sh
+xpar create -r 10% -o backup movie.mkv
+xpar verify backup.xpa
+xpar repair --in-place backup.xpa
 ```
 
-Alternatives include PAR2, PAR2-turbo, ParPar, QuickPar, Par3, zfec, and ISA-L
-front-ends. xpar uses two Reed-Solomon layers to correct both bit errors and
-lost or invalid blocks. Repairs are performed in place. The inner code uses
-small blocks that can be transposed for better burst-error correction.
+`create` writes recovery volumes. `verify` checks data without changing it and
+exits 0 when clean, 1 when repairable, or 2 when beyond repair. `repair` restores
+damage covered by the available recovery data.
 
-The format is specified in [doc/xpar-format.tex](doc/xpar-format.tex). Run
-`make docs` to typeset it; releases include `xpar-format-<version>.pdf`. A
-manual page is also included.
+xpar combines an outer Reed-Solomon code with an optional inner code. The outer
+code reconstructs missing data. The inner code corrects bit errors and supports
+interleaving for burst damage. Repairs can update only the damaged ranges.
 
-## Upgrading from xpar 1.x
-
-xpar 2.0 uses a new container format and cannot read xpar 1.x archives. It
-rejects 1.x files with migration instructions:
-
-```
-% xpar verify old.xpa
-xpar: 'old.xpa' is an xpar 1.0 joint-mode archive.
-xpar: decode it with xpar 1.x, then re-protect it.
-```
-
-Decode with xpar 1.x, then protect the result with xpar 2.0.
-
-The command line also changed: operations are verbs rather than mode flags,
-so `-J`, `-W`, `-L`, `-s`, `-t`, `--interlacing`, `-H`/`--integrity` and
-`--auth` are gone.  Scripts written against xpar 1.x will not run unchanged.
+See the [format specification](doc/xpar-format.tex) and the `xpar(1)` manual for
+the full format and command reference. `make docs` builds the PDF specification.
 
 ## Installation
 
-Install your software vendor's xpar package when available. Otherwise,
-download the binary for your operating system and CPU from the Releases tab.
+Use your software vendor's package when available, or download a binary from the
+GitHub Releases page. To build a release tarball from source, run
 
-To build from source, download a release tarball and run:
-
+```sh
+./configure
+make
+sudo make install
 ```
-% ./configure && make && sudo make install
-```
 
-`configure` probes for all SIMD extensions that xpar can use.  Each becomes
-a convenience library with its own compilation flags, while the kernel is
-picked at the runtime based on signals from CPUID + OSXSAVE/XCR0 (x86),
-HWCAP or `riscv_hwprobe`.
+`configure` detects supported SIMD extensions. Runtime dispatch selects the
+best available kernel.
 
-| option | effect |
-| :--- | :--- |
-| `--disable-simd` | scalar kernels only |
-| `--disable-threads` | single-threaded build |
-| `--enable-sanitizers` | ASan + UBSan, for the test suite |
+| Configure option | Effect |
+| --- | --- |
+| `--disable-simd` | Build only scalar kernels |
+| `--disable-threads` | Build without multithreading |
+| `--enable-sanitizers` | Enable ASan and UBSan for tests |
 
 ## Basic usage
 
-`create` protects files or whole directory trees (when `-R` is specified).  The
-argument `-r` specifies the intended amount of redundancy as a percentage, byte
-size, or a multiple (e.g. `-r 2x`).
+Protect a directory tree with 15 percent redundancy and file deduplication.
 
-```
-% xpar create -r 15% --dedup=file -o photos -R 448CANON
-xpar: photos: 9 entries, 513 slices of 4096 bytes, 77 recovery slices in 6 volumes
+```sh
+xpar create -r 15% --dedup=file -o photos -R 448CANON
 ```
 
-The `448CANON` directory will not be altered. `photos.xpa` will hold the
-manifest of the data protected (i.e., names, sizes, modes, modification and
-creation times, checksums, permissions, ...), while `photos.v*.xpa` will hold
-the Reed-Solomon recovery data, split across volumes in a doubling ladder.
+The source tree is unchanged. `photos.xpa` stores the manifest, while
+`photos.v*.xpa` stores recovery data. The manifest includes names, sizes,
+checksums, and selected filesystem metadata.
 
-xpar provides built-in deduplication.  Identical files are thus stored only
-once.  `list --dedup` shows shared contents:
+`-r` accepts a slice count, percentage, byte size, or multiple such as `2x`.
+`--dedup=file` stores identical files once. Chunk deduplication is also
+available.
 
-```
-% xpar list --dedup photos.xpa
-generation 0  set e356e96ef0495c7c3360960a49d50a2b  9 entries
-  t         size  gen  mode   mtime                 name
-  d            0    0  0775   2026-08-28T18:30:49Z  448CANON
-  f       300000    0  0664   2026-08-28T18:30:49Z  448CANON/IMG0001 (Copy).jpg
-      extent 0 + 300000  in generation 0  refs=2
-  f       300000    0  0664   2026-08-28T18:30:49Z  448CANON/IMG0001.jpg
-      extent 0 + 300000  in generation 0  refs=2
-  ...
+Inspect a set with `list` or `info`.
+
+```sh
+xpar list --dedup photos.xpa
+xpar info photos.xpa
 ```
 
-`verify` checks the integrity of the data, and writes nothing beside the
-set: an armoured archive is staged in memory when its plaintext fits `-m`,
-otherwise under `$TMPDIR` (or `TMP`/`TEMP`), and failing those under the
-host's own temporary directory; the stage is mode 0600 and is removed on
-exit.  Only when none of those directories can hold it does the stage fall
-back to a temporary file beside the archive.
-Three exit codes/ERRORLEVELs are possible: 0 (clean), 1 (damaged but
-repairable), 2 (hopelessly broken).
+Use `--json` for JSON Lines output.
 
-```
-% xpar verify backup.xpa
-xpar: movie.mkv: content differs
-xpar: 3956 slices of 5056 bytes, 396 recovery slices, erasure unit cell of 5056 bytes (1 per slice)
-xpar: coverage: tree (1 entry)
-xpar: damaged: 1 entry (0 missing), 1 slice, 1 cell; deepest column 1
-xpar: status: repairable
+```sh
+xpar verify --json photos.xpa
 ```
 
-`--json` may be passed for a more machine friendly output:
+A fatal error still ends the stream with a summary record, so consumers can
+identify why processing stopped.
 
-```
-% xpar verify --json photos.xpa | tail -1
-{"type":"summary","t":7019,"schema":1,"status":"clean","exit":0,
- "slices_checked":513,"slices_bad":0,"cells_bad":0,"cells_superseded":0,
- "column_depth":0,"column_groups":0,"recovery_available":77,
- "recovery_needed":0,"entries_damaged":0,"entries_alias_only":0,
- "entries_opaque":0,"entries_inherited_damaged":0,"entries_superseded":0,
- "volumes_substituted":0,"volumes_to_rewrite":0,"syndromes":0,
- "bytes_read":2400000,"bytes_written":0}
-```
+## Repair behavior
 
-A fatal error ends the stream with a summary of its own, so a consumer
-never has to guess why the output stopped:
+`repair --in-place` preserves names, inodes, and hard links where possible. It
+also recreates missing empty files, directories, and symbolic links. Damaged or
+stale set volumes can be rebuilt from valid replicas.
 
-```
-% xpar verify --json nosuch.xpa
-{"type":"summary","t":26,"schema":1,"status":"error","exit":3,
- "message":"No xpar set found for 'nosuch.xpa'; use 'xpar --help' to list verbs."}
-```
+An undo journal is written before protected data changes. A successful repair
+removes it. After an interruption, run `xpar undo` to restore the previous
+state. An unreadable or invalid journal is retained because xpar cannot safely
+determine whether writes began. Use `--replace-journal` only when discarding it
+is intentional.
 
-Repair a damaged archive with the `repair` command:
+`repair --dry-run --exit-on-change` exits 1 when a repair would write data and 0
+when no change is needed.
 
-```
-% xpar repair --in-place backup.xpa
-xpar: 1 cell damaged, 0 copied, 1 decoded; 1 write, 5056 bytes; 1 entry repaired (0 further names share a repaired inode).
-```
+## Why xpar
 
-In this simulation, one randomly garbled byte in a 20 MB file cost a write
-of only 5 KiB.  The file keeps its name, inode, and hard links.  An undo journal
-is written first and removed on success.  This ensures data integrity if the
-machine powers off mid repair, or the tool crashes, `xpar undo` replays stale
-journal files.  The journal is created with mode 0600 and never follows a
-symlink planted under its name.  `repair` issues a write only after the
-corrected result matches the stored BLAKE3 checksum, and then re-verifies the
-finished file. A journal that is unreadable or fails its footer CRC is retained:
-the program cannot safely distinguish a torn pre-write journal from a complete
-journal damaged after writes began. Only `--replace-journal` discards it.
-The journal reverses protected-tree byte and length writes, objects repair
-created, hard-link topology it replaced, and non-packet volume tails it
-trimmed. Rebuilding derived redundancy and restoring filesystem metadata are
-set housekeeping, not rollback records.
+Most erasure-correction tools reconstruct whole missing blocks. xpar divides
+each slice into checksum-protected cells and treats only damaged cells as
+erasures. This can reduce both recovery cost and the amount written during a
+repair.
 
-`repair --in-place` also puts back what is missing rather than only what is
-damaged: empty files, directories and symbolic links are recreated from the
-manifest with their recorded mode and times, a packet-bearing volume whose
-packets fail their checksums is rewritten from intact replicas in the other
-volumes, a volume whose critical packets the index volume supersedes (what an
-interrupted `addrecovery` leaves behind) is rewritten to the index's copies,
-and a split data volume that was renamed or is the wrong length is restored to
-its recorded name and length.  `repair --dry-run
---exit-on-change` exits 1 when writes would be made and 0 when they would
-not, which is what a monitoring check wants.
+Cells are at most 64 KiB by default. Slices below 4 KiB use the whole slice as
+the erasure unit. `--cell` selects an explicit size.
 
-## Why xpar?
+The optional inner code protects against bit errors. In sidecar and split sets,
+`--armour=metadata` protects critical metadata. `--armour=all` also protects
+slice tables and recovery slices. An armoured archive protects its entire
+packet stream.
 
-Erasure correction reconstructs missing blocks; error correction can also use
-the intact parts of damaged blocks. Unlike PAR2, PAR2Turbo, PAR3 (Draft),
-ParPar, and zfec, xpar supports both. Within a block, xpar uses checksums to
-identify intact cells and treats only damaged cells as erasures.
+At the default GF(2^8) RS(255,223) code, full armour adds about 14 percent to
+the recovery volumes. At `-r 10%`, this is about 1.5 percent of the protected
+data. Larger recovery slices may use GF(2^16) with less overhead.
 
-Cells are `min(64 KiB, Z)`, so a slice size large enough to reach the 64 KiB
-ceiling has to be asked for; here `-s 2M` gives 32 cells per slice.  Below
-the 4 KiB floor a slice has no cells at all and the erasure unit is the whole
-slice.
+Use `--armour-t=4` or higher. With `t=1`, some two-symbol damage can be mistaken
+for a one-symbol error. The outer checksum catches the failed repair.
 
-```
-% xpar create -s 2M -r 10% -o b big.bin        # big.bin is 100 MB
-xpar: b: 1 entry, 48 slices of 2097152 bytes, 5 recovery slices in 3 volumes
-% xpar verify b.xpa
-xpar: big.bin: content differs
-xpar: 48 slices of 2097152 bytes, 5 recovery slices, erasure unit cell of 65536 bytes (32 per slice)
-xpar: coverage: tree (1 entry)
-xpar: damaged: 1 entry (0 missing), 22 slices, 29 cells; deepest column 3
-xpar: damage has 17 column patterns; repair needs that many decode plans
-xpar: status: repairable
+`scrub` reads all data and recovery volumes and reports corrected symbols. Add
+`--deep` to recompute and compare recovery data.
 
-% xpar repair --in-place b.xpa
-xpar: 29 cells damaged, 0 copied, 29 decoded; 29 writes, 1900544 bytes; 1 entry repaired (0 further names share a repaired inode).
-% cmp big.bin big.keep && echo ok
-ok
+```sh
+xpar scrub --deep photos.xpa
 ```
 
-An optional inner code adds redundancy that corrects bit errors in place. In
-sidecar and split sets `--armour=metadata`, the default, covers the critical
-metadata group; `--armour=all` also wraps every slice-table packet and every
-recovery slice in an inner code of its own, so a flipped bit in a recovery
-volume costs a few parity symbols instead of a whole Z-byte slice. In the
-armoured layout the inner code covers the whole archive, which is what
-`--armour=all` means there.
+## Layouts
 
-`--armour=all` costs about 14% of the recovery volumes at the default GF(2^8)
-RS(255,223) code, so about 1.5% of the protected data at `-r 10%`. Once a
-recovery slice is large enough for the wider GF(2^16) code to pay for its
-128 KiB frame, xpar picks that instead and the cost falls under 2%;
-`--armour-field` forces either field. Bare split data volumes stay raw
-whatever the level, and a clean `verify` of an `all` set runs within about a
-tenth of the time a `metadata` one takes.
+xpar supports three layouts.
 
-```
-% xpar verify arch.xpa
-xpar: 2 stored packets failed a checksum; replicas were used. Rewrite the set volumes to clear them.
-xpar: 74 slices of 4096 bytes, 7 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: armoured regions: 1 corrected, 0 past the inner code
-xpar: coverage: tree (1 entry)
-xpar: status: clean
+| Layout | Storage |
+| --- | --- |
+| `sidecar` | Original files remain in place. An index and recovery volumes sit beside them. |
+| `split` | Raw `base.dNN` files hold consecutive stream ranges. Concatenating them reconstructs the stream. |
+| `armoured` | One self-contained `base.xpa` holds the manifest, data, and recovery stream. Use `extract` to unpack it. |
 
-% xpar scrub arch.xpa
-xpar: 2 stored packets failed a checksum; replicas were used. Rewrite the set volumes to clear them.
-xpar: 74 slices of 4096 bytes, 7 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: armoured regions: 1 corrected, 0 past the inner code
-xpar: coverage: tree (1 entry)
-xpar: status: clean
-xpar: recovery: 7 slices named, 7 present, 2 packets failed their checksum
-xpar: recovery: 1 packets had invalid lengths
-xpar: inner code: 7 regions, 35 codewords, 30 clean, 5 corrected, 0 past capacity
-xpar: corrected symbols: 67 total, worst codeword 16
-xpar:   codewords corrected at 11 symbols: 1
-xpar:   codewords corrected at 12 symbols: 1
-xpar:   codewords corrected at 13 symbols: 1
-xpar:   codewords corrected at 15 symbols: 1
-xpar:   codewords corrected at 16 symbols: 1
-xpar: scrub: exit 1
+Use `recover` to rebuild a missing set volume. The recovery count must cover all
+slices in that volume.
+
+```sh
+xpar recover --volume=disc.d01 disc.xpa
 ```
 
-`--armour-t` sets the correction power of that code directly.  Keep it at
-four or more: at `--armour-t=1` a codeword carries two parity symbols, so
-a two-symbol error is silently miscorrected rather than flagged, and only
-the outer checksums notice.
+`explain` prints a shell recipe for extracting an armoured region without xpar
+or error correction. For an armoured layout this region contains the protected
+data. For sidecar and split layouts it contains critical metadata.
 
-xpar also handles inserted or deleted data:
+## Generations
 
-```
-% xpar repair --in-place p.xpa
-xpar: ./data.bin: found 732 displaced slices (732 confirmations).
-xpar: restored 1 overlong entry.
-xpar: 733 cells damaged, 733 copied, 0 decoded; 2 writes, 3000000 bytes; 1 entry repaired (0 further names share a repaired inode).
-% cmp data.bin data.keep && echo identical
-identical
-```
+`add` appends a generation for new or changed files. Unchanged data is inherited
+instead of stored again. `prune` removes unneeded generations, and `consolidate`
+re-encodes a chain as one generation.
 
-The format can also be extracted without error correction using standard UNIX
-commands, so archives remain accessible without xpar.  What the recipe yields
-depends on the layout: with `--layout=armoured` it is the protected data
-itself, while in a sidecar or split set the data is the original files and
-the recipe extracts the critical metadata group instead.
+Verification and repair normally process the chain from oldest to newest.
+`--generation=G` selects one generation. `info --deps` shows dependencies and
+recovery consumed by superseded slices.
 
-```
-% xpar explain p.xpa
-p.xpa is a packet-bearing xpar volume.
+`prune` and `consolidate` refuse to rewrite a chain containing an unreadable
+generation. They use a maintenance journal so `xpar repair` can finish or roll
+back an interrupted update.
 
-The protected data is not in here: in the sidecar and split layouts the
-original files are the data, and they are never rewritten or armoured.
-What is armoured is the critical metadata group, one ARMG packet holding
-the set descriptor, the manifest and the slice checksums.
-The recipe below recovers the first ARMG packet's plaintext, which begins
-with "XPAR2PKT". That packet is at file offset 72 and its payload
-begins at 168.
+## Authentication
 
-  code             RS(255, 223), t = 16 over GF(2^8)
-  interleave D     1
-  frame            255 bytes on disk, 223 of plaintext
-  frames           17
+`--auth-key=FILE` authenticates metadata and content with a keyed MAC. It does
+not encrypt the set. Every later operation, including `explain`, requires the
+key and exits 6 if the key is missing or wrong.
 
-# xpar hand-recovery recipe for p.xpa
-# this extracts the armoured critical metadata group
-[...]
-set -e
-in=p.xpa
-out=recovered.bin
-W=1; n=255; k=223; D=1; hdr=168
-Fd=$((D*k*W))          # plaintext bytes per frame = 223
-Fx=$((D*n*W))          # disk bytes per frame      = 255
-frames=17
-off=0               # stream_offset from the prologue
-len=3728               # stream_length from the prologue
+Authentication is effective only when the verifier always supplies a key. An
+attacker without the key cannot forge a MAC, but can remove authentication and
+retag the set. A keyless verifier would then see an unauthenticated set. The
+calling script must therefore require the key.
 
-# 1. drop the prologue in one read, so no later step needs to skip it
-dd if="$in" of=region.bin bs=$hdr skip=1 status=none
-
-# 2. take the first Fd bytes of every Fx-byte frame.
-f=0
-while [ $f -lt $frames ]; do
-  dd if=region.bin bs=$Fx skip=$f count=1 status=none | head -c $Fd
-  f=$((f+1))
-done > plain.bin
-
-# 3. the protected stream is len bytes at off inside that plaintext
-if [ $off -gt 0 ]; then
-  dd if=plain.bin bs=$off skip=1 status=none | head -c $len > "$out"
-else
-  head -c $len plain.bin > "$out"
-fi
-# end of recipe
-```
+`--auth-only` omits public CRCs and whole-file hashes from an authenticated set.
 
 ## Comparison
 
-| | xpar | par2cmdline | par2cmdline-turbo | ParPar | zfec |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| Protect file sets / trees | yes | yes | yes | yes | one file |
-| Filenames + metadata stored | yes | yes | yes | yes | no |
-| Arbitrary redundancy | yes (`%`, count, size, `1x`) | yes | yes | yes | k, m free |
-| Verify without repairing | yes | yes | yes | creation-focused | no |
-| **Corrects bit errors** | **yes** | no | no | no | no |
-| **Erasure unit finer than a block** | **yes (cells of 4 KiB to 64 KiB; the erasure unit is a cell, not a slice)** | no | no | no | no |
-| **Repairs in place** | **yes, + undo journal** | rename + recreate | rename + recreate | n/a | no |
-| **Burst-error interleaving** | **yes** | no | no | no | no |
-| **Keyed authentication** | **yes** | no | no | no | no |
-| **Media-health check** | **yes (`scrub`)** | no | no | no | no |
-| Resync after insert/delete | yes | yes | yes | n/a | no |
+| Capability | xpar | par2cmdline | par2cmdline-turbo | ParPar | zfec |
+| --- | --- | --- | --- | --- | --- |
+| Protect file sets or trees | yes | yes | yes | yes | one file |
+| Store names and metadata | yes | yes | yes | yes | no |
+| Correct bit errors | yes | no | no | no | no |
+| Use erasure units smaller than a block | yes | no | no | no | no |
+| Repair in place | yes | no | no | n/a | no |
+| Interleave burst errors | yes | no | no | no | no |
+| Authenticate with a key | yes | no | no | no | no |
+| Check media health | yes | no | no | no | no |
+| Resync after insertion or deletion | yes | yes | yes | n/a | no |
 | Add recovery later | yes | yes | yes | yes | no |
-| Memory cap / multi-pass | yes | yes | yes | yes | streams |
 | Incremental generations | yes | no | no | no | no |
-| Deduplication | yes (file / chunk) | no | no | no | no |
-| Published format spec | yes | yes | yes | yes | yes |
-| GFNI / AVX-512 | yes | no | yes | yes | no |
-| SVE, RISC-V V | yes | no | yes | yes | no |
-| GPU (OpenCL) | no | no | no | yes | no |
-| Legacy targets | yes | no | no | no | no |
+| Deduplicate content | yes | no | no | no | no |
+| Published format | yes | yes | yes | yes | yes |
+| GPU backend | no | no | no | yes | no |
 
-Some drawbacks of xpar:
+xpar is less mature than PAR2 and is not PAR2-compatible. ParPar can be faster
+and provides an OpenCL backend, which xpar does not currently plan to add.
 
-- It's not as mature; PAR2 is interoperable and very solid.
-- ParPar often has a speed edge over xpar and there are currently no plans
-  for an OpenCL backend.
+## Exit status
 
-## Other features
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, or clean data under `verify` |
+| 1 | Repairable damage, or a change reported by `--exit-on-change` |
+| 2 | Damage beyond the available recovery |
+| 3 | Set not found, invalid set, or unsupported version |
+| 4 | Usage error |
+| 5 | I/O error |
+| 6 | Authentication error |
+| 7 | No plan fits within `-m`, or memory is exhausted |
+| 8 | Internal error |
 
-- `add` / `prune` / `consolidate`: manages a chain of generations in the `xpa`
-  file.  `add` appends a new generation detailing the changes against the
-  current disk contents.  Unchanged files are inherited and not re-stored.
-  Since redundancy is per-generation, `info --deps` shows old generations that
-  are still required for operation, with a `superseded/R` column counting the
-  slices nothing still reads against the recovery that generation carries.
-  `prune` removes generations that are unreferenced.  `consolidate` collapses
-  generational chains, merging all generations into one, and re-encodes the
-  archive.
-  A generation cannot check or rebuild the bytes it inherits, so on a set of
-  more than one generation `verify`, `repair` and `scrub` walk the whole
-  ancestry oldest first unless `--generation=G` picks one; `--chain` asks for
-  that walk explicitly and is now the default.  Damage that falls in
-  inherited bytes is reported as such, and slices an ancestor no longer owns
-  count as erasures for the decoder: they can exhaust that ancestor's
-  recovery, and `verify` says so, but with nothing damaged there is nothing
-  to decode and the verdict stays clean.  Omitting `-r` makes `add` inherit
-  the generation it extends and `consolidate` the widest ratio in the chain,
-  and `add` warns when a changed file spends an ancestor's recovery budget.
-  Under `--rescan=hash` an entry whose content still matches inherits its
-  bytes, so a metadata-only change adds no stream data.
-  A generation whose volumes are on disk but whose descriptor survives
-  nowhere, not even in the replicas its own recovery volumes carry, is
-  reported as damaged rather than dropped; `consolidate` and `prune` refuse
-  to rewrite a chain around it.
-  Both rename the whole chain aside before publishing, so both first write a
-  maintenance journal, `base.xparmaint`: if the machine dies inside that
-  window, `verify` reports the interrupted operation instead of a missing set
-  and `xpar repair` completes or rolls it back.
-```
-% xpar add -r 15% photos.xpa -R pics
-xpar: generation 1, set 09817e407913ea82a05c5cf7ebf32144: 10 entries (1 added, 2 changed, 7 inherited, 0 dropped), 500000 new stream bytes, 18 recovery slices in 5 volumes.
-xpar: warning: redundancy falls from 15.0% to 14.6%; pass -r to keep the old ratio.
-xpar: warning: generation 0: 74 of its 513 slices are superseded and count as erasures; only 3 of 77 recovery slices remain for its 7 inherited entries.
-
-% xpar verify photos.xpa
-xpar: pics/IMG0002.jpg: superseded
-xpar: 513 slices of 4096 bytes, 77 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: coverage: tree (9 entries)
-xpar: superseded: 1 entry excluded from this generation's verdict
-xpar: 74 slices of generation 0 are superseded by a later generation and count as erasures; consolidate to restore full protection
-xpar: status: clean
-xpar: 123 slices of 4096 bytes, 18 recovery slices, erasure unit cell of 4096 bytes (1 per slice)
-xpar: coverage: tree (10 entries)
-xpar: status: clean
-```
-- `recover`: regenerate lost volume(s) from the surviving set.  For example,
-  when with `--layout=split --volumes=4`, the data lives in header-free
-  `.d00` - `.d03` files, one per disk, then:
-```
-% xpar create --layout=split --volumes=4 -r 30% -o disc vid.mp4
-xpar: disc: 1 entry, 1221 slices of 4096 bytes, 366 recovery slices in 4 volumes
-% rm disc.d01
-% xpar recover --volume=disc.d01 disc.xpa
-xpar: recovered disc.d01 from survivor and parity slices (1249280 bare stream bytes).
-% cat disc.d0* > joined && cmp joined vid.mp4 && echo identical
-identical
-```
-  R has to cover the slices of the lost volume: one of four volumes is a
-  quarter of the set, so a lower `-r` cannot rebuild it, and the refusal
-  names the shortfall.
-```
-% xpar create --layout=split --volumes=4 -r 15% -o disc vid.mp4
-xpar: disc: 1 entry, 1221 slices of 4096 bytes, 183 recovery slices in 4 volumes
-% rm disc.d01
-% xpar recover --volume=disc.d01 disc.xpa
-xpar: Volume 'disc.d01' cannot be reconstructed from the surviving data and recovery slices: too few recovery slices: 305 needed, 183 exist, 122 short.
-```
-- `--auth-key=FILE`: authenticate the set with a keyed MAC, as a precaution
-  against doctored archives.  Every subsequent operation requires the key,
-  `explain` included, and a missing or wrong key exits 6:
-```
-% xpar verify s.xpa
-xpar: This set is authenticated; supply --auth-key=FILE.
-% xpar verify --auth-key=wrong.bin s.xpa
-xpar: The authentication key is wrong for this set.
-```
-  Authentication only protects a set when the verifier always supplies the
-  key.  An attacker without the key cannot forge a MAC, but can strip the
-  AUTH packets and re-tag the whole set, and a keyless `verify` will then
-  report that unauthenticated set clean.  Nothing in an archive can force a
-  verifier to ask for a key it never passes.  `--auth-only`, which drops the
-  public CRCs and whole-file hashes, works at any set size.
-- `--memory`: sets the maximum working set size for the planner and the
-  explicitly buffered readers. If even their smallest useful buffer does not
-  fit, the operation exits 7 instead of silently exceeding the ceiling.
-```
-% xpar create -m 1M -r 20% -o tiny data.bin
-xpar: No plan fits: raise -m to 2.0 MiB; no -b fits this -m; --codec=matrix does not fit either at -m 1.0 MiB.
-```
-- `info`: displays information about the erasure and error correction
-  data type, along with the creator string, any comment packets, and, for
-  `--layout=armoured`, the armour overhead the archive actually carries on
-  disk rather than the code's nominal rate.
-```
-% xpar info b.xpa
-  set        : f660c2f96605d7a0337b69477b9a8b65
-  format     : 2.0, layout sidecar
-  generation : 0 of 1 (the newest)
-  geometry   : Z = 2097152 (2.0 MiB), S = 48, L = 100000000 (95.4 MiB)
-               stream base 0, 1 entries
-  cells      : Y = 65536 bytes, K = 32 per slice; the erasure unit is
-               (slice, column), not a whole slice
-  codec      : matrix over GF(2^8), recovery axis 2^8 = 208 slices
-  redundancy : R = 5 (10.4% of S), 5 recovery slices present
-  tags       : CRC32C per slice, BLAKE3 strong tag of 8 bytes
-  dedup      : level 0 (none)
-  armour     : GF(2^8) RS(255, 223), t = 16, D = 1
-               level metadata: the critical packet group is armoured
-               frame 255 bytes on disk carrying 223 of plaintext
-               correctable burst 15 bytes anywhere in a frame
-               code overhead 14.350%
-               on disk 20520 bytes for 17836 of plaintext, overhead 15.048%
-  ...
-  creator    : xpar 2.0
-  chain      : 1 generation
-    gen 0    set f660c2f9...  95.4 MiB    S=48 R=5 (10.4%)  volumes 4  <- selected
-  plan       : to repair this generation
-  geometry   : L = 100,000,000  Z = 2,097,152  S = 48  R = 5
-  field      : S + R = 53 <= 256, so GF(2^8)
-  codec      : matrix  (GF(2^8), C = 2,097,152 B)
-  memory     : work buffers 22.1 MiB;  read-ahead 0 B;  stage + hash 32.0 MiB
-               total 54.1 MiB
-  cells      : Y = 65,536 B, K = 32 per slice (last cell 65,536 B)
-               erasure budget is 5 per column, not 5 per set
-               SLCL = 6,144 B
-  passes     : 1 sequential read totalling 100,000,000 bytes
-```
-- `benchmark`: measures xpar's low-level SIMD kernels.
-```
-% xpar benchmark --tiers
-xpar: benchmark: V-HASH, V-CRC and V-GEN KATs ok
-xpar: benchmark: tier         operation         bytes     time       rate
-xpar: benchmark: gfni256      gf8-mac         8388608 bytes      187 us  42780.75 MiB/s
-xpar: benchmark: gf tier gfni256  ok
-xpar: benchmark: gfni512      gf8-mac         8388608 bytes      194 us  41237.11 MiB/s
-xpar: benchmark: gf tier gfni512  ok
-xpar: benchmark: ...
-xpar: benchmark: gfni256      armour-gf8       285440 bytes     1133 us    240.26 MiB/s
-xpar: benchmark: gfni256      armour-gf16     8616960 bytes     8773 us    936.71 MiB/s
-xpar: benchmark: armour tier gfni256  ok
-xpar: benchmark: ...
-xpar: benchmark: crc32c sse4.2, blake3 avx2
-xpar: benchmark: 9 tiers agree with scalar
-```
-
-All commands use these exit codes/ERRORLEVELs:
-- 0: No error.
-- 1: File damaged but repairable.
-- 2: File hopelessly damaged.
-- 3: Not found / Not an xpar set / Wrong version.
-- 4: Wrong usage.
-- 5: I/O error.
-- 6: Authentication error.
-- 7: No feasible plan under `-m`, or out of memory.
-- 8: Internal error.
-
-## Binary layouts
-
-xpar supports three layouts:
-
-- `--layout=sidecar` (default): files are never touched and stay where they
-  were. `base.xpa` and `base.v*.xpa` sit beside them. Extraction is never
-  necessary.
-- `--layout=split`: the protected data is written into files `base.d00`,
-  `base.d01`, etc., which are raw data volumes with no header, no trailer
-  and no padding, so that `cat base.d* > file` reconstructs the original
-  stream exactly.
-- `--layout=armoured`: one self-contained `base.xpa` containing three
-  replicated header copies, alongside an inner-coded packet stream with the
-  manifest, the data and the recovery.  Use `extract` to unpack, rather than
-  concatenation.  Here `--armour=all` is the only level: the archive is one
-  protected region.
-
-## Performance
+## Performance and portability
 
 Single-core performance is comparable to par2cmdline-turbo and ParPar. Parallel
-workloads are less optimized.
+workloads are less optimized. xpar reads output back after writing by default.
+Use `--no-verify-after` to skip that pass.
 
-xpar reads output back by default to verify the write. Use `--no-verify-after`
-to disable this check.
+Optimized kernels cover x86 SSSE3, SSE4.2, AVX2, GFNI, GFNI-512, and VBMI;
+ARM NEON, PMULL, and SVE; PowerPC VSX; and RISC-V vector extensions. The binary
+format is platform-independent.
 
-## Portability
+The default Windows target uses UTF-16 paths and requires Vista or later.
 
-Specialised kernels exist for x86's extensions SSSE3 / SSE4.2 / AVX2 / GFNI
-/ GFNI-512 / VBMI, ARM NEON / PMULL / SVE, PowerPC VSX, and
-RISC-V vector (both shuffle and clmul paths).  The binary format is
-platform-agnostic.
-
-Windows has two targets. The default `nt` target uses UTF-16, extended-length
-paths, and Vista or later. Build it with:
-
-```
-% CC=x86_64-w64-mingw32-gcc ./configure --host=x86_64-w64-mingw32 \
-      --with-windows-target=nt && make
+```sh
+CC=x86_64-w64-mingw32-gcc ./configure \
+  --host=x86_64-w64-mingw32 --with-windows-target=nt
+make
 ```
 
-The `win95` target is a separate ASCII-only path with an i486 (1989) scalar
-baseline, a freestanding startup/runtime and a PE 4.0 header:
+The separate `win95` target uses ASCII paths, an i486 scalar baseline, and a PE
+4.0 header.
 
-```
-% CC=i686-w64-mingw32-gcc ./configure --host=i686-w64-mingw32 \
-      --with-windows-target=win95 && make
+```sh
+CC=i686-w64-mingw32-gcc ./configure \
+  --host=i686-w64-mingw32 --with-windows-target=win95
+make
 ```
 
-That executable imports only `KERNEL32.DLL`. MS-DOS builds through DJGPP
-(`--host=i586-pc-msdosdjgpp`), likewise with an i386 (1985) scalar baseline
-and no optional SIMD.  A 32-bit NT build may contain SSSE3 and SSE4.2 objects.
+The Win95 executable imports only `KERNEL32.DLL`. DJGPP builds target MS-DOS
+with `--host=i586-pc-msdosdjgpp` and use an i386 scalar baseline.
+
+## Upgrading from xpar 1.x
+
+xpar 2.0 cannot read version 1 archives. Decode them with xpar 1.x, then protect
+the result with xpar 2.0. Version 2 also replaces mode flags with verbs, so
+scripts written for version 1 need updating.
