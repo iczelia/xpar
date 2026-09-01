@@ -298,7 +298,7 @@ jobs:
       - name: Configure
         run: |
           ./configure --bindir=/ --program-suffix=-linux-${{ matrix.target.name }} \
-                      CFLAGS="-O2 -g"
+                      CFLAGS="-O2 -g" LDFLAGS=-static
 
       - name: Make
         run: make -j4 all
@@ -315,6 +315,15 @@ jobs:
           make DESTDIR="$PWD/output" install-exec
           binary=output/xpar-linux-${{ matrix.target.name }}
           debug=output/xpar-linux-${{ matrix.target.name }}.dbg
+          file "$binary"
+          if readelf -l "$binary" | grep -q 'Requesting program interpreter'; then
+            echo "release binary has an ELF interpreter" >&2
+            exit 1
+          fi
+          if readelf -d "$binary" 2>/dev/null | grep -q '(NEEDED)'; then
+            echo "release binary has dynamic dependencies" >&2
+            exit 1
+          fi
           objcopy --only-keep-debug "$binary" "$debug"
           strip --strip-all "$binary"
           ( cd output && objcopy \
@@ -355,6 +364,7 @@ jobs:
 
       - name: Configure
         run: |
+          #  Apple does not provide a static libSystem.
           ./configure --bindir=/ --program-suffix=-macos-${{ matrix.target.name }} \
                       CC=clang CFLAGS="-O2 -g"
 
@@ -444,14 +454,16 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe \
             | grep -q 'coff-go32-exe'
 
-      - name: Full test suite in FreeDOS
+      - name: Full test suite in three FreeDOS guests
         run: |
-          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
+          sh contrib/dos/run-parallel-suite.sh build-dos "$FREEDOS_ROOT" \
              "$RUNNER_TEMP/dos-suite"
 
       - name: Show the test logs
         if: failure()
-        run: cat "$RUNNER_TEMP/dos-suite/result.log" 2>&1 || true
+        run: |
+          cat "$RUNNER_TEMP"/dos-suite/*.log \
+              "$RUNNER_TEMP"/dos-suite/*/result.log 2>&1 || true
 
       - name: Stage the binary
         run: |

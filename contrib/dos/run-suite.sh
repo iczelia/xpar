@@ -94,6 +94,17 @@ if test -n "${XPAR_COMPAT:-}" && test -d "$XPAR_COMPAT"; then
   done
 fi
 
+programs=${XPAR_DOS_PROGRAM_TESTS-'TUNIT TCODEC TCENTRAL'}
+: > "$suite_root/PROGRAMS.LST"
+for test_program in $programs; do
+  case $test_program in
+    TUNIT|TCODEC|TCENTRAL) ;;
+    *) fail "unknown DOS test program $test_program" ;;
+  esac
+  printf '%s\n' "$test_program" >> "$suite_root/PROGRAMS.LST"
+done
+mcopy "$suite_root/PROGRAMS.LST" d:/PROGRAMS.LST
+
 tests=${XPAR_DOS_TESTS:-'CENTRAL.SH FAULTS.SH SAFETY.SH SANITY.SH BUILD.SH REGRESS.SH PERF.SH BENCH.SH HOSTFLT.SH'}
 : > "$suite_root/TESTS.LST"
 for test_script in $tests; do

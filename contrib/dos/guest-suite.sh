@@ -23,18 +23,23 @@ export XPAR_DOS_TEST=1
 test ! -d C:/COMPAT || export XPAR_COMPAT=C:/COMPAT
 
 failed=0
-for test_program in TUNIT TCODEC TCENTRAL; do
+while read test_program; do
+  test -n "$test_program" || continue
   echo
   echo "===== $test_program.EXE ====="
+  test_start=$SECONDS
   C:/BLD/$test_program.EXE || failed=1
-done
+  echo "$test_program.EXE finished in $((SECONDS - test_start)) s"
+done < C:/PROGRAMS.LST
 
 while read test_script; do
   test -n "$test_script" || continue
   echo
   echo "===== $test_script ====="
+  test_start=$SECONDS
   C:/BIN/BASH.EXE C:/SRC/TESTS/$test_script
   status=$?
+  echo "$test_script finished in $((SECONDS - test_start)) s"
   case $status in
     0) ;;
     77) echo "$test_script skipped on DOS" ;;

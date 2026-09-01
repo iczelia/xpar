@@ -318,7 +318,7 @@ EXTRA_DIST = \
   contrib/dos/fdauto.bat contrib/dos/fdconfig.sys \
   contrib/dos/guest-suite.sh \
   contrib/dos/install-freedos.sh contrib/dos/qemu-exit.c \
-  contrib/dos/run-suite.sh \
+  contrib/dos/run-suite.sh contrib/dos/run-parallel-suite.sh \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
   tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \

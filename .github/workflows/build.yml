@@ -786,23 +786,27 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe | grep -q 'coff-go32-exe'
 
-      - name: Run the full test suite in FreeDOS
+      - name: Run the full test suite in three FreeDOS guests
         run: |
-          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
+          sh contrib/dos/run-parallel-suite.sh build-dos "$FREEDOS_ROOT" \
              "$RUNNER_TEMP/dos-suite"
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
-        run: cat "$RUNNER_TEMP/dos-suite/result.log" 2>&1 || true
+        run: |
+          cat "$RUNNER_TEMP"/dos-suite/*.log \
+              "$RUNNER_TEMP"/dos-suite/*/result.log 2>&1 || true
 
       - name: Upload the DOS transcript
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: xpar-dos-transcript-${{ github.sha }}
-          path: ${{ runner.temp }}/dos-suite/result.log
+          path: |
+            ${{ runner.temp }}/dos-suite/*.log
+            ${{ runner.temp }}/dos-suite/*/result.log
           if-no-files-found: ignore
 
   docs:
