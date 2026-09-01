@@ -26,6 +26,7 @@
 #endif
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,6 +123,9 @@ static unsigned long long img_len;
 static void io_seek(unsigned long long off) {
 #if defined(_WIN32)
   if (_fseeki64(img_f, (long long) off, SEEK_SET)) {
+#elif defined(__MSDOS__)
+  if (off > (unsigned long long) LONG_MAX ||
+      fseek(img_f, (long) off, SEEK_SET)) {
 #else
   if (fseeko(img_f, (off_t) off, SEEK_SET)) {
 #endif
@@ -149,6 +153,9 @@ static void img_open(const char * path) {
 #if defined(_WIN32)
   if (_fseeki64(img_f, 0, SEEK_END)) { perror(path);  exit(2); }
   size = _ftelli64(img_f);
+#elif defined(__MSDOS__)
+  if (fseek(img_f, 0, SEEK_END)) { perror(path);  exit(2); }
+  size = (long long) ftell(img_f);
 #else
   if (fseeko(img_f, 0, SEEK_END)) { perror(path);  exit(2); }
   size = (long long) ftello(img_f);
@@ -276,9 +283,28 @@ static void op_truncate(unsigned long long len) {
     fprintf(stderr, "damage: truncate: %llu is past the end\n", len);
     exit(2);
   }
+#if defined(__MSDOS__)
+  {
+    const char * p, * leaf = img_path;
+    size_t dir;
+    for (p = img_path; *p; p++)
+      if (*p == '/' || *p == '\\') leaf = p + 1;
+    dir = (size_t) (leaf - img_path);
+    tmp = (char *) malloc(dir + sizeof "XPDAM.TMP");
+    if (tmp) {
+      memcpy(tmp, img_path, dir);
+      memcpy(tmp + dir, "XPDAM.TMP", sizeof "XPDAM.TMP");
+    }
+  }
+#else
   tmp = (char *) malloc(strlen(img_path) + 8);
+#endif
   if (!tmp) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
+#if defined(__MSDOS__)
+  remove(tmp);
+#else
   sprintf(tmp, "%s.trunc", img_path);
+#endif
   out = fopen(tmp, "wb");
   if (!out) { perror(tmp);  exit(2); }
   for (left = len; left; ) {

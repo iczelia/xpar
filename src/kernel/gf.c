@@ -29,15 +29,8 @@ static u16 * gf16_log_store;
 const u16 * xpar_gf16_exp;
 const u16 * xpar_gf16_log;
 
-/*  8x8 GF(2) matrices of `x -> x * c` for every c, 2 KiB, so that
-    preparing a GF(2^8) coefficient for the affine tiers is one load
-    rather than eight multiplies and sixty-four bit tests.
-
-    Sixty-five thousand of those would be 2 MiB, so GF(2^16) keeps only
-    the sixteen matrices of the basis elements x^j. `x -> x * c` is
-    linear in c as well as in x, so the matrix of an arbitrary c is the
-    XOR of the matrices of its set bits: at most sixty-four XORs instead
-    of sixteen multiplies and two hundred and fifty-six bit tests.  */
+/*  Cache every GF(2^8) affine matrix. For GF(2^16), cache only the 16
+    basis matrices and XOR those selected by the coefficient.  */
 static u64 gf8_aff_tab[256];
 static u64 gf16_aff_basis[16][4];
 
@@ -86,13 +79,8 @@ static void gf16_tables(void) {
   xpar_gf16_log = gf16_log_store;
 }
 
-/*  Affine matrices.
-    GF2P8AFFINEQB computes, for each input byte b and the qword M of its
-    own 64-bit lane, `out.bit[i] = parity(M.byte[7-i] & b)`. So byte 7-i
-    of M is the row that produces output bit i, and bit k of that row is
-    the coefficient of input bit k. Multiplication by a constant c is
-    GF(2)-linear, so its matrix has column k equal to `(1 << k) * c`, and
-    bit i of that column belongs at qword bit `8*(7-i) + k`.  */
+/*  Build the byte matrix expected by GF2P8AFFINEQB. Column k is
+    `(1 << k) * c`, stored in the instruction's reversed row order.  */
 
 static u64 gf8_affine(u8 c) {
   u64 mx = 0;  int k, i;
@@ -124,19 +112,8 @@ static void gf16_affine(u16 c, u64 blk[4]) {
   }
 }
 
-/*  Coefficient preparation.
-    The affine matrices and the nibble tables are always built. tab6 costs
-    as much again and only vbmi512 reads it, so it is built only while that
-    tier is active: prepare a coefficient after choosing the tier.
-
-    The split tables come out of the same linearity that gives the affine
-    matrices. A nibble table entry is `(i << 4k) * c`, and `i << 4k` is
-    the sum of the basis elements x^(4k+b) over the set bits b of i, so
-    the sixteen entries are the sixteen XOR-combinations of four
-    products. Walking the basis with a doubling loop builds each table in
-    fifteen XORs instead of sixteen log-table multiplies, and it needs no
-    table at all: the basis is x^j * c, reached by repeated doubling from
-    c itself.  */
+/*  Always build affine and nibble tables. Build tab6 only for vbmi512.
+    Nibble tables use XOR combinations of basis products from doubling.  */
 
 static u8 gf8_xtime(u8 v) {
   return (u8) ((v << 1) ^ ((v & 0x80u) ? (XPAR_GF8_POLY & 0xFFu) : 0));
@@ -230,11 +207,8 @@ void xpar_gf8_mul_ref(u8 * d, const u8 * s, sz n, u8 c) {
   for (sz i = 0; i < n; i++) d[i] = gf8_mulc(s[i], lc);
 }
 
-/*  A GF(2^16) region is little-endian u16 by definition, not by host
-    property: the shuffle kernels necessarily read the even byte of a
-    symbol as its low half, so the scalar walk goes through rd16/wr16 and
-    the two agree on a big-endian host. A trailing odd byte is not part
-    of any symbol and is left alone.  */
+/*  GF(2^16) regions are little-endian u16 on every host. Scalar code uses
+    rd16 and wr16 to match shuffle kernels and leaves an odd tail untouched.  */
 
 void xpar_gf16_mac_ref(u8 * d, const u8 * s, sz n, u16 c) {
   if (!c) return;

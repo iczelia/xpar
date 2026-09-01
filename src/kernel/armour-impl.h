@@ -12,11 +12,8 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Inner-code region kernels, instantiated once per ISA.
-
-    Encoder sweeps retain one source across 2t destinations; syndrome
-    sweeps fuse multiply and XOR.  Each selects a loop order by register
-    size.  Scalar reference functions handle vector tails.  */
+/*  Inner-code kernels instantiated once per ISA. Scalar functions handle
+    vector tails.  */
 
 #include "armour.h"
 
@@ -83,12 +80,8 @@
   #define ARM_SR4(v)      vshrq_n_u8((v), 4)
 #endif
 
-/*  GF(2^8): the multiply.
-    ARM_PRE8 splits a source vector into the two nibble indices the
-    shuffle method wants, once per vector rather than once per tap, and
-    the affine method has nothing to split. The void cast in the affine
-    form is there so that the unused half is still a use: the two macros
-    have to present the same interface to the loops below.  */
+/*  ARM_PRE8 splits shuffle indices once per vector. Affine variants use
+    the void cast to keep the same two-argument interface.  */
 
 #ifdef ARM_SPLIT
   #define ARM_PRE8(v, lo, hi)  do {                                          \
@@ -114,15 +107,8 @@
   #define ARM_MUL8V(v, m)  ARM_AFF((v), ARM_SET64((m)->affine))
 #endif
 
-/*  GF(2^16): planes.
-    A region is interleaved little-endian u16 and the multiply wants the
-    low and the high bytes apart, because a nibble table or a matrix
-    applies to a byte and the two halves of a symbol need different ones.
-    aarch64 separates them outright; x86 gathers within each lane with a
-    byte shuffle and recombines the halves of two vectors with a 64-bit
-    unpack, which permutes the symbols inside each plane. That does not
-    matter, because the multiply is elementwise and ARM_INT undoes
-    exactly the permutation ARM_DEINT introduced.  */
+/*  Split interleaved GF(2^16) symbols into byte planes for multiplication.
+    ARM_INT reverses any lane-local permutation from ARM_DEINT.  */
 
 #ifdef ARM_ISA_NEON
   #define ARM_PLANE_VARS
@@ -180,12 +166,8 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
 #define ARM_BODY8(n)   ((n) & ~(sz) (ARM_VB - 1))
 #define ARM_BODY16(n)  ((n) & ~(sz) (2 * ARM_VB - 1))
 
-/*  Hoisted coefficients.
-    The tap-major sweeps below hold one coefficient for a whole pass over
-    the lane, which is where the shuffle tiers get their eight tables and
-    the affine tiers their matrix into registers instead of reloading
-    them per vector. The chunk-major sweeps cannot: their inner loop is
-    the tap.  */
+/*  Tap-major sweeps hold one coefficient in registers for a lane pass.
+    Chunk-major sweeps cannot because their inner loop is the tap.  */
 
 #ifdef ARM_SPLIT
   #define ARM_H8_VARS(m)                                                     \
@@ -331,13 +313,8 @@ static void k_taps16(u8 * restrict par, sz stride, u32 t2, u32 head,
     xpar_armour_taps16_ref(par + ai, stride, t2, head, gen, fb + ai, n - ai);
 }
 
-/*  The Horner sweep.
-    syn[j] = syn[j] * rt[j] ^ sym, fused so that syn is read once and
-    written once where a region multiply followed by a region XOR would
-    read and write it twice. The accumulator is the multiply's source, so
-    nothing about it can be hoisted; what is hoisted is the codeword
-    symbol, which all 2t recurrences add. Slots are in order here, so
-    neither order has a wrap to split.  */
+/*  Fuse syn[j] = syn[j] * rt[j] ^ sym so each accumulator is read and
+    written once. The shared codeword symbol stays in registers.  */
 
 static void k_horner8(u8 * restrict syn, sz stride, u32 t2,
                       const xpar_gf8_coef * rt,

@@ -12,11 +12,8 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Galois-field region kernels, instantiated once per ISA.
-
-    Split-nibble tiers use two byte shuffles; GFNI tiers apply the prepared
-    GF(2) matrix.  GF(2^16) deinterleaves low and high byte planes except
-    on the masked AVX-512 path.  Scalar reference functions handle tails.  */
+/*  Galois-field kernels instantiated once per ISA. SIMD variants handle
+    full vectors and scalar functions handle tails.  */
 
 #include "gf.h"
 
@@ -70,13 +67,8 @@
 
 #ifdef XPAR_GF_HAVE_SIMD
 
-/*  Vector primitives.
-    GF_TAB loads a 16-byte table and replicates it into every 128-bit
-    lane, which is what the wide shuffles want: pshufb and vqtbl1q index
-    inside their own lane on every width, so one pattern serves 128, 256
-    and 512 bits. GF_UNPKL and GF_UNPKH are likewise per-lane, which is
-    why GF_INT below is an exact inverse of GF_DEINT even though the
-    symbol order inside the two planes is permuted.  */
+/*  GF_TAB replicates a 16-byte table in each 128-bit lane. GF_INT reverses
+    GF_DEINT even when lane-local unpacking permutes symbols.  */
 
 #if defined(GF_ISA_SSE)
   #include <immintrin.h>
@@ -157,12 +149,8 @@
   #define GF_SR4(v)      vec_sr((v), vec_splats((unsigned char) 4))
 #endif
 
-/*  GF(2^8): the multiply.
-    GF_MUL8_VARS hoists the coefficient into registers once per call, so
-    the loops below carry no per-iteration setup. Each of these macros
-    carries its own semicolon, because on some variants one of them
-    expands to nothing and a stray semicolon between declarations would
-    be a statement.  */
+/*  GF_MUL8_VARS hoists coefficients. The macros include semicolons because
+    some variants expand to declarations and others to nothing.  */
 
 #ifdef GF_SPLIT
   #define GF_MUL8_VARS                                                       \
@@ -175,23 +163,9 @@
   #define GF_MUL8(v)  GF_AFF((v), gma)
 #endif
 
-/*  GF(2^16): the multiply.
-    GF_MUL16_PAIR turns two source vectors into two product vectors and
-    is the only GF(2^16) primitive the kernels below use, so a tier is
-    free to reach the result any way it likes. Two ways are used.
-
-    Planes. A GF(2^16) region is interleaved little-endian u16 and both
-    the nibble table and the block matrix apply to a byte, so the low
-    bytes and the high bytes have to be separated first. aarch64 has the
-    separation outright; x86 gathers within each lane with a byte shuffle
-    and recombines the halves of two vectors with a 64-bit unpack. The
-    unpack leaves the symbols permuted inside each plane, which does not
-    matter: the multiply is elementwise and GF_INT undoes exactly the
-    permutation GF_DEINT introduced.
-
-    A mask register instead. A masked affine writes each product directly
-    into its destination byte lane, avoiding plane construction.  Only the
-    AVX-512 tier has an efficient mask form; other tiers build planes.  */
+/*  GF_MUL16_PAIR is the shared GF(2^16) primitive. Most tiers split
+    interleaved u16 values into byte planes and rejoin them after the
+    multiply. AVX-512 affine kernels write directly to masked byte lanes.  */
 
 #if defined(GF_VBMI)
 
@@ -233,10 +207,8 @@ static const u8 gf_swap_idx[16] = { 1, 0, 3, 2, 5, 4, 7, 6,
     const GF_V gma = GF_SET64(m->affine[0]), gmb = GF_SET64(m->affine[1]),   \
                gmc = GF_SET64(m->affine[2]), gmd = GF_SET64(m->affine[3]),   \
                gsw = GF_TAB(gf_swap_idx);
-  /*  Even lanes hold a symbol's low byte and odd lanes its high byte, so
-      the even half of the result is A*low ^ B*high and the odd half is
-      C*low ^ D*high. gv carries low in the even lanes; gw, the
-      byte-swapped copy, carries it in the odd ones.  */
+  /*  Even lanes hold low bytes and odd lanes high bytes. gv and its
+      byte-swapped copy gw let the four affine blocks produce both halves.  */
   #define GF_MUL16_ONE(s, o) do {                                            \
       GF_V gv = (s), gw = GF_SHUF(gv, gsw);                                  \
       GF_V gx = GF_AFF(gv, gmd), gy = GF_AFF(gw, gmc);                       \

@@ -12,16 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Additive-FFT erasure coding over GF(2^8) and GF(2^16).
-
-    Encoding uses m = NextPow2(R); decoding uses
-    n = NextPow2(m + S) and has cost independent of the erasure count.
-    FFT sets require R <= S and S + m <= 2^w.  They are prefix-stable
-    exactly while m remains unchanged.
-
-    Values retain gf.h's polynomial representation.  GF(2^8)
-    coefficients are prepared eagerly; GF(2^16) coefficients are
-    prepared at each butterfly group to avoid a full-field table.  */
+/*  Additive-FFT erasure coding over GF(2^8) and GF(2^16). Encoding uses
+    m = NextPow2(R), while decoding uses n = NextPow2(m + S). FFT sets
+    require R <= S and S + m <= 2^w.  */
 
 #include "codec.h"
 #include "codec-int.h"
@@ -91,19 +84,9 @@ static u8 * pool_new(u32 count, sz stride) {
   return (u8 *) xpar_alloc_aligned((sz) need, 64);
 }
 
-/*  Walsh-Hadamard transform, modulo 2^w - 1.
-    The error locator is a product over the erased positions, so it is a
-    sum in the exponent, and a sum over `i XOR e` is an XOR convolution:
-    transform, multiply pointwise, transform back. No scaling is needed
-    on the way back because the transform length 2^w is congruent to 1
-    modulo 2^w - 1, which is the reason the exponent group and the
-    transform length are the pair they are.
-
-    The two halves of a butterfly fold the carry out of bit w back into
-    bit 0 and admit 2^w - 1 as a second spelling of zero, so a value
-    stays in [0, 2^w - 1] and never needs a division. The subtraction
-    relies on the borrow wrapping in 32-bit arithmetic and on 2^(32-w)
-    being a multiple of 2^w, which holds for every w <= 16.  */
+/*  Walsh-Hadamard transform modulo 2^w - 1. The error-locator sum is an
+    XOR convolution, evaluated by transforming, multiplying pointwise and
+    transforming back. Wrapped 32-bit subtraction is valid for w <= 16.  */
 
 static u32 fwht_add(u32 a, u32 b, u32 bits, u32 mask) {
   u32 s = a + b;
@@ -115,12 +98,8 @@ static u32 fwht_sub(u32 a, u32 b, u32 bits, u32 mask) {
   return (d + (d >> bits)) & mask;
 }
 
-/*  a * b modulo 2^w - 1, by folding the high half of the product onto
-    the low one twice rather than dividing. The product fits 32 bits
-    because (2^16 - 1)^2 is 2^32 - 2^17 + 1, and two folds are exact for
-    a modulus of this shape. It matters: the pointwise step is 2^w of
-    these, and a 32-bit division apiece would cost more than both Walsh
-    passes around it.  */
+/*  Multiply modulo 2^w - 1. Folding twice is exact for w <= 16 and avoids
+    division in the pointwise step.  */
 static u32 fwht_mulmod(u32 a, u32 b, u32 bits, u32 mask) {
   u32 p = a * b;
   p = (p & mask) + (p >> bits);
@@ -150,19 +129,8 @@ static void fwht(u16 * d, u32 len, u32 trunc, u32 bits) {
   xpar_assert(dist == len);
 }
 
-/*  Skew values.
-    The twisted factors of the transform, derived from the Cantor basis
-    of the field. The recurrence is Leopard's FFTInitialize read into the
-    standard representation: where upstream starts from the indices
-    2, 4, ... 2^(w-1) of its relabelled field, the same elements here are
-    the Cantor basis entries 1 through w-1, and where it XORs an index
-    with 1 it XORs a value with the basis element of index 1, which is
-    the constant 1 in both fields.
-
-    The largest index written is 2*2^(w-1) - 2^k - 1 <= 2^w - 2, so the
-    table is exactly 2^w - 1 entries: the same bound the encoder needs,
-    because ceil(S/m)*m <= 2^w - m whenever S + m <= 2^w and m divides
-    2^w.  */
+/*  Build skew factors from the Cantor basis using Leopard's recurrence in
+    the standard field representation. The table has 2^w - 1 entries.  */
 
 static void skew_build8(u8 * sk) {
   u8 t[7];
@@ -202,12 +170,8 @@ static void skew_build16(u16 * sk) {
   }
 }
 
-/*  Slot i of the transform evaluates at the field element whose Cantor
-    coordinates are the bits of i, so the table below is the log of that
-    element, and slot 0 is given the exponent 0 rather than the log of
-    zero. That convention is what drops the (x + x) factor out of the
-    error locator at an erased position, which is exactly the term the
-    formal derivative removes later.  */
+/*  Build logs of Cantor-basis elements indexed by coordinate bits. Slot
+    zero uses exponent zero, omitting the erased position's zero factor.  */
 static void walsh_build(fft_codec * cd) {
   u32 order = cd->order;
   u16 * lw = (u16 *) xpar_alloc_raw((sz) order * sizeof(u16));
@@ -224,16 +188,9 @@ static void walsh_build(fft_codec * cd) {
   cd->walsh = lw;
 }
 
-/*  The transforms.
-    Upstream unrolls two layers at a time so that four buffers stay in
-    registers across a fused butterfly. Here the butterfly is already one
-    dispatched region kernel over the whole column, so the layers are
-    written plainly; the two forms visit the same butterflies with the
-    same skew values, and the plain one additionally skips a block that
-    the unrolled one enters and finds empty.
-
-    A zero skew value degenerates the butterfly to y ^= x in both
-    directions, which is a plain XOR and not a multiply by zero.  */
+/*  Each butterfly already dispatches a region kernel, so the transform
+    uses plain layers instead of upstream's unrolling. Zero skew reduces
+    to y ^= x.  */
 
 static void fft_fwd(const fft_codec * cd, u8 ** w, u32 trunc, u32 len,
                     u32 base, sz bytes) {

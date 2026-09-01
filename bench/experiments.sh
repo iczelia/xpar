@@ -267,10 +267,7 @@ par_repair_argv() {   # <kind> <bin> <dir>: prints the argv to time
   esac
 }
 
-# Sample powers of two up to scattered-fault capacity.
-# Powers of two to see the shape, plus the three points either side of R
-# and of R*K, because a claim about where a format stops needs the point
-# where it stopped and not the octave that contains it.
+# Sample powers of two and points around R and R*K to bracket capacity.
 scatter_points() {   # <slices> <recovery> <columns>
   _s=$1;  _r=$2;  _k=$3
   _cap=$(( _r * _k ))
@@ -399,10 +396,7 @@ exp_scatter_par() {   # <kind> <label> <binary> <blocksize>
     fi
   }
 
-  #  A block code stops at its own recovery-block count, which is not
-  #  where xpar stops, so sample around it too. Without this the sweep
-  #  reports the last power of two that survived and the boundary stays
-  #  unbracketed, which is a weaker claim than the data can support.
+  #  Sample around the competitor's recovery-block limit.
   _pts=$scatter_ns
   : "${_rb:=0}"
   for _b in $((_rb - 1)) $_rb $((_rb + 1)); do

@@ -472,19 +472,8 @@ void xpar_armour_generator(const xpar_armour * a, u32 * g) {
   for (u32 i = 0; i <= a->t2; i++) g[i] = a->gpoly[i];
 }
 
-/*  Encoding.
-    The parity register is t2 slots of `lane` bytes with logical slot u
-    at physical slot (head + u) mod t2. A step of the recurrence shifts
-    the register down by one and adds gen[u]*fb to every tap; the shift
-    is the head advancing and the vacated slot being zeroed, so the whole
-    step is 2t region MACs and no data movement.
-
-    Message symbol i is the coefficient of x^(n-1-i).  */
-
-/*  fb = data ^ top, and the vacated slot goes to zero. Below a vector's
-    worth of bytes the two calls cost more than the work, and at D = 1
-    they are two calls per input symbol; the open form is one pass and
-    no call at all.  */
+/*  Compute fb = data ^ top and clear the vacated slot. A scalar loop is
+    cheaper below one vector.  */
 static void feedback(const xpar_gf_kernels * gk, u8 * fb, const u8 * dat,
                      u8 * top, sz lane) {
   if (lane > 16) { gk->xor3(fb, dat, top, lane);  xpar_memset(top, 0, lane); }
@@ -517,7 +506,8 @@ static void scatter(sz lane, u8 * dst, u64 fx, u32 cnt, const u8 * src) {
       xpar_memcpy(dst + (sz) (f * fx), src + (sz) f * lane, lane);
 }
 
-/*  Encode a frame batch with the single-frame recurrence.  */
+/*  Encode with a circular parity register. Advancing `head` shifts it
+    without moving data.  */
 static void encode_batch(const xpar_armour * a, u8 * base, u64 fx, u32 cnt) {
   const xpar_gf_kernels * gk = xpar_gf_active();
   sz lane = a->lane, used = (sz) cnt * lane, vl = virt_lane(a, cnt);
@@ -582,11 +572,7 @@ void xpar_armour_extract(const xpar_armour * a, u8 * plain, u64 plain_length,
   }
 }
 
-/*  Syndromes.
-    S_j = c(alpha^(fcr + j*prim)), by Horner over the codeword. The 2t
-    recurrences are independent of each other and, across the D codewords
-    of a frame, independent again, so one symbol position is 2t region
-    operations and the whole pass is 2t byte-operations per input byte.  */
+/*  Compute the 2t independent syndromes by Horner evaluation.  */
 static void batch_syndromes(const xpar_armour * a, const u8 * base, u64 fx,
                             u32 cnt) {
   sz lane = a->lane, used = (sz) cnt * lane, vl = virt_lane(a, cnt);
@@ -634,16 +620,8 @@ static u32 berlekamp(const xpar_armour * a) {
   return L;
 }
 
-/*  Chien.
-    Sweeps the degrees a *shortened* codeword actually occupies, r in
-    [0, n), which is what makes shortening free: a locator root outside
-    that window is simply never found, the root count comes up short, and
-    the codeword is rejected instead of being corrected at a position
-    that does not exist.
-
-    Evaluated incrementally. ev[i] holds lam[i] * y^i for the current
-    y = alpha^(-prim*r), so a step is one multiply per term by the fixed
-    alpha^(-prim*i) rather than an exponentiation per position.  */
+/*  Search only positions present in the shortened codeword. Incremental
+    evaluation replaces exponentiation at each position with multiplication.  */
 static u32 chien(const xpar_armour * a, u32 L) {
   u32 cnt = 0, r, i, pinv = a->order - (a->p.prim % a->order);
   for (i = 0; i <= L; i++) {
@@ -662,16 +640,8 @@ static u32 chien(const xpar_armour * a, u32 L) {
   return cnt;
 }
 
-/*  Forney.
-    With S_j = sum Y_l X_l^j, X_l = alpha^(prim*r_l) and
-    Y_l = v_l * alpha^(fcr*r_l), the standard identities give
-    Omega = S*Lambda mod x^(2t) and Y_l = X_l * Omega(1/X_l) /
-    Lambda'(1/X_l). The stored magnitude is then v_l, with the fcr twist
-    divided back out, which is where fcr stops mattering to anything
-    downstream.
-
-    False, so the caller rejects the codeword: a zero denominator, or a
-    zero magnitude, which is what a spurious locator root produces.  */
+/*  Compute error magnitudes with Forney's formula. Reject zero denominators
+    and magnitudes as invalid locator roots.  */
 static bool forney(const xpar_armour * a, u32 L) {
   u32 i, j, l;
   for (j = 0; j < L; j++) {
@@ -700,16 +670,8 @@ static bool forney(const xpar_armour * a, u32 L) {
   return true;
 }
 
-/*  Re-derive all 2t syndromes from the errors the decoder claims and
-    require every one of them to agree. Past capacity the key equation
-    still has a solution and Chien still finds roots, so without this the
-    decoder would happily write t plausible corrections into a codeword
-    carrying t+1 errors. It costs 2t multiplies per located error against
-    the 2t*n of the syndrome pass that preceded it.
-
-    It cannot catch a codeword that has been carried onto a genuinely
-    different valid codeword, because that one's syndromes are correct.
-    That residue is what the caller's tag is for.  */
+/*  Recompute all syndromes from the proposed errors before writing them.
+    The caller's tag catches changes into a different valid codeword.  */
 static bool syndromes_agree(const xpar_armour * a, u32 L) {
   u32 j, l;
   for (l = 0; l < L; l++) {

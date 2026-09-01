@@ -98,11 +98,8 @@ u32 xpar_cpu_probe(void) {
   return f;
 }
 
-/*  The ladder mirrors the per-ISA libraries Makefile.am builds, and each
-    tier requires exactly the features its kernels were compiled with: the
-    sse42 row demands PCLMUL only when the crc32c kernel was built with
-    -mpclmul, because otherwise there is no pclmulqdq in the binary to
-    fault on and requiring it would refuse a tier that works.  */
+/*  Each tier requires the features used by its compiled kernels. Require
+    PCLMUL for sse42 only when CRC32C was built with it.  */
 
 #define XPAR_T_SSSE3  (XPAR_CPU_SSSE3)
 #if defined(HAVE_PCLMUL)

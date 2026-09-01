@@ -395,11 +395,8 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
 }
 
 #if defined(HAVE_IO_URING) && defined(HAVE_MMAP)
-/*  Keep one small ring for the lifetime of the process. Creating, mapping,
-    unmapping and closing a ring for every eight reads costs more than the
-    reads themselves once the protected files are in the page cache. The
-    public operation is still synchronous, and the lock makes the singleton
-    safe for callers which issue batches from several worker threads.  */
+/*  Reuse one locked io_uring instance. Public batches remain synchronous
+    and the lock permits concurrent callers.  */
 typedef struct {
   struct io_uring_params p;
   struct io_uring_sqe * sqe;
@@ -583,52 +580,6 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
   return done;
 }
 
-/*  Test hook. POSIX lets a mapped file be resized, replaced and unlinked;
-    Windows does not, and a wrong publication order is invisible here
-    without it. XPAR_TEST_STRICT_MAP borrows the Windows rule.  */
-
-#define MAPLOCK_MAX 64
-
-typedef struct { const void * at;  u64 dev, ino; } maplock;
-
-static maplock maplock_held[MAPLOCK_MAX];
-static u32     maplock_count;
-static int     maplock_wanted = -1;
-
-static bool maplock_on(void) {
-  if (maplock_wanted < 0) {
-    const char * v = getenv("XPAR_TEST_STRICT_MAP");
-    maplock_wanted = v && *v && *v != '0';
-  }
-  return maplock_wanted != 0;
-}
-
-static bool maplock_hit(u64 dev, u64 ino) {
-  u32 i;
-  for (i = 0; i < maplock_count; i++)
-    if (maplock_held[i].dev == dev && maplock_held[i].ino == ino) return true;
-  return false;
-}
-
-#if defined(HAVE_MMAP)
-static void maplock_add(const void * at, u64 dev, u64 ino) {
-  if (!maplock_on() || maplock_count == MAPLOCK_MAX) return;
-  maplock_held[maplock_count].at  = at;
-  maplock_held[maplock_count].dev = dev;
-  maplock_held[maplock_count].ino = ino;
-  maplock_count++;
-}
-
-static void maplock_drop(const void * at) {
-  u32 i;
-  for (i = 0; i < maplock_count; i++)
-    if (maplock_held[i].at == at) {
-      maplock_held[i] = maplock_held[--maplock_count];
-      return;
-    }
-}
-#endif
-
 /*  Track mapped paths for SIGBUS diagnostics.  */
 
 #define MAPREG_MAX   64
@@ -673,22 +624,8 @@ static const char * mapreg_find(const void * addr) {
   return NULL;
 }
 
-bool xpar_maplock_blocks(const char * path) {
-  struct stat st;
-  if (!maplock_count || !maplock_on()) return false;
-  if (lstat(path, &st) != 0) return false;
-  return maplock_hit((u64) st.st_dev, (u64) st.st_ino);
-}
-
 int xpar_ftruncate(xpar_file * f, u64 length) {
   if (!off_fits(length)) { errno = EOVERFLOW;  return -1; }
-  if (maplock_on()) {
-    struct stat st;
-    if (fstat(f->fd, &st) == 0 &&
-        maplock_hit((u64) st.st_dev, (u64) st.st_ino)) {
-      errno = f->last_errno = EBUSY;  return -1;
-    }
-  }
 #if defined(HAVE_FTRUNCATE)
   while (ftruncate(f->fd, (off_t) length) != 0) {
     if (errno == EINTR) continue;
@@ -823,7 +760,6 @@ xpar_mmap xpar_map(const char * path) {
     close(fd);
     if (p == MAP_FAILED) { m.size = 0;  return m; }
     m.map = (u8 *) p;  m.valid = true;
-    maplock_add(p, (u64) st.st_dev, (u64) st.st_ino);
     mapreg_add(m.map, m.size, path);
   }
 #else
@@ -835,7 +771,7 @@ xpar_mmap xpar_map(const char * path) {
 void xpar_unmap(xpar_mmap * m) {
 #if defined(HAVE_MMAP)
   if (m->map) {
-    maplock_drop(m->map);  mapreg_drop(m->map);
+    mapreg_drop(m->map);
     munmap(m->map, m->size);
   }
 #endif

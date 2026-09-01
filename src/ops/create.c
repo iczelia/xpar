@@ -782,7 +782,7 @@ static void check_reachable(ctx * c) {
   lost = xpar_manifest_unreachable(&c->m, dir, c->o->stdin_name);
   xpar_free(dir);
   if (lost)
-    FATAL("Sidecar entry '%.*s' is unreachable; place the set beside its "
+    FATAL("Sidecar entry '%.*s' is unreachable. Place the set beside its "
           "data or use --base.",
           (int) lost->name_len, lost->name);
 }
@@ -806,7 +806,7 @@ static void check_manifest(ctx * c) {
     if (!xpar_strcmp(a, b))
       FATAL("Input '%s' is duplicated as '%.*s'.", a,
             (int) e->name_len, e->name);
-    FATAL("'%s' and '%s' both map to '%.*s'; use --base to disambiguate.",
+    FATAL("'%s' and '%s' both map to '%.*s'. Use --base to disambiguate.",
           a, b, (int) e->name_len, e->name);
   }
   FATAL("Entry '%.*s' cannot be stored: %s.", (int) e->name_len, e->name,
@@ -1043,6 +1043,14 @@ static char * create_output_stage(const char * base) {
   xpar_free(parent);  xpar_free(stem);
   if (!path)
     FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  {
+    char * absolute = xpar_path_lex_abs(path);
+    if (!absolute) FATAL_IO("Cannot resolve DOS staging directory '%s'.", path);
+    xpar_free(path);
+    path = absolute;
+  }
+#endif
   stage_pending = path;
   xpar_on_fatal(stage_sweep);
   return path;
@@ -1092,8 +1100,7 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     for (j = 0; j < m->count; j++)
       if (m->source[j] && xpar_path_same(m->source[j], to[i])) {
         publish_discard(from, total, extra, stage_dir);
-        FATAL("Output '%s' is also an input of this set; nothing was "
-              "published.", to[i]);
+        FATAL("Output '%s' is also an input. Nothing was published.", to[i]);
       }
   }
   for (i = 0; i < total; i++) {
@@ -1108,8 +1115,9 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) {
       if (publish_discard(from, total, extra, stage_dir))
-        FATAL("'%s' exists; -f overwrites it.", to[i]);
-      FATAL("'%s' exists; -f overwrites it; the staged set remains in '%s'.",
+        FATAL("'%s' exists. Use -f to overwrite it.", to[i]);
+      FATAL("'%s' exists. Use -f to overwrite it. The staged set remains "
+            "in '%s'.",
             to[i], stage_dir);
     }
   }
@@ -1164,16 +1172,16 @@ rollback_old:
                    "xpar: warning: old output remains at '%s'.\n",
                    backup[j - 1]);
   if (irregular)
-    FATAL("Refusing non-regular output '%s'; set remains in '%s'.",
+    FATAL("Output '%s' is not regular. The set remains in '%s'.",
           to[i], stage_dir);
   if (collision)
-    FATAL("Output '%s' appeared; set remains in '%s'.", to[i], stage_dir);
+    FATAL("Output '%s' appeared. The set remains in '%s'.", to[i], stage_dir);
   if (stranded)
-    FATAL_IO("Cannot publish '%s': %s; %" PRIu32 " file%s remain%s published; "
-             "set remains in '%s'.", to[i < total ? i : total - 1],
+    FATAL_IO("Cannot publish '%s'. %s. %" PRIu32 " file%s remain%s published. "
+             "The set remains in '%s'.", to[i < total ? i : total - 1],
              xpar_strerror(saved), stranded, PLURAL(stranded),
              stranded == 1 ? "s" : "", stage_dir);
-  FATAL_IO("Cannot publish '%s': %s; set remains in '%s'.",
+  FATAL_IO("Cannot publish '%s'. %s. The set remains in '%s'.",
            to[i < total ? i : total - 1],
            xpar_strerror(saved), stage_dir);
 }
@@ -1262,7 +1270,7 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
   if (xpar_lstat(final, &st) == 0) {
     if (!st.is_regular)
       FATAL("Refusing to replace non-regular pipe destination '%s'.", final);
-    if (!o->force) FATAL("'%s' exists; -f overwrites it.", final);
+    if (!o->force) FATAL("'%s' exists. Use -f to overwrite it.", final);
     had = true;
   }
   for (i = 0; i < 1000; i++) {
@@ -1325,7 +1333,7 @@ static int create_from_pipe_spooled(const xpar_options * o) {
       if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
       xpar_free(parent); }
     if (!o->force && xpar_lstat(final, &st) == 0)
-      FATAL("'%s' exists; -f overwrites it.", final);
+      FATAL("'%s' exists. Use -f to overwrite it.", final);
   }
   one[0] = stage;
   nested.paths = one;  nested.path_count = 1;  nested.from_stdin = false;
@@ -1411,7 +1419,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   parent = xpar_path_dir(final);
   if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
   if (!o->force && xpar_lstat(final, &st) == 0)
-    FATAL("'%s' exists; -f overwrites it.", final);
+    FATAL("'%s' exists. Use -f to overwrite it.", final);
   f = create_stage_open(parent, &stage);
 
   ready.rs.z = z;  ready.rs.count = r;
@@ -1852,7 +1860,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       probe = xpar_open(names[i], XPAR_O_RDONLY);
       if (probe) {
         xpar_close(probe);
-        FATAL("'%s' exists; -f overwrites it.", names[i]);
+        FATAL("'%s' exists. Use -f to overwrite it.", names[i]);
       }
     }
   if (!o->force && o->labels && o->layout == XPAR_LAYOUT_SPLIT)
@@ -1863,7 +1871,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       probe = xpar_open(label, XPAR_O_RDONLY);
       if (probe) {
         xpar_close(probe);
-        FATAL("'%s' exists; -f overwrites it.", label);
+        FATAL("'%s' exists. Use -f to overwrite it.", label);
       }
       xpar_free(label);
     }
@@ -1930,7 +1938,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (ready && ready->final_path) {
     for (i = 0; i < name_count; i++)
       FATAL_UNLESS("The pipe destination collides with set output '%s'.",
-                   xpar_strcmp(ready->final_path, names[i]) != 0, names[i]);
+                   !xpar_path_same(ready->final_path, names[i]), names[i]);
 #if defined(XPAR_DOS) || defined(__MSDOS__)
     pipe_stage = xpar_path_join(output_stage, "STDIN.DAT");
 #else

@@ -153,7 +153,7 @@ mkdir -p sc && cdto sc
 mkfile p.bin 100000 5
 run 0 "$XPAR" create --armour=all -r 20% -o a p.bin
 off=`"$DAMAGE" a.xpa find=ARMG | head -1`
-damage a.xpa "flip=`expr $off + 300`,6"
+damage a.xpa "flip=$((off + 300)),6"
 run 5 inject XPAR_FI_OPENW=1 -- "$XPAR" scrub --rewrite a.xpa
 grep -q 'cannot open' "$log" || bad "the unwritable volume was not named"
 cdto ..

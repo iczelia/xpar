@@ -874,7 +874,7 @@ static u32 pick_gen(const xpar_vset * s, const xpar_options * o) {
     }
     if (matches != 1) {
       list_branches(s);
-      FATAL("This chain is forked or disconnected; select a branch "
+      FATAL("This chain is forked or disconnected. Select a branch "
             "with --generation=<set-id-prefix>.");
     }
     return found;
@@ -889,9 +889,9 @@ static u32 pick_gen(const xpar_vset * s, const xpar_options * o) {
   /*  Match chain-reader diagnostics and exit codes.  */
   if (matches > 1) {
     if (o->gens[0].by_id)
-      FATAL("Set-id prefix '%s' is ambiguous; provide more hexadecimal "
+      FATAL("Set-id prefix '%s' is ambiguous. Provide more hexadecimal "
             "digits.", o->gens[0].id_prefix);
-    FATAL("Generation %" PRIu64 " is ambiguous across fork branches; select "
+    FATAL("Generation %" PRIu64 " is ambiguous across fork branches. Select "
           "it by set-id prefix.", o->gens[0].number);
   }
   if (matches == 1) return found;
@@ -1379,7 +1379,7 @@ static bool split_claimed(const xpar_vset * s, const xpar_vol * lv,
                           const char * name) {
   For(u32, i, s->layt.count,
       if (&s->layt.vol[i] != lv && s->layt.vol[i].name &&
-          !xpar_strcmp(s->layt.vol[i].name, name)) return true)
+          xpar_path_same(s->layt.vol[i].name, name)) return true)
   return false;
 }
 
@@ -1429,7 +1429,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
     if (!d) return NULL;
     while ((de = xpar_readdir(d)) != NULL) {
       char * candidate;
-      if (!de->is_regular || !xpar_strcmp(de->name, lv->name)) continue;
+      if (!de->is_regular || xpar_path_same(de->name, lv->name)) continue;
       candidate = xpar_path_join(s->dir, de->name);
       if (xpar_lstat(candidate, &st) == 0 && st.is_regular &&
           xpar_vol_tag_match(candidate, lv)) {
@@ -1454,7 +1454,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
     if (d) {
       while ((de = xpar_readdir(d)) != NULL) {
         char * candidate;
-        if (!de->is_regular || !xpar_strcmp(de->name, lv->name)) continue;
+        if (!de->is_regular || xpar_path_same(de->name, lv->name)) continue;
         candidate = xpar_path_join(s->dir, de->name);
         split_score_candidate(s, lv, candidate, de->name,
                               &best_path, &best_name, &best, &tied,
@@ -1522,7 +1522,7 @@ static void load_owned_data(xpar_vset * s) {
     if (path) {
       xpar_stat_t st;
       split_image_add(s, path);
-      if (xpar_strcmp(lv->name, found_name)) {
+      if (!xpar_path_same(lv->name, found_name)) {
         subst_add(s, lv->name, found_name, i);
         xpar_free(lv->name);
         lv->name = found_name;
@@ -1764,7 +1764,7 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
     want = xpar_path_join(s->dir, s->subst[i].want);
     { char * got = xpar_path_join(s->dir, s->subst[i].got);
       For(u32, q, s->img_count,
-          if (s->img[q].path && !xpar_strcmp(s->img[q].path, got))
+          if (s->img[q].path && xpar_path_same(s->img[q].path, got))
             src = &s->img[q])
       in = xpar_open(got, XPAR_O_RDONLY);
       xpar_free(got); }
@@ -2869,7 +2869,7 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
       take = MIN(len, lv->byte_length - (rel - lv->stream_offset));
       for (j = 0; j < s->img_count; j++) {
         const char * base = xpar_path_base(s->img[j].path);
-        if (lv->name && !xpar_strcmp(base, lv->name)) break;
+        if (lv->name && xpar_path_same(base, lv->name)) break;
       }
       if (j == s->img_count || !s->img[j].data ||
           rel - lv->stream_offset > s->img[j].size ||
@@ -3802,7 +3802,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
       s->have_layt && s->subst[i].vol < s->layt.count &&
       s->layt.vol[s->subst[i].vol].kind != XPAR_VOL_DATA ? "volume"
                                                          : "data volume";
-    if (!xpar_strcmp(s->subst[i].want, s->subst[i].got))
+    if (xpar_path_same(s->subst[i].want, s->subst[i].got))
       xpar_fprintf(xpar_stderr,
                    "xpar: %s '%s' is not its recorded length; "
                    "`xpar repair` restores it\n", kind, s->subst[i].want);
@@ -3819,7 +3819,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
   /*  Substitutes leave the recorded layout incomplete.  */
   { u64 renamed = 0;
     For(u32, q, s->subst_count,
-        if (xpar_strcmp(s->subst[q].want, s->subst[q].got)) renamed++)
+        if (!xpar_path_same(s->subst[q].want, s->subst[q].got)) renamed++)
     if (renamed)
       xpar_fprintf(xpar_stderr,
                    "xpar: %" PRIu64 " volume%s need%s to be restored under "

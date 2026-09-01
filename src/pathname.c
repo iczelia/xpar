@@ -68,8 +68,24 @@ bool xpar_path_ends_with(const char * s, const char * suffix) {
 char * xpar_path_norm(const char * path) {
   sz n = xpar_strlen(path), i = 0, j = 0;
   char * out = (char *) xpar_alloc_raw(n + 2);
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  /*  DJGPP and its shells use both C:/dir and /dev/c/dir.  */
+  if (n >= 6 && path[0] == '/' &&
+      (path[1] == 'd' || path[1] == 'D') &&
+      (path[2] == 'e' || path[2] == 'E') &&
+      (path[3] == 'v' || path[3] == 'V') && path[4] == '/' &&
+      ((path[5] >= 'a' && path[5] <= 'z') ||
+       (path[5] >= 'A' && path[5] <= 'Z')) &&
+      (!path[6] || xpar_path_sep(path[6]))) {
+    out[j++] = path[5];
+    out[j++] = ':';
+    out[j++] = '/';
+    i = 6;
+    while (xpar_path_sep(path[i])) i++;
+  }
+#endif
   /*  Remove leading "./" and repeated separators.  */
-  while (path[i] == '.' && xpar_path_sep(path[i + 1])) {
+  while (!j && path[i] == '.' && xpar_path_sep(path[i + 1])) {
     i += 2;
     while (xpar_path_sep(path[i])) i++;
   }
@@ -77,7 +93,8 @@ char * xpar_path_norm(const char * path) {
     if (xpar_path_sep(path[i]) && j && xpar_path_sep(out[j - 1])) continue;
     out[j++] = path[i];
   }
-  while (j > 1 && xpar_path_sep(out[j - 1])) j--;
+  while (j > 1 && xpar_path_sep(out[j - 1]) &&
+         !(j == 3 && out[1] == ':')) j--;
   if (!j) out[j++] = '.';
   out[j] = 0;
   return out;
@@ -151,6 +168,14 @@ char * xpar_path_vol(const char * dir, const char * name) {
   return p;
 }
 
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+static void dos_stage_hex(char out[9], const u8 in[4]) {
+  xpar_hex(out, in, 4);
+  for (sz i = 0; i < 8; i++)
+    if (out[i] >= 'a' && out[i] <= 'f') out[i] -= 'a' - 'A';
+}
+#endif
+
 /*  Trim the final component to leave room for the staging suffix.  */
 char * xpar_stage_stem(const char * stem, sz suffix) {
   const char * base = xpar_path_base(stem);
@@ -176,7 +201,7 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
     u8 rnd[4];  char hex[9], leaf[13];
     char * path;
     xpar_file * f;
-    xpar_random_bytes(rnd, sizeof rnd);  xpar_hex(hex, rnd, sizeof rnd);
+    xpar_random_bytes(rnd, sizeof rnd);  dos_stage_hex(hex, rnd);
     xpar_memcpy(leaf, dos_tag, tl);
     xpar_memcpy(leaf + tl, hex, 8 - tl);
     xpar_memcpy(leaf + 8, ".TMP", 5);
@@ -233,7 +258,7 @@ char * xpar_stage_dir(const char * stem, const char * dos_tag) {
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[4];  char hex[9], leaf[9];
     char * path;
-    xpar_random_bytes(rnd, sizeof rnd);  xpar_hex(hex, rnd, sizeof rnd);
+    xpar_random_bytes(rnd, sizeof rnd);  dos_stage_hex(hex, rnd);
     xpar_memcpy(leaf, dos_tag, tl);
     xpar_memcpy(leaf + tl, hex, 8 - tl);  leaf[8] = 0;
     path = xpar_path_join(dir, leaf);

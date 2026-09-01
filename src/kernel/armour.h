@@ -12,13 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Reed-Solomon inner-code interface.
-
-    Parameters describe shortened RS(n, k = n - 2t) codes over GF(2^8)
-    or GF(2^16).  Frames interleave D codewords so frame symbol s belongs
-    to codeword s mod D at position floor(s / D).  Plaintext therefore
-    occupies the frame prefix verbatim.  Callers check the frame tag
-    before decoding and must validate any correction with the tag.  */
+/*  Shortened Reed-Solomon codes over GF(2^8) or GF(2^16). Frames interleave
+    D codewords and keep plaintext at the front. Validate corrections with
+    the frame tag.  */
 
 #ifndef XPAR_ARMOUR_H
 #define XPAR_ARMOUR_H

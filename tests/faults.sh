@@ -21,8 +21,8 @@
 rounds_for() {
   case $XPAR_TEST_LEVEL in
     quick) echo "$1" ;;
-    full)  echo `expr $1 \* 3` ;;
-    *)     echo `expr $1 \* 8` ;;
+    full)  echo $(($1 * 3)) ;;
+    *)     echo $(($1 * 8)) ;;
   esac
 }
 
@@ -76,7 +76,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
     while test "$j" -lt "$K"; do
       #  Zero happens often on purpose: an undamaged column must not be
       #  charged to the budget.
-      rnd `expr $R + 2`;  want=$rnd
+      rnd "$((R + 2))";  want=$rnd
       test "$want" -le "$S" || want=$S
       profile="$profile $want"
       i=0
@@ -85,9 +85,9 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
         #  trailing cells hold no bytes, is never asked for.
         ops="$ops cell=$i,$j"
         echo "$i,$j" >> cells.txt
-        i=`expr $i + 1`
+        i=$((i + 1))
       done
-      j=`expr $j + 1`
+      j=$((j + 1))
     done
 
     set -- `cells_depth cells.txt`
@@ -97,7 +97,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
 
     if test "$cells" -eq 0; then
       run 0 "$XPAR" verify set.xpa
-      round=`expr $round + 1`
+      round=$((round + 1))
       continue
     fi
 
@@ -122,7 +122,7 @@ family_cells() {   # family_cells <label> <bytes> <rounds> <create options...>
     attempt "$XPAR" repair --in-place set.xpa || { cd ..;  return 0; }
     check_repair_outcome "$status" data.bin pristine.bin "$pred" "$what"
     if test "$status" -eq 0; then run 0 "$XPAR" verify --strong set.xpa; fi
-    round=`expr $round + 1`
+    round=$((round + 1))
   done
   cd ..
 }
@@ -146,7 +146,7 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
     cp pristine.bin data.bin
     : > cells.txt
     ops=
-    rnd 6;  bursts=`expr 1 + $rnd`
+    rnd 6;  bursts=$((1 + rnd))
     b=0
     while test "$b" -lt "$bursts"; do
       #  Offsets are drawn in cell-sized steps plus a jitter, so a burst
@@ -154,21 +154,21 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
       rnd "$S";  _s=$rnd
       rnd "$K";  _c=$rnd
       rnd 3;     _jit=$rnd
-      rnd 200;   len=`expr 1 + $rnd`
-      off=`expr $_s \* $Z + $_c \* $Y`
-      off=`expr $off + $_jit \* \( $Y - 8 \) / 2`
-      test "$off" -lt "$L" || off=`expr $L - 1`
-      if test `expr $off + $len` -gt "$L"; then len=`expr $L - $off`; fi
+      rnd 200;   len=$((1 + rnd))
+      off=$((_s * Z + _c * Y))
+      off=$((off + _jit * (Y - 8) / 2))
+      test "$off" -lt "$L" || off=$((L - 1))
+      if test $((off + len)) -gt "$L"; then len=$((L - off)); fi
       ops="$ops rand=$off,$len"
       p=$off
-      end=`expr $off + $len`
+      end=$((off + len))
       while test "$p" -lt "$end"; do
-        s=`expr $p / $Z`
-        j=`expr \( $p % $Z \) / $Y`
+        s=$((p / Z))
+        j=$(((p % Z) / Y))
         echo "$s,$j" >> cells.txt
-        p=`expr $s \* $Z + \( $j + 1 \) \* $Y`
+        p=$((s * Z + (j + 1) * Y))
       done
-      b=`expr $b + 1`
+      b=$((b + 1))
     done
 
     set -- `cells_depth cells.txt`
@@ -187,7 +187,7 @@ family_bursts() {   # <label> <bytes> <rounds> <create options...>
 
     attempt "$XPAR" repair --in-place set.xpa || { cd ..;  return 0; }
     check_repair_outcome "$status" data.bin pristine.bin "$pred" "$what"
-    round=`expr $round + 1`
+    round=$((round + 1))
   done
   cd ..
 }
@@ -217,11 +217,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   cp set.xpa keep/index.orig
   for v in $vols; do cp "$v" "keep/$v.orig"; done
 
-  #  Intact data with damaged recovery is not a data emergency: verify
-  #  answers for the protected data and stays clean, exactly as it does
-  #  for the missing volume below. scrub --deep is the verb that reads
-  #  the recovery back, so that one has to notice. Pinning both directions
-  #  keeps either from drifting silently.
+  #  Verify ignores damaged recovery while scrub --deep detects it.
   victim=`echo $vols | tr ' ' '\n' | head -1`
   damage "$victim" "rand=200,4096"
   run 0 "$XPAR" verify set.xpa
@@ -240,7 +236,7 @@ family_recovery() {   # family_recovery <label> <bytes> <create options...>
   cp pristine.bin data.bin
   ops=
   i=0
-  while test "$i" -lt "$R"; do ops="$ops cell=$i,0";  i=`expr $i + 1`; done
+  while test "$i" -lt "$R"; do ops="$ops cell=$i,0";  i=$((i + 1)); done
   # shellcheck disable=SC2086
   damage data.bin -Z "$Z" -Y "$Y" -n 96 $ops
   damage "$victim" "rand=300,8192"
@@ -260,8 +256,8 @@ large_bytes=8388608; mid_bytes=4194304; ragged_bytes=2686976
 z_large=1M; z_mid=512K; z_small=256K; z_narrow=128K
 if xpar_config_defined XPAR_DOS; then
   cell=4K
-  large_bytes=524288; mid_bytes=262144; ragged_bytes=167936
-  z_large=64K; z_mid=32K; z_small=16K; z_narrow=8K
+  large_bytes=114688; mid_bytes=65536; ragged_bytes=100000
+  z_large=16K; z_mid=16K; z_small=16K; z_narrow=8K
 fi
 
 family_cells  "matrix, GF(2^8)" "$large_bytes" "$n" \

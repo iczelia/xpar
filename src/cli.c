@@ -181,9 +181,8 @@ static int need_word(const char * nm, const char * v,
                      const char * const * words) {
   int i;
   if (v) for (i = 0; words[i]; i++) if (!xpar_strcmp(v, words[i])) return i;
-  xpar_fprintf(xpar_stderr, "xpar: Option %s does not accept '%s'.\n",
-               nm, v ? v : "");
-  xpar_fputs("xpar: it takes one of:", xpar_stderr);
+  xpar_fprintf(xpar_stderr, "xpar: invalid value '%s' for %s. Expected",
+               v ? v : "", nm);
   for (i = 0; words[i]; i++) xpar_fprintf(xpar_stderr, " %s", words[i]);
   xpar_fputs("\n", xpar_stderr);
   xpar_exit(XPAR_EXIT_USAGE);
@@ -229,11 +228,9 @@ static const struct { const char * name;  u32 bits, lit; } pres_tokens[] = {
 };
 
 static void bad_token(const char * nm, const char * tok) {
-  xpar_fprintf(xpar_stderr, "xpar: Option %s does not accept the token "
-               "'%s'.\n", nm, tok);
-  xpar_fputs("xpar: tokens: mtime atime ctime btime times mode setid "
-             "attrs owner\n"
-             "xpar:         xattr xattr-all links all none\n", xpar_stderr);
+  xpar_fprintf(xpar_stderr, "xpar: invalid token '%s' for %s. Expected "
+               "mtime atime ctime btime times mode setid attrs owner\n"
+               "xpar: xattr xattr-all links all none\n", tok, nm);
   xpar_exit(XPAR_EXIT_USAGE);
 }
 
@@ -785,20 +782,17 @@ static void v1_flag_refuse(int argc, char ** argv) {
   for (sz i = 0; i < ARRAY_LEN(tab); i++) {
     sz n = xpar_strlen(tab[i].flag);
     if (xpar_strncmp(argv[1], tab[i].flag, n)) continue;
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x mode flag, and "
-                 "version 2.0 takes a verb.\n", tab[i].flag);
-    xpar_fprintf(xpar_stderr, "xpar: use: xpar %s", tab[i].v2);
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag. Use xpar %s",
+                 tab[i].flag, tab[i].v2);
     for (int k = 2; k < argc; k++)
       xpar_fprintf(xpar_stderr, " %s", argv[k]);
     xpar_fputs("\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE);
   }
-  /*  Recognize bare v1 mode flags without suggesting one verb.  */
+  /*  Handle bare v1 flags without suggesting a verb.  */
   if (!argv[1][2]) {
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x mode flag; "
-                 "version 2.0 requires a verb.\n", argv[1]);
-    xpar_fputs("xpar: use create, verify, repair, or extract; 'xpar --help' "
-               "lists all verbs.\n", xpar_stderr);
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag. Use create, "
+                 "verify, repair or extract.\n", argv[1]);
     xpar_exit(XPAR_EXIT_USAGE);
   }
 }
@@ -973,6 +967,10 @@ static void strip_gen_suffix(char * base) {
 
 static void strip_volume_suffix(char * base) {
   sz n = xpar_strlen(base), dot = n, i;
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  if (n >= 2 && (base[n - 2] == 'G' || base[n - 2] == 'g') &&
+      base[n - 1] >= '1' && base[n - 1] <= '9') base[n - 2] = '\0';
+#endif
   while (dot && base[dot - 1] != '/' && base[dot - 1] != '\\' &&
          base[dot - 1] != '.') dot--;
   if (!dot || base[dot - 1] != '.' || dot >= n || base[dot] != 'v') return;
@@ -1119,8 +1117,8 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     else {
       xpar_free(a);
       say_rollback_residue(arg);
-      FATAL_FORMAT("No xpar set found for '%s'; use 'xpar --help' to list "
-                   "verbs.", xpar_name_escape(arg));
+      FATAL_FORMAT("No xpar set found for '%s'. See 'xpar --help'.",
+                   xpar_name_escape(arg));
     }
   }
   if (out->base) gather_chain_siblings(out);
@@ -1427,8 +1425,7 @@ static void validate(xpar_options * o, u32 pres_lit) {
   FATAL_UNLESS("--auth-only needs --auth-key=FILE.",
                !o->auth_only || o->auth_key);
   /*  Sidecar verification uses lstat, so followed links cannot match.  */
-  FATAL_UNLESS("--follow-symlinks cannot write a sidecar set; use "
-               "--layout=split or --layout=armoured.",
+  FATAL_UNLESS("--follow-symlinks requires split or armoured layout.",
                !o->follow_symlinks || o->layout != XPAR_LAYOUT_SIDECAR ||
                (o->verb != XPAR_VERB_CREATE && o->verb != XPAR_VERB_ADD &&
                 o->verb != XPAR_VERB_CONSOLIDATE));
@@ -1489,19 +1486,17 @@ static void validate(xpar_options * o, u32 pres_lit) {
   }
 
   if (o->set && !xpar_strcmp(o->set, "-"))
-    FATAL_UNLESS("Verb %s needs random access and cannot read a set from "
-                 "a pipe; spool it to a file first.",
+    FATAL_UNLESS("Verb %s requires random access. Spool the set first.",
                  o->verb != XPAR_VERB_VERIFY && o->verb != XPAR_VERB_REPAIR &&
                  o->verb != XPAR_VERB_SCRUB && o->verb != XPAR_VERB_RECOVER,
                  xpar_verb_name(o->verb));
 
   if (o->verb == XPAR_VERB_CREATE && !o->recurse)
     for (u32 i = 0; i < o->path_count; i++)
-      FATAL_UNLESS("'%s' is a directory; use -R to descend.",
+      FATAL_UNLESS("'%s' is a directory. Use -R to descend.",
                    !is_dir(o->paths[i]), xpar_name_escape(o->paths[i]));
 
-  FATAL_UNLESS("--labels needs --layout=split; the other layouts have no "
-               "data volumes to label.",
+  FATAL_UNLESS("--labels requires --layout=split.",
                !o->labels || o->verb != XPAR_VERB_CREATE ||
                o->layout == XPAR_LAYOUT_SPLIT);
 }
@@ -1591,13 +1586,12 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
       maint_gate(a);
       if (looks) say_rollback_residue(a);
       FATAL_CODE(looks ? XPAR_EXIT_NOTFOUND : XPAR_EXIT_USAGE,
-                 looks ? "No xpar set found for '%s'; use 'xpar --help' to "
-                         "list verbs."
-                       : "Unknown verb '%s'; 'xpar --help' lists them.",
+                 looks ? "No xpar set found for '%s'. See 'xpar --help'."
+                       : "Unknown verb '%s'. See 'xpar --help'.",
                  xpar_name_escape(a));
     }
-    FATAL_UNLESS("Only a single set argument may stand in for a verb; "
-                 "'xpar --help' lists them.", r->res->pos_argc == 1);
+    FATAL_UNLESS("Only one set may stand in for a verb. See 'xpar --help'.",
+                 r->res->pos_argc == 1);
     o->verb = XPAR_VERB_VERIFY;
   }
 

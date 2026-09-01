@@ -32,12 +32,12 @@ phase="(starting up)"
 hard_error() {
   echo "$prog: $*" >&2
   if test -n "${log:-}" && test -s "$log"; then
-    echo "$prog:   last command output:" >&2
+    echo "$prog: last command output" >&2
     sed 's/^/  | /' "$log" >&2
   fi
   exit 99
 }
-skip_all()   { echo "$prog: SKIP: $*" >&2;  exit 77; }
+skip_all()   { echo "$prog: SKIP $*" >&2;  exit 77; }
 
 if test -n "${XPAR:-}"; then
   :
@@ -46,7 +46,7 @@ elif test -x "$abs_top_builddir/xpar"; then
 elif test -x "$abs_top_builddir/xpar.exe"; then
   XPAR=$abs_top_builddir/xpar.exe
 else
-  hard_error "no xpar binary; set XPAR or build first"
+  hard_error "no xpar binary. Set XPAR or build first"
 fi
 
 : "${MKDATA:=$abs_top_builddir/tests/mkdata}"
@@ -59,7 +59,16 @@ test -x "$MKDATA" || MKDATA=$MKDATA.exe
 test -x "$DAMAGE" || DAMAGE=$DAMAGE.exe
 test -x "$FORGE"  || FORGE=$FORGE.exe
 
-work=`pwd`/tw-$prog.$$
+xpar_test_dos=no
+_test_cfg=${XPAR_TEST_CONFIG_H:-$abs_top_builddir/config.h}
+test -f "$_test_cfg" && grep -q '^#define XPAR_DOS ' "$_test_cfg" &&
+  xpar_test_dos=yes
+if test "$xpar_test_dos" = yes; then
+  _work_id=`printf '%s' "$prog.$$" | cksum | awk '{ printf "%07d", $1 % 10000000 }'`
+  work=`pwd`/D$_work_id
+else
+  work=`pwd`/tw-$prog.$$
+fi
 rm -rf "$work"
 mkdir "$work" || hard_error "cannot create $work"
 if test -z "${XPAR_TEST_KEEP:-}"; then
@@ -77,16 +86,16 @@ echo "$prog: seed $XPAR_TEST_SEED, level $XPAR_TEST_LEVEL"
 
 # Reporting.
 
-step() { phase="$*";  echo;  echo "$prog: --- $* ---"; }
+step() { phase="$*";  echo;  echo "$prog: $*"; }
 
 note() { echo "$prog:   $*"; }
 
-ok() { checks=`expr $checks + 1`; }
+ok() { checks=$((checks + 1)); }
 
 bad() {
-  checks=`expr $checks + 1`
-  failures=`expr $failures + 1`
-  echo "$prog: FAIL in $phase: $*" >&2
+  checks=$((checks + 1))
+  failures=$((failures + 1))
+  echo "$prog: FAIL in $phase. $*" >&2
   if test -s "$log"; then sed 's/^/  | /' "$log" >&2; fi
 }
 
@@ -109,9 +118,9 @@ explain_status() {
     5) echo "I/O error" ;;
     6) echo "authentication failure" ;;
     7) echo "no plan fits the memory ceiling" ;;
-    8) echo "INTERNAL ERROR (a bug)" ;;
+    8) echo "internal error" ;;
     12[89]|13[0-9]|1[4-8][0-9]|19[01])
-       echo "CRASHED (signal `expr $1 - 128`)" ;;
+       echo "CRASHED (signal $(($1 - 128)))" ;;
     *) echo "unrecognised status" ;;
   esac
 }
@@ -119,17 +128,35 @@ explain_status() {
 never_false_success() {   # <status> <file> <pristine> <what>
   if test "$1" -ne 0; then ok;  return 0; fi
   if cmp -s "$2" "$3"; then ok
-  else bad "$4: exited 0 with bytes that are not the original"; fi
+  else bad "$4 returned 0 with changed bytes"; fi
 }
 
 # Inject damage or stop if the helper fails.
 damage() {   # damage <file> <op>...
-  "$DAMAGE" "$@" > /dev/null || hard_error "damage failed: $*"
+  "$DAMAGE" "$@" > /dev/null || hard_error "damage failed for $*"
 }
 
 # Enter a directory, or stop.
 cdto() {   # cdto <dir>
-  cd "$1" || hard_error "cd $1"
+  _cd_target=$1
+  if test "$xpar_test_dos" = yes; then
+    case $_cd_target in
+      */* | . | ..) ;;
+      *)
+        if test "${#_cd_target}" -gt 8; then
+          _cd_id=`printf '%s' "$PWD/$_cd_target" | cksum |
+            awk '{ printf "%07d", $1 % 10000000 }'`
+          _cd_short=D$_cd_id
+          if test -e "$_cd_target"; then
+            test ! -e "$_cd_short" || hard_error "DOS directory collision"
+            mv "$_cd_target" "$_cd_short" || hard_error "shorten $_cd_target"
+          fi
+          _cd_target=$_cd_short
+        fi
+        ;;
+    esac
+  fi
+  cd "$_cd_target" || hard_error "cd $_cd_target"
 }
 
 # Run a command and save its status without asserting it.
@@ -137,7 +164,7 @@ attempt() {
   status=0
   "$@" > "$log" 2>&1 || status=$?
   if test "$status" -ge 128 || test "$status" -eq 8; then
-    bad "$* : `explain_status $status` (status $status)"
+    bad "$* returned $status (`explain_status $status`)"
     return 1
   fi
   return 0
@@ -148,9 +175,8 @@ run() {
   want=$1;  shift
   attempt "$@" || return 1
   if test "$status" -ne "$want"; then
-    bad "$*
-       expected: $want (`explain_status $want`)
-       got     : $status (`explain_status $status`)"
+    bad "$* expected $want (`explain_status $want`), got $status" \
+        "(`explain_status $status`)"
     return 1
   fi
   ok
@@ -164,9 +190,7 @@ run_any() {
   for w in $want; do
     if test "$status" -eq "$w"; then ok;  return 0; fi
   done
-  bad "$*
-       expected one of: $want
-       got            : $status (`explain_status $status`)"
+  bad "$* expected one of $want, got $status (`explain_status $status`)"
   return 1
 }
 
@@ -184,7 +208,7 @@ differs() {
 
 equal() {   # equal <what> <got> <want>
   if test "x$2" = "x$3"; then ok
-  else bad "$1: got '$2', want '$3'"; fi
+  else bad "$1 got '$2', expected '$3'"; fi
 }
 
 exists() {
@@ -256,6 +280,8 @@ fifos_work() {   # fifos_work <path>
 
 # Whether mode 555 prevents this user from creating files.
 perms_bite() {   # perms_bite <scratch dir>
+  xpar_config_defined XPAR_WIN_LEGACY && return 1
+  xpar_config_defined XPAR_DOS && return 1
   _d=$1/perm-probe
   rm -rf "$_d";  mkdir -p "$_d" || return 1
   chmod 555 "$_d" 2> /dev/null || { rm -rf "$_d";  return 1; }
@@ -318,23 +344,23 @@ read_geometry() {   # read_geometry <set>
   L=`json_num "$work/geom.json" stream_length set`
   test -n "$Z" && test -n "$S" || hard_error "no geometry in info --json"
   if test -z "$Y" || test "$Y" -eq 0; then K=1;  Y=$Z
-  else K=`expr \( $Z + $Y - 1 \) / $Y`; fi
+  else K=$(((Z + Y - 1) / Y)); fi
 }
 
 # Deterministic, portable randomness for reproducible corruption matrices.
 
 # Park-Miller RNG with 31-bit-safe arithmetic.
-rng_state=`expr $XPAR_TEST_SEED % 2147483647`
+rng_state=$((XPAR_TEST_SEED % 2147483647))
 test "$rng_state" -gt 0 || rng_state=1
 
 # Return through $rnd so state changes persist outside a subshell.
 rnd() {   # rnd <n> -> 0 .. n-1 in $rnd
-  _hi=`expr $rng_state / 127773`
-  _lo=`expr $rng_state % 127773`
-  rng_state=`expr 16807 \* $_lo - 2836 \* $_hi`
-  test "$rng_state" -gt 0 || rng_state=`expr $rng_state + 2147483647`
+  _hi=$((rng_state / 127773))
+  _lo=$((rng_state % 127773))
+  rng_state=$((16807 * _lo - 2836 * _hi))
+  test "$rng_state" -gt 0 || rng_state=$((rng_state + 2147483647))
   # Avoid correlated low bits for small n.
-  rnd=`expr \( $rng_state / 32768 \) % "$1"`
+  rnd=$(((rng_state / 32768) % $1))
 }
 
 # Corpora.

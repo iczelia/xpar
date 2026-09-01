@@ -18,7 +18,9 @@
 
 #include "container.h"
 #include "manifest.h"
+#include "pathname.h"
 #include "slice.h"
+#include "volname.h"
 #include "platform/port-fs.h"
 #include "kernel/blake3.h"
 #include "kernel/crc32c.h"
@@ -703,6 +705,24 @@ static void check_path(const char * name, xpar_path_status want,
 
 static void test_paths(void) {
   xt_section_begin("paths");
+
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  char * dos_abs;
+  CHECK(xpar_path_same("/dev/c/work/set", "C:/WORK/SET"),
+        "DJGPP and DOS drive paths compare equal");
+  CHECK(xpar_path_same("/dev/c", "c:/"),
+        "DJGPP and DOS drive roots compare equal");
+  dos_abs = xpar_path_lex_abs("/dev/c/work/set");
+  CHECK(dos_abs && xpar_path_same(dos_abs, "c:/work/set"),
+        "lexical absolute paths accept DJGPP drive spelling");
+  xpar_free(dos_abs);
+  CHECK(xpar_vname_is_index("SAFE.XPA", "safe"),
+        "the DOS index name is an index");
+  CHECK(!xpar_vname_is_index("SAFE.V00", "safe"),
+        "a DOS recovery volume is not an index");
+  CHECK(xpar_vname_is_member("SAFE.V00", "safe"),
+        "a DOS recovery volume is a set member");
+#endif
 
   check_path("a/b/c.txt", XPAR_PATH_OK, 0);
   check_path("a", XPAR_PATH_OK, 0);

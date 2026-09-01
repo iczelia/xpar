@@ -744,7 +744,10 @@ static void rebuild_cells(scrub * c) {
              base[-1] != '/' && base[-1] != '\\'; base--) {}
         if (layt) for (q = 0; q < layt->count; q++)
           if (layt->vol[q].kind == XPAR_VOL_DATA && layt->vol[q].name &&
-              !xpar_strcmp(base, layt->vol[q].name)) { is_data = true; break; }
+              xpar_path_same(base, layt->vol[q].name)) {
+            is_data = true;
+            break;
+          }
         if (is_data) continue;
         f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
         if (!f) {

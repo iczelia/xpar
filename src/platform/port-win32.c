@@ -612,8 +612,6 @@ void xpar_xclose(xpar_file * f) {
   }
 }
 
-bool xpar_maplock_blocks(const char * path) { (void) path;  return false; }
-
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m;
   HANDLE fh, fm;
@@ -869,12 +867,9 @@ i64 xpar_wall_ns(void) {
   return (i64) ((t - WIN_EPOCH_DELTA_100NS) * 100ULL);
 }
 
-/*  RtlGenRandom is the documented user-mode entry to the system CSPRNG and
-    is reached by ordinal name through advapi32 so that the program does
-    not acquire a link-time dependency on it; the pre-XP path is
-    CryptGenRandom, reached the same way. Failure is fatal: a keyed
-    authentication tag seeded from a weak source verifies correctly and
-    forges trivially, which looks exactly like working.  */
+/*  Resolve the system CSPRNG at runtime for old Windows compatibility.
+    Fall back from RtlGenRandom to CryptGenRandom. Failure is fatal because
+    authentication requires strong randomness.  */
 typedef BOOLEAN (WINAPI * rtl_gen_random_fn)(PVOID, ULONG);
 typedef BOOL (WINAPI * crypt_acquire_fn)(HCRYPTPROV *, LPCSTR, LPCSTR,
                                          DWORD, DWORD);

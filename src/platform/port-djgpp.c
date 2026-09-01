@@ -24,13 +24,11 @@
 
 #include "common.h"
 
-#include <dir.h>
 #include <dos.h>
 #include <dpmi.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <go32.h>
-#include <io.h>
+#include <libc/dosio.h>
 #include <pc.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -78,47 +76,97 @@ void xpar_host_init(void) {
   g_stdin.is_char  = fd_is_char(0);
   g_stdout.is_char = fd_is_char(1);
   g_stderr.is_char = fd_is_char(2);
-  /*  A redirected standard stream carries container bytes, and DOS text
-      mode would turn every 0x0A into 0x0D 0x0A on the way out and eat
-      0x1A on the way in.  */
-  if (!g_stdin.is_char)  setmode(0, O_BINARY);
-  if (!g_stdout.is_char) setmode(1, O_BINARY);
-  /*  Probe for a long-filename driver once, so open and findfirst take the
-      AX=71xxh forms where the drive supports them.  */
-  _use_lfn(".");
 }
 
 /*  off_t is a signed 32-bit long here, so anything past 2 GiB - 1 is
     rejected at the boundary instead of wrapping.  */
 static bool off_fits(u64 v) { return v <= 0x7fffffffULL; }
 
+static int dos_seek(int fd, i32 off, unsigned int whence, u32 * position) {
+  __dpmi_regs r;
+  u32 bits = (u32) off;
+  memset(&r, 0, sizeof r);
+  r.x.ax = (u16) (0x4200u | whence);
+  r.x.bx = (u16) fd;
+  r.x.cx = (u16) (bits >> 16);
+  r.x.dx = (u16) bits;
+  if (__dpmi_int(0x21, &r) < 0) { errno = EIO;  return -1; }
+  if (r.x.flags & 1) {
+    errno = __doserr_to_errno(r.x.ax);
+    return -1;
+  }
+  if (position) *position = (u32) r.x.ax | ((u32) r.x.dx << 16);
+  return 0;
+}
+
+static int dos_truncate_here(int fd) {
+  __dpmi_regs r;
+  memset(&r, 0, sizeof r);
+  r.h.ah = 0x40;
+  r.x.bx = (u16) fd;
+  r.x.ds = __tb_segment;
+  r.x.dx = __tb_offset;
+  if (__dpmi_int(0x21, &r) < 0) { errno = EIO;  return -1; }
+  if (r.x.flags & 1) {
+    errno = __doserr_to_errno(r.x.ax);
+    return -1;
+  }
+  return 0;
+}
+
+static int dos_resize(int fd, u32 length) {
+  u32 saved;
+  int err = 0;
+  if (dos_seek(fd, 0, 1, &saved) != 0) return -1;
+  if (dos_seek(fd, (i32) length, 0, NULL) != 0 ||
+      dos_truncate_here(fd) != 0)
+    err = errno;
+  if (dos_seek(fd, (i32) saved, 0, NULL) != 0 && !err) err = errno;
+  if (!err) return 0;
+  errno = err;
+  return -1;
+}
+
 xpar_file * xpar_open(const char * path, int flags) {
-  int acc = flags & 3, oflag;
-  int fd;
+  int acc = flags & 3, mode;
+  int fd = -1;
+  unsigned int err;
   struct xpar_file * f;
-  if      (acc == XPAR_O_WRONLY) oflag = O_WRONLY;
-  else if (acc == XPAR_O_RDWR)   oflag = O_RDWR;
-  else                           oflag = O_RDONLY;
-  oflag |= O_BINARY;
-  if (flags & XPAR_O_CREAT)  oflag |= O_CREAT;
-  if (flags & XPAR_O_TRUNC)  oflag |= O_TRUNC;
-  if (flags & XPAR_O_EXCL)   oflag |= O_EXCL;
-  if (flags & XPAR_O_APPEND) oflag |= O_APPEND;
-  fd = open(path, oflag, 0666);
-  if (fd < 0) return NULL;
+  if      (acc == XPAR_O_WRONLY) mode = 1;
+  else if (acc == XPAR_O_RDWR)   mode = 2;
+  else                           mode = 0;
+  if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_EXCL))
+    err = _dos_creatnew(path, 0, &fd);
+  else if ((flags & XPAR_O_CREAT) && (flags & XPAR_O_TRUNC))
+    err = _dos_creat(path, 0, &fd);
+  else {
+    err = _dos_open(path, (unsigned int) mode, &fd);
+    if (err && (flags & XPAR_O_CREAT)) err = _dos_creatnew(path, 0, &fd);
+    if (!err && (flags & XPAR_O_TRUNC) && dos_resize(fd, 0) != 0) {
+      _dos_close(fd);
+      return NULL;
+    }
+  }
+  if (err) { errno = __doserr_to_errno(err);  return NULL; }
+  if ((flags & XPAR_O_APPEND) && dos_seek(fd, 0, 2, NULL) != 0) {
+    _dos_close(fd);
+    return NULL;
+  }
   f = malloc(sizeof(*f));
-  if (!f) { close(fd);  errno = ENOMEM;  return NULL; }
+  if (!f) { _dos_close(fd);  errno = ENOMEM;  return NULL; }
   f->fd = fd;  f->is_char = fd_is_char(fd);  f->owned = true;
   f->at_eof = false;  f->last_errno = 0;
   return f;
 }
 
 int xpar_close(xpar_file * f) {
-  int r;
+  unsigned int err;
   if (!f || !f->owned) return 0;
-  r = close(f->fd);
+  err = _dos_close(f->fd);
   free(f);
-  return r;
+  if (!err) return 0;
+  errno = __doserr_to_errno(err);
+  return -1;
 }
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
@@ -127,10 +175,13 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
   u8 * p = (u8 *) buf;
   while (total < n) {
     sz want = n - total;
-    int got;
-    if (want > 0x10000000u) want = 0x10000000u;
-    got = read(f->fd, p + total, (unsigned) want);
-    if (got < 0)  { f->last_errno = errno;  break; }
+    unsigned int got = 0, err;
+    if (want > 0xffffu) want = 0xffffu;
+    err = _dos_read(f->fd, p + total, (unsigned int) want, &got);
+    if (err) {
+      f->last_errno = errno = __doserr_to_errno(err);
+      break;
+    }
     if (got == 0) { f->at_eof = true;       break; }
     total += (sz) got;
   }
@@ -143,10 +194,13 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
   const u8 * p = (const u8 *) buf;
   while (total < n) {
     sz want = n - total;
-    int wrote;
-    if (want > 0x10000000u) want = 0x10000000u;
-    wrote = write(f->fd, p + total, (unsigned) want);
-    if (wrote < 0)  { f->last_errno = errno;  break; }
+    unsigned int wrote = 0, err;
+    if (want > 0xffffu) want = 0xffffu;
+    err = _dos_write(f->fd, p + total, (unsigned int) want, &wrote);
+    if (err) {
+      f->last_errno = errno = __doserr_to_errno(err);
+      break;
+    }
     if (wrote == 0) break;
     total += (sz) wrote;
   }
@@ -154,18 +208,23 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
 }
 
 int xpar_seek(xpar_file * f, i64 off, int whence) {
-  int w = whence == XPAR_SEEK_SET ? SEEK_SET
-        : whence == XPAR_SEEK_CUR ? SEEK_CUR : SEEK_END;
+  unsigned int w = whence == XPAR_SEEK_SET ? 0
+                 : whence == XPAR_SEEK_CUR ? 1 : 2;
   if (off > 0 && !off_fits((u64) off)) { errno = EOVERFLOW;  return -1; }
   if (off < -0x7fffffffLL)             { errno = EOVERFLOW;  return -1; }
-  if (lseek(f->fd, (long) off, w) < 0) { f->last_errno = errno;  return -1; }
+  if (dos_seek(f->fd, (i32) off, w, NULL) != 0) {
+    f->last_errno = errno;
+    return -1;
+  }
   f->at_eof = false;
   return 0;
 }
 
 i64 xpar_tell(xpar_file * f) {
-  long p = lseek(f->fd, 0, SEEK_CUR);
-  return p < 0 ? -1 : (i64) p;
+  u32 p;
+  if (dos_seek(f->fd, 0, 1, &p) != 0) return -1;
+  if (!off_fits(p)) { errno = EOVERFLOW;  return -1; }
+  return (i64) p;
 }
 
 /*  DOS writes go straight to the file system through int 21h; there is no
@@ -174,12 +233,16 @@ int xpar_flush(xpar_file * f) { (void) f;  return 0; }
 int xpar_fsync(xpar_file * f) { (void) f;  return 0; }
 
 i64 xpar_size(xpar_file * f) {
-  long len = filelength(f->fd);
-  return len < 0 ? -1 : (i64) len;
+  u32 saved, len;
+  if (dos_seek(f->fd, 0, 1, &saved) != 0) return -1;
+  if (dos_seek(f->fd, 0, 2, &len) != 0) return -1;
+  if (dos_seek(f->fd, (i32) saved, 0, NULL) != 0) return -1;
+  if (!off_fits(len)) { errno = EOVERFLOW;  return -1; }
+  return (i64) len;
 }
 
 bool xpar_is_seekable(xpar_file * f) {
-  return lseek(f->fd, 0, SEEK_CUR) >= 0;
+  return dos_seek(f->fd, 0, 1, NULL) == 0;
 }
 bool xpar_is_tty(xpar_file * f) { return f->is_char; }
 bool xpar_eof   (xpar_file * f) { return f->at_eof; }
@@ -202,19 +265,22 @@ bool xpar_lock_supported(void) { return false; }
 /*  Emulate positional reads by seeking, then restore cursor and EOF state.  */
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
   f->last_errno = 0;
-  long saved;
+  u32 saved;
   bool saved_eof = f->at_eof;
   sz got;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
-  saved = lseek(f->fd, 0, SEEK_CUR);
-  if (saved < 0) { f->last_errno = errno;  return 0; }
-  if (lseek(f->fd, (long) off, SEEK_SET) < 0) {
+  if (dos_seek(f->fd, 0, 1, &saved) != 0) {
+    f->last_errno = errno;
+    return 0;
+  }
+  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) {
     f->last_errno = errno;
     return 0;
   }
   got = xpar_read(f, buf, n);
   f->at_eof = saved_eof;
-  if (lseek(f->fd, saved, SEEK_SET) < 0) f->last_errno = errno;
+  if (dos_seek(f->fd, (i32) saved, 0, NULL) != 0)
+    f->last_errno = errno;
   return got;
 }
 
@@ -224,23 +290,26 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
   f->last_errno = 0;
-  long saved;
+  u32 saved;
   sz put;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
-  saved = lseek(f->fd, 0, SEEK_CUR);
-  if (saved < 0) { f->last_errno = errno;  return 0; }
-  if (lseek(f->fd, (long) off, SEEK_SET) < 0) {
+  if (dos_seek(f->fd, 0, 1, &saved) != 0) {
+    f->last_errno = errno;
+    return 0;
+  }
+  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) {
     f->last_errno = errno;
     return 0;
   }
   put = xpar_write(f, buf, n);
-  if (lseek(f->fd, saved, SEEK_SET) < 0) f->last_errno = errno;
+  if (dos_seek(f->fd, (i32) saved, 0, NULL) != 0)
+    f->last_errno = errno;
   return put;
 }
 
 int xpar_ftruncate(xpar_file * f, u64 length) {
   if (!off_fits(length)) { errno = EOVERFLOW;  return -1; }
-  if (ftruncate(f->fd, (long) length) != 0) {
+  if (dos_resize(f->fd, (u32) length) != 0) {
     f->last_errno = errno;
     return -1;
   }
@@ -269,12 +338,15 @@ void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
 }
 
 void xpar_xclose(xpar_file * f) {
+  unsigned int err;
   if (!f || !f->owned) return;
-  if (close(f->fd) < 0) FATAL_PERROR("close");
+  err = _dos_close(f->fd);
   free(f);
+  if (err) {
+    errno = __doserr_to_errno(err);
+    FATAL_PERROR("close");
+  }
 }
-
-bool xpar_maplock_blocks(const char * path) { (void) path;  return false; }
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m;

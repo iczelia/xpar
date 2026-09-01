@@ -25,14 +25,21 @@ bench_find_tools() {
   if test -z "${xpar:-}"; then
     if   test -x "$top/xpar";     then xpar=$top/xpar
     elif test -x "$top/xpar.exe"; then xpar=$top/xpar.exe
-    else die "xpar binary not found; use --xpar"
+    else die "xpar binary not found. Use --xpar"
     fi
   fi
   case $xpar in
-    /*) ;;
+    /*|?:[/\\]*) ;;
     *)  xpar=`cd \`dirname "$xpar"\` && pwd`/`basename "$xpar"` ;;
   esac
   test -x "$xpar" || die "not executable: $xpar"
+  bench_dos=no
+  if test "${XPAR_DOS_TEST:-0}" = 1; then bench_dos=yes
+  else
+    case `"$xpar" --version 2> /dev/null | head -1` in
+      *djgpp*|*msdos*) bench_dos=yes ;;
+    esac
+  fi
 
   mkdata=${MKDATA:-$top/tests/mkdata}
   damage=${DAMAGE:-$top/tests/damage}
@@ -114,15 +121,15 @@ jnum0() { _v=`jnum "$@"`;  echo "${_v:-0}"; }
 # Load geometry into g_z, g_y, g_k, g_s, g_r, g_l, g_codec and g_field.
 
 read_geometry() {
-  "$xpar" info --json "$1" > "$work/geom.json" 2> /dev/null ||
+  "$xpar" info --json "$1" > "$geom_json" 2> /dev/null ||
     die "cannot read set geometry: $1"
-  g_z=`jnum0 "$work/geom.json" slice_size set`
-  g_s=`jnum0 "$work/geom.json" slices set`
-  g_y=`jnum0 "$work/geom.json" cell_bytes set`
-  g_r=`jnum0 "$work/geom.json" recovery set`
-  g_l=`jnum0 "$work/geom.json" stream_length set`
-  g_codec=`jstr "$work/geom.json" codec set`
-  g_field=`jnum0 "$work/geom.json" field set`
+  g_z=`jnum0 "$geom_json" slice_size set`
+  g_s=`jnum0 "$geom_json" slices set`
+  g_y=`jnum0 "$geom_json" cell_bytes set`
+  g_r=`jnum0 "$geom_json" recovery set`
+  g_l=`jnum0 "$geom_json" stream_length set`
+  g_codec=`jstr "$geom_json" codec set`
+  g_field=`jnum0 "$geom_json" field set`
   test "$g_y" -gt 0 || g_y=$g_z
   g_k=$(( (g_z + g_y - 1) / g_y ))
 }
@@ -179,6 +186,22 @@ bench_open_output() {
   mkdir -p "$work" || die "cannot create work directory: $work"
   csv=$out/results.csv
   jsonl=$out/results.json
+  env_json=$out/environment.json
+  provenance_json=$out/provenance.json
+  kernel_json=$out/kernels.json
+  geom_json=$work/geom.json
+  pre_json=$work/pre.json
+  out_json=$work/out.json
+  out_log=$work/out.log
+  if test "$bench_dos" = yes; then
+    jsonl=$out/result.jsn
+    env_json=$out/env.json
+    provenance_json=$out/prov.json
+    kernel_json=$out/kernel.jsn
+    geom_json=$work/geom.jsn
+    pre_json=$work/pre.jsn
+    out_json=$work/out.jsn
+  fi
   cmdlog=$out/commands.log
   test -s "$csv" || {
     : > "$csv"
@@ -283,7 +306,7 @@ bench_measure() {   # <setup-fn> <check-fn> <command...>
     echo "$*" >> "$cmdlog"
     settle
     m_status=0
-    "$timeit" "$work/timing" "$@" > "$work/out.json" 2> "$work/out.log" ||
+    "$timeit" "$work/timing" "$@" > "$out_json" 2> "$out_log" ||
       m_status=$?
     m_us=`sed -n 's/^elapsed_us=//p' "$work/timing"`
     m_rss=`sed -n 's/^maxrss_kb=//p' "$work/timing"`
@@ -324,7 +347,7 @@ bench_measure() {   # <setup-fn> <check-fn> <command...>
     elif test "$_refusal" = yes; then
       # Preserve the refusal reason for result consumers.
       if test -z "$f_unsupported"; then
-        f_unsupported=`head -1 "$work/out.log" 2>/dev/null |
+        f_unsupported=`head -1 "$out_log" 2>/dev/null |
           sed 's/^xpar: //' | tr -d ',"' | cut -c1-90`
         test -n "$f_unsupported" || f_unsupported="status $m_status"
       fi
@@ -429,14 +452,11 @@ bench_environment() {
     printf '  "repetitions": %s,\n'          "$reps"
     printf '  "jobs": %s\n'                  "`jstr_of "$jobs"`"
     printf '}\n'
-  } > "$out/environment.json"
+  } > "$env_json"
   bench_provenance
 }
 
-# Provenance. A result set that cannot be tied to an exact binary and an
-# exact harness is a set of numbers, not a measurement. The benchmark host
-# usually builds from a distribution tarball with no .git, so the commit
-# alone is not enough: hash what actually ran.
+# Hash the exact binary and harness because tarball builds may lack Git data.
 
 _sha() {
   test -r "$1" || { echo null;  return; }
@@ -446,7 +466,7 @@ _sha() {
 }
 
 bench_provenance() {
-  _out=$out/provenance.json
+  _out=$provenance_json
   {
     printf '{\n  "schema": 1,\n'
     printf '  "recorded_utc": %s,\n' \
@@ -507,7 +527,7 @@ bench_finish() {
   say "results:"
   say "  CSV: $csv"
   say "  JSON: $jsonl"
-  say "  environment: $out/environment.json"
+  say "  environment: $env_json"
   say "  commands: $cmdlog"
   if test "${refused_rows:-0}" -gt 0; then
     say "$refused_rows refused parameter combinations recorded"

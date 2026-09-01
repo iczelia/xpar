@@ -27,7 +27,7 @@ damage_profile() {
     _i=0
     while test "$_i" -lt "$_depth"; do
       _ops="$_ops cell=$_i,$_col"
-      _i=`expr $_i + 1`
+      _i=$((_i + 1))
     done
   done
   test -n "$_ops" || return 0
@@ -37,7 +37,7 @@ damage_profile() {
 
 all_columns() {
   _j=0;  _out=
-  while test "$_j" -lt "$K"; do _out="$_out $_j";  _j=`expr $_j + 1`; done
+  while test "$_j" -lt "$K"; do _out="$_out $_j";  _j=$((_j + 1)); done
   echo "$_out"
 }
 
@@ -77,14 +77,14 @@ one_config() {
   "$XPAR" verify --json set.xpa > v.json 2> "$log"
   equal "verify status" "`json_str v.json status summary`" repairable
   equal "cells reported bad" "`json_num v.json cells_bad summary`" \
-        "`expr $K \* $R`"
+        "$((K * R))"
   equal "deepest column" "`json_num v.json column_depth summary`" "$R"
   equal "recovery needed" "`json_num v.json recovery_needed summary`" "$R"
   run 1 "$XPAR" verify set.xpa
   run 0 "$XPAR" repair --in-place set.xpa
   same data.bin pristine.bin
   run 0 "$XPAR" verify --strong set.xpa
-  note "K*R = `expr $K \* $R` cells lost and recovered"
+  note "K*R = $((K * R)) cells lost and recovered"
 
   # One column beyond its budget.
   if test "$R" -lt "$S"; then
@@ -96,13 +96,13 @@ one_config() {
     done
     # shellcheck disable=SC2086
     damage_profile data.bin "$R" $others
-    damage_profile data.bin `expr $R + 1` "$victim"
+    damage_profile data.bin "$((R + 1))" "$victim"
     "$XPAR" verify --json set.xpa > v.json 2> "$log"
     equal "verify status" "`json_str v.json status summary`" unrepairable
     equal "deepest column" "`json_num v.json column_depth summary`" \
-          "`expr $R + 1`"
+          "$((R + 1))"
     equal "recovery needed" "`json_num v.json recovery_needed summary`" \
-          "`expr $R + 1`"
+          "$((R + 1))"
     equal "recovery available" \
           "`json_num v.json recovery_available summary`" "$R"
     run 2 "$XPAR" verify set.xpa
@@ -113,7 +113,7 @@ one_config() {
     else
       ok
     fi
-    note "one column at R+1 = `expr $R + 1` was refused, the rest untouched"
+    note "one column at R+1 = $((R + 1)) was refused, the rest untouched"
   fi
 
   # -- Whole slices: K cells each, one erasure of budget each. ----------
@@ -124,9 +124,9 @@ one_config() {
     j=0
     while test "$j" -lt "$K"; do
       ops="$ops cell=$i,$j"
-      j=`expr $j + 1`
+      j=$((j + 1))
     done
-    i=`expr $i + 1`
+    i=$((i + 1))
   done
   # shellcheck disable=SC2086
   damage data.bin -Z "$Z" -Y "$Y" -n 96 seed=$XPAR_TEST_SEED $ops
@@ -138,7 +138,7 @@ one_config() {
 
   # -- A burst across a cell boundary marks both cells. -----------------
   cp pristine.bin data.bin
-  damage data.bin "rand=`expr $Y - 8`,16"
+  damage data.bin "rand=$((Y - 8)),16"
   "$XPAR" verify --json set.xpa > v.json 2> "$log"
   equal "a burst across a cell boundary" \
         "`json_num v.json cells_bad summary`" 2
@@ -149,7 +149,7 @@ one_config() {
   # -- A burst across a slice boundary is one erasure in two columns. ---
   if test "$S" -gt 1; then
     cp pristine.bin data.bin
-    damage data.bin "rand=`expr $Z - 8`,16"
+    damage data.bin "rand=$((Z - 8)),16"
     "$XPAR" verify --json set.xpa > v.json 2> "$log"
     equal "a burst across a slice boundary" \
           "`json_num v.json cells_bad summary`" 2

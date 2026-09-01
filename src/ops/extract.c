@@ -160,7 +160,7 @@ static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename,
   }
   if (v->vol_tag && (d = xpar_opendir(x->dir)) != NULL) {
     while ((de = xpar_readdir(d)) != NULL) {
-      if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
+      if (!de->is_regular || xpar_path_same(de->name, v->name)) continue;
       path = xpar_path_join(x->dir, de->name);
       if (xpar_vol_tag_match(path, v)) {
         *basename = xpar_strdup(de->name);
@@ -488,7 +488,7 @@ static bool ex_read_stream(ex * x, u64 off, u64 len, u8 * dst) {
       for (k = 0; k < x->vol_count; k++) {
         const char * b = x->vol[k].path, * s;
         for (s = b; *s; s++) if (*s == '/') b = s + 1;
-        if (xpar_strcmp(b, v->name)) continue;
+        if (!xpar_path_same(b, v->name)) continue;
         if (off - lo + take > x->vol[k].size) return false;
         xpar_memcpy(dst, x->vol[k].data + (off - lo), (sz) take);
         hit = true;
@@ -1009,7 +1009,7 @@ int xpar_op_extract(const xpar_options * o) {
 
   ex_pick_setd(&x);
   ex_authenticate(&x);
-  FATAL_UNLESS("This set uses external files; use verify or repair.",
+  FATAL_UNLESS("This set uses external files. Use verify or repair.",
                x.sd.layout != XPAR_LAYOUT_SIDECAR);
 
   if (x.sd.generation) ex_open_chain(&x);
@@ -1039,7 +1039,7 @@ int xpar_op_extract(const xpar_options * o) {
                    "stream. Run `xpar repair` to rebuild it.",
                    path != NULL, v->name);
       for (k = 0; k < x.vol_count && !seen; k++)
-        if (!xpar_strcmp(x.vol[k].path, path)) seen = true;
+        if (xpar_path_same(x.vol[k].path, path)) seen = true;
       if (!seen && !ex_vol_open(&x, path))
         FATAL_IO("Data volume '%s' cannot be read.", path);
       if (damaged) {
@@ -1050,7 +1050,7 @@ int xpar_op_extract(const xpar_options * o) {
                        "xpar: data volume '%s' is damaged; run `xpar repair` "
                        "first for a faithful copy\n", v->name);
       }
-      if (xpar_strcmp(v->name, basename)) {
+      if (!xpar_path_same(v->name, basename)) {
         /*  Report substituted volumes consistently across verbs.  */
         char * named = xpar_path_join(x.dir, v->name);
         xpar_stat_t vst;
@@ -1128,7 +1128,7 @@ int xpar_op_extract(const xpar_options * o) {
       }
       xpar_free(buf);
       FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-                 "Stream hash mismatch; nothing written. Run `xpar repair`.");
+                 "Stream hash mismatch. Nothing written. Run `xpar repair`.");
     }
     for (k = 0; k < e->extent_count; k++) {
       u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
@@ -1158,7 +1158,7 @@ int xpar_op_extract(const xpar_options * o) {
     if (xpar_mkdir_p(x.dest, 0777) != 0 && (err = xpar_errno(),
                                             xpar_lstat(x.dest, &st) != 0))
       FATAL_IO("Cannot create '%s': %s.", x.dest, xpar_strerror(err)); }
-  FATAL_UNLESS("Extraction directory '%s' is a symbolic link; use its "
+  FATAL_UNLESS("Extraction directory '%s' is a symbolic link. Use its "
                "target path.",
                xpar_lstat(x.dest, &st) == 0 && !st.is_symlink, x.dest);
   x.caps = xpar_fs_caps(x.dest);
@@ -1180,7 +1180,7 @@ int xpar_op_extract(const xpar_options * o) {
         FATAL_UNLESS("Destination '%s' exists and is not a directory.",
                      !exists || st.is_dir, p);
       } else {
-        FATAL_UNLESS("Destination '%s' exists; -f overwrites it.",
+        FATAL_UNLESS("Destination '%s' exists. Use -f to overwrite it.",
                      !exists || o->force, p);
         FATAL_UNLESS("Refusing to replace destination directory '%s'.",
                      !exists || !st.is_dir, p);

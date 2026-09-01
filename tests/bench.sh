@@ -29,6 +29,9 @@ test -x "$TIMEIT" ||
   skip_all "bench/timeit is not built; run 'make bench-tools'"
 export TIMEIT MKDATA DAMAGE
 
+bench_extra=
+test "$xpar_test_dos" != yes || bench_extra="--codec matrix"
+
 #  A missing CSV has zero bad rows.
 bad_rows() {
   test -f "$1" || { echo 0;  return 0; }
@@ -52,10 +55,14 @@ bench_timing() {
 
 step "a clean run reports every repetition usable"
 
+bench_size=4194304
+xpar_config_defined XPAR_DOS && bench_size=524288
+case `xpar_host` in *djgpp* | *msdos*) bench_size=524288 ;; esac
 rc=0
 t0=`date +%s`
 "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" --out ok \
-  --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" > clean.log 2>&1 || rc=$?
+  --size "$bench_size" --reps 2 --seed "$XPAR_TEST_SEED" $bench_extra \
+  > clean.log 2>&1 || rc=$?
 bench_timing clean.log $((`date +%s` - t0))
 if test "$rc" -eq 0; then ok
 else bad "the harness exited $rc on a clean run"
@@ -83,8 +90,8 @@ step "a repetition that skipped its restore is caught"
 rc=0
 t0=`date +%s`
 XPAR_BENCH_BREAK=repair "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
-  --out broken --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" \
-  > broken.log 2>&1 || rc=$?
+  --out broken --size "$bench_size" --reps 2 --seed "$XPAR_TEST_SEED" \
+  $bench_extra > broken.log 2>&1 || rc=$?
 bench_timing broken.log $((`date +%s` - t0))
 
 if test "$rc" -ne 0; then ok
@@ -104,8 +111,8 @@ step "an unexpected status fails the measurement"
 rc=0
 t0=`date +%s`
 XPAR_BENCH_BREAK=status "$XPAR_SH" "$run_sh" --quick --xpar "$XPAR" \
-  --out status --size 4194304 --reps 2 --seed "$XPAR_TEST_SEED" \
-  > status.log 2>&1 || rc=$?
+  --out status --size "$bench_size" --reps 2 --seed "$XPAR_TEST_SEED" \
+  $bench_extra > status.log 2>&1 || rc=$?
 bench_timing status.log $((`date +%s` - t0))
 
 if test "$rc" -ne 0; then ok

@@ -342,14 +342,8 @@ typedef struct {
 void xpar_critset_init(xpar_critset *);
 void xpar_critset_free(xpar_critset *);
 
-/*  True for a new packet. Repeats update `copies`, `conflicts`, and `stale`;
-    the highest-ranked copy is retained.
-
-    The set keeps `body` rather than copying it, and reads it again on
-    every later add and find. It shall point into storage that outlives
-    the set and does not move: a volume image, or an ARMG plaintext the
-    caller owns. A growable buffer that is written to again after the add
-    is not such storage.  */
+/*  Add a packet body by reference. Its storage must remain stable for the
+    set's lifetime. Repeats update counts and retain the highest-ranked body.  */
 bool xpar_critset_add(xpar_critset *, const xpar_pkt *, const u8 * body);
 
 /*  Preserve bodies borrowed from a range that is about to be released.  */

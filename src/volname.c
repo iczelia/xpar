@@ -188,6 +188,15 @@ static bool dos_2digits(const char * p) {
   return p[0] >= '0' && p[0] <= '9' && p[1] >= '0' && p[1] <= '9';
 }
 
+static bool vname_has_xpa_ext(const char * name) {
+  sz n = xpar_strlen(name), i;
+  static const char ext[] = XPAR_EXT;
+  if (n <= XPAR_EXT_LEN) return false;
+  for (i = 0; i < XPAR_EXT_LEN; i++)
+    if (fold(name[n - XPAR_EXT_LEN + i]) != ext[i]) return false;
+  return true;
+}
+
 static bool vname_is_dos_index(const char * name, const char * stem) {
   char b[4];
   sz n = xpar_strlen(name);
@@ -212,15 +221,15 @@ static bool vname_is_dos_recovery(const char * name, const char * stem) {
 }
 
 bool xpar_vname_has_ext(const char * name) {
-  sz n = xpar_strlen(name), i;
-  static const char ext[] = XPAR_EXT;
+  sz n = xpar_strlen(name);
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+  if (n >= 4 && name[n - 4] == '.' && fold(name[n - 3]) == 'v' &&
+      dos_2digits(name + n - 2)) return true;
+#endif
   if (n >= 4 && name[n - 4] == '.' && fold(name[n - 3]) == 'x' &&
       fold(name[n - 2]) == 'g' && name[n - 1] >= '1' && name[n - 1] <= '9')
     return true;
-  if (n <= XPAR_EXT_LEN) return false;
-  for (i = 0; i < XPAR_EXT_LEN; i++)
-    if (fold(name[n - XPAR_EXT_LEN + i]) != ext[i]) return false;
-  return true;
+  return vname_has_xpa_ext(name);
 }
 
 bool xpar_vname_is_undo(const char * name) {
@@ -241,7 +250,7 @@ bool xpar_vname_is_undo(const char * name) {
 bool xpar_vname_is_index(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
   if (vname_is_dos_index(name, stem)) return true;
-  if (!xpar_vname_has_ext(name) || n - XPAR_EXT_LEN < p ||
+  if (!vname_has_xpa_ext(name) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
   n -= XPAR_EXT_LEN;
   if (p == n) return true;
@@ -254,7 +263,7 @@ bool xpar_vname_is_member(const char * name, const char * stem) {
   sz n = xpar_strlen(name), p = xpar_strlen(stem), i;
   if (xpar_vname_is_index(name, stem)) return true;
   if (vname_is_dos_recovery(name, stem)) return true;
-  if (!xpar_vname_has_ext(name) || n - XPAR_EXT_LEN < p ||
+  if (!vname_has_xpa_ext(name) || n - XPAR_EXT_LEN < p ||
       xpar_strncmp(name, stem, p)) return false;
   n -= XPAR_EXT_LEN;
   if (p == n) return true;

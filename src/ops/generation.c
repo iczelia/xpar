@@ -145,7 +145,7 @@ static void gen_publish_whole(char * tmp, const char * path, bool replace) {
   if (!replace && gen_exists(path)) {
     xpar_remove(tmp);
     xpar_free(tmp);
-    FATAL("'%s' exists; -f overwrites it.", path);
+    FATAL("'%s' exists. Use -f to overwrite it.", path);
   }
   if (xpar_rename(tmp, path) != 0) {
     int e = xpar_errno();
@@ -165,7 +165,7 @@ static void gen_write_whole(const char * path, const void * p, sz n,
                             bool replace) {
   char * tmp;
   if (!replace && gen_exists(path))
-    FATAL("'%s' exists; -f overwrites it.", path);
+    FATAL("'%s' exists. Use -f to overwrite it.", path);
   tmp = gen_stage_whole(path, p, n);
   gen_publish_whole(tmp, path, replace);
 }
@@ -300,7 +300,7 @@ static void gen_maint_add(gen_maint * j, u32 kind, const char * from,
 static bool gen_maint_is_stage(const gen_maint * j, const char * path) {
   For(u32, i, j->count,
       if (j->rec[i].kind == XPAR_MAINT_PUBLISH &&
-          !xpar_strcmp(j->rec[i].from, path)) return true)
+          xpar_path_same(j->rec[i].from, path)) return true)
   return false;
 }
 
@@ -693,11 +693,8 @@ u32 xpar_garm_prologue_copies(const u8 * file, sz len) {
   return n;
 }
 
-/*  The format's prologue procedure, in its three stages: the stored
-    copies, then the corrected ones, then a byte majority. Copies that pass
-    the checksum must agree with each other; a stage that has an agreed
-    representation is the answer, valid or not, and never falls through to
-    the next.  `which` names the copy, or 3 for a majority candidate.  */
+/*  Recover the prologue from stored copies, corrected copies, then byte
+    majority. The first stage with an agreed result wins.  */
 
 static bool arm_agreed(const u8 * const * copy, int n, int * first) {
   int j;
@@ -1313,8 +1310,8 @@ static const xpar_key * gen_chain_key(const xpar_chain * c) {
 static void gen_refuse_unreadable(const xpar_chain * c, const char * verb) {
   if (!c->lost_count) return;
   FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-             "Generation %" PRIu32 " is unreadable; %s would discard it. "
-             "Repair or recover it first.", c->lost_first, verb);
+             "Generation %" PRIu32 " is unreadable. Repair or recover it "
+             "before %s.", c->lost_first, verb);
 }
 
 static void gen_require_write_key(const xpar_chain * c, const char * verb) {
@@ -1330,7 +1327,7 @@ static int gen_chain_layout(const xpar_options * o, const xpar_chain * c,
   int chain = (int) c->gen[head].sd.layout;
   if (!o->layout_given) return chain;
   if (extending && o->layout != chain)
-    FATAL("This chain uses layout '%s'; omit --layout or consolidate to "
+    FATAL("This chain uses layout '%s'. Omit --layout or use consolidate to "
           "change it.",
           xpar_layout_name((u8) chain));
   return o->layout;
@@ -1366,7 +1363,7 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
   if (!g) {
     if (c->forked) {
       gen_list_branches(c);
-      FATAL("This chain has forked; select a branch with --generation.");
+      FATAL("This chain has forked. Select a branch with --generation.");
     }
     return c->head;
   }
@@ -1376,7 +1373,7 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
         found = i;  matches++;
       }
     if (matches > 1)
-      FATAL("Set-id prefix '%s' is ambiguous; provide more hexadecimal "
+      FATAL("Set-id prefix '%s' is ambiguous. Provide more hexadecimal "
             "digits.", g->id_prefix);
     if (matches == 1) return found;
     FATAL("No generation of this set has a set_id beginning '%s'.",
@@ -1388,7 +1385,7 @@ u32 xpar_gchain_select(const xpar_chain * c, const xpar_genref * g) {
     }
   if (matches > 1)
     FATAL("Generation %" PRIu64
-          " is ambiguous across fork branches; select it "
+          " is ambiguous across fork branches. Select it "
           "by set-id prefix.", g->number);
   if (matches == 1) return found;
   FATAL("This set has no generation %" PRIu64 ".", g->number);
@@ -1925,7 +1922,7 @@ static void gen_warn_thinner(const xpar_options * o, f64 was, u64 r, u64 s) {
   f64 now = s ? 100.0 * (f64) r / (f64) s : 0.0;
   if (o->quiet || !s || was <= 0.0 || now >= was - 0.05) return;
   xpar_fprintf(xpar_stderr,
-               "xpar: warning: redundancy falls from %.1f%% to %.1f%%; pass "
+               "xpar: warning: redundancy falls from %.1f%% to %.1f%%. Pass "
                "-r to keep the old ratio.\n", was, now);
 }
 
@@ -2555,7 +2552,7 @@ static char * gen_stage_data_range(const xpar_manifest * m,
                "internal: a data-volume range is outside its generation.");
   at = m->stream_base + local_offset;
   if (!replace && gen_exists(path))
-    FATAL("'%s' exists; -f overwrites it.", path);
+    FATAL("'%s' exists. Use -f to overwrite it.", path);
   f = gen_stage_open(path, &tmp);
   gen_src_init(&src, m, m->stream_base + m->stream_length);
   while (left) {
@@ -2715,7 +2712,7 @@ static void gen_volumes_free(gen_vol * v, u32 n) {
 
 static bool gen_chain_names(const xpar_chain * c, const char * path) {
   For(u32, i, c->vol_count,
-      if (!xpar_strcmp(c->vol[i].path, path)) return true)
+      if (xpar_path_same(c->vol[i].path, path)) return true)
   return false;
 }
 
@@ -2830,8 +2827,8 @@ static void gen_commit_consolidation(const xpar_chain * c,
         !o->force) {
       u32 k;
       for (k = 0; k < ns; k++) xpar_remove(stage[k].name);
-      FATAL("'%s' exists and is not a volume of the chain being replaced; "
-            "-f overwrites it.", final[i].name);
+      FATAL("'%s' is not a volume of this chain. Use -f to overwrite it.",
+            final[i].name);
     }
   for (i = 0; i < data_n; i++)
     if (gen_exists(final_data[i]) &&
@@ -2839,8 +2836,8 @@ static void gen_commit_consolidation(const xpar_chain * c,
       u32 k;
       for (k = 0; k < ns; k++) xpar_remove(stage[k].name);
       for (k = 0; k < data_n; k++) xpar_remove(stage_data[k]);
-      FATAL("'%s' exists and is not a data volume of the chain being "
-            "replaced; -f overwrites it.", final_data[i]);
+      FATAL("'%s' is not a data volume of this chain. Use -f to overwrite it.",
+            final_data[i]);
     }
   for (i = 0; i < data_n && o->labels; i++)
     if (gen_exists(final_label[i]) &&
@@ -2850,8 +2847,8 @@ static void gen_commit_consolidation(const xpar_chain * c,
       for (k = 0; k < data_n; k++) {
         xpar_remove(stage_data[k]); xpar_remove(stage_label[k]);
       }
-      FATAL("'%s' exists and is not a label of the chain being replaced; "
-            "-f overwrites it.", final_label[i]);
+      FATAL("'%s' is not a label of this chain. Use -f to overwrite it.",
+            final_label[i]);
     }
 
   for (i = 0; i < c->vol_count; i++) {
@@ -3217,7 +3214,7 @@ static void gen_addrec_publish(gen_addrec_file * files, u32 count) {
       const char * name = files[i].final;
       xpar_free(backup);
       gen_addrec_discard(files, count);
-      FATAL("'%s' exists; -f overwrites it.", name);
+      FATAL("'%s' exists. Use -f to overwrite it.", name);
     }
   for (i = 0; i < count; i++) {
     if (gen_exists(files[i].final)) {
@@ -3290,10 +3287,10 @@ static void gen_addrec_order(gen_addrec_file * files, u32 count, u32 fresh,
                                                           sizeof *out);
   u32 i, n = 0;
   for (i = fresh; i < count; i++)
-    if (!index_path || xpar_strcmp(files[i].final, index_path))
+    if (!index_path || !xpar_path_same(files[i].final, index_path))
       out[n++] = files[i];
   for (i = fresh; i < count; i++)
-    if (index_path && !xpar_strcmp(files[i].final, index_path))
+    if (index_path && xpar_path_same(files[i].final, index_path))
       out[n++] = files[i];
   for (i = 0; i < fresh; i++) out[n++] = files[i];
   xpar_memcpy(files, out, (sz) count * sizeof *out);
@@ -3380,15 +3377,15 @@ static void gen_write_set(gen_write_req * rq) {
   if (!o->force)
     for (i = 0; i < nvol; i++)
       if (gen_exists(vol[i].name))
-        FATAL("'%s' exists; -f overwrites it. Nothing was written.",
+        FATAL("'%s' exists. Use -f to overwrite it. Nothing was written.",
               vol[i].name);
   if (!o->force)
     for (i = 0; i < data_n; i++) {
       if (gen_exists(data_name[i]))
-        FATAL("'%s' exists; -f overwrites it. Nothing was written.",
+        FATAL("'%s' exists. Use -f to overwrite it. Nothing was written.",
               data_name[i]);
       if (label_name[i] && gen_exists(label_name[i]))
-        FATAL("'%s' exists; -f overwrites it. Nothing was written.",
+        FATAL("'%s' exists. Use -f to overwrite it. Nothing was written.",
               label_name[i]);
     }
 
@@ -3826,7 +3823,7 @@ static void gen_check_manifest(const xpar_manifest * m) {
   if (!gen_name_fault(st)) return;
   e = &m->entry[res.entry];
   if (st == XPAR_MF_DUP_NAME)
-    FATAL("Two entries map to '%.*s'; use --base to disambiguate.",
+    FATAL("Two entries map to '%.*s'. Use --base to disambiguate.",
           (int) e->name_len, e->name);
   FATAL("Entry '%.*s' cannot be stored: %s.", (int) e->name_len, e->name,
         xpar_mf_reason(st));
@@ -4370,8 +4367,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
   axis = xpar_setd_recovery_limit(&c.gen[g].sd);
 
   if (!c.gen[g].sd.data_slice_count)
-    FATAL("Generation %" PRIu32
-          " is stream-empty, so it has nothing to protect.",
+    FATAL("Generation %" PRIu32 " has no stream to protect.",
           c.gen[g].sd.generation);
   if (!c.gen[g].layt_body)
     FATAL_FORMAT("Generation %" PRIu32 " carries no volume layout.",
@@ -4383,7 +4379,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
   want = gen_resolve_r(&o->recovery, c.gen[g].sd.data_slice_count,
                        c.gen[g].sd.slice_size);
   if (!want)
-    FATAL("addrecovery requires --recovery=SPEC (current total: %" PRIu64 ").",
+    FATAL("Use --recovery=SPEC to raise the current total of %" PRIu64 ".",
           have);
   if (want <= have) {
     xpar_fprintf(xpar_stderr, "xpar: generation %" PRIu32 " already has %"
@@ -4428,9 +4424,8 @@ int xpar_op_addrecovery(const xpar_options * o) {
       and that is all this encode reads.  */
   if (!xpar_vset_stream_intact(source_set, source_rc))
     FATAL_CODE(source_rc,
-               "Generation %" PRIu32 "'s protected stream is damaged; recovery data "
-               "was not added.",
-               c.gen[g].sd.generation);
+               "Recovery was not added because generation %" PRIu32
+               " is damaged.", c.gen[g].sd.generation);
 
   gen_manifest_on_disk(&c, g, o, &m, &owner);
   xpar_memset(&p, 0, sizeof p);
@@ -4462,7 +4457,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
                     (sz) p.geom.slice_size))
       FATAL_CODE(XPAR_EXIT_INTERNAL,
                  "internal: re-encoding at R=%" PRIu64 " changed recovery slice "
-                 "%" PRIu64 "; nothing was written.",
+                 "%" PRIu64 ". Nothing was written.",
                  want, r.exponent);
   }
 
@@ -4582,7 +4577,7 @@ int xpar_op_addrecovery(const xpar_options * o) {
   if (!o->force)
     for (i = 0; i < nvol; i++)
       if (gen_exists(vol[i].name))
-        FATAL("'%s' exists; -f overwrites it. Nothing was written.",
+        FATAL("'%s' exists. Use -f to overwrite it. Nothing was written.",
               vol[i].name);
 
   /*  Strictly parse all staged files, then publish new volumes before their
@@ -5008,9 +5003,8 @@ int xpar_op_add(const xpar_options * caller) {
 
   if (warn_posix)
     xpar_fprintf(xpar_stderr,
-                 "xpar: an inherited entry was rescanned without being named "
-                 "on the command line, so its POSX record was dropped; name "
-                 "its path to keep ownership and extended attributes.\n");
+                 "xpar: rescanning an unnamed inherited entry dropped its "
+                 "ownership and extended attributes.\n");
 
   if (fresh.posix_count) {
     g.m.posix       = fresh.posix;
@@ -5028,8 +5022,8 @@ int xpar_op_add(const xpar_options * caller) {
       xpar_manifest_unreachable(&g.m, dir, o->stdin_name);
     xpar_free(dir);
     if (lost)
-      FATAL("Sidecar entry '%.*s' is unreachable; name inputs relative to "
-            "the set directory or use --base.",
+      FATAL("Sidecar entry '%.*s' is unreachable. Use paths relative to the "
+            "set directory or use --base.",
             (int) lost->name_len, lost->name);
   }
   if (c.base) input_cache = xpar_vname_cache(c.base);
@@ -5052,7 +5046,7 @@ int xpar_op_add(const xpar_options * caller) {
   rq.base          = o->output ? o->output : c.base;
   rq.quiet         = o->quiet;
   rq.auth_only     = c.authenticated ? c.auth_only : o->auth_only;
-  if (!rq.base) FATAL("This set has no base name; pass --output.");
+  if (!rq.base) FATAL("This set has no base name. Pass --output.");
   if (chunk_cache.slot) {
     u64 average = o->dedup_chunk ? o->dedup_chunk : (u64) 1 << 20;
     output_cache = xpar_vname_cache(rq.base);
@@ -5925,11 +5919,11 @@ int xpar_op_consolidate(const xpar_options * caller) {
   owned_layout = c.gen[head].sd.layout != XPAR_LAYOUT_SIDECAR;
   if (!o->quiet && c.base) gen_report_stale_stage(o, c.base);
   base = o->output ? o->output : c.base;
-  if (!base) FATAL("This set has no base name; pass --output.");
+  if (!base) FATAL("This set has no base name. Pass --output.");
   /*  Dry runs need no destination.  */
   if (!o->output && !o->replace && !o->dry_run)
-    FATAL("consolidate writes a new generation-0 set: give --output=BASE, "
-          "or --replace to overwrite this chain in place.");
+    FATAL("consolidate writes a new generation-0 set. Use --output=BASE or "
+          "--replace.");
 
   xpar_gchain_manifest(&c, head, &m, &owner);
   tab  = (xpar_posix_rec **) xpar_calloc(c.gen_count, sizeof(void *));
@@ -6024,18 +6018,18 @@ int xpar_op_consolidate(const xpar_options * caller) {
   if (owned_layout && unreadable)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
                "%" PRIu32 " of %" PRIu32 " entries could not be extracted "
-               "from this self-contained chain; repair it first.",
+               "from this self-contained chain. Repair it first.",
                unreadable, m.count);
   if (io_bad)
     FATAL_CODE(XPAR_EXIT_IO,
-               "%" PRIu32 "/%" PRIu32 " entries could not be read; nothing "
+               "%" PRIu32 "/%" PRIu32 " entries could not be read. Nothing "
                "was written.", io_bad, m.count);
   if (bad && !o->force)
     FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "%" PRIu32 " entries do not match the chain; repair or pass "
+               "%" PRIu32 " entries do not match the chain. Repair or pass "
                "--force.", bad);
   if (bad)
-    xpar_fprintf(xpar_stderr, "xpar: --force: recorded %" PRIu32
+    xpar_fprintf(xpar_stderr, "xpar: --force recorded %" PRIu32
                  " mismatched entr%s as found.\n", bad,
                  bad == 1 ? "y" : "ies");
 
@@ -6558,7 +6552,8 @@ int xpar_op_recover(const xpar_options * o) {
       r_total = MAX(r_total, layt.vol[i].recovery_first +
                              layt.vol[i].byte_length);
     if (o->volume_name) {
-      if (layt.vol[i].name && !xpar_strcmp(layt.vol[i].name, o->volume_name))
+      if (layt.vol[i].name && xpar_path_same(layt.vol[i].name,
+                                             o->volume_name))
         target = i;
     } else if (i == (u32) o->volume_index) {
       target = i;
@@ -6574,7 +6569,7 @@ int xpar_op_recover(const xpar_options * o) {
             XPAR_OK) continue;
         for (i = 0; i < other.count; i++)
           if (other.vol[i].name &&
-              !xpar_strcmp(other.vol[i].name, o->volume_name)) {
+              xpar_path_same(other.vol[i].name, o->volume_name)) {
             u32 num = c.gen[h].sd.generation;
             xpar_layt_free(&other);
             FATAL("'%s' belongs to generation %" PRIu32 ", not to generation %"
@@ -6625,7 +6620,7 @@ int xpar_op_recover(const xpar_options * o) {
     else
       path = xpar_path_join(c.dir, layt.vol[target].name);
     if (!o->force && gen_exists(path))
-      FATAL("'%s' exists; -f overwrites it.", path);
+      FATAL("'%s' exists. Use -f to overwrite it.", path);
     set = xpar_vset_open(o);
     dst = gen_stage_open_rw(path, &tmp);
     if (!xpar_vset_recover_data(set, layt.vol[target].stream_offset,
@@ -6705,21 +6700,6 @@ int xpar_op_recover(const xpar_options * o) {
   return XPAR_EXIT_OK;
 }
 
-static bool gen_dir_path_equal(const char * a, const char * b) {
-  char ca, cb;
-  for (;;) {
-    ca = *a++;  cb = *b++;
-    if (xpar_path_sep(ca)) ca = '/';
-    if (xpar_path_sep(cb)) cb = '/';
-#if defined(XPAR_WIN32) || defined(XPAR_DOS) || defined(__MSDOS__)
-    if (ca >= 'A' && ca <= 'Z') ca = (char) (ca - 'A' + 'a');
-    if (cb >= 'A' && cb <= 'Z') cb = (char) (cb - 'A' + 'a');
-#endif
-    if (ca != cb) return false;
-    if (!ca) return true;
-  }
-}
-
 static bool gen_path_equal_n(const char * a, sz an,
                              const char * b, sz bn) {
   sz i;
@@ -6752,7 +6732,7 @@ static bool gen_same_dir(const char * a, const char * bpath,
   aa = xpar_path_lex_abs(a);
   bb = xpar_path_lex_abs(bpath);
   if (!aa || !bb) { xpar_free(aa);  xpar_free(bb);  return false; }
-  same = gen_dir_path_equal(aa, bb);
+  same = xpar_path_same(aa, bb);
   xpar_free(aa);  xpar_free(bb);
   return same;
 }
@@ -7136,7 +7116,7 @@ int xpar_op_undo(const xpar_options * o) {
     paths[k] = gen_undo_path(o, &chain, order[k]);
     /*  Fork branches can share a generation number, hence a journal.  */
     for (i = 0; i < k; i++)
-      if (!xpar_strcmp(paths[i], paths[k])) seen = true;
+      if (xpar_path_same(paths[i], paths[k])) seen = true;
     if (seen) continue;
     rc = gen_undo_one(o, &chain, order[k], paths[k], &present);
     if (!present) continue;
@@ -7145,7 +7125,7 @@ int xpar_op_undo(const xpar_options * o) {
   }
 
   if (!played) {
-    xpar_fprintf(xpar_stderr, "xpar: no journal at '%s'; nothing to undo.\n",
+    xpar_fprintf(xpar_stderr, "xpar: no journal at '%s'. Nothing to undo.\n",
                  paths[0]);
     worst = XPAR_EXIT_NOTFOUND;
   }

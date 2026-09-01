@@ -16,7 +16,7 @@ ACLOCAL_AMFLAGS = -I m4
 
 AM_CFLAGS = -std=c99 $(XPAR_WARN_CFLAGS) $(XPAR_HARDEN_CFLAGS) \
             $(XPAR_SAN_CFLAGS) $(XPAR_WIN_CFLAGS) $(XPAR_DOS_CFLAGS)
-AM_LDFLAGS = $(XPAR_SAN_LDFLAGS) $(XPAR_WIN_LDFLAGS)
+AM_LDFLAGS = $(XPAR_SAN_LDFLAGS) $(XPAR_WIN_LDFLAGS) $(XPAR_DOS_LDFLAGS)
 
 AM_CPPFLAGS = $(XPAR_WIN_CPPFLAGS) $(XPAR_DOS_CPPFLAGS) -I$(top_builddir) \
               -I$(top_srcdir)/src \
@@ -65,8 +65,20 @@ libxpar_core_a_SOURCES = \
   src/kernel/blake3.c src/kernel/blake3-scalar.c \
   src/kernel/crc32c.c src/kernel/crc32c-scalar.c \
   src/platform/port-common.c src/platform/port-crash.c \
-  src/platform/port-cpu-x86.c src/platform/port-cpu-arm.c \
-  src/platform/port-cpu-other.c
+  src/platform/port-cpu-common.c
+
+if XPAR_CPU_SCALAR
+libxpar_core_a_SOURCES += src/platform/port-cpu-scalar.c
+endif
+if XPAR_CPU_X86
+libxpar_core_a_SOURCES += src/platform/port-cpu-x86.c
+endif
+if XPAR_CPU_ARM
+libxpar_core_a_SOURCES += src/platform/port-cpu-arm.c
+endif
+if XPAR_CPU_OTHER
+libxpar_core_a_SOURCES += src/platform/port-cpu-other.c
+endif
 
 if XPAR_IS_POSIX
 libxpar_core_a_SOURCES += src/platform/port-posix.c \
@@ -80,6 +92,7 @@ endif
 if XPAR_DOS
 libxpar_core_a_SOURCES += src/platform/port-djgpp.c \
                           src/platform/port-fs-djgpp.c \
+                          src/platform/port-dos-crt.c \
                           src/platform/port-printf.c
 endif
 
@@ -260,7 +273,9 @@ tests_forge_LDADD       = $(xpar_LDADD)
 TESTS = $(XPAR_PROGRAM_TESTS) $(XPAR_SHELL_TESTS)
 
 test-programs: tests/t_unit$(EXEEXT) tests/t_codec$(EXEEXT) \
-               tests/t_central$(EXEEXT)
+               tests/t_central$(EXEEXT) tests/mkdata$(EXEEXT) \
+               tests/damage$(EXEEXT) tests/forge$(EXEEXT) \
+               bench/timeit$(EXEEXT)
 endif
 
 TEST_EXTENSIONS = .sh
@@ -300,10 +315,10 @@ EXTRA_DIST = \
   contrib/check-win95-pe.sh contrib/ci-check.sh \
   contrib/repro-digest.sh \
   contrib/gitlog-to-changelog \
-  contrib/dos/dosbox-x.conf contrib/dos/ci-check.bat \
-  contrib/dos/exec.conf contrib/dos/exec.sh contrib/dos/name-bridge.sh \
-  contrib/dos/run-check.sh contrib/dos/test-launcher.sh \
-  contrib/dos/run-suite.sh contrib/dos/run2.c \
+  contrib/dos/fdauto.bat contrib/dos/fdconfig.sys \
+  contrib/dos/guest-suite.sh \
+  contrib/dos/install-freedos.sh contrib/dos/qemu-exit.c \
+  contrib/dos/run-suite.sh \
   tests/t_harness.h tests/lib.sh \
   tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
   tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \

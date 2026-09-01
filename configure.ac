@@ -66,15 +66,19 @@ esac
 AM_CONDITIONAL([XPAR_DOS], [test "x$xpar_is_dos" = "xyes"])
 XPAR_DOS_CPPFLAGS=""
 XPAR_DOS_CFLAGS=""
+XPAR_DOS_LDFLAGS=""
 if test "x$xpar_is_dos" = "xyes"; then
   AC_DEFINE([XPAR_DOS], [1], [Define on MS-DOS/DJGPP hosts])
   dnl  DJGPP hides POSIX and DOS declarations behind __STRICT_ANSI__.
   XPAR_DOS_CPPFLAGS="-U__STRICT_ANSI__"
   dnl  Crash reporting walks frame pointers on DJGPP.
-  XPAR_DOS_CFLAGS="-fno-omit-frame-pointer"
+  XPAR_DOS_CFLAGS="-march=i386 -mtune=i386 -fno-omit-frame-pointer"
+  XPAR_DOS_CFLAGS="$XPAR_DOS_CFLAGS -ffunction-sections -fdata-sections"
+  XPAR_DOS_LDFLAGS="-Wl,--gc-sections"
 fi
 AC_SUBST([XPAR_DOS_CPPFLAGS])
 AC_SUBST([XPAR_DOS_CFLAGS])
+AC_SUBST([XPAR_DOS_LDFLAGS])
 
 case "$host_os" in
   mingw*|cygwin*|msys*) xpar_is_windows=yes ;;
@@ -106,12 +110,14 @@ case "$xpar_win_target" in
     dnl  Legacy crash reporting walks frame pointers.
     xpar_win_cflags="-march=i486 -mtune=i486 -mfpmath=387"
     xpar_win_cflags="$xpar_win_cflags -fno-omit-frame-pointer"
+    xpar_win_cflags="$xpar_win_cflags -ffunction-sections -fdata-sections"
     xpar_win_ldflags="-Wl,--major-subsystem-version=4"
     xpar_win_ldflags="$xpar_win_ldflags,--minor-subsystem-version=0"
     xpar_win_ldflags="$xpar_win_ldflags,--major-os-version=4"
     xpar_win_ldflags="$xpar_win_ldflags,--minor-os-version=0"
     xpar_win_ldflags="$xpar_win_ldflags,--disable-dynamicbase"
     xpar_win_ldflags="$xpar_win_ldflags,--disable-nxcompat"
+    xpar_win_ldflags="$xpar_win_ldflags,--gc-sections"
     ;;
   *)
     AC_MSG_ERROR([--with-windows-target must be "nt" or "win95"])
@@ -208,9 +214,11 @@ test "x$xpar_win_target" = "xwin95" && xpar_skip_simd=yes
 
 xpar_is_x86=no
 xpar_is_x86_64=no
+xpar_is_arm=no
 case "$host_cpu" in
   i?86)             xpar_is_x86=yes ;;
   x86_64*|amd64*)   xpar_is_x86=yes; xpar_is_x86_64=yes ;;
+  arm*|aarch64*)    xpar_is_arm=yes ;;
 esac
 
 AC_ARG_ENABLE([simd],
@@ -222,6 +230,16 @@ if test "x$xpar_skip_simd" = "xyes"; then
   AC_DEFINE([XPAR_NO_SIMD], [1],
             [Define when the vector kernels were deliberately not built])
 fi
+
+AM_CONDITIONAL([XPAR_CPU_SCALAR],
+  [test "x$xpar_skip_simd" = "xyes"])
+AM_CONDITIONAL([XPAR_CPU_X86],
+  [test "x$xpar_skip_simd" = "xno" && test "x$xpar_is_x86" = "xyes"])
+AM_CONDITIONAL([XPAR_CPU_ARM],
+  [test "x$xpar_skip_simd" = "xno" && test "x$xpar_is_arm" = "xyes"])
+AM_CONDITIONAL([XPAR_CPU_OTHER],
+  [test "x$xpar_skip_simd" = "xno" && test "x$xpar_is_x86" = "xno" &&
+   test "x$xpar_is_arm" = "xno"])
 
 SSSE3_CFLAGS=""
 SSE42_CFLAGS=""

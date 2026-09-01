@@ -12,12 +12,8 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  The undo journal's on-disk shape. repair writes it and undo replays
-    it, from different translation units, so it is declared once: a second
-    copy of the sizes or the magics can drift with nothing to catch it.
-
-    A valid footer marks a journal safe to replay; XPAR_UNDO_CREATED
-    marks a record whose file did not exist before the repair.  */
+/*  Shared on-disk journal definitions. A valid footer permits replay.
+    XPAR_UNDO_CREATED marks files absent before repair.  */
 
 #ifndef XPAR_UNDO_H
 #define XPAR_UNDO_H

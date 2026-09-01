@@ -155,7 +155,7 @@ jobs:
                       CC=${{ matrix.target.host }}-gcc \
                       ${{ matrix.target.extra }} \
                       --bindir=/ --program-suffix=-${{ matrix.target.name }} \
-                      CFLAGS=-O2 LDFLAGS="-static -s"
+                      CFLAGS="-O2 -g" LDFLAGS=-static
 
       - name: Make
         run: make -j4 all
@@ -169,6 +169,21 @@ jobs:
       - name: Stage the binary
         run: |
           make DESTDIR="$PWD/output" install-exec
+          binary=output/xpar-${{ matrix.target.name }}.exe
+          debug=output/xpar-${{ matrix.target.name }}.dbg
+          objcopy=${{ matrix.target.host }}-objcopy
+          strip=${{ matrix.target.host }}-strip
+          "$objcopy" --only-keep-debug "$binary" "$debug"
+          "$strip" --strip-all "$binary"
+          ( cd output && "$objcopy" \
+              --add-gnu-debuglink=xpar-${{ matrix.target.name }}.dbg \
+              xpar-${{ matrix.target.name }}.exe )
+          if test '${{ matrix.target.name }}' = i686-win95; then
+            OBJDUMP=${{ matrix.target.host }}-objdump \
+            NM=${{ matrix.target.host }}-nm \
+              /bin/bash contrib/check-win95-pe.sh \
+              "$binary" config.h "$debug"
+          fi
           cp config.h output/config.h
           ls -l output
 
@@ -283,7 +298,7 @@ jobs:
       - name: Configure
         run: |
           ./configure --bindir=/ --program-suffix=-linux-${{ matrix.target.name }} \
-                      CFLAGS=-O2 LDFLAGS=-s
+                      CFLAGS="-O2 -g"
 
       - name: Make
         run: make -j4 all
@@ -296,7 +311,16 @@ jobs:
         run: cat test-suite.log tests/*.log 2>&1 || true
 
       - name: Stage the binary
-        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+        run: |
+          make DESTDIR="$PWD/output" install-exec
+          binary=output/xpar-linux-${{ matrix.target.name }}
+          debug=output/xpar-linux-${{ matrix.target.name }}.dbg
+          objcopy --only-keep-debug "$binary" "$debug"
+          strip --strip-all "$binary"
+          ( cd output && objcopy \
+              --add-gnu-debuglink=xpar-linux-${{ matrix.target.name }}.dbg \
+              xpar-linux-${{ matrix.target.name }} )
+          ls -l output
 
       - name: Publish the binary
         uses: softprops/action-gh-release@v2
@@ -332,7 +356,7 @@ jobs:
       - name: Configure
         run: |
           ./configure --bindir=/ --program-suffix=-macos-${{ matrix.target.name }} \
-                      CC=clang CFLAGS=-O2 LDFLAGS=-Wl,-x
+                      CC=clang CFLAGS="-O2 -g"
 
       - name: Make
         run: make -j4 all
@@ -345,7 +369,15 @@ jobs:
         run: cat test-suite.log tests/*.log 2>&1 || true
 
       - name: Stage the binary
-        run: make DESTDIR="$PWD/output" install-exec && ls -l output
+        run: |
+          make DESTDIR="$PWD/output" install-exec
+          binary=output/xpar-macos-${{ matrix.target.name }}
+          dsymutil "$binary" -o "$binary.dSYM"
+          strip -S -x "$binary"
+          ditto -c -k --sequesterRsrc --keepParent "$binary.dSYM" \
+            "$binary.dSYM.zip"
+          rm -rf "$binary.dSYM"
+          ls -l output
 
       - name: Publish the binary
         uses: softprops/action-gh-release@v2
@@ -358,29 +390,16 @@ jobs:
     name: Publish MS-DOS i386
     needs: [ sources ]
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       DJGPP_RELEASE: "v3.4"
       DJGPP_GCC: "1220"
+      FREEDOS_VERSION: "1.4"
     steps:
       - name: Download the source package artifact
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ env.XPAR_VERSION }}
-
-      - name: Install the DJGPP cross-toolchain and DOSBox-X
-        run: |
-          #  Required by the prebuilt ar and ranlib.
-          sudo apt-get update
-          sudo apt-get install -y libfl2 dosbox-x unzip
-          curl -fL -o /tmp/djgpp.tar.bz2 \
-            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
-          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
-          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
-          curl -fL -o /tmp/csdpmi.zip \
-            http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
-          unzip -j -o -d "$HOME/csdpmi" /tmp/csdpmi.zip 'bin/CWSDPMI.EXE'
-          echo "CWSDPMI=$HOME/csdpmi/CWSDPMI.EXE" >> $GITHUB_ENV
 
       - name: Extract the source package
         run: |
@@ -388,15 +407,34 @@ jobs:
           sleep 1
           touch aclocal.m4 configure config.h.in Makefile.in
 
-      - name: Build for MS-DOS and for this host
+      - name: Cache the FreeDOS guest
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/xpar-freedos
+          key: freedos-${{ runner.os }}-${{ runner.arch }}-${{ env.FREEDOS_VERSION }}-${{ hashFiles('contrib/dos/install-freedos.sh') }}
+
+      - name: Install the DJGPP cross-toolchain and FreeDOS guest
         run: |
-          mkdir build-dos build-native
+          #  Required by the prebuilt ar and ranlib.
+          sudo apt-get update
+          sudo apt-get install -y libfl2 mtools qemu-system-x86 unzip
+          guest="$HOME/.cache/xpar-freedos/$FREEDOS_VERSION"
+          contrib/dos/install-freedos.sh "$guest"
+          echo "FREEDOS_ROOT=$guest/share/xpar-dos" >> $GITHUB_ENV
+          if test -e /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+          curl -fL -o /tmp/djgpp.tar.bz2 \
+            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
+          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
+          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+
+      - name: Build for MS-DOS
+        run: |
+          mkdir build-dos
           ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp \
                   --disable-simd --bindir=/ --program-suffix=-dos \
-                  CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 LDFLAGS=-s \
+                  CC=i586-pc-msdosdjgpp-gcc CFLAGS="-O2 -g" \
               && make -j4 all \
               && make -j4 test-programs )
-          ( cd build-native && ../configure && make -j4 check TESTS= )
 
       #  objdump provides a stable BFD target name.
       - name: Verify the DOS binary format
@@ -406,18 +444,23 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe \
             | grep -q 'coff-go32-exe'
 
-      - name: Full test suite under DOSBox-X
+      - name: Full test suite in FreeDOS
         run: |
-          sh contrib/dos/run-suite.sh build-dos build-native \
-             "$CWSDPMI" "$RUNNER_TEMP/dos-suite"
+          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
+             "$RUNNER_TEMP/dos-suite"
 
       - name: Show the test logs
         if: failure()
-        run: cat build-native/test-suite.log build-native/tests/*.log 2>&1 || true
+        run: cat "$RUNNER_TEMP/dos-suite/result.log" 2>&1 || true
 
       - name: Stage the binary
         run: |
           make -C build-dos DESTDIR="$PWD/output" install-exec
+          i586-pc-msdosdjgpp-objcopy --only-keep-debug \
+            output/xpar-dos.exe output/xpar-dos.dbg
+          i586-pc-msdosdjgpp-strip --strip-all output/xpar-dos.exe
+          ( cd output && i586-pc-msdosdjgpp-objcopy \
+              --add-gnu-debuglink=xpar-dos.dbg xpar-dos.exe )
           ls -l output
 
       - name: Publish the binary

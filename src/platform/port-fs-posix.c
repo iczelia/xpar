@@ -345,7 +345,6 @@ int xpar_rmdir(const char * path) {
 }
 
 int xpar_remove(const char * path) {
-  if (xpar_maplock_blocks(path)) { errno = EBUSY;  return -1; }
 #if defined(HAVE_UNLINKAT) && defined(HAVE_OPENAT) && defined(O_DIRECTORY) && \
     defined(O_NOFOLLOW)
   char * storage;
@@ -359,8 +358,6 @@ int xpar_remove(const char * path) {
 }
 
 int xpar_rename(const char * from, const char * to) {
-  /*  Only the replacement target may be mapping-locked.  */
-  if (xpar_maplock_blocks(to)) { errno = EBUSY;  return -1; }
 #if defined(HAVE_RENAMEAT) && defined(HAVE_OPENAT) && \
     defined(O_DIRECTORY) && defined(O_NOFOLLOW)
   char * from_storage, * to_storage;

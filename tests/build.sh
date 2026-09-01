@@ -152,6 +152,7 @@ else
     hard_error "print-distfiles failed"
   missing=
   for f in `cd "$abs_top_srcdir" && git ls-files`; do
+    test -e "$abs_top_srcdir/$f" || continue
     case $f in
       .github/*|attic/*|*.gitignore) continue ;;
     esac

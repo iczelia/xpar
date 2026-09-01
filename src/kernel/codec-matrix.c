@@ -49,17 +49,9 @@ struct xpar_codec_plan { u8 kind;  void * impl; };
 
 static sz mat_stride(sz bytes) { return (sz) xpar_align_up(bytes, 64); }
 
-/*  For A[k][l] = 1/(x_k + y_l), the inverse entry at [l][k] is
-
-      B[l][k] = P(x_k) Q(y_l) / ((x_k + y_l) a_k b_l)
-
-    with P(x_k) = prod_t (x_k + y_t),  a_k = prod_{t != k} (x_k + x_t),
-         Q(y_l) = prod_t (x_t + y_l),  b_l = prod_{t != l} (y_l + y_t).
-
-    In characteristic two subtraction is XOR and the sign is one. Node
-    distinctness keeps every denominator nonzero. Exponents are reduced
-    modulo 2^w - 1, so inversion is negation and one conditional subtraction
-    reduces each accumulated exponent.  */
+/*  Invert the Cauchy matrix with its closed-form row and column products.
+    Distinct nodes keep every denominator nonzero. Field operations use
+    logarithms modulo 2^w - 1.  */
 
 static u32 addm(u32 a, u32 b, u32 mod) {
   u32 s = a + b;

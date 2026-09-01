@@ -299,7 +299,7 @@ static void rp_tree_preflight(const xpar_options * o, const xpar_manifest * m,
       if (e->entry_type == XPAR_ENTRY_DIR)
         FATAL_UNLESS("Destination '%s' is not a directory.", st.is_dir, p);
       else {
-        FATAL_UNLESS("Destination '%s' exists; -f overwrites it.",
+        FATAL_UNLESS("Destination '%s' exists. Use -f to overwrite it.",
                      o->force, p);
         FATAL_UNLESS("Refusing to replace destination directory '%s'.",
                      !st.is_dir, p);
@@ -639,7 +639,7 @@ static void rp_open_recovery(rp * r) {
       if (v->kind != XPAR_VOL_RECOVERY || !v->name) continue;
       path = xpar_path_vol(r->dir, v->name);
       for (k = 0; k < r->vol_count && !seen; k++)
-        if (!xpar_strcmp(r->vol[k].path, path)) seen = true;
+        if (xpar_path_same(r->vol[k].path, path)) seen = true;
       if (!seen && rp_vol_open(r, path))
         rp_collect(r, r->vol[r->vol_count - 1].data,
                    r->vol[r->vol_count - 1].size, false);
@@ -1868,7 +1868,7 @@ static void rp_journal_read(const rp_jrange * w, u8 * buf, u64 at, u64 n) {
   u64 have = w->size > w->off + at ? MIN(n, w->size - w->off - at) : 0;
   if (have && xpar_pread(w->src, buf, (sz) have, w->off + at) != (sz) have)
     FATAL_IO("Cannot read '%s' at offset %" PRIu64
-             " for the journal; use --no-journal to continue.",
+             " for the journal. Use --no-journal to continue.",
              w->path, w->off + at);
   if (have < n) xpar_memset(buf + have, 0, (sz) (n - have));
 }
@@ -1898,7 +1898,7 @@ static void rp_journal_write(const xpar_options * o, const char * journal,
   xpar_wr32(hdr + 60, xpar_crc32c(0, hdr, 60));
   f = xpar_open(journal, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
                          XPAR_O_NOFOLLOW | XPAR_O_PRIVATE);
-  if (!f) FATAL_IO("Cannot write journal '%s': %s; use --no-journal to "
+  if (!f) FATAL_IO("Cannot write journal '%s'. %s. Use --no-journal to "
                    "continue.", journal,
                    xpar_strerror(xpar_errno()));
   if (xpar_set_mode(journal, 1, 0600) != 0)
@@ -1955,7 +1955,7 @@ static void rp_journal_write(const xpar_options * o, const char * journal,
   if (xpar_fsync_dir(journal) != 0) {
     int err = xpar_errno();
     xpar_remove(journal);
-    FATAL_IO("Cannot persist journal '%s': %s; use --no-journal to continue.",
+    FATAL_IO("Cannot persist journal '%s'. %s. Use --no-journal to continue.",
              journal, xpar_strerror(err));
   }
   if (o->verbose && !o->quiet)
@@ -2053,7 +2053,7 @@ static void rp_read_old(rp * r) {
              ? MIN(w->len, r->fsize[w->entry] - w->off) : 0;
     if (have && !rp_read_entry_raw(r, w->entry, w->off, have, w->old))
       FATAL_IO("Cannot journal '%.*s' at offset %" PRIu64
-               ": read failed; use --no-journal to continue.",
+               " because the read failed. Use --no-journal to continue.",
                (int) r->mf.entry[w->entry].name_len,
                r->mf.entry[w->entry].name, w->off);
   }
@@ -2688,7 +2688,12 @@ static char * rp_backup_name(const char * path) {
   u32 n;
   for (n = 1; ; n++) {
     xpar_free(out);
+#if defined(XPAR_DOS) || defined(__MSDOS__)
+    FATAL_UNLESS("Too many backups exist for '%s'.", n < 1000, path);
+    out = xpar_dos_numbered(path, "RPB", "BAK", n);
+#else
     xpar_asprintf(&out, "%s.%" PRIu32, path, n);
+#endif
     if (xpar_lstat(out, &st) != 0) return out;
     FATAL_UNLESS("Too many backups exist for '%s'.", n != UINT32_MAX, path);
   }
@@ -2729,7 +2734,7 @@ static void rp_publish_tree_stage(const xpar_options * o, char * stage,
     int err = 0;
     FATAL_UNLESS("Refusing to replace destination directory '%s'.",
                  !st.is_dir, path);
-    FATAL_UNLESS("Destination '%s' exists; -f overwrites it.",
+    FATAL_UNLESS("Destination '%s' exists. Use -f to overwrite it.",
                  o->force, path);
     backup = rp_keep_aside_name(path, &err);
     if (!backup)
@@ -3266,6 +3271,8 @@ static char * owned_chain_gen_dir(const char * root, const u8 * id) {
   char text[XPAR_SET_ID_LEN * 2 + 1], * name = NULL, * out;
   xpar_hex(text, id, XPAR_SET_ID_LEN);
 #if defined(XPAR_DOS) || defined(__MSDOS__)
+  for (sz i = 0; i < 7; i++)
+    if (text[i] >= 'a' && text[i] <= 'f') text[i] -= 'a' - 'A';
   xpar_asprintf(&name, "G%.7s", text);
 #else
   xpar_asprintf(&name, "g-%s", text);
@@ -4914,7 +4921,7 @@ int xpar_op_repair(const xpar_options * o) {
   /*  CRC32C alone cannot authorise overwriting the evidence.  */
   if (o->dest != XPAR_DEST_TO && o->dest != XPAR_DEST_BACKUP &&
       r.sd.slice_tag_len == 0 && !o->force)
-    FATAL("In-place repair without slice tags requires -f; use --to DIR to "
+    FATAL("Use -f for in-place repair without slice tags, or --to DIR to "
           "preserve the originals.");
 
   rp_read_manifest(&r);
@@ -4926,8 +4933,8 @@ int xpar_op_repair(const xpar_options * o) {
   if (o->dest == XPAR_DEST_BACKUP && !o->force) {
     for (i = 0; i < r.mf.count; i++)
       if (r.mf.entry[i].entry_type == XPAR_ENTRY_HARDLINK)
-        FATAL("--backup would break the hard-link group containing '%.*s'; "
-              "use --in-place, --to, or -f.",
+        FATAL("--backup would break the hard-link group containing '%.*s'. "
+              "Use --in-place, --to or -f.",
               (int) r.mf.entry[i].name_len, r.mf.entry[i].name);
   }
 
@@ -5026,7 +5033,7 @@ int xpar_op_repair(const xpar_options * o) {
       chunk = (u32) ((o->memory / lanes) & ~(u64) 63);
     if (chunk < 64 && r.er.bad_count)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Decoding needs at least %" PRIu64 " bytes of buffer; raise -m.",
+                 "Decoding needs at least %" PRIu64 " bytes of buffer. Raise -m.",
                  (lanes * 64));
     if (chunk < 64) chunk = 64;
   }

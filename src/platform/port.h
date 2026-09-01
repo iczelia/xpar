@@ -178,9 +178,6 @@ typedef struct { u8 * map; sz size; bool valid; } xpar_mmap;
 xpar_mmap xpar_map  (const char * path);
 void      xpar_unmap(xpar_mmap *);
 
-/*  Whether a test-emulated mapping lock blocks PATH.  */
-bool xpar_maplock_blocks(const char * path);
-
 /*  Advice for a sequential streaming pass. Best effort; never fails.  */
 void xpar_advise_sequential(xpar_file *, u64 off, u64 len);
 void xpar_advise_random(xpar_file *, u64 off, u64 len);

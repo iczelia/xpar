@@ -78,7 +78,7 @@ static char * li_data_present(const xpar_chain * c, const xpar_vol * v,
   xpar_free(path);
   if (!v->vol_tag || !(d = xpar_opendir(dir))) return NULL;
   while ((de = xpar_readdir(d)) != NULL) {
-    if (!de->is_regular || !xpar_strcmp(de->name, v->name)) continue;
+    if (!de->is_regular || xpar_path_same(de->name, v->name)) continue;
     path = xpar_path_join(dir, de->name);
     if (xpar_vol_tag_match(path, v)) { xpar_closedir(d); return path; }
     xpar_free(path);
@@ -755,10 +755,8 @@ int xpar_op_info(const xpar_options * o) {
       bool present = false, named_here = false;
       for (v = 0; v < c.vol_count; v++)
         if (c.vol[v].gen == sel && c.vol[v].path && layt.vol[i].name) {
-          sz pl = xpar_strlen(c.vol[v].path);
-          sz nl = xpar_strlen(layt.vol[i].name);
-          if (pl >= nl && !xpar_strcmp(c.vol[v].path + pl - nl,
-                                       layt.vol[i].name)) present = true;
+          if (xpar_path_same(xpar_path_base(c.vol[v].path),
+                             layt.vol[i].name)) present = true;
         }
       if (layt.vol[i].kind == XPAR_VOL_DATA) {
         data_path = li_data_present(&c, &layt.vol[i], &named_here);
@@ -780,7 +778,7 @@ int xpar_op_info(const xpar_options * o) {
             if (*p == '/' || *p == '\\') actual = p + 1;
         }
         if (actual && layt.vol[i].name &&
-            xpar_strcmp(actual, layt.vol[i].name))
+            !xpar_path_same(actual, layt.vol[i].name))
           xpar_fprintf(li_out(),
                        "    %-8s %-32s present as %s\n", kind,
                        layt.vol[i].name, actual);
@@ -862,11 +860,7 @@ static void li_recipe(const char * file, u64 hdr, u64 w, u64 n, u64 k,
   xpar_fprintf(li_out(),
     "# xpar hand-recovery recipe for %s\n"
     "# %s\n"
-    "# Frame f holds its plaintext at the front: the D*k*W plaintext bytes\n"
-    "# come first and the D*2t*W parity bytes follow, so the data is never\n"
-    "# moved, never reordered and never transformed. That is the whole\n"
-    "# guarantee, and it holds at every interleave depth and in both\n"
-    "# fields.\n"
+    "# Each frame stores D*k*W plaintext bytes before its parity.\n"
     "set -e\n"
     "in=%s\n"
     "out=recovered.bin\n"
@@ -877,19 +871,19 @@ static void li_recipe(const char * file, u64 hdr, u64 w, u64 n, u64 k,
     "off=%" PRIu64 "               # stream_offset from the prologue\n"
     "len=%" PRIu64 "               # stream_length from the prologue\n"
     "\n"
-    "# 1. drop the prologue in one read, so no later step needs to skip it\n"
-    "dd if=\"$in\" of=region.bin bs=$hdr skip=1 status=none\n"
+    "# 1. Remove the prologue.\n"
+    "dd if=\"$in\" of=region.bin bs=$hdr skip=1 2>/dev/null\n"
     "\n"
-    "# 2. take the first Fd bytes of every Fx-byte frame.\n"
+    "# 2. Copy the plaintext prefix from each frame.\n"
     "f=0\n"
     "while [ $f -lt $frames ]; do\n"
-    "  dd if=region.bin bs=$Fx skip=$f count=1 status=none | head -c $Fd\n"
+    "  dd if=region.bin bs=$Fx skip=$f count=1 2>/dev/null | head -c $Fd\n"
     "  f=$((f+1))\n"
     "done > plain.bin\n"
     "\n"
-    "# 3. the protected stream is len bytes at off inside that plaintext\n"
+    "# 3. Extract the protected stream range.\n"
     "if [ $off -gt 0 ]; then\n"
-    "  dd if=plain.bin bs=$off skip=1 status=none | head -c $len > \"$out\"\n"
+    "  dd if=plain.bin bs=$off skip=1 2>/dev/null | head -c $len > \"$out\"\n"
     "else\n"
     "  head -c $len plain.bin > \"$out\"\n"
     "fi\n"

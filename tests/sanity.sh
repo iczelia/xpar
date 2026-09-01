@@ -29,10 +29,17 @@ if test -z "${XPAR:-}"; then
 fi
 
 script=$abs_top_srcdir/contrib/ci-check.sh
+_test_cfg=${XPAR_TEST_CONFIG_H:-$abs_top_builddir/config.h}
+if test -f "$_test_cfg" && grep -q '^#define XPAR_DOS ' "$_test_cfg"; then
+  script=$abs_top_srcdir/contrib/cichk.sh
+fi
 test -r "$script" || { echo "$prog: $script is missing" >&2;  exit 99; }
 
 # The sanity check requires random damage input.
-test -r /dev/urandom || { echo "$prog: SKIP: no /dev/urandom" >&2;  exit 77; }
+if test ! -r /dev/urandom && test ! -x "${DAMAGE:-}"; then
+  echo "$prog: SKIP: no damage source" >&2
+  exit 77
+fi
 
 # Resolve the fixture before changing directory.
 if test -n "${XPAR_COMPAT:-}"; then
@@ -42,7 +49,13 @@ if test -n "${XPAR_COMPAT:-}"; then
   esac
 fi
 
-work=`pwd`/tw-sanity.$$
+if test -f "$_test_cfg" && grep -q '^#define XPAR_DOS ' "$_test_cfg"; then
+  _work_id=`printf '%s' "sanity.$$" | cksum |
+    awk '{ printf "%07d", $1 % 10000000 }'`
+  work=`pwd`/D$_work_id
+else
+  work=`pwd`/tw-sanity.$$
+fi
 rm -rf "$work"
 mkdir "$work" || { echo "$prog: cannot create $work" >&2;  exit 99; }
 trap 'cd /; rm -rf "$work"' EXIT HUP INT TERM

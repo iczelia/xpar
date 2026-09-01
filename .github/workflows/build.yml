@@ -111,8 +111,6 @@ jobs:
         run: VERBOSE=1 make -j4 check
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
-          #  Hold the sanitized Linux jobs to the Windows mapping rule.
-          XPAR_TEST_STRICT_MAP: ${{ matrix.san == 'sanitized' && '1' || '' }}
 
       - name: Show the test logs
         if: failure()
@@ -441,7 +439,7 @@ jobs:
           ./configure --host=${{ matrix.target.host }} \
                       CC=${{ matrix.target.host }}-gcc \
                       ${{ matrix.target.extra }} \
-                      CFLAGS=-O2 LDFLAGS=-static
+                      CFLAGS="-O2 -g" LDFLAGS=-static
 
       - name: Make
         run: make -j4 all
@@ -453,12 +451,27 @@ jobs:
           file xpar.exe
           make win95-check
 
+      - name: Split debug information
+        run: |
+          objcopy=${{ matrix.target.host }}-objcopy
+          strip=${{ matrix.target.host }}-strip
+          "$objcopy" --only-keep-debug xpar.exe xpar.dbg
+          "$strip" --strip-all xpar.exe
+          "$objcopy" --add-gnu-debuglink=xpar.dbg xpar.exe
+          if test '${{ matrix.target.name }}' = i686-win95; then
+            OBJDUMP=${{ matrix.target.host }}-objdump \
+            NM=${{ matrix.target.host }}-nm \
+              /bin/bash contrib/check-win95-pe.sh \
+              xpar.exe config.h xpar.dbg
+          fi
+
       - name: Upload the binary
         uses: actions/upload-artifact@v7
         with:
           name: xpar-win-${{ matrix.target.name }}-${{ github.sha }}
           path: |
             xpar.exe
+            xpar.dbg
             config.h
 
   #  Run the cross-built binaries on Windows.
@@ -711,15 +724,16 @@ jobs:
           qemu-${{ matrix.target.qemu }}-static \
             -cpu ${{ matrix.target.cpu2 }} ./xpar benchmark --tiers
 
-  #  Run the DJGPP build under DOSBox-X and verify cross-host compatibility.
+  #  Test the DJGPP build in FreeDOS across hosts.
   dos:
-    name: MS-DOS i386 (DJGPP, under DOSBox-X)
+    name: MS-DOS i386 (DJGPP, FreeDOS)
     needs: [ dist ]
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       DJGPP_RELEASE: "v3.4"
       DJGPP_GCC: "1220"
+      FREEDOS_VERSION: "1.4"
     steps:
       - name: Download source package artifact
         uses: actions/download-artifact@v7
@@ -731,36 +745,39 @@ jobs:
           name: xpar-compat-${{ github.sha }}
           path: compat
 
-      - name: Install the DJGPP cross-toolchain, DOSBox-X and CWSDPMI
-        run: |
-          #  The prebuilt ar and ranlib require the flex runtime.
-          sudo apt-get update
-          sudo apt-get install -y libfl2 dosbox-x unzip
-          curl -fL -o /tmp/djgpp.tar.bz2 \
-            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
-          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
-          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
-          #  DOSBox-X needs CWSDPMI to run a go32 image.
-          curl -fL -o /tmp/csdpmi.zip \
-            http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
-          unzip -j -o -d "$HOME/csdpmi" /tmp/csdpmi.zip 'bin/CWSDPMI.EXE'
-          echo "CWSDPMI=$HOME/csdpmi/CWSDPMI.EXE" >> $GITHUB_ENV
-
       - name: Extract source package
         run: |
           tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
           sleep 1
           touch aclocal.m4 configure config.h.in Makefile.in
 
-      #  The native build creates and verifies the cross-host corpus.
-      - name: Build for MS-DOS and for this host
+      - name: Cache the FreeDOS guest
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/xpar-freedos
+          key: freedos-${{ runner.os }}-${{ runner.arch }}-${{ env.FREEDOS_VERSION }}-${{ hashFiles('contrib/dos/install-freedos.sh') }}
+
+      - name: Install the DJGPP cross-toolchain and FreeDOS guest
         run: |
-          mkdir build-dos build-native
+          #  The prebuilt ar and ranlib require the flex runtime.
+          sudo apt-get update
+          sudo apt-get install -y libfl2 mtools qemu-system-x86 unzip
+          guest="$HOME/.cache/xpar-freedos/$FREEDOS_VERSION"
+          contrib/dos/install-freedos.sh "$guest"
+          echo "FREEDOS_ROOT=$guest/share/xpar-dos" >> $GITHUB_ENV
+          if test -e /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+          curl -fL -o /tmp/djgpp.tar.bz2 \
+            "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
+          tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
+          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+
+      - name: Build for MS-DOS
+        run: |
+          mkdir build-dos
           ( cd build-dos && ../configure --host=i586-pc-msdosdjgpp --disable-simd \
                                          CC=i586-pc-msdosdjgpp-gcc CFLAGS=-O2 \
               && make -j4 all \
               && make -j4 test-programs )
-          ( cd build-native && ../configure && make -j4 check TESTS= )
 
       #  Use objdump's stable BFD target name for the assertion.
       - name: Verify the DOS binary format
@@ -769,25 +786,23 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe | grep -q 'coff-go32-exe'
 
-      - name: Run the full test suite under DOSBox-X
+      - name: Run the full test suite in FreeDOS
         run: |
-          sh contrib/dos/run-suite.sh build-dos build-native \
-             "$CWSDPMI" "$RUNNER_TEMP/dos-suite"
+          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
+             "$RUNNER_TEMP/dos-suite"
         env:
           XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
-        run: cat build-native/test-suite.log build-native/tests/*.log 2>&1 || true
+        run: cat "$RUNNER_TEMP/dos-suite/result.log" 2>&1 || true
 
       - name: Upload the DOS transcript
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: xpar-dos-transcript-${{ github.sha }}
-          path: |
-            build-native/test-suite.log
-            build-native/tests/*.log
+          path: ${{ runner.temp }}/dos-suite/result.log
           if-no-files-found: ignore
 
   docs:

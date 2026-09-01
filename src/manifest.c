@@ -723,7 +723,7 @@ static bool check_emit_name(const walker * w, const char * name, u32 len,
   if (w->o->strict)
     FATAL("Cannot store '%s': %s.", xpar_name_escape(disk),
           xpar_path_reason(s));
-  xpar_fprintf(xpar_stderr, "xpar: skipping '%s': %s; use --strict to "
+  xpar_fprintf(xpar_stderr, "xpar: skipped '%s' (%s). Use --strict to "
                "reject it.\n", xpar_name_escape(disk), xpar_path_reason(s));
   return false;
 }
@@ -782,7 +782,7 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   if (st.is_symlink && w->o->follow_symlinks) {
     pb_set(&real, disk->p, disk->len);
     if (!follow_link(&real, &st)) {
-      xpar_fprintf(xpar_stderr, "xpar: skipping '%s': dangling link.\n",
+      xpar_fprintf(xpar_stderr, "xpar: skipped dangling link '%s'.\n",
                    xpar_name_escape(disk->p));
       xpar_free(real.p);
       return;
@@ -796,7 +796,7 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   if (w->o->self_base &&
       (xpar_vname_is_output(disk->p, w->o->self_base) ||
        (path != disk && xpar_vname_is_output(path->p, w->o->self_base)))) {
-    xpar_fprintf(xpar_stderr, "xpar: skipping '%s': this set's own output.\n",
+    xpar_fprintf(xpar_stderr, "xpar: skipped set output '%s'.\n",
                  xpar_name_escape(disk->p));
     xpar_free(real.p);
     return;
@@ -824,8 +824,7 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
   } else if (!keep) {
     /*  A filtered special file is silent just like a filtered regular one.  */
   } else if (!st.is_regular && !st.is_symlink) {
-    xpar_fprintf(xpar_stderr,
-                 "xpar: skipping '%s': not a file, directory or link.\n",
+    xpar_fprintf(xpar_stderr, "xpar: skipped unsupported file type '%s'.\n",
                  xpar_name_escape(path->p));
   } else {
     xpar_entry * e = emit_entry(w, name, name_len, path->p, &st);
@@ -919,15 +918,32 @@ static bool path_lex_absolute(const char * p) {
 #endif
 }
 
+static bool path_lex_equal_n(const char * a, const char * b, sz n) {
+  sz i;
+  for (i = 0; i < n; i++) {
+    char ac = a[i], bc = b[i];
+#if defined(XPAR_WIN32) || defined(XPAR_DOS) || defined(__MSDOS__)
+    if (ac >= 'A' && ac <= 'Z') ac = (char) (ac - 'A' + 'a');
+    if (bc >= 'A' && bc <= 'Z') bc = (char) (bc - 'A' + 'a');
+#endif
+    if (ac != bc) return false;
+  }
+  return true;
+}
+
 /*  Normalize PATH as an absolute path.  */
 char * xpar_path_lex_abs(const char * p) {
-  char * cwd, * join, * abs;
-  if (path_lex_absolute(p)) return path_lex_norm(p);
+  char * cwd, * join, * abs, * norm = xpar_path_norm(p);
+  if (path_lex_absolute(norm)) {
+    abs = path_lex_norm(norm);
+    xpar_free(norm);
+    return abs;
+  }
   cwd = xpar_getcwd();
-  if (!cwd) return NULL;
-  join = xpar_path_join(cwd, p);
+  if (!cwd) { xpar_free(norm);  return NULL; }
+  join = xpar_path_join(cwd, norm);
   abs  = path_lex_norm(join);
-  xpar_free(cwd);  xpar_free(join);
+  xpar_free(cwd);  xpar_free(join);  xpar_free(norm);
   return abs;
 }
 
@@ -973,10 +989,11 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
       }
       bl = xpar_strlen(ba);
       if (bl == 1 && ba[0] == '/') bl = 0;   /*  --base=/ names no prefix.  */
-      if (!xpar_strcmp(rooted, ba)) {
+      if (xpar_strlen(rooted) == bl && path_lex_equal_n(rooted, ba, bl)) {
         /*  The input directory itself: its children carry the names.  */
         base = rooted;  blen = 0;
-      } else if (!xpar_strncmp(rooted, ba, bl) &&
+      } else if (xpar_strlen(rooted) > bl &&
+                 path_lex_equal_n(rooted, ba, bl) &&
                  xpar_path_sep(rooted[bl])) {
         base = rooted + bl + 1;
         blen = (u32) (xpar_strlen(rooted) - bl - 1);
@@ -1073,7 +1090,7 @@ static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
   xpar_blake3_init(&h);
   got = xpar_xread(f, buf, 16384);
   if (cache && (u64) got > expected)
-    FATAL("'%s' changed while it was being cached; nothing was written.",
+    FATAL("'%s' changed while caching. Nothing was written.",
           m->source[idx]);
   if (cache && got) xpar_memcpy(cache, buf, got);
   if (got) xpar_blake3_update(&h, buf, got);
@@ -1082,7 +1099,7 @@ static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
   xpar_blake3_final(&h, e->prefix_hash, 16);
   while ((got = xpar_xread(f, buf, chunk)) > 0) {
     if (cache && (u64) got > expected - total)
-      FATAL("'%s' changed while it was being cached; nothing was written.",
+      FATAL("'%s' changed while caching. Nothing was written.",
             m->source[idx]);
     if (cache) xpar_memcpy(cache + total, buf, got);
     xpar_blake3_update(&h, buf, got);
@@ -1093,7 +1110,7 @@ static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
   xpar_free(buf);
   xpar_xclose(f);
   if (cache && total != expected)
-    FATAL("'%s' changed while it was being cached; nothing was written.",
+    FATAL("'%s' changed while caching. Nothing was written.",
           m->source[idx]);
   e->length = total;
 }
@@ -1215,7 +1232,7 @@ static void pack_regular_chunks(xpar_manifest * m,
   }
   if (c.bytes != expected) {
     xpar_free(c.ext);
-    FATAL("'%s' changed while it was being chunked; nothing was written.",
+    FATAL("'%s' changed while chunking. Nothing was written.",
           m->source[i]);
   }
   c.e->length = c.bytes;

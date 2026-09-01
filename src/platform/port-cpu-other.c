@@ -12,64 +12,8 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Architecture-independent CPU feature caching and tier control.
-    Architecture files supply only the probe and tier table.  */
-
 #include "common.h"
 #include "port-cpu.h"
-
-/*  Probed once. The store is plain: dispatch tables are built during
-    startup, before any pool exists, and a second probe on a racing thread
-    would compute the same answer anyway.  */
-static bool g_probed = false;
-static u32  g_probed_mask = 0;
-static u32  g_allow = XPAR_CPU_ALL;
-
-static u32 probed(void) {
-  if (!g_probed) { g_probed_mask = xpar_cpu_probe();  g_probed = true; }
-  return g_probed_mask;
-}
-
-u32 xpar_cpu_features(void) { return probed() & g_allow; }
-
-/*  Masks down and never up. --simd=gfni512 on a machine without AVX-512
-    therefore selects whatever that machine really has, instead of building
-    a dispatch table full of instructions that fault on first use.  */
-void xpar_cpu_force(u32 allow) { (void) probed();  g_allow = allow; }
-
-int xpar_cpu_tier_count(void) { return xpar_cpu_tier_table_n; }
-
-const xpar_cpu_tier * xpar_cpu_tier_at(int i) {
-  if (i < 0 || i >= xpar_cpu_tier_table_n) return NULL;
-  return &xpar_cpu_tier_table[i];
-}
-
-int xpar_cpu_tier_find(const char * name) {
-  for (int i = 0; i < xpar_cpu_tier_table_n; i++)
-    if (xpar_strcmp(name, xpar_cpu_tier_table[i].name) == 0) return i;
-  return -1;
-}
-
-/*  Against the probed set and not the forced one: a sweep that has just
-    forced `scalar` must still be told that avx2 is runnable, or it stops
-    after the first tier.  */
-bool xpar_cpu_tier_usable(int i) {
-  const xpar_cpu_tier * t = xpar_cpu_tier_at(i);
-  if (!t) return false;
-  return (probed() & t->need) == t->need;
-}
-
-int xpar_cpu_tier_best(void) {
-  int best = 0;
-  for (int i = 0; i < xpar_cpu_tier_table_n; i++)
-    if (xpar_cpu_tier_usable(i)) best = i;
-  return best;
-}
-
-#if !(defined(__x86_64__) || defined(__i386__) ||                             \
-      defined(_M_X64) || defined(_M_IX86) ||                                  \
-      defined(__aarch64__) || defined(__arm__) ||                             \
-      defined(_M_ARM64) || defined(_M_ARM))
 
 /*  Feature probes for non-x86 and non-ARM targets.  */
 
@@ -153,5 +97,3 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 
 const int xpar_cpu_tier_table_n =
   (int) (sizeof xpar_cpu_tier_table / sizeof xpar_cpu_tier_table[0]) - 1;
-
-#endif

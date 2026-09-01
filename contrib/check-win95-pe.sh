@@ -6,6 +6,7 @@ objdump=${OBJDUMP:-objdump}
 nm=${NM:-nm}
 exe=${1:-./xpar.exe}
 config=${2:-./config.h}
+symbols=${3:-$exe}
 tmp=${TMPDIR:-/tmp}/xpar-pe-$$
 trap 'rm -f "$tmp" "$tmp.k32"' EXIT HUP INT TERM
 
@@ -23,7 +24,7 @@ check 'file format pei-i386' 'not a 32-bit PE image'
 entry=`"$objdump" -f "$exe" |
        sed -n 's/^start address 0x0*\([0-9a-fA-F]*\).*/\1/p' |
        tr 'A-F' 'a-f'`
-want=`"$nm" "$exe" |
+want=`"$nm" "$symbols" |
       sed -n 's/^0*\([0-9a-fA-F]*\) [Tt] _xpar_entry$/\1/p' |
       tr 'A-F' 'a-f'`
 if test -z "$entry" || test -z "$want"; then

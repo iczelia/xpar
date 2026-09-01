@@ -28,6 +28,7 @@ seed=20260823
 jobs=
 cold=none
 matrix=default
+codec_filter=
 xpar=${XPAR:-}
 keep=
 
@@ -44,6 +45,7 @@ usage: run.sh [options]
   --cold WHICH     none (default) or drop, which needs privileges
   --quick          32 MiB corpus, one repetition, a short matrix
   --full           the long matrix
+  --codec NAME     run only matrix or fft
   --keep           leave the corpus and the sets behind
   -h, --help       this message
 EOF
@@ -61,6 +63,7 @@ while test $# -gt 0; do
     --cold)   cold=$2;  shift 2 ;;
     --quick)  size=33554432;  reps=1;  matrix=quick;  shift ;;
     --full)   matrix=full;  shift ;;
+    --codec)  codec_filter=$2; shift 2 ;;
     --keep)   keep=1;  shift ;;
     -h|--help) usage ;;
     *) die "unknown option $1; try --help" ;;
@@ -74,7 +77,7 @@ bench_environment
 test -n "$keep" || trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 say "writing to $out"
-sed 's/^/  /' "$out/environment.json"
+sed 's/^/  /' "$env_json"
 
 say "generating a $size byte corpus from seed $seed"
 echo "$mkdata $seed $size $work/corpus.bin --pattern=random" >> "$cmdlog"
@@ -84,17 +87,17 @@ pristine=$work/corpus.bin
 say "kernel tiers"
 echo "$xpar benchmark --tiers --json --quiet" >> "$cmdlog"
 _t0=`date +%s 2>/dev/null || echo 0`
-"$xpar" benchmark --tiers --json --quiet > "$out/kernels.json" 2>/dev/null ||
+"$xpar" benchmark --tiers --json --quiet > "$kernel_json" 2>/dev/null ||
   warn "benchmark --tiers failed"
 _t1=`date +%s 2>/dev/null || echo 0`
 say "kernel tiers took $((_t1 - _t0)) s"
 
-setup_create() { rm -f "$sdir"/set*.xpa; }
+setup_create() { rm -f "$sdir"/sets.*; }
 
 check_create() {
-  if test ! -f "$sdir/set.xpa"; then sig=no-set;  return 1; fi
-  read_geometry "$sdir/set.xpa"
-  account_archive "$sdir/set" "$g_r" "$g_z"
+  if test ! -f "$sdir/sets.xpa"; then sig=no-set;  return 1; fi
+  read_geometry "$sdir/sets.xpa"
+  account_archive "$sdir/sets" "$g_r" "$g_z"
   f_archive_bytes=$archive_total
   f_nominal_payload_bytes=$archive_nominal
   f_format_overhead_bytes=$archive_overhead
@@ -104,9 +107,9 @@ check_create() {
 }
 
 check_verify() {
-  _rd=`jnum0 "$work/out.json" bytes_read summary`
+  _rd=`jnum0 "$out_json" bytes_read summary`
   f_scan_bytes=$((_rd + f_archive_bytes))
-  f_damaged_cells=`jnum0 "$work/out.json" cells_bad summary`
+  f_damaged_cells=`jnum0 "$out_json" cells_bad summary`
   sig="read=$_rd cells=$f_damaged_cells"
 }
 
@@ -121,12 +124,12 @@ setup_repair() {
   # shellcheck disable=SC2086
   "$damage" "$sdir/data.bin" -Z "$g_z" -Y "$g_y" -n 96 seed=$seed \
     $damage_ops || return 1
-  "$xpar" verify --json "$sdir/set.xpa" > "$work/pre.json" 2>/dev/null || true
-  f_damaged_cells=`jnum0 "$work/pre.json" cells_bad summary`
-  f_damaged_slices=`jnum0 "$work/pre.json" slices_bad summary`
-  f_column_depth=`jnum0 "$work/pre.json" column_depth summary`
-  f_column_groups=`jnum0 "$work/pre.json" column_groups summary`
-  f_scan_bytes=`jnum0 "$work/pre.json" bytes_read summary`
+  "$xpar" verify --json "$sdir/sets.xpa" > "$pre_json" 2>/dev/null || true
+  f_damaged_cells=`jnum0 "$pre_json" cells_bad summary`
+  f_damaged_slices=`jnum0 "$pre_json" slices_bad summary`
+  f_column_depth=`jnum0 "$pre_json" column_depth summary`
+  f_column_groups=`jnum0 "$pre_json" column_groups summary`
+  f_scan_bytes=`jnum0 "$pre_json" bytes_read summary`
   f_scan_bytes=$((f_scan_bytes + f_archive_bytes))
   test "$f_damaged_cells" -gt 0 || return 1
 }
@@ -135,7 +138,7 @@ check_repair() {
   if ! cmp -s "$sdir/data.bin" "$pristine"; then
     sig=not-repaired;  return 1
   fi
-  f_repaired_bytes=`jnum0 "$work/out.json" bytes_written repair`
+  f_repaired_bytes=`jnum0 "$out_json" bytes_written repair`
   sig="cells=$f_damaged_cells depth=$f_column_depth wrote=$f_repaired_bytes"
 }
 
@@ -175,15 +178,22 @@ case $matrix in
   *)       codecs="matrix fft";  fields="8 16";   recs="5% 10% 25%";
            slices="0 1048576 4194304" ;;
 esac
+case $codec_filter in
+  '') ;;
+  matrix|fft) codecs=$codec_filter ;;
+  *) die "unknown codec $codec_filter" ;;
+esac
 
 jflag=
 test -z "$jobs" || jflag="-j $jobs"
 
+case_id=0
 for codec in $codecs; do
  for field in $fields; do
   for rec in $recs; do
    for slice in $slices; do
-    sdir=$work/$codec-gf$field-$rec-$slice
+    case_id=$((case_id + 1))
+    sdir=$work/`printf 'b%07d' "$case_id"`
     rm -rf "$sdir";  mkdir -p "$sdir"
     cp "$pristine" "$sdir/data.bin"
     if test "$slice" = 0; then sflag=;  slabel=auto
@@ -202,15 +212,16 @@ for codec in $codecs; do
     bench_measure setup_create check_create \
       "$xpar" create --reproducible --dedup=none --align=none \
         --no-verify-after --codec="$codec" --field="$field" -r "$rec" \
-        $sflag $jflag --json -o "$sdir/set" "$sdir/data.bin"
+        $sflag $jflag --json --base="$sdir" -o "$sdir/sets" \
+        "$sdir/data.bin"
 
-    if test ! -f "$sdir/set.xpa"; then
+    if test ! -f "$sdir/sets.xpa"; then
       warn "skipping the rest of $sdir: no set was written"
       rm -rf "$sdir"
       continue
     fi
-    read_geometry "$sdir/set.xpa"
-    archive=`archive_bytes "$sdir/set"`
+    read_geometry "$sdir/sets.xpa"
+    archive=`archive_bytes "$sdir/sets"`
 
     for vop in verify verify-strong; do
       test "$vop" = verify && vflag= || vflag=--strong
@@ -222,7 +233,7 @@ for codec in $codecs; do
       f_archive_bytes=$archive;  f_expect=0
       # shellcheck disable=SC2086
       bench_measure setup_none check_verify \
-        "$xpar" verify $vflag $jflag --json "$sdir/set.xpa"
+        "$xpar" verify $vflag $jflag --json "$sdir/sets.xpa"
     done
 
     # Compare whole-slice damage with equal-count scattered cells.
@@ -246,7 +257,7 @@ for codec in $codecs; do
       f_archive_bytes=$archive;  f_damage=$dmg;  f_expect=0
       # shellcheck disable=SC2086
       bench_measure setup_repair check_repair \
-        "$xpar" repair --in-place --no-journal $jflag --json "$sdir/set.xpa"
+        "$xpar" repair --in-place --no-journal $jflag --json "$sdir/sets.xpa"
     done
 
     rm -rf "$sdir"
