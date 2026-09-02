@@ -1,4 +1,126 @@
+2026-09-02  Kamila Szewczyk  <k@iczelia.net>
+
+	w95 compatibility fix
+
+	additional tests
+
+	build.yml: typo
+
+	migrate to a C-based test suite
+
+	parallel freedos suite
+
+	DOS path overhaul, split debug info.
+
+2026-08-31  Kamila Szewczyk  <k@iczelia.net>
+
+	work around a dosbox-x buffer overflow
+
+	DOS: populate $command_file
+
+	scale down the DOS CI.
+
+	desperate attempts to make the suite faster...
+
+	FindFirstFileA hack...
+
+	run2: --server
+
+	dos/exec.conf: add -nocachedir for C
+
+	performance tweaks
+
+	DOS port tweaks.
+
+	forgot to actually compile the program award
+
+	DJGPP suites
+
+	misc. changes
+
+	windows file locks snafu...
+
+	more win32 nonsense...
+
+	miscellaneous changes.
+
+	lean(er) docs.
+
+	win32 nonsense
+
+	32-bit windows: stop the mess with long filenames
+
+2026-08-30  Kamila Szewczyk  <k@iczelia.net>
+
+	minor...
+
+	path name stuff.
+
+	more hardening
+
+	v2.0 release prep
+
+2026-08-29  Kamila Szewczyk  <k@iczelia.net>
+
+	misc. changes
+
+	miscellaneous changes
+
+	implement --armour=all
+
+2026-08-28  Kamila Szewczyk  <k@iczelia.net>
+
+	v2.0 release preparation
+
+	platform/*: reset errno
+
+	hardening
+
+	improved CI suite
+
+	update timeout
+
+	add windows argv parser to make dist
+
+	suite amendment
+
+	misc. refactoring
+
+	misc. changes
+
+	DOS: ci-check update
+
+	misc. fixes
+
+	misc. changes
+
+	misc. changes
+
+	plan, slice: simplify.
+
+	ops: simplify
+
+	platform, port: update
+
+	cli, container: misc changes
+
+	build: add timeout
+
 2026-08-27  Kamila Szewczyk  <k@iczelia.net>
+
+	t/regress: update phrasing
+
+	misc CLI message adjustments
+
+	lean(er) explanations and prose
+
+	consensus, general fixes
+
+	misc. changes
+
+	misc platf. specific
+
+	run gitlog-to-changelog
 
 	README: update extraction script
 
