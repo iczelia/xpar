@@ -20,7 +20,7 @@ env:
 jobs:
   #  Package once for all release jobs.
   sources:
-    name: Publish sources
+    name: Build sources
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -31,8 +31,9 @@ jobs:
       - name: Install the archivers
         run: |
           sudo apt-get update
-          sudo apt-get install -y bzip3 zstd zip
+          sudo apt-get install -y bzip3 xz-utils zstd zip
           bzip3 --version
+          xz --version
 
       - name: Regenerate the ChangeLog from the git history
         run: |
@@ -45,7 +46,7 @@ jobs:
 
       - name: Build the source packages
         run: |
-          pkg=`sed -n 's/^PACKAGE_VERSION = //p' Makefile`
+          pkg=$(sed -n 's/^PACKAGE_VERSION = //p' Makefile)
           test "$pkg" = "$XPAR_VERSION" || \
             echo "::warning::tag $XPAR_VERSION but configure.ac says $pkg"
           make VERSION="$XPAR_VERSION" dist
@@ -53,13 +54,14 @@ jobs:
           gzip -dk "xpar-$XPAR_VERSION.tar.gz"
           bzip3 -k "xpar-$XPAR_VERSION.tar"
           zstd -19 -k "xpar-$XPAR_VERSION.tar"
-          ls -l xpar-$XPAR_VERSION.*
+          ls -l "xpar-$XPAR_VERSION".*
 
-      - name: Publish the source packages
-        uses: softprops/action-gh-release@v2
+      - name: Upload the source package artifact
+        uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ env.XPAR_VERSION }}
-          files: |
+          name: xpar-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: |
             xpar-${{ env.XPAR_VERSION }}.tar
             xpar-${{ env.XPAR_VERSION }}.tar.bz2
             xpar-${{ env.XPAR_VERSION }}.tar.bz3
@@ -68,15 +70,9 @@ jobs:
             xpar-${{ env.XPAR_VERSION }}.tar.zst
             xpar-${{ env.XPAR_VERSION }}.zip
 
-      - name: Upload the source package artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: xpar-${{ env.XPAR_VERSION }}
-          path: xpar-${{ env.XPAR_VERSION }}.tar.gz
-
   #  Format specification.
   spec:
-    name: Publish the format specification
+    name: Build the format specification
     needs: [ sources ]
     runs-on: ubuntu-latest
     steps:
@@ -105,15 +101,16 @@ jobs:
           make docs
           mv doc/xpar-format.pdf "xpar-format-$XPAR_VERSION.pdf"
 
-      - name: Publish the specification
-        uses: softprops/action-gh-release@v2
+      - name: Upload the specification artifact
+        uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ env.XPAR_VERSION }}
-          files: xpar-format-${{ env.XPAR_VERSION }}.pdf
+          name: xpar-release-spec-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: xpar-format-${{ env.XPAR_VERSION }}.pdf
 
   #  Statically linked Windows binaries.
   windows:
-    name: Publish Windows ${{ matrix.target.name }}
+    name: Build Windows ${{ matrix.target.name }}
     needs: [ sources ]
     runs-on: ubuntu-latest
     strategy:
@@ -191,6 +188,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: xpar-release-win-${{ matrix.target.name }}-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
           path: output
 
   #  Run the complete suite against each exact Windows release image.
@@ -261,15 +259,9 @@ jobs:
         if: failure()
         run: cat test-suite.log tests/*.log 2>&1 || true
 
-      - name: Publish the binary
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.XPAR_VERSION }}
-          files: target/xpar-${{ matrix.target.name }}*
-
   #  Linux binaries built on the oldest supported image.
   linux:
-    name: Publish Linux ${{ matrix.target.name }}
+    name: Build Linux ${{ matrix.target.name }}
     needs: [ sources ]
     runs-on: ${{ matrix.target.runner }}
     strategy:
@@ -328,15 +320,125 @@ jobs:
               xpar-linux-${{ matrix.target.name }} )
           ls -l output
 
-      - name: Publish the binary
-        uses: softprops/action-gh-release@v2
+      - name: Upload the Linux build
+        uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ env.XPAR_VERSION }}
-          files: output/xpar-linux-${{ matrix.target.name }}*
+          name: xpar-release-linux-${{ matrix.target.name }}-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: output
+
+  #  Statically linked Linux binaries for foreign architectures.
+  linux-cross:
+    name: Build Linux ${{ matrix.target.arch }}
+    needs: [ sources ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - arch: ppc64le
+            host: powerpc64le-linux-gnu
+            qemu: ppc64le
+            libc: ppc64el
+          - arch: riscv64
+            host: riscv64-linux-gnu
+            qemu: riscv64
+            libc: riscv64
+            gcc: gcc-14-riscv64-linux-gnu
+            cc: riscv64-linux-gnu-gcc-14
+            cpu: -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64,zvbc=true
+          - arch: s390x
+            host: s390x-linux-gnu
+            qemu: s390x
+            libc: s390x
+          - arch: armhf
+            host: arm-linux-gnueabihf
+            qemu: arm
+            libc: armhf
+    env:
+      QEMU: qemu-${{ matrix.target.qemu }}-static ${{ matrix.target.cpu }}
+    steps:
+      - name: Download the source package artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: xpar-${{ env.XPAR_VERSION }}
+
+      - name: Install the cross-toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static \
+            ${{ matrix.target.gcc || format('gcc-{0}', matrix.target.host) }} \
+            libc6-dev-${{ matrix.target.libc }}-cross
+
+      - name: Extract the source package
+        run: |
+          tar --strip-components=1 -mxf "xpar-$XPAR_VERSION.tar.gz"
+          sleep 1
+          touch aclocal.m4 configure config.h.in Makefile.in
+
+      - name: Configure
+        run: |
+          cc=${{ matrix.target.cc || format('{0}-gcc', matrix.target.host) }}
+          ./configure --host=${{ matrix.target.host }} CC=$cc \
+                      --bindir=/ \
+                      --program-suffix=-linux-${{ matrix.target.arch }} \
+                      CFLAGS="-O2 -g" LDFLAGS=-static
+
+      - name: Make
+        run: make -j4 all test-programs
+
+      - name: Write the xpar launcher
+        run: |
+          mkdir qw
+          printf '#!/bin/sh\nexec %s "%s" "$@"\n' \
+            "$QEMU" "$PWD/xpar" > qw/xpar
+          chmod +x qw/xpar
+          ./qw/xpar --version
+
+      - name: Full test suite under QEMU
+        run: |
+          e="XPAR=$PWD/qw/xpar; export XPAR;"
+          VERBOSE=1 make -j4 check LOG_COMPILER="$QEMU" \
+            TESTS_ENVIRONMENT="$e"
+
+      - name: Show the test logs
+        if: failure()
+        run: cat test-suite.log tests/*.log 2>&1 || true
+
+      - name: Stage the binary
+        run: |
+          make DESTDIR="$PWD/output" install-exec
+          binary=output/xpar-linux-${{ matrix.target.arch }}
+          debug=$binary.dbg
+          tools=${{ matrix.target.host }}
+          file "$binary"
+          if "$tools-readelf" -l "$binary" \
+               | grep -q 'Requesting program interpreter'; then
+            echo "release binary has an ELF interpreter" >&2
+            exit 1
+          fi
+          if "$tools-readelf" -d "$binary" 2>/dev/null | grep -q '(NEEDED)'; then
+            echo "release binary has dynamic dependencies" >&2
+            exit 1
+          fi
+          "$tools-objcopy" --only-keep-debug "$binary" "$debug"
+          "$tools-strip" --strip-all "$binary"
+          ( cd output && "$tools-objcopy" \
+              --add-gnu-debuglink=xpar-linux-${{ matrix.target.arch }}.dbg \
+              xpar-linux-${{ matrix.target.arch }} )
+          ls -l output
+
+      - name: Upload the cross-built Linux build
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpar-release-linux-${{ matrix.target.arch }}-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: output
 
   #  Unsigned macOS binaries.
   macos:
-    name: Publish macOS ${{ matrix.target.name }}
+    name: Build macOS ${{ matrix.target.name }}
     needs: [ sources ]
     runs-on: ${{ matrix.target.runner }}
     strategy:
@@ -381,20 +483,18 @@ jobs:
           binary=output/xpar-macos-${{ matrix.target.name }}
           dsymutil "$binary" -o "$binary.dSYM"
           strip -S -x "$binary"
-          ditto -c -k --sequesterRsrc --keepParent "$binary.dSYM" \
-            "$binary.dSYM.zip"
-          rm -rf "$binary.dSYM"
           ls -l output
 
-      - name: Publish the binary
-        uses: softprops/action-gh-release@v2
+      - name: Upload the macOS build
+        uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ env.XPAR_VERSION }}
-          files: output/xpar-macos-${{ matrix.target.name }}*
+          name: xpar-release-macos-${{ matrix.target.name }}-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: output
 
   #  MS-DOS binary.
   dos:
-    name: Publish MS-DOS i386
+    name: Build MS-DOS i386
     needs: [ sources ]
     runs-on: ubuntu-latest
     timeout-minutes: 240
@@ -427,12 +527,12 @@ jobs:
           sudo apt-get install -y libfl2 mtools qemu-system-x86 unzip
           guest="$HOME/.cache/xpar-freedos/$FREEDOS_VERSION"
           contrib/dos/install-freedos.sh "$guest"
-          echo "FREEDOS_ROOT=$guest/share/xpar-dos" >> $GITHUB_ENV
+          echo "FREEDOS_ROOT=$guest/share/xpar-dos" >> "$GITHUB_ENV"
           if test -e /dev/kvm; then sudo chmod 666 /dev/kvm; fi
           curl -fL -o /tmp/djgpp.tar.bz2 \
             "https://github.com/andrewwutw/build-djgpp/releases/download/${DJGPP_RELEASE}/djgpp-linux64-gcc${DJGPP_GCC}.tar.bz2"
           tar -xjf /tmp/djgpp.tar.bz2 -C "$HOME"
-          echo "$HOME/djgpp/bin" >> $GITHUB_PATH
+          echo "$HOME/djgpp/bin" >> "$GITHUB_PATH"
 
       - name: Build for MS-DOS
         run: |
@@ -470,8 +570,88 @@ jobs:
               --add-gnu-debuglink=xpar-dos.dbg xpar-dos.exe )
           ls -l output
 
-      - name: Publish the binary
-        uses: softprops/action-gh-release@v2
+      - name: Upload the DOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpar-release-dos-i386-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: output
+
+  #  Publish once, after every binary has been built and tested.
+  publish:
+    name: Publish the release
+    needs: [ sources, spec, windows-test, linux, linux-cross, macos, dos ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Install the zip archiver
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Assemble the release
+        run: |
+          mkdir release debug
+
+          cp "artifacts/xpar-$XPAR_VERSION/xpar-$XPAR_VERSION".* release/
+          cp "artifacts/xpar-release-spec-$XPAR_VERSION/xpar-format-$XPAR_VERSION.pdf" release/
+
+          cp "artifacts/xpar-release-win-x86_64-$XPAR_VERSION/xpar-x86_64.exe" release/
+          cp "artifacts/xpar-release-win-i686-$XPAR_VERSION/xpar-i686.exe" release/
+          cp "artifacts/xpar-release-win-i686-win95-$XPAR_VERSION/xpar-i686-win95.exe" release/
+          cp "artifacts/xpar-release-linux-x86_64-$XPAR_VERSION/xpar-linux-x86_64" release/
+          cp "artifacts/xpar-release-linux-aarch64-$XPAR_VERSION/xpar-linux-aarch64" release/
+          cp "artifacts/xpar-release-linux-ppc64le-$XPAR_VERSION/xpar-linux-ppc64le" release/
+          cp "artifacts/xpar-release-linux-riscv64-$XPAR_VERSION/xpar-linux-riscv64" release/
+          cp "artifacts/xpar-release-linux-s390x-$XPAR_VERSION/xpar-linux-s390x" release/
+          cp "artifacts/xpar-release-linux-armhf-$XPAR_VERSION/xpar-linux-armhf" release/
+          cp "artifacts/xpar-release-macos-arm64-$XPAR_VERSION/xpar-macos-arm64" release/
+          cp "artifacts/xpar-release-macos-x86_64-$XPAR_VERSION/xpar-macos-x86_64" release/
+          cp "artifacts/xpar-release-dos-i386-$XPAR_VERSION/xpar-dos.exe" release/
+
+          cp artifacts/xpar-release-win-*-"$XPAR_VERSION"/*.dbg debug/
+          cp artifacts/xpar-release-linux-*-"$XPAR_VERSION"/*.dbg debug/
+          cp artifacts/xpar-release-dos-i386-"$XPAR_VERSION"/*.dbg debug/
+          cp -R artifacts/xpar-release-macos-*-"$XPAR_VERSION"/*.dSYM debug/
+
+          test "$(find debug -name '*.dbg' -type f | wc -l)" -eq 10
+          test "$(find debug -name '*.dSYM' -type d | wc -l)" -eq 2
+          ( cd debug && zip -9 -r \
+              "../release/xpar-$XPAR_VERSION-debug-symbols.zip" . )
+
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 21
+          ls -l release
+
+      - name: Upload the complete release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpar-release-${{ env.XPAR_VERSION }}
+          if-no-files-found: error
+          path: release
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.XPAR_VERSION }}
-          files: output/xpar-dos*
+          overwrite_files: true
+          files: release/*
+
+      - name: Remove separately published debug symbols
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          assets=$(gh release view "$XPAR_VERSION" --json assets \
+            --jq '.assets[].name')
+          for asset in \
+            xpar-x86_64.dbg xpar-i686.dbg xpar-i686-win95.dbg \
+            xpar-linux-x86_64.dbg xpar-linux-aarch64.dbg \
+            xpar-linux-ppc64le.dbg xpar-linux-riscv64.dbg \
+            xpar-linux-s390x.dbg xpar-linux-armhf.dbg xpar-dos.dbg \
+            xpar-macos-arm64.dSYM.zip xpar-macos-x86_64.dSYM.zip
+          do
+            printf '%s\n' "$assets" | grep -Fxq "$asset" || continue
+            gh release delete-asset "$XPAR_VERSION" "$asset" --yes
+          done
