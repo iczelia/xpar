@@ -35,7 +35,7 @@ jobs:
       #  Reference bytes for cross-architecture reproducibility checks.
       - name: Write the reproducibility reference
         run: |
-          make -j4 tests/mkdata
+          make -j4 xpar tests/mkdata
           ./contrib/repro-digest.sh ./xpar ./tests/mkdata repro-work \
             > repro-reference.txt
           cat repro-reference.txt
