@@ -1,0 +1,2 @@
+These xpar 2.0 fixtures preserve matrix GF(2^8), matrix GF(2^16) and FFT
+GF(2^16) formats. The C suite verifies, extracts and repairs them.

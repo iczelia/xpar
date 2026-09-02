@@ -952,14 +952,10 @@ static const cc_case big_cases[] = {
   { XPAR_CODEC_FFT_LOW,16,  16, 512 }
 };
 
-int xpar_main(int argc, char ** argv) {
+void xt_run_codec(void) {
   xt_rng rng;
   u32 i;
 
-  (void) argc;  (void) argv;
-  xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
-  xt_trace_from_env(xpar_getenv("XPAR_TEST_TRACE"));
-  xpar_gf_init();
   xt_seed(&rng, 0xC0DEC0DEC0DEull);
 
   test_supports();
@@ -1035,5 +1031,4 @@ int xpar_main(int argc, char ** argv) {
   CHECK(cc_ran[2] >= 4, "the low-rate cases must not all have been skipped "
         "(%" PRIu32 " ran)", cc_ran[2]);
 
-  return xt_finish("t_codec");
 }

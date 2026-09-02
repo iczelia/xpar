@@ -1162,13 +1162,7 @@ static void test_reader_bounds(void) {
     } }
 }
 
-int xpar_main(int argc, char ** argv) {
-  (void) argc;  (void) argv;
-  xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
-  xt_trace_from_env(xpar_getenv("XPAR_TEST_TRACE"));
-  xpar_gf_init();
-  xpar_crc32c_init();
-
+void xt_run_unit(void) {
   test_helpers();
   test_crc32c();
   test_blake3();
@@ -1186,5 +1180,4 @@ int xpar_main(int argc, char ** argv) {
   test_append_open();
   test_reader_bounds();
 
-  return xt_finish("t_unit");
 }

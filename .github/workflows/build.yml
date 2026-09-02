@@ -32,21 +32,6 @@ jobs:
       - name: Run distcheck
         run: make distcheck
 
-      #  Fixture read by every runnable target.
-      - name: Write the cross-host compatibility fixture
-        run: |
-          make -j4 all
-          mkdir compat
-          cd compat
-          head -c 1200000 /dev/urandom > corpus.bin
-          ../xpar create --layout=armoured -r 20% -o compat corpus.bin
-
-      - name: Upload compatibility fixture
-        uses: actions/upload-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
-
       #  Reference bytes for cross-architecture reproducibility checks.
       - name: Write the reproducibility reference
         run: |
@@ -81,12 +66,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
-
       - name: Extract source package
         run: |
           tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
@@ -109,8 +88,6 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
@@ -126,11 +103,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
       - name: Download the reproducibility reference
         uses: actions/download-artifact@v7
         with:
@@ -161,8 +133,6 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       #  Reproducible output must be independent of pointer width.
       - name: Reproducible output matches the reference
@@ -189,11 +159,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
 
       - name: Extract source package
         run: |
@@ -209,8 +174,6 @@ jobs:
 
       - name: Suite once per tier
         run: make check-simd
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
@@ -235,11 +198,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
 
       - name: Extract source package
         run: |
@@ -261,8 +219,6 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       #  Ensure clmul-neon is dispatched on its only runner.
       - name: Differential kernel check
@@ -302,11 +258,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
 
       - name: Extract source package
         run: |
@@ -328,8 +279,6 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
@@ -358,11 +307,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -389,8 +333,6 @@ jobs:
 
       - name: Test suite
         run: VERBOSE=1 make -j4 check
-        env:
-          XPAR_COMPAT: compat
 
       - name: Show the test logs
         if: failure()
@@ -504,11 +446,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
       - name: Download the cross-built binary
         uses: actions/download-artifact@v7
         with:
@@ -536,15 +473,10 @@ jobs:
           ./configure --build="`sh ./config.guess`" \
                       --host=${{ matrix.host }} \
                       CC=${{ matrix.host }}-gcc LDFLAGS=-static
-          make -j4 check TESTS=
+          make -j4 test-programs
           chmod +x bin/xpar.exe
           bin=`cd bin && pwd`/xpar.exe
-          cfg=`cd bin && pwd`/config.h
-          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$bin" \
-            XPAR_TEST_CONFIG_H="$cfg" \
-            XPAR_TEST_CC=${{ matrix.host }}-gcc
-        env:
-          XPAR_COMPAT: compat
+          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$bin"
 
       - name: Show the test logs
         if: failure()
@@ -608,11 +540,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
       - name: Download the reproducibility reference
         uses: actions/download-artifact@v7
         with:
@@ -653,8 +580,8 @@ jobs:
         run: |
           file xpar
           mkdir qw
-          make -j4 check TESTS=
-          for t in xpar tests/mkdata tests/damage tests/forge bench/timeit; do
+          make -j4 tests/t_suite tests/mkdata
+          for t in xpar tests/mkdata; do
             n=`basename "$t"`
             printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$QEMU" "$PWD/$t" > "qw/$n"
             chmod +x "qw/$n"
@@ -672,18 +599,12 @@ jobs:
             exit 1;
           }
 
-      #  LOG_COMPILER wraps scripts; launchers wrap their helper binaries.
+      #  LOG_COMPILER runs the C suite, which invokes xpar through qw/xpar.
       - name: Test suite under qemu
         run: |
           e="XPAR=$PWD/qw/xpar; export XPAR;"
-          e="$e MKDATA=$PWD/qw/mkdata; export MKDATA;"
-          e="$e DAMAGE=$PWD/qw/damage; export DAMAGE;"
-          e="$e FORGE=$PWD/qw/forge; export FORGE;"
-          e="$e TIMEIT=$PWD/qw/timeit; export TIMEIT;"
           make -j4 check VERBOSE=1 LOG_COMPILER="$QEMU" \
                                    TESTS_ENVIRONMENT="$e"
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
@@ -739,12 +660,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: xpar-${{ github.sha }}
-      - name: Download compatibility fixture
-        uses: actions/download-artifact@v7
-        with:
-          name: xpar-compat-${{ github.sha }}
-          path: compat
-
       - name: Extract source package
         run: |
           tar --strip-components=1 -mxf xpar-${{ github.sha }}.tar.gz
@@ -786,18 +701,14 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe | grep -q 'coff-go32-exe'
 
-      - name: Run the full test suite in three FreeDOS guests
+      - name: Run the full C suite in FreeDOS
         run: |
-          sh contrib/dos/run-parallel-suite.sh build-dos "$FREEDOS_ROOT" \
+          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
              "$RUNNER_TEMP/dos-suite"
-        env:
-          XPAR_COMPAT: ${{ github.workspace }}/compat
 
       - name: Show the test logs
         if: failure()
-        run: |
-          cat "$RUNNER_TEMP"/dos-suite/*.log \
-              "$RUNNER_TEMP"/dos-suite/*/result.log 2>&1 || true
+        run: cat "$RUNNER_TEMP"/dos-suite/*.log 2>&1 || true
 
       - name: Upload the DOS transcript
         if: always()
@@ -806,7 +717,6 @@ jobs:
           name: xpar-dos-transcript-${{ github.sha }}
           path: |
             ${{ runner.temp }}/dos-suite/*.log
-            ${{ runner.temp }}/dos-suite/*/result.log
           if-no-files-found: ignore
 
   docs:

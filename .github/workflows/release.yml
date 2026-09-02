@@ -249,16 +249,13 @@ jobs:
           ./configure --build="`sh ./config.guess`" \
                       --host=${{ matrix.target.host }} \
                       CC=${{ matrix.target.host }}-gcc LDFLAGS=-static
-          make -j4 check TESTS=
+          make -j4 test-programs
 
       - name: Full test suite
         run: |
           binary=`cd target && pwd`/xpar-${{ matrix.target.name }}.exe
-          cfg=`cd target && pwd`/config.h
           chmod +x "$binary"
-          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$binary" \
-            XPAR_TEST_CONFIG_H="$cfg" \
-            XPAR_TEST_CC=${{ matrix.target.host }}-gcc
+          VERBOSE=1 make -j4 check XPAR_TEST_BINARY="$binary"
 
       - name: Show the test logs
         if: failure()
@@ -454,16 +451,14 @@ jobs:
           i586-pc-msdosdjgpp-objdump -f build-dos/xpar.exe \
             | grep -q 'coff-go32-exe'
 
-      - name: Full test suite in three FreeDOS guests
+      - name: Full C suite in FreeDOS
         run: |
-          sh contrib/dos/run-parallel-suite.sh build-dos "$FREEDOS_ROOT" \
+          sh contrib/dos/run-suite.sh build-dos "$FREEDOS_ROOT" \
              "$RUNNER_TEMP/dos-suite"
 
       - name: Show the test logs
         if: failure()
-        run: |
-          cat "$RUNNER_TEMP"/dos-suite/*.log \
-              "$RUNNER_TEMP"/dos-suite/*/result.log 2>&1 || true
+        run: cat "$RUNNER_TEMP"/dos-suite/*.log 2>&1 || true
 
       - name: Stage the binary
         run: |

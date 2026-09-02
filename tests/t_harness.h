@@ -12,17 +12,20 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Shared assertion harness. Tests define xpar_main; failures accumulate. */
-
 #ifndef XPAR_T_HARNESS_H
 #define XPAR_T_HARNESS_H
 
 #include "common.h"
 
 /* Scale iteration counts with XPAR_TEST_LEVEL. */
-static int xt_level = 1;
-static u64 xt_checks, xt_failures;
-static const char * xt_section = "(none)";
+extern int xt_level;
+extern int xt_tracing;
+extern u64 xt_checks, xt_failures;
+extern const char * xt_section;
+extern xpar_file * xt_report_file;
+
+bool xt_open_report(const char *);
+void xt_close_report(void);
 
 static inline void xt_level_from_env(const char * v) {
   if (!v) return;
@@ -37,7 +40,6 @@ static inline u32 xt_scale(u32 quick) {
 }
 
 /* Optional tracing helps diagnose hangs without cluttering normal logs. */
-static int xt_tracing;
 
 static inline void xt_trace_from_env(const char * v) {
   xt_tracing = v && *v && xpar_strcmp(v, "0");
@@ -45,6 +47,7 @@ static inline void xt_trace_from_env(const char * v) {
 
 static inline void xt_section_begin(const char * name) {
   xt_section = name;
+  if (xt_report_file) xpar_fprintf(xt_report_file, "== %s\n", name);
   if (xt_tracing)
     xpar_fprintf(xpar_stderr, "  == %s (%" PRIu64 " us)\n", name,
                  xpar_usec_now());
@@ -53,27 +56,45 @@ static inline void xt_section_begin(const char * name) {
 static inline void xt_trace(const char * fmt, ...) XPAR_PRINTF(1, 2);
 
 static inline void xt_trace(const char * fmt, ...) {
-  va_list ap;
-  if (!xt_tracing) return;
-  xpar_fprintf(xpar_stderr, "     ");
+  va_list ap, copy;
+  if (!xt_tracing && !xt_report_file) return;
   va_start(ap, fmt);
-  xpar_vfprintf(xpar_stderr, fmt, ap);
+  if (xt_tracing) {
+    va_copy(copy, ap);
+    xpar_fprintf(xpar_stderr, "     ");
+    xpar_vfprintf(xpar_stderr, fmt, copy);
+    xpar_fprintf(xpar_stderr, " (%" PRIu64 " us)\n", xpar_usec_now());
+    va_end(copy);
+  }
+  if (xt_report_file) {
+    xpar_fprintf(xt_report_file, "   ");
+    xpar_vfprintf(xt_report_file, fmt, ap);
+    xpar_fprintf(xt_report_file, "\n");
+  }
   va_end(ap);
-  xpar_fprintf(xpar_stderr, " (%" PRIu64 " us)\n", xpar_usec_now());
 }
 
 static inline void xt_report(bool ok, const char * fmt, ...) XPAR_PRINTF(2, 3);
 
 static inline void xt_report(bool ok, const char * fmt, ...) {
-  va_list ap;
+  va_list ap, copy;
   xt_checks++;
   if (ok) return;
   xt_failures++;
   xpar_fprintf(xpar_stderr, "FAIL [%s] ", xt_section);
   va_start(ap, fmt);
-  xpar_vfprintf(xpar_stderr, fmt, ap);
+  va_copy(copy, ap);
+  xpar_vfprintf(xpar_stderr, fmt, copy);
+  va_end(copy);
   va_end(ap);
   xpar_fprintf(xpar_stderr, "\n");
+  if (xt_report_file) {
+    xpar_fprintf(xt_report_file, "FAIL [%s] ", xt_section);
+    va_start(ap, fmt);
+    xpar_vfprintf(xt_report_file, fmt, ap);
+    va_end(ap);
+    xpar_fprintf(xt_report_file, "\n");
+  }
 }
 
 #define CHECK(cond, ...)  xt_report((cond), __VA_ARGS__)
@@ -85,6 +106,10 @@ static inline void xt_report(bool ok, const char * fmt, ...) {
       xt_report(false, __VA_ARGS__);                                          \
       xpar_fprintf(xpar_stderr, "       got %" PRIu64 ", want %" PRIu64 "\n", \
                    xt_g, xt_w);                                               \
+      if (xt_report_file)                                                      \
+        xpar_fprintf(xt_report_file,                                           \
+                     "       got %" PRIu64 ", want %" PRIu64 "\n",         \
+                     xt_g, xt_w);                                              \
     } else xt_checks++;                                                       \
   } while (0)
 
@@ -99,6 +124,11 @@ static inline bool xt_bytes_equal(const char * what, const u8 * got,
                  "FAIL [%s] %s differs at byte %" PRIu64 " of %" PRIu64
                  ": got %02X, want %02X\n",
                  xt_section, what, (u64) i, (u64) n, got[i], want[i]);
+    if (xt_report_file)
+      xpar_fprintf(xt_report_file,
+                   "FAIL [%s] %s differs at byte %" PRIu64 " of %" PRIu64
+                   ": got %02X, want %02X\n",
+                   xt_section, what, (u64) i, (u64) n, got[i], want[i]);
     return false;
   }
   xt_checks++;
@@ -108,6 +138,11 @@ static inline bool xt_bytes_equal(const char * what, const u8 * got,
 static inline int xt_finish(const char * program) {
   xpar_fprintf(xpar_stderr, "%s: %" PRIu64 " checks, %" PRIu64 " failed\n",
                program, xt_checks, xt_failures);
+  if (xt_report_file)
+    xpar_fprintf(xt_report_file,
+                 "%s: %" PRIu64 " checks, %" PRIu64 " failed\n",
+                 program, xt_checks, xt_failures);
+  xt_close_report();
   return xt_failures ? 1 : 0;
 }
 
@@ -137,5 +172,10 @@ static inline u32 xt_below(xt_rng * r, u32 n) {
 static inline void xt_fill(xt_rng * r, u8 * p, sz n) {
   For(sz, i, n, p[i] = (u8) xt_next(r))
 }
+
+void xt_run_unit(void);
+void xt_run_codec(void);
+void xt_run_central(void);
+void xt_run_functional(int, char **);
 
 #endif

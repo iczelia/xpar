@@ -373,7 +373,7 @@ static void test_random_profiles(u8 kind, u8 field, u64 z, u32 y, u64 s,
   ct_free(&c);
 }
 
-int xpar_main(int argc, char ** argv) {
+void xt_run_central(void) {
   xt_rng rng;
   u32 i;
 
@@ -392,10 +392,6 @@ int xpar_main(int argc, char ** argv) {
     { XPAR_CODEC_FFT,    16 }
   };
 
-  (void) argc;  (void) argv;
-  xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
-  xt_trace_from_env(xpar_getenv("XPAR_TEST_TRACE"));
-  xpar_gf_init();
   xt_seed(&rng, 0xCE27A1ull);
 
   for (i = 0; i < ARRAY_LEN(shapes); i++) {
@@ -430,5 +426,4 @@ int xpar_main(int argc, char ** argv) {
     }
   }
 
-  return xt_finish("t_central");
 }

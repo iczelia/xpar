@@ -231,80 +231,50 @@ xpar_LDADD += libxpar_core.a
 ## Tests define xpar_main because libxpar_core supplies the platform main.
 ## Standalone data, damage and timing tools do not link the code under test.
 
-XPAR_PROGRAM_TESTS = tests/t_unit tests/t_codec tests/t_central
-XPAR_SHELL_TESTS = tests/central.sh tests/faults.sh tests/safety.sh \
-                   tests/sanity.sh tests/build.sh tests/regress.sh \
-                   tests/perf.sh tests/bench.sh tests/hostfaults.sh
+XPAR_PROGRAM_TESTS = tests/t_suite
 
 if XPAR_WIN_LEGACY
 ## Legacy Windows cannot link or run the test programs.
 check_PROGRAMS =
 TESTS =
 else
-check_PROGRAMS = $(XPAR_PROGRAM_TESTS) \
-                 tests/mkdata tests/damage tests/forge bench/timeit
+check_PROGRAMS = $(XPAR_PROGRAM_TESTS)
+EXTRA_PROGRAMS = tests/mkdata tests/damage bench/timeit
 
-tests_t_unit_SOURCES    = tests/t_unit.c
-tests_t_unit_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
-tests_t_unit_LDADD      = $(xpar_LDADD)
+tests_t_suite_SOURCES = tests/t_suite.c tests/t_harness.c tests/t_system.c \
+                        tests/t_functional.c \
+                        tests/t_unit.c tests/t_codec.c tests/t_central.c
+tests_t_suite_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
+tests_t_suite_LDADD = $(xpar_LDADD)
 
-tests_t_codec_SOURCES   = tests/t_codec.c
-tests_t_codec_CPPFLAGS  = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
-tests_t_codec_LDADD     = $(xpar_LDADD)
+TESTS = $(XPAR_PROGRAM_TESTS)
 
-tests_t_central_SOURCES  = tests/t_central.c
-tests_t_central_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
-tests_t_central_LDADD    = $(xpar_LDADD)
-
-tests_mkdata_SOURCES    = tests/mkdata.c
-tests_mkdata_CPPFLAGS   =
-tests_mkdata_LDADD      =
-
-tests_damage_SOURCES    = tests/damage.c
-tests_damage_CPPFLAGS   =
-tests_damage_LDADD      =
-
-## forge links xpar to sign packets.
-tests_forge_SOURCES     = tests/forge.c
-tests_forge_CPPFLAGS    = $(AM_CPPFLAGS)
-tests_forge_LDADD       = $(xpar_LDADD)
-
-
-TESTS = $(XPAR_PROGRAM_TESTS) $(XPAR_SHELL_TESTS)
-
-test-programs: tests/t_unit$(EXEEXT) tests/t_codec$(EXEEXT) \
-               tests/t_central$(EXEEXT) tests/mkdata$(EXEEXT) \
-               tests/damage$(EXEEXT) tests/forge$(EXEEXT) \
-               bench/timeit$(EXEEXT)
+test-programs: tests/t_suite$(EXEEXT)
 endif
 
-TEST_EXTENSIONS = .sh
-
-#  Fail hung tests individually when timeout(1) is available.
-SH_LOG_COMPILER = $(XPAR_TEST_TIMEOUT) $(SHELL)
 LOG_COMPILER    = $(XPAR_TEST_TIMEOUT)
 
 AM_TESTS_ENVIRONMENT = \
   abs_top_builddir='$(abs_top_builddir)';  export abs_top_builddir; \
   abs_top_srcdir='$(abs_top_srcdir)';      export abs_top_srcdir; \
   srcdir='$(abs_top_srcdir)/tests';        export srcdir; \
+  XPAR_TEST_FIXTURES='$(abs_top_srcdir)/tests/format'; \
+                                                  export XPAR_TEST_FIXTURES; \
   XPAR='$(XPAR_TEST_BINARY)';                         export XPAR; \
-  MKDATA='$(abs_top_builddir)/tests/mkdata$(EXEEXT)'; export MKDATA; \
-  DAMAGE='$(abs_top_builddir)/tests/damage$(EXEEXT)'; export DAMAGE; \
-  FORGE='$(abs_top_builddir)/tests/forge$(EXEEXT)';   export FORGE; \
-  TIMEIT='$(abs_top_builddir)/bench/timeit$(EXEEXT)'; export TIMEIT; \
   XPAR_TEST_LEVEL="$${XPAR_TEST_LEVEL-quick}";        export XPAR_TEST_LEVEL; \
-  XPAR_TEST_SEED="$${XPAR_TEST_SEED-20260823}";       export XPAR_TEST_SEED; \
-  XPAR_SH='$(SHELL)';                                 export XPAR_SH; \
-  XPAR_TEST_CONFIG_H='$(XPAR_TEST_CONFIG_H)';         export XPAR_TEST_CONFIG_H; \
-  XPAR_TEST_CC='$(XPAR_TEST_CC)';                     export XPAR_TEST_CC; \
-  CC='$(CC)';                                         export CC;
+  XPAR_TEST_TRACE="$${XPAR_TEST_TRACE-0}";             export XPAR_TEST_TRACE;
 
 XPAR_TEST_BINARY = $(abs_top_builddir)/xpar$(EXEEXT)
-XPAR_TEST_CONFIG_H = $(abs_top_builddir)/config.h
-XPAR_TEST_CC = $(CC)
 
-## Benchmarks are opt-in; tests/bench.sh still requires timeit.
+## Benchmarks are opt-in.
+
+tests_mkdata_SOURCES = tests/mkdata.c
+tests_mkdata_CPPFLAGS =
+tests_mkdata_LDADD =
+
+tests_damage_SOURCES = tests/damage.c
+tests_damage_CPPFLAGS =
+tests_damage_LDADD =
 
 bench_timeit_SOURCES  = bench/timeit.c
 bench_timeit_CPPFLAGS =
@@ -312,24 +282,22 @@ bench_timeit_LDADD    =
 
 EXTRA_DIST = \
   bootstrap README.md \
-  contrib/check-win95-pe.sh contrib/ci-check.sh \
+  contrib/check-win95-pe.sh \
   contrib/repro-digest.sh \
   contrib/gitlog-to-changelog \
   contrib/dos/fdauto.bat contrib/dos/fdconfig.sys \
-  contrib/dos/guest-suite.sh \
   contrib/dos/install-freedos.sh contrib/dos/qemu-exit.c \
-  contrib/dos/run-suite.sh contrib/dos/run-parallel-suite.sh \
-  tests/t_harness.h tests/lib.sh \
-  tests/central.sh tests/faults.sh tests/safety.sh tests/sanity.sh \
-  tests/build.sh tests/regress.sh tests/perf.sh tests/bench.sh \
-  tests/hostfaults.sh tests/faultio.c \
+  contrib/dos/run-suite.sh \
+  tests/format/README tests/format/DATA.BIN \
+  tests/format/m8.xpa tests/format/a16.xpa tests/format/f16a.xpa \
+  tests/t_harness.h tests/t_system.h \
   bench/run.sh bench/lib.sh bench/plot.py bench/mktree.sh \
   bench/competitors.sh bench/experiments.sh bench/remote.sh
 
 VENDORED = src/yarg.h
 
 .PHONY: docs win95-check check-full check-torture check-simd \
-        print-distfiles print-shell-tests test-programs bench-tools bench
+        print-distfiles test-programs bench-tools bench
 docs: doc/xpar-format.pdf
 
 ##  Print the files included in the distribution tarball.
@@ -342,9 +310,6 @@ print-distfiles:
 	    *)               echo "$$f" ;; \
 	  esac; \
 	done
-
-print-shell-tests:
-	@echo $(XPAR_SHELL_TESTS)
 
 ## Wider test matrices for nightly and release builds.
 check-full:
