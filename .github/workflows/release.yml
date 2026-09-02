@@ -386,7 +386,7 @@ jobs:
                       CFLAGS="-O2 -g" LDFLAGS=-static
 
       - name: Make
-        run: make -j4 all test-programs
+        run: make -j4 all
 
       - name: Write the xpar launcher
         run: |
