@@ -693,6 +693,57 @@ static void arm_damage(const arm_case * c, u8 * region, u32 count) {
   }
 }
 
+/*  Independent root-by-root reference for the linear q-binomial builder.  */
+static void arm_generator_ref(const xpar_armour_params * p, u32 * g) {
+  bool f16 = p->symbol_bits == 16;
+  u32 order = f16 ? 65535u : 255u;
+  u32 m = p->n - p->k, i, j;
+
+  xpar_memset(g, 0, (sz) (m + 1) * sizeof(u32));
+  g[0] = 1;
+  for (j = 0; j < m; j++) {
+    u32 e = (u32) (((u64) p->fcr + (u64) j * p->prim) % order);
+    u32 root = f16 ? (u32) xpar_gf16_alpha_pow(e)
+                   : (u32) xpar_gf8_alpha_pow(e);
+    g[j + 1] = g[j];
+    for (i = j; i > 0; i--)
+      g[i] = g[i - 1] ^ fmul(g[i], root, f16);
+    g[0] = fmul(g[0], root, f16);
+  }
+}
+
+static void test_armour_generators(void) {
+  static const struct { u32 field, n, t; } cases[] = {
+    { 8, 16, 1 }, { 8, 64, 8 }, { 8, 255, 127 },
+    { 16, 16, 1 }, { 16, 96, 8 }, { 16, 65535, 256 }
+  };
+  u32 ci;
+
+  for (ci = 0; ci < ARRAY_LEN(cases); ci++) {
+    xpar_armour_params p;
+    xpar_armour * a;
+    u32 m = 2 * cases[ci].t, i;
+    u32 * got = (u32 *) xpar_alloc_raw((sz) (m + 1) * sizeof(u32));
+    u32 * ref = (u32 *) xpar_alloc_raw((sz) (m + 1) * sizeof(u32));
+
+    xpar_armour_defaults(&p, cases[ci].field);
+    p.n = cases[ci].n;  p.k = p.n - m;
+    a = xpar_armour_new(&p);
+    xpar_armour_generator(a, got);
+    arm_generator_ref(&p, ref);
+    for (i = 0; i <= m; i++)
+      if (got[i] != ref[i]) {
+        CHECK(false, "armour GF(2^%" PRIu32 ") n=%" PRIu32
+              " t=%" PRIu32 ": generator coefficient %" PRIu32
+              " is %" PRIu32 ", expected %" PRIu32,
+              cases[ci].field, p.n, cases[ci].t, i, got[i], ref[i]);
+        break;
+      }
+    xpar_armour_free(a);
+    xpar_free(got);  xpar_free(ref);
+  }
+}
+
 static void test_armour_tiers(xt_rng * rng) {
   static const u64 depths[] = { 1, 2, 3, 7, 16, 31, 32, 33, 64 };
   static const u32 fields[] = { 8, 16 };
@@ -1009,6 +1060,9 @@ void xt_run_codec(void) {
   test_matrix_streaming(8, 1, 1, &rng);
   test_matrix_streaming(16, 40, 7, &rng);
   test_matrix_odd_bytes();
+
+  xt_section_begin("armour generators");
+  test_armour_generators();
 
   xt_section_begin("armour tiers and depths");
   { xt_rng ar;  xt_seed(&ar, 0xA12000);  test_armour_tiers(&ar); }
