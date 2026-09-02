@@ -327,22 +327,44 @@ void xpar_armour_horner16_ref(u8 * restrict syn, sz stride, u32 t2,
 
 /*  Construction.  */
 
-/*  g(x) = prod (x - alpha^(fcr + j*prim)), built root by root so the
-    O(t^2) cost is paid once per file rather than once per frame. The
-    coefficient of x^(2t) is 1 and is not stored as a tap.  */
+/*  g(x) = prod (x - a*q^j), where a = alpha^fcr and q = alpha^prim.
+
+    The finite q-binomial theorem says that the coefficient c[r] of
+    x^(m-r), m = 2t, is
+
+      c[r] = (-a)^r q^(r(r-1)/2) {m choose r}_q.
+
+    Consequently
+
+      c[r] / c[r-1] = (-a) q^(r-1)
+                       (1 - q^(m-r+1)) / (1 - q^r).
+
+    Signs are additions in characteristic two. Since prim is a unit modulo
+    the field order, q has that full order; m < order makes every denominator
+    nonzero. Advancing the two powers of q gives all coefficients in O(t).
+    The coefficient of x^(2t) is 1 and is not stored as a tap.  */
 static void build_generator(xpar_armour * a) {
-  u32 t2 = a->t2, i, j;
-  a->gpoly = (u32 *) xpar_calloc(t2 + 1, sizeof(u32));
-  a->gpoly[0] = 1;
-  for (j = 0; j < t2; j++) {
-    u32 r = f_alpha(a, (u32) (((u64) a->p.fcr +
-                               (u64) j * a->p.prim) % a->order));
-    a->gpoly[j + 1] = a->gpoly[j];
-    for (i = j; i > 0; i--)
-      a->gpoly[i] = a->gpoly[i - 1] ^ f_mul(a, a->gpoly[i], r);
-    a->gpoly[0] = f_mul(a, a->gpoly[0], r);
+  u32 m = a->t2, r;
+  u32 ar = f_alpha(a, a->p.fcr % a->order);
+  u32 q = f_alpha(a, a->p.prim % a->order);
+  u32 qi = 1;                         /* q^(r-1) */
+  u32 qj = f_alpha_mul(a, m, a->p.prim); /* q^(m-r+1) */
+  u32 qinv = f_inv(a, q);
+  u32 c = 1;
+
+  a->gpoly = (u32 *) xpar_calloc(m + 1, sizeof(u32));
+  a->gpoly[m] = 1;
+  for (r = 1; r <= m; r++) {
+    u32 qr = f_mul(a, qi, q);
+    u32 ratio = f_div(a, 1u ^ qj, 1u ^ qr);
+    c = f_mul(a, c, ar);
+    c = f_mul(a, c, qi);
+    c = f_mul(a, c, ratio);
+    a->gpoly[m - r] = c;
+    qi = qr;
+    qj = f_mul(a, qj, qinv);
   }
-  xpar_assert(a->gpoly[t2] == 1);
+  xpar_assert(a->gpoly[m] == 1);
 }
 
 /*  Preparing a coefficient costs a few hundred operations, so the 2t
