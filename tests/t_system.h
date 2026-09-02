@@ -21,6 +21,7 @@ typedef struct {
   char err[XT_PATH_MAX];
   u32 case_no;
   int keep;
+  bool target_link_identity;
 } xt_context;
 
 bool xt_context_init(xt_context *, int argc, char ** argv);

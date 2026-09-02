@@ -79,6 +79,7 @@ bool xt_mkdir(const char * path) {
 }
 
 bool xt_context_init(xt_context * c, int argc, char ** argv) {
+  static const char * const version[] = { "--version", NULL };
   const char * xpar = xpar_getenv("XPAR");
   char def[XT_PATH_MAX], leaf[16];
   u32 pid = process_id(), attempt;
@@ -117,6 +118,8 @@ bool xt_context_init(xt_context * c, int argc, char ** argv) {
   if (!c->seed || !xt_mkdir(c->seed)) return false;
   if (!xt_path(c->out, sizeof c->out, c->root, "OUT.TXT") ||
       !xt_path(c->err, sizeof c->err, c->root, "ERR.TXT")) return false;
+  if (xt_run_xpar(c, c->root, version) != 0) return false;
+  c->target_link_identity = !xt_file_contains(c->out, ", win95)");
   return true;
 }
 

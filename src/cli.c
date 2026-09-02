@@ -549,8 +549,13 @@ const char * xpar_verb_name(xpar_verb v) {
 
 void xpar_cli_version(void) {
   const xpar_cpu_tier * best = xpar_cpu_tier_at(xpar_cpu_tier_best());
+#if defined(XPAR_WIN_LEGACY)
+  xpar_fprintf(xpar_stdout, "xpar %s (%s, %s, win95)\n", PACKAGE_VERSION,
+               XPAR_HOST_TRIPLE, best ? best->name : "scalar");
+#else
   xpar_fprintf(xpar_stdout, "xpar %s (%s, %s)\n", PACKAGE_VERSION,
                XPAR_HOST_TRIPLE, best ? best->name : "scalar");
+#endif
   xpar_fputs(
     "Copyright (C) 2022-2026 Kamila Szewczyk.\n"
     "License GPLv3: GNU GPL version 3 only"

@@ -485,8 +485,8 @@ static bool same_link(const char * a, const char * b) {
 
 static void test_hardlink_journal(xt_context * c) {
   static const char * const create[] = {
-    "create", "--reproducible", "-R", "-s", "4K", "-r", "30%",
-    "-o", "safe", "TREE", NULL
+    "create", "--reproducible", "--dedup=none", "-R", "-s", "4K",
+    "-r", "30%", "-o", "safe", "TREE", NULL
   };
   static const char * const verify[] = { "verify", "safe.xpa", NULL };
   static const char * const repair[] = {
@@ -512,6 +512,21 @@ static void test_hardlink_journal(xt_context * c) {
   CHECK(xpar_remove(b) == 0 && xt_copy_file(a, b),
         "replace one link with an identical copy");
   CHECK(!same_link(a, b), "the replacement starts as a separate file");
+
+  if (!c->target_link_identity) {
+    run(c, dir, 0, verify, "accept identity that the target cannot observe");
+    CHECK(xt_damage(b, 4096, 64, 0x1A11),
+          "damage the independent alias");
+    run(c, dir, 1, verify, "detect damage to the independent alias");
+    run(c, dir, 0, repair, "repair the independent alias");
+    CHECK(!same_link(a, b), "repair does not invent an unsupported link");
+    CHECK(xt_files_equal(a, b), "repair restores the alias bytes");
+    run(c, dir, 0, undo, "undo the alias repair");
+    CHECK(!same_link(a, b), "undo keeps the aliases independent");
+    CHECK(!xt_files_equal(a, b), "undo restores the damaged alias bytes");
+    return;
+  }
+
   run(c, dir, 1, verify, "detect the replaced hard link");
   run(c, dir, 0, repair, "restore the hard link");
   CHECK(same_link(a, b), "repair restores the shared identity");
