@@ -328,6 +328,69 @@ bool xt_file_contains_ci(const char * path, const char * needle) {
   return file_contains(path, needle, true);
 }
 
+static char * read_small_file(const char * path, sz * size) {
+  u64 bytes;
+  char * data;
+  xpar_file * f;
+  if (!xt_file_size(path, &bytes) || bytes > 1024 * 1024) return NULL;
+  data = xpar_malloc((sz) bytes + 1);
+  if (!data) return NULL;
+  f = xpar_open(path, XPAR_O_RDONLY);
+  if (!f || xpar_read(f, data, (sz) bytes) != (sz) bytes) {
+    if (f) xpar_close(f);
+    xpar_free(data);
+    return NULL;
+  }
+  xpar_close(f);
+  data[bytes] = 0;
+  *size = (sz) bytes;
+  return data;
+}
+
+static const char * json_value(const char * data, sz size,
+                               const char * key) {
+  char pattern[128];
+  sz pn, i;
+  const char * found = NULL;
+  if (xpar_snprintf(pattern, sizeof pattern, "\"%s\":", key) < 0)
+    return NULL;
+  pn = xpar_strlen(pattern);
+  for (i = 0; i + pn <= size; i++) {
+    if (xpar_memcmp(data + i, pattern, pn)) continue;
+    found = data + i + pn;
+  }
+  return found;
+}
+
+bool xt_json_u64(const char * path, const char * key, u64 * value) {
+  char number[32];
+  sz size, n = 0;
+  char * data = read_small_file(path, &size);
+  const char * p;
+  bool ok = false;
+  if (!data) return false;
+  p = json_value(data, size, key);
+  while (p && *p >= '0' && *p <= '9' && n + 1 < sizeof number)
+    number[n++] = *p++;
+  number[n] = 0;
+  if (n && xpar_parse_u64(number, value) == 0) ok = true;
+  xpar_free(data);
+  return ok;
+}
+
+bool xt_json_string(const char * path, const char * key, const char * value) {
+  sz size, n = xpar_strlen(value);
+  char * data = read_small_file(path, &size);
+  const char * p;
+  bool ok = false;
+  if (!data) return false;
+  p = json_value(data, size, key);
+  if (p && *p++ == '"' && (sz) (data + size - p) > n &&
+      !xpar_memcmp(p, value, n) && p[n] == '"') ok = true;
+  xpar_free(data);
+  return ok;
+}
+
 void xt_dump_file(const char * path, const char * label) {
   u8 buf[4096];
   xpar_file * f = xpar_open(path, XPAR_O_RDONLY);

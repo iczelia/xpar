@@ -503,6 +503,11 @@ static void test_hardlink_journal(xt_context * c) {
         xt_path(b, sizeof b, tree, "B.BIN") &&
         xt_write_pattern(a, 40000, 5), "prepare the hard-link tree");
   CHECK(xpar_link(a, b) == 0, "create the hard link");
+  if (!same_link(a, b)) {
+    CHECK(false, "created names share an identity");
+    return;
+  }
+  CHECK(true, "created names share an identity");
   if (run(c, dir, 0, create, "protect the hard link") != 0) return;
   CHECK(xpar_remove(b) == 0 && xt_copy_file(a, b),
         "replace one link with an identical copy");
@@ -704,5 +709,6 @@ void xt_run_functional(int argc, char ** argv) {
   test_renamed_volume(&c);
   test_prologue_recovery(&c);
   test_format_stability(&c);
+  xt_run_recovery(&c);
   xt_context_free(&c);
 }

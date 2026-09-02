@@ -41,11 +41,14 @@ bool xt_damage(const char *, u64 offset, u64 bytes, u64 seed);
 bool xt_truncate(const char *, u64 bytes);
 bool xt_file_contains(const char *, const char *);
 bool xt_file_contains_ci(const char *, const char *);
+bool xt_json_u64(const char *, const char *, u64 *);
+bool xt_json_string(const char *, const char *, const char *);
 void xt_dump_file(const char *, const char *);
 bool xt_find_file(const char *, const char * prefix, const char * suffix,
                   char *, sz);
 
 int xt_run_xpar(xt_context *, const char * cwd,
                 const char * const * args);
+void xt_run_recovery(xt_context *);
 
 #endif

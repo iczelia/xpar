@@ -450,7 +450,7 @@ static u32 keep_mask(const xpar_walk_opts * o) {
   return o->preserve & (~XPAR_PRES_HOSTDEP | o->preserve_explicit);
 }
 
-typedef struct { u64 dev, ino, nlink; } wstat;
+typedef struct { u64 dev, ino; } wstat;
 
 typedef struct { char * p; sz len, cap; } pathbuf;
 
@@ -732,7 +732,6 @@ static void note_stat(walker * w, u32 idx, const xpar_stat_t * st) {
   w->st = (wstat *) grow_to(w->st, &w->st_cap, idx + 1, sizeof(wstat));
   w->st[idx].dev   = st->dev;
   w->st[idx].ino   = st->ino;
-  w->st[idx].nlink = st->is_regular ? st->nlink : 0;
 }
 
 static xpar_entry * emit_entry(walker * w, const char * name, u32 name_len,
@@ -846,7 +845,7 @@ static void detect_links(walker * w) {
     u64 h;
     u32 slot;
     if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
-    if (w->st[i].nlink <= 1) continue;   /*  The cheap pre-filter.  */
+    /*  Identity alone determines whether two entries are hard links.  */
     h = w->st[i].dev * 0x9E3779B97F4A7C15ull + w->st[i].ino;
     slot = (u32) ((h ^ (h >> 32)) & mask);
     while (table[slot] != 0xFFFFFFFFu) {

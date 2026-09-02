@@ -242,7 +242,7 @@ check_PROGRAMS = $(XPAR_PROGRAM_TESTS)
 EXTRA_PROGRAMS = tests/mkdata tests/damage bench/timeit
 
 tests_t_suite_SOURCES = tests/t_suite.c tests/t_harness.c tests/t_system.c \
-                        tests/t_functional.c \
+                        tests/t_functional.c tests/t_recovery.c \
                         tests/t_unit.c tests/t_codec.c tests/t_central.c
 tests_t_suite_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/tests
 tests_t_suite_LDADD = $(xpar_LDADD)
