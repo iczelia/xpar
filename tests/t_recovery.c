@@ -28,10 +28,7 @@ static int expect(xt_context * c, const char * dir, int want,
 
 static const char * leaf_name(const char * path) {
   const char * leaf = path;
-  while (*path) {
-    if (*path == '/' || *path == '\\') leaf = path + 1;
-    path++;
-  }
+  while (*path) { if (*path == '/' || *path == '\\') leaf = path + 1;  path++; }
   return leaf;
 }
 
@@ -298,5 +295,5 @@ void xt_run_recovery(xt_context * c) {
       65536, 16384, 4096, 2 }
   };
   u32 i;
-  for (i = 0; i < ARRAY_LEN(shapes); i++) one_shape(c, &shapes[i], i == 0);
+  Fi(ARRAY_LEN(shapes), one_shape(c, &shapes[i], i == 0));
 }

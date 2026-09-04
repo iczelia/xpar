@@ -22,7 +22,6 @@
 
 #include "common.h"
 #include "port-fs.h"
-
 #include <dir.h>
 #include <dos.h>
 #include <dpmi.h>
@@ -259,10 +258,7 @@ int xpar_link(const char * existing, const char * newpath) {
 
 static int dos_path_call(u16 lfn_ax, u16 dos_ax, const char * path) {
   __dpmi_regs r;
-  if (xpar_strlen(path) + 1 > __tb_size) {
-    errno = ENAMETOOLONG;
-    return -1;
-  }
+  if (xpar_strlen(path) + 1 > __tb_size) { errno = ENAMETOOLONG;  return -1; }
   _put_path(path);
   memset(&r, 0, sizeof r);
   r.x.ax = _use_lfn(NULL) ? lfn_ax : dos_ax;
@@ -343,20 +339,14 @@ int xpar_set_times(const char * path, int nofollow,
   (void) btime_ns;
   if (mtime_ns == XPAR_TIME_NONE)
     return atime_ns == XPAR_TIME_NONE ? 0 : (errno = ENOTSUP, -1);
-  if (!dos_time_pack(mtime_ns, &date, &time)) {
-    errno = EOVERFLOW;
-    return -1;
-  }
+  if (!dos_time_pack(mtime_ns, &date, &time)) { errno = EOVERFLOW;  return -1; }
   rc = _dos_open(path, 0, &fd);
   if (rc) return dos_error(rc);
   rc = _dos_setftime(fd, date, time);
   close_rc = _dos_close(fd);
   if (rc) return dos_error(rc);
   if (close_rc) return dos_error(close_rc);
-  if (atime_ns != XPAR_TIME_NONE) {
-    errno = ENOTSUP;
-    return -1;
-  }
+  if (atime_ns != XPAR_TIME_NONE) { errno = ENOTSUP;  return -1; }
   return 0;
 }
 
@@ -431,10 +421,7 @@ char * xpar_getcwd(void) {
   r.x.ds = (u16) (__tb >> 4);
   r.x.si = (u16) (__tb & 15);
   __dpmi_int(0x21, &r);
-  if (r.x.flags & 1) {
-    errno = __doserr_to_errno(r.x.ax);
-    return NULL;
-  }
+  if (r.x.flags & 1) { errno = __doserr_to_errno(r.x.ax);  return NULL; }
   dosmemget(__tb, sizeof dos_path, dos_path);
   dos_path[sizeof dos_path - 1] = 0;
   n = xpar_strlen(dos_path);
@@ -442,12 +429,11 @@ char * xpar_getcwd(void) {
   out[0] = (char) ('a' + drive - 1);
   out[1] = ':';
   out[2] = '/';
-  for (i = 0; i < n; i++) {
+  Fi(n,
     char c = dos_path[i];
     if (c == '\\') c = '/';
     if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    out[i + 3] = c;
-  }
+    out[i + 3] = c);
   out[n + 3] = 0;
   return out;
 }

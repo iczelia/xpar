@@ -12,15 +12,12 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Host I/O interface.  Portable code includes no system headers or host
-    conditionals.  Filesystem metadata, CPU features, and threads have
-    independent interfaces.  */
+/*  Host I/O. Portable code has no system headers or host conditionals.  */
 
 #ifndef XPAR_PORT_H
 #define XPAR_PORT_H
 
 #include "config.h"
-
 #include <stdarg.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -125,13 +122,10 @@ bool        xpar_is_seekable(xpar_file *);
 bool        xpar_is_tty(xpar_file *);
 bool        xpar_eof  (xpar_file *);
 
-/*  Sticky, with ferror semantics: once an error has been seen on a handle
-    it is reported until the handle is closed, and there is no way to clear
-    it.  */
+/*  Sticky ferror-style state.  */
 int         xpar_error(xpar_file *);
 
-/*  Advisory whole-file locks, so two xpar processes do not repair the same
-    set at once.  */
+/*  Advisory whole-file locks.  */
 int  xpar_lock       (xpar_file *, bool exclusive);
 int  xpar_unlock     (xpar_file *);
 bool xpar_lock_supported(void);
@@ -141,8 +135,7 @@ sz  xpar_pread (xpar_file *, void * buf, sz n, u64 off);
 sz  xpar_pwrite(xpar_file *, const void * buf, sz n, u64 off);
 int xpar_ftruncate(xpar_file *, u64 length);
 
-/*  Ordered positional-read batch, optionally backed by io_uring. A NULL
-    file produces a zero result without I/O.  */
+/*  Ordered positional reads; a NULL file returns zero without I/O.  */
 typedef struct {
   xpar_file * file;
   void *      buf;
@@ -153,18 +146,13 @@ typedef struct {
 
 bool xpar_pread_batch(xpar_read_req *, sz count);
 
-/*  The same requests issued one at a time with xpar_pread, in order.
-    Every port either is this or falls back to it, so no port writes the
-    loop again. Returns false: nothing was batched.  */
+/*  Serial fallback; always returns false.  */
 bool xpar_pread_serial(xpar_read_req *, sz count);
 
-/*  fsync on the directory containing `path`. Required after a rename or a
-    create for the entry to survive a crash; a file fsync does not cover
-    it. A host without the concept returns 0.  */
+/*  Sync the directory containing `path`; unsupported hosts return 0.  */
 int xpar_fsync_dir(const char * path);
 
-/*  Fatal-on-failure wrappers, for the paths where a short read or a failed
-    write has no sensible recovery.  */
+/*  Fatal-on-failure I/O.  */
 sz   xpar_xread (xpar_file *, void * p, sz n);
 void xpar_xwrite(xpar_file *, const void * p, sz n);
 typedef struct { const void * data;  sz length; } xpar_write_part;
@@ -195,14 +183,10 @@ void   xpar_free     (void * p);
 void * xpar_alloc_aligned(sz n, sz align);
 void   xpar_free_aligned (void * p);
 
-/*  Physical memory in bytes, or 0 when the host will not say. The planner
-    uses it only to pick a default for -m.  */
+/*  Physical memory in bytes, or 0.  */
 u64 xpar_physical_memory(void);
 
-/*  True when `path` lives on rotating media, which decides the codec on a
-    plan that would otherwise stride. Unknown answers as
-    false, so being wrong costs performance on increasingly rare hardware
-    rather than correctness.  */
+/*  Whether `path` is on rotating media; unknown is false.  */
 bool xpar_is_rotational(const char * path);
 
 /*  Strings and formatting.  */
@@ -245,10 +229,7 @@ static inline bool xpar_errno_absent(int err) {
   return err == XPAR_ENOENT || err == XPAR_ENOTDIR;
 }
 
-/*  Wall-clock time in nanoseconds since the Unix epoch, for CRTR and for
-    default timestamps. Distinct from xpar_usec_now, which is monotonic
-    where the host has a monotonic clock and must not be used for stored
-    timestamps.  */
+/*  Unix time in nanoseconds; xpar_usec_now is monotonic.  */
 i64 xpar_wall_ns(void);
 
 /*  Random bytes for staging names; not for cryptographic keys.  */

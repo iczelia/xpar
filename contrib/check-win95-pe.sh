@@ -28,12 +28,12 @@ want=`"$nm" "$symbols" |
       sed -n 's/^0*\([0-9a-fA-F]*\) [Tt] _xpar_entry$/\1/p' |
       tr 'A-F' 'a-f'`
 if test -z "$entry" || test -z "$want"; then
-  echo 'win95-check: cannot read the entry point out of the image' >&2
+  echo 'win95-check: cannot read entry point' >&2
   exit 1
 fi
 if test "$entry" != "$want"; then
   echo "win95-check: entry is 0x$entry but _xpar_entry is 0x$want" >&2
-  echo 'win95-check: the linker did not resolve the -e symbol' >&2
+  echo 'win95-check: unresolved -e symbol' >&2
   exit 1
 fi
 
@@ -81,7 +81,7 @@ for sym in `awk '$2 == "<none>" {print $4}' "$tmp.k32"`; do
     test "$known" = "$sym" && found=yes
   done
   if test "$found" != yes; then
-    echo "win95-check: non-Win95 kernel import: $sym" >&2
+    echo "win95-check: unsupported kernel import $sym" >&2
     exit 1
   fi
 done

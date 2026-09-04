@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: Galois field kernels, AVX2 split-table variant.  */
+/*  Galois field kernels, AVX2 split-table variant.  */
 
 #define XPAR_GF_VARIANT_AVX2
 #define XPAR_GF_HAVE_SIMD

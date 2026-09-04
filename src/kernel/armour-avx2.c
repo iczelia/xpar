@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: inner-code region kernels, AVX2 split-nibble variant.  */
+/*  inner-code region kernels, AVX2 split-nibble variant.  */
 
 #define XPAR_ARM_VARIANT_AVX2
 #define XPAR_ARM_HAVE_SIMD

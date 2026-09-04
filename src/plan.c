@@ -15,7 +15,6 @@
 /*  Codec, field, column, cell, and buffer planning.  */
 
 #include "plan.h"
-
 #include "kernel/codec.h"
 #include "platform/port-thread.h"
 
@@ -84,10 +83,7 @@ static void group(char * buf, u64 v) {
   int n = 0, i, k = 0;
   if (!v) { buf[0] = '0';  buf[1] = '\0';  return; }
   while (v) { tmp[n++] = (char) ('0' + (int) (v % 10));  v /= 10; }
-  for (i = n - 1; i >= 0; i--) {
-    buf[k++] = tmp[i];
-    if (i && i % 3 == 0) buf[k++] = ',';
-  }
+  for (i = n - 1; i >= 0; i--) { buf[k++] = tmp[i];  if (i && i % 3 == 0) buf[k++] = ','; }
   buf[k] = '\0';
 }
 
@@ -96,10 +92,7 @@ static void human(char * buf, sz cap, u64 v) {
   u64 scale = 1;
   int i = 0;
   while (i < 5 && v >= scale * 1024) { scale *= 1024;  i++; }
-  if (!i) {
-    xpar_snprintf(buf, cap, "%" PRIu64 " B", v);
-    return;
-  }
+  if (!i) { xpar_snprintf(buf, cap, "%" PRIu64 " B", v);  return; }
   xpar_snprintf(buf, cap, "%" PRIu64 ".%" PRIu64 " %s",
                 (v / scale),
                 (v % scale * 10 / scale), u[i]);
@@ -248,10 +241,7 @@ static void eval(const cand_in * in, cand_out * out) {
                                     (sz) chunk) > in->budget) {
       chunk = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
                       in->s, in->r, in->budget, in->z);
-      if (!chunk) {
-        out->why = "(S + 2m) buffers do not fit, even at a 64-byte column";
-        return;
-      }
+      if (!chunk) { out->why = "(S + 2m) buffers do not fit, even at a 64-byte column";  return; }
     }
     out->feasible    = true;
     out->chunk       = (u32) chunk;
@@ -440,7 +430,7 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   stage = stage_bytes(budget, out->geom.slice_size, threads);
   out->mem_stage = stage;
 
-  for (i = 0; i < n; i++) {
+  Fi(n,
     cand_in in;
     cand_out c;
     u64 s;
@@ -475,14 +465,12 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     s = score_us(&in, &c);
     if (best < 0 || s < best_score) {
       best_score = s;  best = i;  won = c;
-    }
-  }
+    });
 
   if (best < 0) {
     int k;
     bool any = false;
-    for (k = 0; k < out->cand_count; k++)
-      if (out->cand[k].feasible || out->cand[k].why) any = true;
+    Fk(out->cand_count, if (out->cand[k].feasible || out->cand[k].why) any = true);
     return any && out->cand_count ? XPAR_PLAN_NO_FIT : XPAR_PLAN_NO_CODEC;
   }
 
@@ -629,13 +617,12 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
       admitting value is well defined.  */
   lo = (u64) 1 << 20;
   hi = (u64) 1 << 20;
-  for (i = 0; i < 44; i++) {
+  Fi(44,
     q.memory_budget = hi;
     if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK) break;
     lo = hi;
     if (hi > ((u64) 1 << 62)) break;
-    hi *= 2;
-  }
+    hi *= 2);
   q.memory_budget = hi;
   if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK) {
     while (lo + (1 << 20) < hi) {
@@ -698,13 +685,12 @@ static u64 one_pass_budget(const xpar_plan_req * req) {
   xpar_plan p;
   u64 lo = 0, hi = (u64) 1 << 20;
   int i;
-  for (i = 0; i < 44; i++) {
+  Fi(44,
     q.memory_budget = hi;
     if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK && p.passes <= 1) break;
     lo = hi;
     if (hi > ((u64) 1 << 62)) return 0;
-    hi *= 2;
-  }
+    hi *= 2);
   q.memory_budget = hi;
   if (xpar_plan_make(&q, &p) != XPAR_PLAN_OK || p.passes > 1) return 0;
   while (lo + ((u64) 1 << 20) < hi) {
@@ -773,7 +759,7 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
                p->field_log2);
 
   if (verbose) {
-    for (i = 0; i < p->cand_count; i++) {
+    Fi(p->cand_count,
       const xpar_plan_cand * c = &p->cand[i];
       xpar_fprintf(out, "  %-11s: %s/GF%" PRIu8 "  ", i ? "" : "candidates",
                    codec_name(c->codec), c->field_log2);
@@ -786,8 +772,7 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
       group(g1, c->passes);
       group(g2, c->column_chunk);
       xpar_fprintf(out, "encode %s MAC-bytes, %s pass%s, C = %s B, %s\n",
-                   w1, g1, c->passes == 1 ? "" : "es", g2, h1);
-    }
+                   w1, g1, c->passes == 1 ? "" : "es", g2, h1));
   }
 
   expo(w1, sizeof w1, p->encode_work);

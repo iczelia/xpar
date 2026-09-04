@@ -31,7 +31,7 @@ static inline bool xpar_progress_wanted(const xpar_options * o) {
 /*  Reject unknown critical packet types.  */
 static inline void xpar_reject_unknown_critical(const xpar_scan * s) {
   if (s->skip_unsupported)
-    FATAL_FORMAT("This set uses an unknown critical packet type.");
+    FATAL_FORMAT("this set uses an unknown critical packet type");
 }
 
 int xpar_op_create(const xpar_options *);

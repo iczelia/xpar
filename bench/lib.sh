@@ -25,7 +25,7 @@ bench_find_tools() {
   if test -z "${xpar:-}"; then
     if   test -x "$top/xpar";     then xpar=$top/xpar
     elif test -x "$top/xpar.exe"; then xpar=$top/xpar.exe
-    else die "xpar binary not found. Use --xpar"
+    else die "xpar binary not found; use --xpar"
     fi
   fi
   case $xpar in

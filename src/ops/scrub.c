@@ -18,7 +18,6 @@
 #include "chain.h"
 #include "volimg.h"
 #include "vset.h"
-
 #include "armour.h"
 #include "blake3.h"
 #include "codec.h"
@@ -30,7 +29,6 @@
 #include "plan.h"
 #include "port-fs.h"
 #include "slice.h"
-
 #include "platform/port-thread.h"
 
 /*  Scrub state.  */
@@ -93,7 +91,7 @@ static void take_rcvs(scrub * c, const xpar_pkt * hdr, const u8 * body) {
 static void take_rcvs_decoded(scrub * c) {
   const xpar_setd * sd = xpar_vset_setd(c->s);
   u64 i;
-  for (i = 0; i < c->rcvs_count; i++) {
+  Fi(c->rcvs_count,
     u64 n = 0;
     const u8 * p;
     if (c->rcvs[i].seen) continue;
@@ -102,8 +100,7 @@ static void take_rcvs_decoded(scrub * c) {
     c->rcvs[i].seen = true;
     c->rcvs[i].data = p;
     c->rcvs[i].exponent = i;
-    c->rcvs_present++;
-  }
+    c->rcvs_present++);
 }
 
 static void scan_image(scrub * c, const u8 * buf, u64 size) {
@@ -134,16 +131,15 @@ static void load_recovery(scrub * c) {
   if (sd->layout == XPAR_LAYOUT_ARMOURED) { take_rcvs_decoded(c);  return; }
   /*  The index volumes may carry recovery slices themselves on a small
       set, so they are scanned before anything is opened.  */
-  for (i = 0; i < xpar_vset_volumes(c->s); i++) {
+  Fi(xpar_vset_volumes(c->s),
     u64 n = 0;
     const u8 * p = xpar_vset_volume(c->s, i, &n);
-    if (p) scan_image(c, p, n);
-  }
+    if (p) scan_image(c, p, n));
   if (!l) return;
 
   c->rvol = (xpar_volimg *) xpar_calloc(l->count ? l->count : 1,
                                         sizeof(xpar_volimg));
-  for (i = 0; i < l->count; i++) {
+  Fi(l->count,
     const xpar_vol * v = &l->vol[i];
     xpar_volimg_status vs;
     char * path;
@@ -152,7 +148,7 @@ static void load_recovery(scrub * c) {
     path = xpar_path_vol(dir, v->name);
     vs = xpar_volimg_read(&c->rvol[c->rcount], path, &err);
     if (vs == XPAR_VOLIMG_IO)
-      FATAL_IO("Cannot read recovery volume '%s': %s.", path,
+      FATAL_IO("cannot read recovery volume '%s': %s", path,
                xpar_strerror(err ? err : xpar_errno()));
     if (vs != XPAR_VOLIMG_OK) {
       xpar_fprintf(xpar_stderr, "xpar: recovery volume '%s' is missing\n",
@@ -162,8 +158,7 @@ static void load_recovery(scrub * c) {
     }
     xpar_free(path);
     scan_image(c, c->rvol[c->rcount].data, c->rvol[c->rcount].size);
-    c->rcount++;
-  }
+    c->rcount++);
   take_rcvs_decoded(c);
 }
 
@@ -174,16 +169,18 @@ static void hist_add(scrub * c, const xpar_armour_stat * st) {
   c->clean     += st->clean;      c->corrected += st->corrected;
   c->failed    += st->failed;     c->symbols   += st->symbols;
   if (st->worst > c->worst) c->worst = st->worst;
-  For(u32, i, MIN(st->hist_len, c->hist_len), c->hist[i] += st->hist[i])
+  u32 i;
+  Fi(MIN(st->hist_len, c->hist_len), c->hist[i] += st->hist[i]);
 }
 
 static void stat_merge(xpar_armour_stat * d, const xpar_armour_stat * s) {
+  u32 i;
   d->frames    += s->frames;     d->codewords += s->codewords;
   d->clean     += s->clean;      d->corrected += s->corrected;
   d->failed    += s->failed;     d->symbols   += s->symbols;
   if (s->worst > d->worst) d->worst = s->worst;
   if (d->hist && s->hist)
-    For(u32, i, MIN(d->hist_len, s->hist_len), d->hist[i] += s->hist[i])
+    Fi(MIN(d->hist_len, s->hist_len), d->hist[i] += s->hist[i]);
 }
 
 /*  Decode independent frame ranges with per-worker codecs.  */
@@ -229,16 +226,14 @@ static void scrub_frames(scrub * c, const xpar_armour * ar, u8 * region,
   j.fx = xpar_armour_frame_disk(ar);
   j.st = (xpar_armour_stat *) xpar_calloc(j.chunks,
                                           sizeof(xpar_armour_stat));
-  for (i = 0; i < j.chunks; i++) {
+  Fi(j.chunks,
     j.st[i].hist_len = st->hist_len;
     j.st[i].hist = st->hist_len
-                     ? (u64 *) xpar_calloc(st->hist_len, sizeof(u64)) : NULL;
-  }
+                     ? (u64 *) xpar_calloc(st->hist_len, sizeof(u64)) : NULL);
   xpar_pool_run(pool, j.chunks, scrub_frames_run, &j);
-  for (i = 0; i < j.chunks; i++) {
+  Fi(j.chunks,
     stat_merge(st, &j.st[i]);
-    xpar_free(j.st[i].hist);
-  }
+    xpar_free(j.st[i].hist));
   xpar_free(j.st);
   xpar_pool_destroy(pool);
 }
@@ -414,17 +409,15 @@ static void scrub_armour(scrub * c) {
   u32 i;
   c->hist_len = SCRUB_HIST_MAX;
   c->hist = (u64 *) xpar_calloc(c->hist_len, sizeof(u64));
-  for (i = 0; i < xpar_vset_volumes(c->s); i++) {
+  Fi(xpar_vset_volumes(c->s),
     u64 n = 0;
     const u8 * p = xpar_vset_volume(c->s, i, &n);
     if (!p) continue;
     if (xpar_garm_is_archive(p, (sz) n))
       scrub_archive(c, p, n, xpar_vset_volume_path(c->s, i));
     else
-      scrub_image(c, p, n, xpar_vset_volume_path(c->s, i));
-  }
-  for (i = 0; i < c->rcount; i++)
-    scrub_image(c, c->rvol[i].data, c->rvol[i].size, c->rvol[i].path);
+      scrub_image(c, p, n, xpar_vset_volume_path(c->s, i)));
+  Fi(c->rcount, scrub_image(c, c->rvol[i].data, c->rvol[i].size, c->rvol[i].path));
 }
 
 /*  Hard-link structure.  */
@@ -470,7 +463,7 @@ static void check_links(scrub * c) {
   if (!m->count) return;
   id = (linkid *) xpar_calloc(m->count, sizeof(linkid));
   xpar_nameidx_build(m, &nix);
-  for (i = 0; i < m->count; i++) {
+  Fi(m->count,
     const xpar_entry * e = &m->entry[i];
     char * path;
     xpar_stat_t st;
@@ -483,10 +476,9 @@ static void check_links(scrub * c) {
       id[n].entry = i;     id[n].have = true;
       n++;
     }
-    xpar_free(path);
-  }
+    xpar_free(path));
   /*  Direction one: the manifest says these names share an inode.  */
-  for (i = 0; i < m->count; i++) {
+  Fi(m->count,
     i64 tgt;
     bool ha, hb;
     linkid ia, ib;
@@ -503,17 +495,13 @@ static void check_links(scrub * c) {
                      "xpar: link-structure-drift: '%s' is no longer the "
                      "same inode as '%s'\n", m->entry[i].name,
                      m->entry[tgt].name);
-    }
-  }
+    });
   /*  Direction two: names the manifest calls independent that now share
       one. Sorted rather than compared pairwise, since a large tree makes
       the quadratic form the dominant cost of the whole operation.  */
   if (n > 1) {
     for (i = n / 2; i-- > 0;) link_sift(id, i, n);
-    for (i = n; i-- > 1;) {
-      linkid t = id[0];  id[0] = id[i];  id[i] = t;
-      link_sift(id, 0, i);
-    }
+    for (i = n; i-- > 1;) { linkid t = id[0];  id[0] = id[i];  id[i] = t;  link_sift(id, 0, i); }
     for (i = 1; i < n; i++) {
       const xpar_entry * a = &m->entry[id[i - 1].entry];
       const xpar_entry * b = &m->entry[id[i].entry];
@@ -545,13 +533,12 @@ static void deep(scrub * c) {
     xpar_fputs("xpar: --deep: nothing to re-encode\n", xpar_stderr);
     return;
   }
-  for (i = 0; i < r_count; i++)
-    if (!c->rcvs[i].seen) c->rcvs_unchecked++;
+  Fi(r_count, if (!c->rcvs[i].seen) c->rcvs_unchecked++);
   if (!xpar_codec_supports_axis(sd->codec, sd->field_log2, s_count, r_count,
                                 sd->recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
                "--deep: this build's codec cannot express S = %" PRIu64 " with "
-               "R = %" PRIu64 ".", s_count,
+               "R = %" PRIu64 , s_count,
                r_count);
 
   chunk = budget / (s_count + r_count);
@@ -559,17 +546,15 @@ static void deep(scrub * c) {
   if (chunk < 64)
     FATAL_CODE(XPAR_EXIT_NOPLAN,
                "--deep needs at least %" PRIu64
-               " bytes of slice buffers; raise -m.",
+               " bytes of slice buffers; raise -m",
                (s_count + r_count) * 64);
   if (chunk > g->slice_size) chunk = g->slice_size;
 
   data = (u8 **) xpar_calloc((sz) s_count, sizeof(u8 *));
   rec  = (u8 **) xpar_calloc((sz) r_count, sizeof(u8 *));
   din  = (const u8 **) xpar_calloc((sz) s_count, sizeof(u8 *));
-  for (i = 0; i < s_count; i++)
-    { data[i] = (u8 *) xpar_alloc_raw((sz) chunk);  din[i] = data[i]; }
-  for (i = 0; i < r_count; i++)
-    rec[i] = (u8 *) xpar_alloc_raw((sz) chunk);
+  Fi(s_count, data[i] = (u8 *) xpar_alloc_raw((sz) chunk);  din[i] = data[i]);
+  Fi(r_count, rec[i] = (u8 *) xpar_alloc_raw((sz) chunk));
   codec = xpar_codec_new_axis(sd->codec, sd->field_log2, s_count, r_count,
                               sd->recovery_axis_log2);
 
@@ -577,17 +562,17 @@ static void deep(scrub * c) {
     bool data_lost = false;
     for (off = 0; off < g->slice_size; off += chunk) {
       u64 take = MIN(chunk, g->slice_size - off);
-      for (i = 0; i < s_count; i++)
+      Fi(s_count,
         if (!xpar_vset_read(c->s, g->stream_base + i * g->slice_size + off,
                             data[i], take)) {
           /* Missing data invalidates every parity comparison. */
           xpar_memset(data[i], 0, (sz) take);
           data_lost = true;
-        }
+        });
       if (data_lost) break;
       xpar_codec_encode(codec, (const u8 * const *) din,
                         (u8 * const *) rec, (sz) take);
-      for (j = 0; j < r_count; j++) {
+      Fj(r_count,
         if (!c->rcvs[j].seen || wrong[j]) continue;
         if (xpar_memcmp(rec[j], c->rcvs[j].data + off, (sz) take) != 0) {
           wrong[j] = 1;
@@ -596,17 +581,16 @@ static void deep(scrub * c) {
             xpar_fprintf(xpar_stderr,
                          "xpar: recovery slice %" PRIu64 " does not recompute "
                          "from the data\n", j);
-        }
-      }
+        });
     }
     if (data_lost && !c->o->quiet)
       xpar_fprintf(xpar_stderr, "xpar: --deep: protected data is incomplete; "
-                   "repair it before checking recovery slices.\n");
+                   "repair it before checking recovery slices\n");
     xpar_free(wrong); }
 
   xpar_codec_free(codec);
-  for (i = 0; i < s_count; i++) xpar_free(data[i]);
-  for (i = 0; i < r_count; i++) xpar_free(rec[i]);
+  Fi(s_count, xpar_free(data[i]));
+  Fi(r_count, xpar_free(rec[i]));
   xpar_free(data);  xpar_free(rec);  xpar_free((void *) din);
 }
 
@@ -641,8 +625,7 @@ static void rebuild_cells(scrub * c) {
                xpar_stderr);
     return;
   }
-  for (i = 0; i < g->slice_count; i++)
-    if (!xpar_vset_cell_covered(c->s, i)) need++;
+  Fi(g->slice_count, if (!xpar_vset_cell_covered(c->s, i)) need++);
   if (!need) {
     xpar_fputs("xpar: --rebuild-cells: the cell table is already "
                "complete\n", xpar_stderr);
@@ -657,7 +640,7 @@ static void rebuild_cells(scrub * c) {
   slice = (u8 *) xpar_alloc_raw((sz) g->slice_size);
 
   /* Flush at coverage gaps, unverified slices and packet limits. */
-  for (i = 0; i < g->slice_count; i++) {
+  Fi(g->slice_count,
     bool ok;
     u32 col;
     if (xpar_vset_cell_covered(c->s, i)) { cellrun_flush(&cr, c);  continue; }
@@ -693,8 +676,7 @@ static void rebuild_cells(scrub * c) {
                                                 (u64) col * sd->cell_bytes,
                                              (sz) xpar_cell_size(g, col));
     cr.run++;
-    c->cells_rebuilt += k;
-  }
+    c->cells_rebuilt += k);
   cellrun_flush(&cr, c);
 
   if (c->cells_unseeded) {
@@ -741,7 +723,7 @@ static void rebuild_cells(scrub * c) {
         u32 q;
         if (!path) continue;
         for (base = path + xpar_strlen(path); base > path &&
-             base[-1] != '/' && base[-1] != '\\'; base--) {}
+             base[-1] != '/' && base[-1] != '\\'; base--) {;}
         if (layt) for (q = 0; q < layt->count; q++)
           if (layt->vol[q].kind == XPAR_VOL_DATA && layt->vol[q].name &&
               xpar_path_same(base, layt->vol[q].name)) {
@@ -859,7 +841,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   xpar_json * js = shared ? shared : &local;
   int rc;
 
-  FATAL_UNLESS("scrub cannot read a pipe; use --spool.", !o->from_stdin);
+  FATAL_UNLESS(!o->from_stdin, "scrub cannot read a pipe; use --spool");
 
   xpar_memset(&c, 0, sizeof c);
   c.o = o;
@@ -869,11 +851,11 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   if ((o->rewrite || o->rebuild_cells) &&
       xpar_vset_authenticated(c.s) && !xpar_vset_key(c.s))
     FATAL_CODE(XPAR_EXIT_AUTH,
-               "Writing this set requires --auth-key=FILE.");
+               "writing this set requires --auth-key=FILE");
 
   if ((o->rewrite || o->rebuild_cells) && !o->force &&
       xpar_vset_setd(c.s)->slice_tag_len == 0)
-    FATAL("Writing a set without slice tags requires -f.");
+    FATAL("writing a set without slice tags requires -f");
 
   rc = xpar_vset_check(c.s, o, o->json ? js : NULL);
   xpar_vset_report(c.s, o, rc);
@@ -927,8 +909,8 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     }
   }
 
-  { u32 i;
-    for (i = 0; i < c.rcount; i++) xpar_volimg_close(&c.rvol[i]); }
+  u32 i;
+  Fi(c.rcount, xpar_volimg_close(&c.rvol[i]));
   xpar_free(c.rvol);
   xpar_free(c.rcvs);  xpar_free(c.hist);
   /*  Chain walks close shared heads after all generations.  */
@@ -944,17 +926,9 @@ int xpar_op_scrub(const xpar_options * o) {
   /*  Scrub unselected ancestry.  */
   if (!walk && !o->gen_count && !o->from_stdin) {
     only = xpar_vset_open(o);
-    if (xpar_vset_setd(only)->generation) {
-      xpar_vset_close(only);
-      only = NULL;
-      walk = true;
-    }
+    if (xpar_vset_setd(only)->generation) { xpar_vset_close(only);  only = NULL;  walk = true; }
   }
-  if (!walk) {
-    rc = scrub_one(o, only, NULL, true);
-    if (only) xpar_vset_close(only);
-    return rc;
-  }
+  if (!walk) { rc = scrub_one(o, only, NULL, true);  if (only) xpar_vset_close(only);  return rc; }
 
   {
     /*  The public reader does not expose the generation table, so use the
@@ -978,8 +952,8 @@ int xpar_op_scrub(const xpar_options * o) {
     member = (u8 *) xpar_calloc(c.gen_count, 1);
     for (at = selected; at != XPAR_GEN_NONE && walked++ < c.gen_count;
          at = c.gen[at].parent) member[at] = 1;
-    FATAL_UNLESS("The selected generation's ancestry is cyclic.",
-                 at == XPAR_GEN_NONE);
+    FATAL_UNLESS(at == XPAR_GEN_NONE,
+                 "the selected generation's ancestry is cyclic");
     xpar_gchain_genref(&c, selected, &top_ref, top_id);
     top.chain = false;
     top.gens = &top_ref;

@@ -125,7 +125,7 @@ static void test_layouts(xt_context * c) {
     { "armoured matrix GF(2^16)", "armoured", "matrix", "16" }
   };
   u32 i;
-  for (i = 0; i < ARRAY_LEN(cases); i++) {
+  Fi(ARRAY_LEN(cases),
     const char * create[] = {
       "create", "--reproducible", "--dedup=none", "--align=none",
       "-s", "4K", "-r", "4", "--layout", cases[i].layout,
@@ -175,8 +175,7 @@ static void test_layouts(xt_context * c) {
             xt_path(restored, sizeof restored, outdir, "DATA.BIN") &&
             xt_files_equal(restored, keep),
             "inner correction restores every byte");
-    }
-  }
+    });
 }
 
 static void test_reproducible(xt_context * c) {
@@ -222,10 +221,7 @@ static void test_statuses(xt_context * c) {
 
 static const char * path_leaf(const char * path) {
   const char * leaf = path;
-  while (*path) {
-    if (*path == '/' || *path == '\\') leaf = path + 1;
-    path++;
-  }
+  while (*path) { if (*path == '/' || *path == '\\') leaf = path + 1;  path++; }
   return leaf;
 }
 
@@ -424,9 +420,9 @@ static void test_stdout_safety(xt_context * c) {
         "add correctable inner-code damage");
   run(c, dir, 0, extract, "correct while extracting to stdout");
   CHECK(xt_files_equal(c->out, keep), "corrected stdout is exact");
-  for (i = 0; i < 12; i++)
+  Fi(12,
     CHECK(xt_damage(archive, 2048 + (u64) i * 8192, 64, 0x5800 + i),
-          "damage armoured slice %" PRIu32, i);
+      "damage armoured slice %" PRIu32, i));
   status = xt_run_xpar(c, dir, extract);
   if (status == 0)
     CHECK(xt_files_equal(c->out, keep),
@@ -503,10 +499,7 @@ static void test_hardlink_journal(xt_context * c) {
         xt_path(b, sizeof b, tree, "B.BIN") &&
         xt_write_pattern(a, 40000, 5), "prepare the hard-link tree");
   CHECK(xpar_link(a, b) == 0, "create the hard link");
-  if (!same_link(a, b)) {
-    CHECK(false, "created names share an identity");
-    return;
-  }
+  if (!same_link(a, b)) { CHECK(false, "created names share an identity");  return; }
   CHECK(true, "created names share an identity");
   if (run(c, dir, 0, create, "protect the hard link") != 0) return;
   CHECK(xpar_remove(b) == 0 && xt_copy_file(a, b),

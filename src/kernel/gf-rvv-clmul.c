@@ -12,10 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: RISC-V Zvbc carry-less multiply GF(2^16) kernels.  */
+/*  RISC-V Zvbc carry-less multiply GF(2^16) kernels.  */
 
 #include "gf-rvv-int.h"
-
 #include <riscv_vector.h>
 
 /*  GF16 symbols are little-endian; vector loads use host byte order.  */

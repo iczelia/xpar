@@ -12,10 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: NEON PMULL kernels, including GF(2^16) carry-less multiply.  */
+/*  NEON PMULL kernels, including GF(2^16) carry-less multiply.  */
 
 #include "gf.h"
-
 #include <arm_neon.h>
 
 /*  Cache coefficients because destination writes may alias them.  */
@@ -90,8 +89,8 @@ static void nc_mac8x2(u8 * const d[2], const u8 * s, sz n,
     vst1q_u8(d[0] + i, veorq_u8(vld1q_u8(d[0] + i), nc_mul8(v, c0)));
     vst1q_u8(d[1] + i, veorq_u8(vld1q_u8(d[1] + i), nc_mul8(v, c1)));
   }
-  for (u32 j = 0; j < 2; j++)
-    xpar_gf8_mac_ref(d[j] + i, s + i, n - i, m[j].c);
+  u32 j;
+  Fj(2, xpar_gf8_mac_ref(d[j] + i, s + i, n - i, m[j].c));
 }
 
 static void nc_mul8_region(u8 * d, const u8 * s, sz n,

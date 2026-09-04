@@ -12,9 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Path-name manipulation and the private staging files built from it.
-    Every operation needs to split a path, rejoin one, and write beside a
-    file before publishing it; none of them needs its own copy.  */
+/*  Path names and private staging files.  */
 
 #ifndef XPAR_PATHNAME_H
 #define XPAR_PATHNAME_H
@@ -44,9 +42,7 @@ bool xpar_path_same(const char * a, const char * b);
 /*  Escape control bytes as \xNN. The rotating buffer owns the result.  */
 char * xpar_name_escape(const char * s);
 
-/*  Advance `*at` over a run of decimal digits ending at `end`, failing
-    when there is not at least one. Volume and generation names are
-    parsed with it.  */
+/*  Scan one nonempty decimal run.  */
 bool xpar_scan_digits(const char * s, sz * at, sz end);
 
 /*  Set or get the fallback volume directory.  */

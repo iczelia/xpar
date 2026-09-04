@@ -109,34 +109,34 @@ static u32 gcd_u32(u32 x, u32 y) {
 const char * xpar_armour_check(const xpar_armour_params * p) {
   u32 order, t2, pr;  u64 frame;
   if (p->symbol_bits != 8 && p->symbol_bits != 16)
-    return "Armour symbol width must be 8 or 16.";
+    return "armour symbol width must be 8 or 16";
   order = p->symbol_bits == 8 ? 255u : 65535u;
   if (p->poly != (p->symbol_bits == 8 ? (XPAR_GF8_POLY  & 0xFFu)
                                       : (XPAR_GF16_POLY & 0xFFFFu)))
-    return "Armour field polynomial is not the one this build implements.";
+    return "armour field polynomial is not the one this build implements";
   /*  Format minimum.  */
-  if (p->n < 16 || p->n > order)     return "Armour n is out of range.";
-  if (p->k < 1 || p->k >= p->n)      return "Armour k is out of range.";
+  if (p->n < 16 || p->n > order)     return "armour n is out of range";
+  if (p->k < 1 || p->k >= p->n)      return "armour k is out of range";
   t2 = p->n - p->k;
-  if (t2 & 1)                        return "Armour n - k must be even.";
+  if (t2 & 1)                        return "armour n - k must be even";
   /*  The 2t roots must be distinct or the code does not have distance
       2t+1, and the Chien search must not map two degrees to one locator.
       Both follow from prim being a unit modulo 2^w - 1.  */
   pr = p->prim % order;
   if (pr == 0 || gcd_u32(pr, order) != 1)
-    return "Armour prim must be invertible modulo 2^w - 1.";
+    return "armour prim must be invertible modulo 2^w - 1";
   /* Version 2.0 fixes the generator for each field. */
   if (p->symbol_bits == 8) {
     if (p->fcr != 212 || p->prim != 11)
-      return "Invalid GF(2^8) armour fcr/prim.";
+      return "invalid GF(2^8) armour fcr/prim";
   } else if (p->fcr != 1 || p->prim != 1) {
-    return "Invalid GF(2^16) armour fcr/prim.";
+    return "invalid GF(2^16) armour fcr/prim";
   }
   if (p->depth < 1 || p->depth > (1u << 24))
-    return "Armour depth must be in [1, 2^24].";
+    return "armour depth must be in [1, 2^24]";
   frame = p->depth * (u64) p->n * (u64) (p->symbol_bits / 8);
   if (frame > (u64) (sz) -1)
-    return "Armour frame does not fit in this host's address space.";
+    return "armour frame does not fit in this host's address space";
   return NULL;
 }
 
@@ -188,8 +188,8 @@ bool xpar_armour_use_tier(int tier) {
 }
 
 void xpar_armour_use_default_tier(void) {
-  for (int i = 0; i < ARM_NTIERS; i++)
-    if (xpar_armour_use_tier(i)) return;
+  int i;
+  Fi(ARM_NTIERS, if (xpar_armour_use_tier(i)) return);
 }
 
 #define ARM_REF_TILE  4096
@@ -218,11 +218,11 @@ void xpar_armour_taps8_ref(u8 * restrict par, sz stride, u32 t2, u32 head,
     sweep8(par, stride, gen + first, head, fb, n);
     return;
   }
-  for (sz i = 0; i < n; i++) {
+  sz i;
+  Fi(n,
     u32 lo = fb[i] & 15u, hi = 16u + (fb[i] >> 4);
     run8(par + (sz) head * stride + i, stride, gen, first, lo, hi);
-    run8(par + i, stride, gen + first, head, lo, hi);
-  }
+    run8(par + i, stride, gen + first, head, lo, hi));
 }
 
 /*  Four nibble lookups per output byte, the same decomposition one field
@@ -242,10 +242,7 @@ static u16 mul16_nib(const xpar_gf16_coef * m, const u32 * q) {
 
 static void run16(u8 * restrict p, sz stride, const xpar_gf16_coef * g, u32 c,
                   const u32 * q) {
-  while (c--) {
-    xpar_wr16(p, (u16) (xpar_rd16(p) ^ mul16_nib(g, q)));
-    p += stride;  g++;
-  }
+  while (c--) { xpar_wr16(p, (u16) (xpar_rd16(p) ^ mul16_nib(g, q)));  p += stride;  g++; }
 }
 
 static void sweep16(u8 * restrict p, sz stride, const xpar_gf16_coef * g,
@@ -283,22 +280,18 @@ void xpar_armour_horner8_ref(u8 * restrict syn, sz stride, u32 t2,
                              const u8 * restrict sym, sz n) {
   u32 j;  sz i;
   if ((u64) t2 * (u64) n > ARM_REF_TILE) {
-    for (j = 0; j < t2; j++) {
+    Fj(t2,
       const u8 * tb = rt[j].tab;
       u8 * p = syn + (sz) j * stride;
-      for (i = 0; i < n; i++)
-        p[i] = (u8) (tb[p[i] & 15u] ^ tb[16 + (p[i] >> 4)] ^ sym[i]);
-    }
+      Fi(n, p[i] = (u8) (tb[p[i] & 15u] ^ tb[16 + (p[i] >> 4)] ^ sym[i])));
     return;
   }
-  for (i = 0; i < n; i++) {
+  Fi(n,
     u8 * p = syn + i;  u8 s = sym[i];
-    for (j = 0; j < t2; j++) {
+    Fj(t2,
       u32 v = *p;
       *p = (u8) (rt[j].tab[v & 15u] ^ rt[j].tab[16 + (v >> 4)] ^ s);
-      p += stride;
-    }
-  }
+      p += stride));
 }
 
 void xpar_armour_horner16_ref(u8 * restrict syn, sz stride, u32 t2,
@@ -306,22 +299,20 @@ void xpar_armour_horner16_ref(u8 * restrict syn, sz stride, u32 t2,
                               const u8 * restrict sym, sz n) {
   u32 q[4], j;  sz i;
   if ((u64) t2 * (u64) n > ARM_REF_TILE) {
-    for (j = 0; j < t2; j++) {
+    Fj(t2,
       u8 * p = syn + (sz) j * stride;
       for (i = 0; i + 2 <= n; i += 2) {
         nib16(q, xpar_rd16(p + i));
         xpar_wr16(p + i, (u16) (mul16_nib(&rt[j], q) ^ xpar_rd16(sym + i)));
-      }
-    }
+      });
     return;
   }
   for (i = 0; i + 2 <= n; i += 2) {
     u8 * p = syn + i;  u16 s = xpar_rd16(sym + i);
-    for (j = 0; j < t2; j++) {
+    Fj(t2,
       nib16(q, xpar_rd16(p));
       xpar_wr16(p, (u16) (mul16_nib(&rt[j], q) ^ s));
-      p += stride;
-    }
+      p += stride);
   }
 }
 
@@ -499,9 +490,7 @@ void xpar_armour_generator(const xpar_armour * a, u32 * g) {
 static void feedback(const xpar_gf_kernels * gk, u8 * fb, const u8 * dat,
                      u8 * top, sz lane) {
   if (lane > 16) { gk->xor3(fb, dat, top, lane);  xpar_memset(top, 0, lane); }
-  else for (sz q = 0; q < lane; q++) {
-    fb[q] = (u8) (dat[q] ^ top[q]);  top[q] = 0;
-  }
+  else for (sz q = 0; q < lane; q++) { fb[q] = (u8) (dat[q] ^ top[q]);  top[q] = 0; }
 }
 
 /*  Gather or scatter one symbol position across a frame batch.  */
@@ -536,15 +525,14 @@ static void encode_batch(const xpar_armour * a, u8 * base, u64 fx, u32 cnt) {
   u32 t2 = a->t2, head = 0, i, u;
   xpar_memset(a->par, 0, (sz) t2 * vl);
   xpar_memset(a->gsym + used, 0, vl - used);
-  for (i = 0; i < a->p.k; i++) {
+  Fi(a->p.k,
     gather(lane, a->gsym, base + (sz) i * lane, fx, cnt);
     feedback(gk, a->fb, a->gsym, a->par + (sz) head * vl, vl);
     if (++head == t2) head = 0;
     if (a->wb == 1)
       a->kern->taps8(a->par, vl, t2, head, a->gen8, a->fb, vl);
     else
-      a->kern->taps16(a->par, vl, t2, head, a->gen16, a->fb, vl);
-  }
+      a->kern->taps16(a->par, vl, t2, head, a->gen16, a->fb, vl));
   for (u = 0; u < t2; u++)
     scatter(lane, base + (sz) (a->p.k + u) * lane, fx, cnt,
             a->par + (sz) ((head + u) % t2) * vl);
@@ -601,18 +589,17 @@ static void batch_syndromes(const xpar_armour * a, const u8 * base, u64 fx,
   u32 i;
   xpar_memset(a->syn, 0, (sz) a->t2 * vl);
   xpar_memset(a->gsym + used, 0, vl - used);
-  for (i = 0; i < a->p.n; i++) {
+  Fi(a->p.n,
     gather(lane, a->gsym, base + (sz) i * lane, fx, cnt);
     if (a->wb == 1)
       a->kern->horner8 (a->syn, vl, a->t2, a->rt8,  a->gsym, vl);
     else
-      a->kern->horner16(a->syn, vl, a->t2, a->rt16, a->gsym, vl);
-  }
+      a->kern->horner16(a->syn, vl, a->t2, a->rt16, a->gsym, vl));
 }
 
 static bool region_zero(const u8 * p, sz n) {
   sz i;  u8 acc = 0;
-  for (i = 0; i < n; i++) acc |= p[i];
+  Fi(n, acc |= p[i]);
   return acc == 0;
 }
 
@@ -646,10 +633,7 @@ static u32 berlekamp(const xpar_armour * a) {
     evaluation replaces exponentiation at each position with multiplication.  */
 static u32 chien(const xpar_armour * a, u32 L) {
   u32 cnt = 0, r, i, pinv = a->order - (a->p.prim % a->order);
-  for (i = 0; i <= L; i++) {
-    a->ev[i]   = a->lam[i];
-    a->step[i] = f_alpha_mul(a, pinv, i);
-  }
+  for (i = 0; i <= L; i++) { a->ev[i]   = a->lam[i];  a->step[i] = f_alpha_mul(a, pinv, i); }
   for (r = 0; r < a->p.n; r++) {
     u32 sum = 0;
     for (i = 0; i <= L; i++) sum ^= a->ev[i];
@@ -666,19 +650,18 @@ static u32 chien(const xpar_armour * a, u32 L) {
     and magnitudes as invalid locator roots.  */
 static bool forney(const xpar_armour * a, u32 L) {
   u32 i, j, l;
-  for (j = 0; j < L; j++) {
+  Fj(L,
     u32 acc = 0;
-    for (i = 0; i <= j && i <= L; i++) acc ^= f_mul(a, a->lam[i], a->s[j - i]);
-    a->om[j] = acc;
-  }
+    for (i = 0; i <= j && i <= L; i++)
+      acc ^= f_mul(a, a->lam[i], a->s[j - i]);
+    a->om[j] = acc);
   for (l = 0; l < L; l++) {
     u32 r = a->pos[l];
     u32 x = f_alpha_mul(a, a->p.prim % a->order, r);
     u32 y = f_inv(a, x), yp = 1, num = 0, den = 0;
-    for (j = 0; j < L; j++) {
+    Fj(L,
       num ^= f_mul(a, a->om[j], yp);
-      yp   = f_mul(a, yp, y);
-    }
+      yp   = f_mul(a, yp, y));
     yp = 1;
     for (i = 1; i <= L; i += 2) {
       den ^= f_mul(a, a->lam[i], yp);
@@ -701,14 +684,10 @@ static bool syndromes_agree(const xpar_armour * a, u32 L) {
     a->ev[l]   = f_mul(a, a->val[l], f_alpha_mul(a, a->p.fcr % a->order, r));
     a->step[l] = f_alpha_mul(a, a->p.prim % a->order, r);
   }
-  for (j = 0; j < a->t2; j++) {
+  Fj(a->t2,
     u32 acc = 0;
-    for (l = 0; l < L; l++) {
-      acc ^= a->ev[l];
-      a->ev[l] = f_mul(a, a->ev[l], a->step[l]);
-    }
-    if (acc != a->s[j]) return false;
-  }
+    for (l = 0; l < L; l++) { acc ^= a->ev[l];  a->ev[l] = f_mul(a, a->ev[l], a->step[l]); }
+    if (acc != a->s[j]) return false);
   return true;
 }
 
@@ -720,10 +699,9 @@ static int decode_one(const xpar_armour * a, u8 * frame, u32 d,
                       const u8 * syn, sz stride) {
   sz lane = a->lane;  u32 j, L, cnt;
   bool zero = true;
-  for (j = 0; j < a->t2; j++) {
+  Fj(a->t2,
     a->s[j] = sym_rd(a, syn + (sz) j * stride + (sz) d * a->wb);
-    if (a->s[j]) zero = false;
-  }
+    if (a->s[j]) zero = false);
   if (zero) return 0;
   L = berlekamp(a);
   if (L == 0 || L > a->t) return -1;
@@ -731,10 +709,9 @@ static int decode_one(const xpar_armour * a, u8 * frame, u32 d,
   if (cnt != L) return -1;
   if (!forney(a, L)) return -1;
   if (!syndromes_agree(a, L)) return -1;
-  for (j = 0; j < L; j++) {
+  Fj(L,
     u8 * p = frame + (sz) (a->p.n - 1 - a->pos[j]) * lane + (sz) d * a->wb;
-    sym_wr(a, p, sym_rd(a, p) ^ a->val[j]);
-  }
+    sym_wr(a, p, sym_rd(a, p) ^ a->val[j]));
   return (int) L;
 }
 

@@ -12,12 +12,10 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: sliding-window misplaced-data search.  */
+/*  sliding-window misplaced-data search.  */
 
 #include "resync.h"
-
 #include "cli.h"
-
 #include "crc32c.h"
 
 #define RS_IO       ((sz) 1 << 20)
@@ -70,18 +68,16 @@ static void rs_index_init(rs_index * x, const xpar_resync_probe * p, u32 n) {
   x->bucket = (u32 *) xpar_alloc_raw((sz) slots * sizeof(u32));
   x->next = (u32 *) xpar_alloc_raw((sz) MAX(n, 1u) * sizeof(u32));
   x->unique = (u8 *) xpar_calloc(MAX(n, 1u), 1);
-  for (i = 0; i < slots; i++) x->bucket[i] = RS_NONE;
-  for (i = 0; i < n; i++) {
+  Fi(slots, x->bucket[i] = RS_NONE);
+  Fi(n,
     u32 b = rs_hash32(p[i].crc) & x->mask;
     x->next[i] = x->bucket[b];
-    x->bucket[b] = i;
-  }
-  for (i = 0; i < n; i++) {
+    x->bucket[b] = i);
+  Fi(n,
     u32 b = rs_hash32(p[i].crc) & x->mask, q, count = 0;
     for (q = x->bucket[b]; q != RS_NONE; q = x->next[q])
       if (p[q].crc == p[i].crc) count++;
-    x->unique[i] = count == 1;
-  }
+    x->unique[i] = count == 1);
 }
 
 static void rs_index_free(rs_index * x) {
@@ -141,10 +137,8 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
   while (pos + window < size) {
     at = pos + window;
     { sz n = (sz) MIN((u64) RS_IO, size - at), i;
-      if (xpar_pread(f, input, n, at) != n) {
-        xpar_free(ring);  xpar_free(input);  return false;
-      }
-      for (i = 0; i < n; i++) {
+      if (xpar_pread(f, input, n, at) != n) { xpar_free(ring);  xpar_free(input);  return false; }
+      Fi(n,
         crc = xpar_crc32c_roll_step(&roll, crc, ring[slot], input[i]);
         ring[slot] = input[i];
         if (++slot == window) slot = 0;
@@ -159,8 +153,7 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
             if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
             if (!hit(user, q, pos)) goto done;
           }
-        }
-      }
+        });
     }
   }
 done:
@@ -230,9 +223,9 @@ bool xpar_resync_search(xpar_file * f, u64 file_size, u64 window,
                rs_hist_hit, &h)) {
     rs_index_free(&ix);  xpar_free(h.bin);  return false;
   }
-  for (i = 0; i < slots; i++)
+  Fi(slots,
     if (h.bin[i].used)
-      rs_insert_best(out, h.bin[i].delta, h.bin[i].count);
+      rs_insert_best(out, h.bin[i].delta, h.bin[i].count));
   out->candidates = h.candidates;
   out->overflow = h.overflow;
   if (out->count) {
@@ -268,7 +261,7 @@ u64 xpar_resync_exhaustive(xpar_file * f, u64 file_size, u64 window,
   rs_exhaust x;
   u64 clipped = 0;
   u32 i;
-  for (i = 0; i < probe_count; i++) located[i] = UINT64_MAX;
+  Fi(probe_count, located[i] = UINT64_MAX);
   x.confirm = confirm;  x.user = user;  x.located = located;  x.confirms = 0;
   if (!probe_count || !window || window > file_size) return 0;
   if (!step) step = 1;
@@ -347,15 +340,15 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
   u32 i, d;
 
   xpar_memset(out, 0, sizeof *out);
-  for (i = 0; i < probe_count; i++) located[i] = UINT64_MAX;
+  Fi(probe_count, located[i] = UINT64_MAX);
   if (o->mode == XPAR_RESYNC_OFF || !probe_count) return;
 
-  for (i = 0; i < probe_count; i++)
+  Fi(probe_count,
     if (probe[i].expected <= file_size &&
         file_size - probe[i].expected >= slice_size &&
         xpar_pread(f, scratch, (sz) slice_size, probe[i].expected) ==
           (sz) slice_size &&
-        xpar_crc32c(0, scratch, (sz) slice_size) == probe[i].crc) aligned++;
+        xpar_crc32c(0, scratch, (sz) slice_size) == probe[i].crc) aligned++);
 
   out->engaged = o->mode == XPAR_RESYNC_ALWAYS ||
                  (o->mode == XPAR_RESYNC_AUTO &&
@@ -371,7 +364,7 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
   if (!result.overflow) {
     for (d = 0; d < result.count; d++) {
       if (d && result.delta[d].votes < 2) break;
-      for (i = 0; i < probe_count; i++) {
+      Fi(probe_count,
         u64 physical;
         if (located[i] != UINT64_MAX ||
             !xpar_resync_shift(probe[i].expected, result.delta[d].delta,
@@ -381,8 +374,7 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
         out->confirmations++;
         if (confirm(user, i, physical)) {
           located[i] = physical;  out->located++;
-        }
-      }
+        });
     }
   }
   if (!out->located && o->exhaustive &&
@@ -390,8 +382,7 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
     out->confirmations = xpar_resync_exhaustive(
       f, file_size, slice_size, probe, probe_count, o->step, o->window,
       confirm, user, located);
-    for (i = 0; i < probe_count; i++)
-      if (located[i] != UINT64_MAX) out->located++;
+    Fi(probe_count, if (located[i] != UINT64_MAX) out->located++);
   } else if (!out->located) {
     out->candidates = result.candidates;
   }

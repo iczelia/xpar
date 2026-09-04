@@ -143,10 +143,7 @@ u32 xpar_crc32c_scalar(u32 crc, const u8 * p, sz n) {
           xpar_crc32c_tab[0][ b >> 24        ];
     p += 8;  n -= 8;
   }
-  while (n) {
-    crc = (crc >> 8) ^ xpar_crc32c_tab[0][(crc ^ *p++) & 0xFF];
-    n--;
-  }
+  while (n) { crc = (crc >> 8) ^ xpar_crc32c_tab[0][(crc ^ *p++) & 0xFF];  n--; }
   return crc;
 }
 

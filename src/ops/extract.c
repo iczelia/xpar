@@ -20,7 +20,6 @@
 #include "chain.h"
 #include "vset.h"
 #include "volimg.h"
-
 #include "armour.h"
 #include "blake3.h"
 #include "container.h"
@@ -154,10 +153,7 @@ static char * ex_find_data(ex * x, const xpar_vol * v, char ** basename,
   *basename = NULL;
   *damaged = false;
   named = xpar_path_vol(x->dir, v->name);
-  if (xpar_vol_tag_match(named, v)) {
-    *basename = xpar_strdup(v->name);
-    return named;
-  }
+  if (xpar_vol_tag_match(named, v)) { *basename = xpar_strdup(v->name);  return named; }
   if (v->vol_tag && (d = xpar_opendir(x->dir)) != NULL) {
     while ((de = xpar_readdir(d)) != NULL) {
       if (!de->is_regular || xpar_path_same(de->name, v->name)) continue;
@@ -187,7 +183,7 @@ static bool ex_vol_open(ex * x, const char * path) {
   int err = 0;
   xpar_volimg_status st = xpar_volimg_read(&v, path, &err);
   if (st == XPAR_VOLIMG_IO)
-    FATAL_IO("Cannot read volume '%s': %s.", path,
+    FATAL_IO("cannot read volume '%s': %s", path,
              xpar_strerror(err ? err : xpar_errno()));
   if (st != XPAR_VOLIMG_OK) return false;
   if (x->vol_count == x->vol_cap) {
@@ -247,8 +243,9 @@ static void ex_collect(ex * x, const u8 * buf, u64 size) {
 }
 
 static bool ex_have_setd(const ex * x) {
-  For(u32, i, x->crit.count,
-      if (xpar_pkt_is(&x->crit.pkt[i].hdr, XPAR_T_SETD)) return true)
+  u32 i;
+  Fi(x->crit.count,
+    if (xpar_pkt_is(&x->crit.pkt[i].hdr, XPAR_T_SETD)) return true);
   return false;
 }
 
@@ -264,18 +261,18 @@ static void ex_open_armoured(ex * x, const xpar_volimg * v) {
   const u8 * arm;
   u64 plain_len, arm_len;
   FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
-               "No prologue copy in '%s' verifies; try "
-               "`xpar recover-prologue`.",
                xpar_garm_prologue(v->data, (sz) v->size, &pr, NULL),
+               "no prologue copy in '%s' verifies; try "
+               "`xpar recover-prologue`",
                v->path);
   p.symbol_bits = pr.symbol_bits;
   p.poly = pr.poly; p.n = pr.n; p.k = pr.k;
   p.fcr = pr.fcr; p.prim = pr.prim; p.depth = pr.depth;
   plain_len = pr.plain_length; arm_len = pr.armoured_length;
-  FATAL_UNLESS("The armoured prologue names unusable parameters: %s",
-               xpar_armour_check(&p) == NULL, xpar_armour_check(&p));
-  FATAL_UNLESS("The armoured region is too large for this host.",
-               plain_len <= (u64) (sz) -1 / 2 && arm_len <= (u64) (sz) -1);
+  FATAL_UNLESS(xpar_armour_check(&p) == NULL,
+               "the armoured prologue names unusable parameters: %s", xpar_armour_check(&p));
+  FATAL_UNLESS(plain_len <= (u64) (sz) -1 / 2 && arm_len <= (u64) (sz) -1,
+               "the armoured region is too large for this host");
   /*  Zero-fill a missing tail as erasures.  */
   if (384 + arm_len > v->size) {
     u64 avail = v->size > 384 ? v->size - 384 : 0;
@@ -321,11 +318,11 @@ static bool ex_armour_apply(ex * x, u64 lo, u64 hi) {
   bool changed = false;
   u32 i;
   /*  A chain reads its payload through per-generation sets instead.  */
-  for (i = 0; i < x->stream_count; i++)
+  Fi(x->stream_count,
     if (x->stream_set[i] &&
         xpar_vset_armour_correct(x->stream_set[i], lo, hi))
-      changed = true;
-  for (i = 0; i < x->arm_count; i++) {
+      changed = true);
+  Fi(x->arm_count,
     ex_arm * m = &x->arm[i];
     u64 fp = xpar_armour_frame_plain(m->a), fd = xpar_armour_frame_disk(m->a);
     u64 base, first, last, f;
@@ -354,8 +351,7 @@ static bool ex_armour_apply(ex * x, u64 lo, u64 hi) {
       xpar_memcpy(m->plain + po, out, (sz) have);
       changed = true;
     }
-    xpar_free(enc);  xpar_free(out);
-  }
+    xpar_free(enc);  xpar_free(out));
   return changed;
 }
 
@@ -365,7 +361,7 @@ static void ex_pick_setd(ex * x) {
   u32 i, j;
   const xpar_crit_pkt * want = NULL;
   xpar_setd sd;
-  for (i = 0; i < x->crit.count; i++) {
+  Fi(x->crit.count,
     const xpar_crit_pkt * p = &x->crit.pkt[i];
     bool named = false, head = true;
     if (!xpar_pkt_is(&p->hdr, XPAR_T_SETD)) continue;
@@ -393,20 +389,19 @@ static void ex_pick_setd(ex * x) {
       xpar_setd_free(&other);
     }
     xpar_setd_free(&sd);
-    if (x->o->gen_count ? named : head) { want = p;  break; }
-  }
+    if (x->o->gen_count ? named : head) { want = p;  break; });
   FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
-                    "No set descriptor survived in '%s'.", want != NULL,
+                    want != NULL, "no set descriptor survived in '%s'",
                     x->o->set);
   if (xpar_setd_read(want->body, (sz) want->body_len, &x->sd) != XPAR_OK)
-    FATAL_FORMAT("The set descriptor is malformed.");
+    FATAL_FORMAT("the set descriptor is malformed");
   xpar_memcpy(x->set_id, want->hdr.set_id, XPAR_SET_ID_LEN);
   x->have_setd = true;
 }
 
 static void ex_authenticate(ex * x) {
   u32 i;
-  for (i = 0; i < x->crit.count; i++) {
+  Fi(x->crit.count,
     const xpar_crit_pkt * p = &x->crit.pkt[i];
     xpar_auth a;
     if (!xpar_pkt_is(&p->hdr, XPAR_T_AUTH) ||
@@ -414,33 +409,31 @@ static void ex_authenticate(ex * x) {
         xpar_auth_read(p->body, (sz) p->body_len, &a) != XPAR_OK) continue;
     if (!x->key_loaded)
       FATAL_CODE(XPAR_EXIT_AUTH,
-                 "Extracting an authenticated set requires --auth-key=FILE; "
-                 "keyless access is read-only.");
+                 "extracting an authenticated set requires --auth-key=FILE; "
+                 "keyless access is read-only");
     if (!xpar_auth_key_ok(&a, x->master))
       FATAL_CODE(XPAR_EXIT_AUTH,
-                 "The authentication key is wrong for this set.");
+                 "the authentication key is wrong for this set");
     x->keyed = true;
     x->auth_only = !a.unkeyed_retained;
-    return;
-  }
+    return);
 }
 
 static void ex_read_manifest(ex * x) {
   u32 i;
-  for (i = 0; i < x->sd.file_count; i++) {
+  Fi(x->sd.file_count,
     const xpar_crit_pkt * p = xpar_critset_find_file(
                                 &x->crit, x->set_id, x->sd.file_id[i]);
     xpar_entry tmp, * e;
     FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
-                 "Manifest entry %" PRIu32 " of %" PRIu32
-                 " is missing from every volume.",
-                 p != NULL, i + 1, x->sd.file_count);
+                 p != NULL,
+                 "manifest entry %" PRIu32 " of %" PRIu32
+                 " is missing from every volume", i + 1, x->sd.file_count);
     if (xpar_entry_read(p->body, (sz) p->body_len, x->sd.posix_record_count,
                         &tmp) != XPAR_OK)
-      FATAL_FORMAT("Manifest entry %" PRIu32 " is malformed.", i + 1);
+      FATAL_FORMAT("manifest entry %" PRIu32 " is malformed", i + 1);
     e  = xpar_manifest_append(&x->mf);
-    *e = tmp;
-  }
+    *e = tmp);
   x->mf.stream_base   = x->sd.stream_base;
   x->mf.stream_length = x->sd.stream_length;
   x->mf.slice_size    = x->sd.slice_size;
@@ -449,7 +442,7 @@ static void ex_read_manifest(ex * x) {
   /*  POSX is per generation and is indexed from FILE.posix_index.  */
   if (xpar_posx_collect(&x->crit, x->set_id, x->sd.posix_record_count,
                         &x->posix) != XPAR_OK)
-    FATAL_FORMAT("The POSX table has gaps, overlaps, or invalid ranges.");
+    FATAL_FORMAT("the POSX table has gaps, overlaps, or invalid ranges");
   x->posix_count = x->sd.posix_record_count;
 }
 
@@ -458,14 +451,13 @@ static void ex_read_manifest(ex * x) {
 static bool ex_read_stream(ex * x, u64 off, u64 len, u8 * dst) {
   if (x->stream_count) {
     u32 i;
-    for (i = 0; i < x->stream_count; i++) {
+    Fi(x->stream_count,
       const xpar_geom * g = xpar_vset_geom(x->stream_set[i]);
       u64 end;
       if (g->stream_length > UINT64_MAX - g->stream_base) continue;
       end = g->stream_base + g->stream_length;
       if (off >= g->stream_base && off <= end && len <= end - off)
-        return xpar_vset_read(x->stream_set[i], off, dst, len);
-    }
+        return xpar_vset_read(x->stream_set[i], off, dst, len));
     return false;
   }
   if (x->strm) {
@@ -485,15 +477,14 @@ static bool ex_read_stream(ex * x, u64 off, u64 len, u8 * dst) {
       lo = v->stream_offset;  hi = lo + v->byte_length;
       if (off < lo || off >= hi) continue;
       take = MIN(len, hi - off);
-      for (k = 0; k < x->vol_count; k++) {
+      Fk(x->vol_count,
         const char * b = x->vol[k].path, * s;
         for (s = b; *s; s++) if (*s == '/') b = s + 1;
         if (!xpar_path_same(b, v->name)) continue;
         if (off - lo + take > x->vol[k].size) return false;
         xpar_memcpy(dst, x->vol[k].data + (off - lo), (sz) take);
         hit = true;
-        break;
-      }
+        break);
       if (!hit) return false;
       off += take;  len -= take;  dst += take;
     }
@@ -577,7 +568,7 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
     u32 k;
     if (!(o->preserve & XPAR_PRES_XATTR))
       ex_skip(x, e, EX_SK_XATTR, "--preserve=xattr was not given");
-    else for (k = 0; k < pr->xattr_count; k++) {
+    else Fk(pr->xattr_count,
       const xpar_xattr * a = &pr->xattrs[k];
       bool user = a->name && !xpar_strncmp(a->name, "user.", 5);
       if (!user && !(o->preserve & XPAR_PRES_XATTR_ALL)) {
@@ -587,8 +578,7 @@ static void ex_apply_meta(ex * x, u32 idx, const char * path) {
         continue;
       }
       if (xpar_setxattr(path, 1, a->name, a->value, a->value_len) != 0)
-        ex_skip(x, e, EX_SK_XATTR, xpar_strerror(xpar_errno()));
-    }
+        ex_skip(x, e, EX_SK_XATTR, xpar_strerror(xpar_errno())));
   }
 }
 
@@ -649,7 +639,7 @@ static char * ex_stage_name(const char * path) {
 static void ex_put_back(ex * x, const char * path, const char * backup) {
   if (xpar_put_back(path, backup) == 0) return;
   xpar_fprintf(xpar_stderr, "xpar: cannot restore '%s': %s; old copy at "
-               "'%s'.\n", path, xpar_strerror(xpar_errno()), backup);
+               "'%s'\n", path, xpar_strerror(xpar_errno()), backup);
 }
 
 /*  Publish STAGE while keeping any old copy reachable.  */
@@ -661,9 +651,7 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
   bool had = xpar_lstat(path, &st) == 0;
   u32 i;
   if (had && st.is_dir) { why = "it is a directory";  goto refuse; }
-  if (had && !x->o->force) {
-    why = "it exists and -f was not given";  goto refuse;
-  }
+  if (had && !x->o->force) { why = "it exists and -f was not given";  goto refuse; }
   if (had) {
     for (i = 0; i < 1000; i++) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
@@ -674,9 +662,7 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
       if (xpar_lstat(backup, &st) != 0) break;
       xpar_free(backup);  backup = NULL;
     }
-    if (!backup) {
-      why = "no backup name available";  goto refuse;
-    }
+    if (!backup) { why = "no backup name available";  goto refuse; }
     if (xpar_keep_aside(path, backup) != 0) {
       err = xpar_errno();  why = "cannot preserve old copy";
       goto refuse;
@@ -699,7 +685,7 @@ static bool ex_replace(ex * x, char * stage, const char * path) {
   return true;
 
 refuse:
-  xpar_fprintf(xpar_stderr, "xpar: cannot write '%s': %s%s%s.\n", path, why,
+  xpar_fprintf(xpar_stderr, "xpar: cannot write '%s': %s%s%s\n", path, why,
                err ? ": " : "", err ? xpar_strerror(err) : "");
   xpar_remove(stage);
   xpar_free(backup);
@@ -717,16 +703,13 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
   u32 k;
   char * stage;
   { char * d = xpar_path_dir(path);
-    if (xpar_mkdir_p(d, 0777) != 0) {
-      xpar_free(d);  x->io_failures++;
-      return false;
-    }
+    if (xpar_mkdir_p(d, 0777) != 0) { xpar_free(d);  x->io_failures++;  return false; }
     xpar_free(d); }
   stage = ex_stage_name(path);
   if (!stage) { x->io_failures++;  return false; }
   f = xpar_open(stage, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL |
                 XPAR_O_NOFOLLOW);
-  if (!f) FATAL_IO("Cannot create '%s': %s.", stage,
+  if (!f) FATAL_IO("cannot create '%s': %s", stage,
                    xpar_strerror(xpar_errno()));
   /*  Narrow modes before writing; privileged bits wait for metadata.  */
   if ((x->o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32)
@@ -737,7 +720,7 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
   buf = (u8 *) xpar_alloc_raw((sz) chunk);
   if (x->auth_only) xpar_blake3_init_keyed(&h, x->key.k_file);
   else              xpar_blake3_init(&h);
-  for (k = 0; k < e->extent_count; k++) {
+  Fk(e->extent_count,
     u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
     while (left) {
       u64 take = MIN(left, chunk);
@@ -746,31 +729,29 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
         xpar_xclose(f);
         xpar_remove(stage);
         xpar_free(stage);  xpar_free(buf);
-        FATAL_IO("The set stream is missing bytes [%" PRIu64 ", %" PRIu64
+        FATAL_IO("the set stream is missing bytes [%" PRIu64 ", %" PRIu64
                  ") that "
                  "'%.*s' needs; the data volume holding them is not "
-                 "here.", at,
+                 "here", at,
                  (at + take), (int) e->name_len,
                  e->name);
       }
       xpar_xwrite(f, buf, (sz) take);
       xpar_blake3_update(&h, buf, (sz) take);
       at += take;  left -= take;  fo += take;
-    }
-  }
-  if (xpar_fsync(f) != 0) FATAL_IO("Cannot flush '%s'.", stage);
+    });
+  if (xpar_fsync(f) != 0) FATAL_IO("cannot flush '%s'", stage);
   xpar_xclose(f);
   xpar_free(buf);
   xpar_blake3_final(&h, got, 32);
   /*  Retry after lazy inner-code correction.  */
   if (xpar_memcmp(got, e->content_hash, 32)) {
     u64 lo = 0, hi = 0;
-    for (k = 0; k < e->extent_count; k++) {
+    Fk(e->extent_count,
       u64 a = e->extents[k].stream_offset;
       u64 b = a + e->extents[k].length;
       if (!k || a < lo) lo = a;
-      if (!k || b > hi) hi = b;
-    }
+      if (!k || b > hi) hi = b);
     if (e->extent_count && ex_armour_apply(x, lo, hi)) {
       xpar_remove(stage);
       xpar_free(stage);
@@ -786,10 +767,7 @@ static bool ex_write_entry(ex * x, u32 idx, const char * path) {
     xpar_free(stage);
     return false;
   }
-  if (!ex_replace(x, stage, path)) {
-    xpar_free(stage);
-    return false;
-  }
+  if (!ex_replace(x, stage, path)) { xpar_free(stage);  return false; }
   x->entries++;  x->bytes += fo;
   xpar_free(stage);
   return true;
@@ -832,33 +810,29 @@ static void ex_link_entry(ex * x, u32 idx, const char * path) {
 
 static void ex_free(ex * x) {
   u32 i;
-  for (i = 0; i < x->stream_count; i++) xpar_vset_close(x->stream_set[i]);
+  Fi(x->stream_count, xpar_vset_close(x->stream_set[i]));
   xpar_free(x->stream_set);
   if (x->have_chain) {
-    for (i = 0; i < x->chain.gen_count; i++)
+    Fi(x->chain.gen_count,
       if (x->posix_tab && x->posix_tab[i])
-        xpar_gchain_posix_free(x->posix_tab[i], x->posix_tab_count[i]);
+        xpar_gchain_posix_free(x->posix_tab[i], x->posix_tab_count[i]));
     xpar_free(x->posix_tab);  xpar_free(x->posix_tab_count);
     xpar_free(x->owner);
     xpar_gchain_free(&x->chain);
   }
-  for (i = 0; i < x->arm_count; i++) {
-    xpar_armour_free(x->arm[i].a);  xpar_free(x->arm[i].done);
-  }
+  Fi(x->arm_count, xpar_armour_free(x->arm[i].a);  xpar_free(x->arm[i].done));
   xpar_free(x->arm);  x->arm = NULL;  x->arm_count = x->arm_cap = 0;
-  for (i = 0; i < x->vol_count; i++) xpar_volimg_close(&x->vol[i]);
+  Fi(x->vol_count, xpar_volimg_close(&x->vol[i]));
   xpar_free(x->vol);
-  for (i = 0; i < x->plain_count; i++) xpar_free(x->plain[i]);
+  Fi(x->plain_count, xpar_free(x->plain[i]));
   xpar_free(x->plain);
-  for (i = 0; i < x->posix_count; i++) {
+  Fi(x->posix_count,
     u32 k;
-    for (k = 0; k < x->posix[i].xattr_count; k++) {
+    Fk(x->posix[i].xattr_count,
       xpar_free(x->posix[i].xattrs[k].name);
-      xpar_free(x->posix[i].xattrs[k].value);
-    }
+      xpar_free(x->posix[i].xattrs[k].value));
     xpar_free(x->posix[i].xattrs);
-    xpar_free(x->posix[i].owner);  xpar_free(x->posix[i].group);
-  }
+    xpar_free(x->posix[i].owner);  xpar_free(x->posix[i].group));
   xpar_free(x->posix);
   if (x->have_layt) xpar_layt_free(&x->layt);
   xpar_nameidx_free(&x->nix);
@@ -879,12 +853,12 @@ static void ex_open_chain(ex * x) {
   g = x->selected;
   while (g != XPAR_GEN_NONE) {
     if (x->chain.gen[g].parent_missing)
-      FATAL_FORMAT("Generation %" PRIu32
+      FATAL_FORMAT("generation %" PRIu32
                    "'s parent is missing; extraction needs "
-                   "the complete selected lineage.",
+                   "the complete selected lineage",
                    x->chain.gen[g].sd.generation);
     if (++walked > x->chain.gen_count)
-      FATAL_FORMAT("The selected generation's ancestry is cyclic.");
+      FATAL_FORMAT("the selected generation's ancestry is cyclic");
     g = x->chain.gen[g].parent;
   }
 
@@ -896,9 +870,9 @@ static void ex_open_chain(ex * x) {
     x->chain.gen_count ? x->chain.gen_count : 1, sizeof(void *));
   x->posix_tab_count = (u32 *) xpar_calloc(
     x->chain.gen_count ? x->chain.gen_count : 1, sizeof(u32));
-  for (i = 0; i < x->chain.gen_count; i++)
+  Fi(x->chain.gen_count,
     x->posix_tab_count[i] = xpar_gchain_posix(&x->chain, i,
-                                               &x->posix_tab[i]);
+       &x->posix_tab[i]));
 
   x->stream_set = (xpar_vset **) xpar_calloc(walked, sizeof(void *));
   g = x->selected;
@@ -911,8 +885,8 @@ static void ex_open_chain(ex * x) {
     x->stream_set[x->stream_count] = xpar_vset_open(&ro);
     if (xpar_vset_setd(x->stream_set[x->stream_count])->layout ==
         XPAR_LAYOUT_SIDECAR)
-      FATAL("Generation %" PRIu32
-            " uses external files and cannot be extracted.",
+      FATAL("generation %" PRIu32
+            " uses external files and cannot be extracted",
             x->chain.gen[g].sd.generation);
     x->stream_count++;
     g = x->chain.gen[g].parent;
@@ -946,8 +920,8 @@ static void ex_validate(ex * x) {
     }
     /*  The fill above is oldest first by writing the reverse lineage.  */
     for (k = 1; k < n; k++)
-      FATAL_UNLESS("Generation stream ranges overlap.",
-                   anc[k - 1].base + anc[k - 1].length <= anc[k].base);
+      FATAL_UNLESS(anc[k - 1].base + anc[k - 1].length <= anc[k].base,
+                   "generation stream ranges overlap");
     lim.ancestor = anc;  lim.ancestor_count = n;
   }
   s = xpar_manifest_validate(&x->mf, &lim, &res);
@@ -957,10 +931,10 @@ static void ex_validate(ex * x) {
         reproduced here, not a malformed set.  */
     if (s == XPAR_MF_PATH && lim.path_flags)
       FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-                 "Entry %" PRIu32 " ('%.*s'): %s under the naming rules in "
-                 "force for this destination.", res.entry,
+                 "entry %" PRIu32 " ('%.*s'): %s under the naming rules in "
+                 "force for this destination", res.entry,
                  (int) e->name_len, e->name, xpar_mf_reason(s));
-    FATAL_FORMAT("Entry %" PRIu32 " ('%.*s'): %s.", res.entry,
+    FATAL_FORMAT("entry %" PRIu32 " ('%.*s'): %s", res.entry,
                  (int) e->name_len, e->name, xpar_mf_reason(s));
   }
   xpar_free(anc);
@@ -982,7 +956,7 @@ int xpar_op_extract(const xpar_options * o) {
     x.key_loaded = true;
   }
 
-  FATAL_UNLESS("Extract needs a set to work on.", o->set_ref.count > 0);
+  FATAL_UNLESS(o->set_ref.count > 0, "extract needs a set to work on");
   {
     xpar_vset * guard = xpar_vset_open(o);
     xpar_vset_close(guard);
@@ -993,24 +967,22 @@ int xpar_op_extract(const xpar_options * o) {
                            : xpar_path_dir(o->set_ref.vol[0]);
   x.dest = xpar_strdup(o->to_dir ? o->to_dir : ".");
 
-  for (i = 0; i < o->set_ref.count; i++) {
+  Fi(o->set_ref.count,
     if (!ex_vol_open(&x, o->set_ref.vol[i])) continue;
     { const xpar_volimg * v = &x.vol[x.vol_count - 1];
       if (xpar_garm_is_archive(v->data, (sz) v->size))
         ex_open_armoured(&x, v);
       else
         ex_collect(&x, v->data, v->size);
-    }
-  }
-  FATAL_UNLESS("Nothing in '%s' could be opened.", x.vol_count > 0, o->set);
+    });
+  FATAL_UNLESS(x.vol_count > 0, "nothing in '%s' could be opened", o->set);
   if (!ex_have_setd(&x))
-    for (i = 0; i < x.vol_count; i++)
-      ex_salvage(&x, x.vol[i].data, x.vol[i].size);
+    Fi(x.vol_count, ex_salvage(&x, x.vol[i].data, x.vol[i].size));
 
   ex_pick_setd(&x);
   ex_authenticate(&x);
-  FATAL_UNLESS("This set uses external files. Use verify or repair.",
-               x.sd.layout != XPAR_LAYOUT_SIDECAR);
+  FATAL_UNLESS(x.sd.layout != XPAR_LAYOUT_SIDECAR,
+               "this set uses external files; use verify or repair");
 
   if (x.sd.generation) ex_open_chain(&x);
   else ex_read_manifest(&x);
@@ -1024,10 +996,10 @@ int xpar_op_extract(const xpar_options * o) {
   }
   if (!x.stream_count && !x.strm) {
     FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
-                      "This set has no volume layout.", x.have_layt);
+                      x.have_layt, "this set has no volume layout");
     if (xpar_layt_tiles(&x.layt, x.sd.stream_length) != XPAR_OK)
-      FATAL_FORMAT("The data volumes do not tile the stream.");
-    for (i = 0; i < x.layt.count; i++) {
+      FATAL_FORMAT("the data volumes do not tile the stream");
+    Fi(x.layt.count,
       xpar_vol * v = &x.layt.vol[i];
       char * path, * basename;
       u32 k;
@@ -1035,13 +1007,13 @@ int xpar_op_extract(const xpar_options * o) {
       if (v->kind != XPAR_VOL_DATA || !v->name) continue;
       path = ex_find_data(&x, v, &basename, &damaged);
       FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
-                   "Data volume '%s' is missing; extraction needs the whole "
-                   "stream. Run `xpar repair` to rebuild it.",
-                   path != NULL, v->name);
+                   path != NULL,
+                   "data volume '%s' is missing; extraction needs the whole "
+                   "stream; run `xpar repair` to rebuild it", v->name);
       for (k = 0; k < x.vol_count && !seen; k++)
         if (xpar_path_same(x.vol[k].path, path)) seen = true;
       if (!seen && !ex_vol_open(&x, path))
-        FATAL_IO("Data volume '%s' cannot be read.", path);
+        FATAL_IO("data volume '%s' cannot be read", path);
       if (damaged) {
         /*  Entry hashes determine whether damaged input survived.  */
         x.vol_damaged++;
@@ -1068,8 +1040,7 @@ int xpar_op_extract(const xpar_options * o) {
       } else {
         xpar_free(basename);
       }
-      xpar_free(path);
-    }
+      xpar_free(path));
   }
 
   if (o->to_stdout) {
@@ -1079,10 +1050,9 @@ int xpar_op_extract(const xpar_options * o) {
     const xpar_entry * e;
     xpar_blake3_t h;
     u8 got[32];
-    for (i = 0; i < x.mf.count; i++)
-      if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) { regs++;  only = i; }
-    FATAL_UNLESS("--stdout requires one entry, but the set has %" PRIu32
-                 "; extract to a directory.", regs == 1, regs);
+    Fi(x.mf.count, if (x.mf.entry[i].entry_type == XPAR_ENTRY_REGULAR) { regs++;  only = i; });
+    FATAL_UNLESS(regs == 1, "--stdout requires one entry, but the set has %" PRIu32
+                 "; extract to a directory", regs);
     /*  stdout creates no paths, so destination name rules do not apply.  */
     x.path_flags = 0;
     ex_validate(&x);
@@ -1100,49 +1070,46 @@ int xpar_op_extract(const xpar_options * o) {
     for (pass = 0; pass < 2; pass++) {
       if (x.auth_only) xpar_blake3_init_keyed(&h, x.key.k_file);
       else             xpar_blake3_init(&h);
-      for (k = 0; k < e->extent_count; k++) {
+      Fk(e->extent_count,
         u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
         while (left) {
           u64 take = MIN(left, chunk);
           if (!ex_read_stream(&x, at, take, buf)) {
             xpar_free(buf);
-            FATAL_IO("Set stream lacks required bytes [%" PRIu64 ", %" PRIu64
-                     ").", at, at + take);
+            FATAL_IO("set stream lacks required bytes [%" PRIu64 ", %" PRIu64
+                     ")", at, at + take);
           }
           xpar_blake3_update(&h, buf, (sz) take);
           at += take;  left -= take;
-        }
-      }
+        });
       xpar_blake3_final(&h, got, 32);
       if (!xpar_memcmp(got, e->content_hash, 32)) break;
       /*  Retry after lazy inner-code correction, as file extraction does.  */
       if (pass == 0 && e->extent_count) {
         u64 lo = 0, hi = 0;
-        for (k = 0; k < e->extent_count; k++) {
+        Fk(e->extent_count,
           u64 a = e->extents[k].stream_offset;
           u64 b = a + e->extents[k].length;
           if (!k || a < lo) lo = a;
-          if (!k || b > hi) hi = b;
-        }
+          if (!k || b > hi) hi = b);
         if (ex_armour_apply(&x, lo, hi)) continue;
       }
       xpar_free(buf);
       FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
-                 "Stream hash mismatch. Nothing written. Run `xpar repair`.");
+                 "stream hash mismatch; nothing written; run `xpar repair`");
     }
-    for (k = 0; k < e->extent_count; k++) {
+    Fk(e->extent_count,
       u64 left = e->extents[k].length, at = e->extents[k].stream_offset;
       while (left) {
         u64 take = MIN(left, chunk);
         if (!ex_read_stream(&x, at, take, buf)) {
           xpar_free(buf);
-          FATAL_IO("Set stream lacks required bytes [%" PRIu64 ", %" PRIu64
-                   ").", at, at + take);
+          FATAL_IO("set stream lacks required bytes [%" PRIu64 ", %" PRIu64
+                   ")", at, at + take);
         }
         xpar_xwrite(xpar_stdout, buf, (sz) take);
         at += take;  left -= take;  wrote += take;
-      }
-    }
+      });
     xpar_free(buf);
     if (xpar_flush(xpar_stdout) != 0 || xpar_error(xpar_stdout)) {
       xpar_fprintf(xpar_stderr, "xpar: cannot flush standard output: %s\n",
@@ -1157,10 +1124,10 @@ int xpar_op_extract(const xpar_options * o) {
   { int err;
     if (xpar_mkdir_p(x.dest, 0777) != 0 && (err = xpar_errno(),
                                             xpar_lstat(x.dest, &st) != 0))
-      FATAL_IO("Cannot create '%s': %s.", x.dest, xpar_strerror(err)); }
-  FATAL_UNLESS("Extraction directory '%s' is a symbolic link. Use its "
-               "target path.",
-               xpar_lstat(x.dest, &st) == 0 && !st.is_symlink, x.dest);
+      FATAL_IO("cannot create '%s': %s", x.dest, xpar_strerror(err)); }
+  FATAL_UNLESS(xpar_lstat(x.dest, &st) == 0 && !st.is_symlink,
+               "extraction directory '%s' is a symbolic link; use its "
+               "target path", x.dest);
   x.caps = xpar_fs_caps(x.dest);
   /*  Windows and DOS always interpret backslashes and reserved names.  */
   x.path_flags = xpar_host_path_flags();
@@ -1171,25 +1138,24 @@ int xpar_op_extract(const xpar_options * o) {
 
   ex_validate(&x);
 
-  for (i = 0; i < x.mf.count; i++) {
+  Fi(x.mf.count,
     const xpar_entry * e = &x.mf.entry[i];
     char * p = ex_resolve_leaf(&x, e);
     if (p) {
       bool exists = xpar_lstat(p, &st) == 0;
       if (e->entry_type == XPAR_ENTRY_DIR) {
-        FATAL_UNLESS("Destination '%s' exists and is not a directory.",
-                     !exists || st.is_dir, p);
+        FATAL_UNLESS(!exists || st.is_dir,
+                     "destination '%s' exists and is not a directory", p);
       } else {
-        FATAL_UNLESS("Destination '%s' exists. Use -f to overwrite it.",
-                     !exists || o->force, p);
-        FATAL_UNLESS("Refusing to replace destination directory '%s'.",
-                     !exists || !st.is_dir, p);
+        FATAL_UNLESS(!exists || o->force,
+                     "destination '%s' exists; use -f to overwrite it", p);
+        FATAL_UNLESS(!exists || !st.is_dir,
+                     "refusing to replace destination directory '%s'", p);
       }
     }
-    xpar_free(p);
-  }
+    xpar_free(p));
 
-  for (i = 0; i < x.mf.count; i++) {
+  Fi(x.mf.count,
     const xpar_entry * e = &x.mf.entry[i];
     char * p;
     if (e->entry_type != XPAR_ENTRY_DIR) continue;
@@ -1198,25 +1164,23 @@ int xpar_op_extract(const xpar_options * o) {
     { int err;
       if (xpar_mkdir_p(p, 0777) != 0 && (err = xpar_errno(),
                                          xpar_lstat(p, &st) != 0))
-        FATAL_IO("Cannot create '%s': %s.", p, xpar_strerror(err)); }
+        FATAL_IO("cannot create '%s': %s", p, xpar_strerror(err)); }
     /*  Restrict private directories before populating them.  */
     if ((o->preserve & XPAR_PRES_MODE) && e->mode != XPAR_ABSENT_U32)
       (void) xpar_set_mode(p, 1,
                            (e->mode & XPAR_MODE_PERM &
                             ~(u32) (XPAR_MODE_SETUID | XPAR_MODE_SETGID |
                                     XPAR_MODE_STICKY)) | 0700);
-    xpar_free(p);
-  }
-  for (i = 0; i < x.mf.count; i++) {
+    xpar_free(p));
+  Fi(x.mf.count,
     const xpar_entry * e = &x.mf.entry[i];
     char * p;
     if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
     p = ex_resolve_leaf(&x, e);
     if (!p) continue;
     (void) ex_write_entry(&x, i, p);
-    xpar_free(p);
-  }
-  for (i = 0; i < x.mf.count; i++) {
+    xpar_free(p));
+  Fi(x.mf.count,
     const xpar_entry * e = &x.mf.entry[i];
     char * p, * target;
     if (e->entry_type != XPAR_ENTRY_SYMLINK) continue;
@@ -1231,25 +1195,23 @@ int xpar_op_extract(const xpar_options * o) {
         xpar_strerror(xpar_errno());
       if (why) {
         xpar_fprintf(xpar_stderr,
-                     "xpar: cannot create symlink '%.*s': %s.\n",
+                     "xpar: cannot create symlink '%.*s': %s\n",
                      (int) e->name_len, e->name, why);
         x.io_failures++;
       } else (void) ex_replace(&x, stage, p);
       xpar_free(stage);
     }
-    xpar_free(target);  xpar_free(p);
-  }
+    xpar_free(target);  xpar_free(p));
 
   /*  Phase two: links only, no data.  */
-  for (i = 0; i < x.mf.count; i++) {
+  Fi(x.mf.count,
     const xpar_entry * e = &x.mf.entry[i];
     char * p;
     if (e->entry_type != XPAR_ENTRY_HARDLINK) continue;
     p = ex_resolve_leaf(&x, e);
     if (!p) continue;
     ex_link_entry(&x, i, p);
-    xpar_free(p);
-  }
+    xpar_free(p));
 
   /*  Apply metadata deepest-first using reversed name order.  */
   for (i = x.nix.count; i-- > 0;) {

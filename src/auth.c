@@ -12,10 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: authenticated key-file loading and key lifetime helpers.  */
+/*  authenticated key-file loading and key lifetime helpers.  */
 
 #include "auth.h"
-
 #include "blake3.h"
 #include "port.h"
 
@@ -29,10 +28,7 @@ xpar_keyfile_status xpar_keyfile_load(const char * path, xpar_key * key,
   xpar_blake3_init_derive_key(&h, "xpar2 auth master v1");
   for (;;) {
     sz n = xpar_read(f, buf, sizeof buf);
-    if (n) {
-      xpar_blake3_update(&h, buf, n);
-      total += n;
-    }
+    if (n) { xpar_blake3_update(&h, buf, n);  total += n; }
     if (n < sizeof buf) {
       if (xpar_error(f)) {
         xpar_close(f);
@@ -45,10 +41,7 @@ xpar_keyfile_status xpar_keyfile_load(const char * path, xpar_key * key,
   }
   xpar_close(f);
   xpar_secure_zero(buf, sizeof buf);
-  if (!total) {
-    xpar_secure_zero(&h, sizeof h);
-    return XPAR_KEYFILE_EMPTY;
-  }
+  if (!total) { xpar_secure_zero(&h, sizeof h);  return XPAR_KEYFILE_EMPTY; }
   xpar_blake3_final(&h, master, XPAR_BLAKE3_KEY_LEN);
   xpar_secure_zero(&h, sizeof h);
   xpar_key_derive(key, master);
@@ -60,13 +53,13 @@ void xpar_keyfile_load_or_die(const char * path, xpar_key * key,
   switch (xpar_keyfile_load(path, key, master)) {
     case XPAR_KEYFILE_OK:    return;
     case XPAR_KEYFILE_OPEN:  FATAL_CODE(XPAR_EXIT_AUTH,
-                                        "Cannot open key file '%s': %s.",
+                                        "cannot open key file '%s': %s",
                                         path,
                                         xpar_strerror(xpar_errno()));
     case XPAR_KEYFILE_EMPTY: FATAL_CODE(XPAR_EXIT_AUTH,
-                                        "Key file '%s' is empty.", path);
+                                        "key file '%s' is empty", path);
     default:                 FATAL_CODE(XPAR_EXIT_AUTH,
-                                        "Cannot read key file '%s'.", path);
+                                        "cannot read key file '%s'", path);
   }
 }
 

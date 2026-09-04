@@ -66,11 +66,11 @@ static int XPAR_ARGV_FN(const XPAR_ARGV_CH * cmd, XPAR_ARGV_CH *** out) {
           int nbs = 0, i;
           while (*p == XPAR_ARGV_L('\\')) { nbs++;  p++; }
           if (*p == XPAR_ARGV_L('"')) {
-            for (i = 0; i < nbs / 2; i++) XPAR_ARGV_PUT(XPAR_ARGV_L('\\'));
+            Fi(nbs / 2, XPAR_ARGV_PUT(XPAR_ARGV_L('\\')));
             if (nbs & 1) { XPAR_ARGV_PUT(XPAR_ARGV_L('"'));  p++; }
             else { in_quote = !in_quote;  p++; }
           } else {
-            for (i = 0; i < nbs; i++) XPAR_ARGV_PUT(XPAR_ARGV_L('\\'));
+            Fi(nbs, XPAR_ARGV_PUT(XPAR_ARGV_L('\\')));
           }
         } else if (*p == XPAR_ARGV_L('"')) {
           if (in_quote && p[1] == XPAR_ARGV_L('"')) {
@@ -93,8 +93,7 @@ fail:
   if (buf) HeapFree(GetProcessHeap(), 0, buf);
   if (argv) {
     int j;
-    for (j = 0; j < argc; j++)
-      if (argv[j]) HeapFree(GetProcessHeap(), 0, argv[j]);
+    Fj(argc, if (argv[j]) HeapFree(GetProcessHeap(), 0, argv[j]));
     HeapFree(GetProcessHeap(), 0, argv);
   }
   return -1;

@@ -12,10 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: base-SVE Galois-field region kernels.  */
+/*  base-SVE Galois-field region kernels.  */
 
 #include "gf.h"
-
 #include <arm_sve.h>
 
 /*  SVE halfword loads are host-endian; GF16 stream symbols are

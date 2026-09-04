@@ -84,11 +84,7 @@ static sz utf8_len_at(const char * s, sz n, sz i) {
 /*  Whether the escaped form loses nothing.  */
 static bool utf8_clean(const char * s, sz n) {
   sz i = 0;
-  while (i < n) {
-    sz len = utf8_len_at(s, n, i);
-    if (!len) return false;
-    i += len;
-  }
+  while (i < n) { sz len = utf8_len_at(s, n, i);  if (!len) return false;  i += len; }
   return true;
 }
 
@@ -116,18 +112,14 @@ static void emit_string(xpar_json * j, const char * s, sz n) {
       esc[6] = 0;
       put(j, esc);  i++;  continue;
     }
-    if (c < 0x80) {
-      esc[0] = (char) c;  esc[1] = 0;
-      put(j, esc);  i++;  continue;
-    }
+    if (c < 0x80) { esc[0] = (char) c;  esc[1] = 0;  put(j, esc);  i++;  continue; }
 
     {
       sz len = utf8_len_at(s, n, i), k;
       if (!len) { put(j, "\\ufffd");  i++;  continue; }
-      for (k = 0; k < len; k++) {
+      Fk(len,
         esc[0] = s[i + k];  esc[1] = 0;
-        put(j, esc);
-      }
+        put(j, esc));
       i += len;
     }
   }
@@ -191,11 +183,10 @@ void xpar_json_hex(xpar_json * j, const char * k, const u8 * p, sz n) {
   key(j, k);
   put(j, "\"");
   buf[2] = 0;
-  for (i = 0; i < n; i++) {
+  Fi(n,
     buf[0] = hex_digits[p[i] >> 4];
     buf[1] = hex_digits[p[i] & 15];
-    put(j, buf);
-  }
+    put(j, buf));
   put(j, "\"");
 }
 

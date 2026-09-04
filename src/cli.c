@@ -37,25 +37,26 @@
 
 static char * dup_str(const char * s) {
   char * p = xpar_strdup(s);
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", p != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, p != NULL, "out of memory");
   return p;
 }
 
 static void push_str(char *** v, u32 * n, const char * s) {
   char ** nv = (char **) xpar_realloc(*v, (*n + 1) * sizeof(char *));
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
   nv[*n] = dup_str(s);  *v = nv;  (*n)++;
 }
 
 static bool is_dir(const char * p);
 
 static void need_dir(const char * nm, const char * p) {
-  FATAL_UNLESS("Option %s needs an existing directory, and '%s' is not "
-               "one.", is_dir(p), nm, p);
+  FATAL_UNLESS(is_dir(p), "option %s needs an existing directory, and '%s' is not "
+               "one", nm, p);
 }
 
 static void free_strv(char ** v, u32 n) {
-  for (u32 i = 0; i < n; i++) xpar_free(v[i]);
+  u32 i;
+  Fi(n, xpar_free(v[i]));
   xpar_free(v);
 }
 
@@ -85,9 +86,7 @@ static int scan_decimal(const char * s, u64 * ip, u64 * fnum, u64 * fden,
     s++;
     while (*s >= '0' && *s <= '9') {
       /*  Later digits cannot change the resulting byte count.  */
-      if (den <= 100000000000000000ull) {
-        num = num * 10 + (u64) (*s - '0');  den *= 10;
-      }
+      if (den <= 100000000000000000ull) { num = num * 10 + (u64) (*s - '0');  den *= 10; }
       s++;  fd++;
     }
     if (!fd) return -1;
@@ -106,8 +105,8 @@ static int size_mult(const char * s, u64 * mult) {
     { "g",  1024ull * 1024 * 1024        }, { "gb", 1000000000ull    },
     { "t",  1024ull * 1024 * 1024 * 1024 }, { "tb", 1000000000000ull }
   };
-  for (sz i = 0; i < ARRAY_LEN(tab); i++)
-    if (ci_equal(s, tab[i].suf)) { *mult = tab[i].mult;  return 0; }
+  sz i;
+  Fi(ARRAY_LEN(tab), if (ci_equal(s, tab[i].suf)) { *mult = tab[i].mult;  return 0; });
   return -1;
 }
 
@@ -155,25 +154,25 @@ int xpar_cli_parse_recovery(const char * s, xpar_rspec * out) {
 
 static u64 need_u64(const char * nm, const char * v) {
   u64 ip = 0, num = 0, den = 1;  const char * end = "";
-  FATAL_UNLESS("Option %s expects a whole number.",
-               v && !scan_decimal(v, &ip, &num, &den, &end) && !*end &&
-               den == 1, nm);
+  FATAL_UNLESS(v && !scan_decimal(v, &ip, &num, &den, &end) && !*end &&
+               den == 1,
+               "option %s expects a whole number", nm);
   return ip;
 }
 
 static u64 need_range(const char * nm, const char * v, u64 lo, u64 hi) {
   u64 n = need_u64(nm, v);
-  FATAL_UNLESS("Option %s expects a number between %" PRIu64 " and %" PRIu64
-               ".",
-               n >= lo && n <= hi, nm, lo,
+  FATAL_UNLESS(n >= lo && n <= hi,
+               "option %s expects a number between %" PRIu64 " and %" PRIu64,
+               nm, lo,
                hi);
   return n;
 }
 
 static u64 need_size(const char * nm, const char * v) {
   u64 out = 0;
-  FATAL_UNLESS("Option %s expects a size such as 4096, 64K or 2.5MB.",
-               v && !xpar_cli_parse_size(v, &out), nm);
+  FATAL_UNLESS(v && !xpar_cli_parse_size(v, &out),
+               "option %s expects a size such as 4096, 64K or 2.5MB", nm);
   return out;
 }
 
@@ -181,7 +180,7 @@ static int need_word(const char * nm, const char * v,
                      const char * const * words) {
   int i;
   if (v) for (i = 0; words[i]; i++) if (!xpar_strcmp(v, words[i])) return i;
-  xpar_fprintf(xpar_stderr, "xpar: invalid value '%s' for %s. Expected",
+  xpar_fprintf(xpar_stderr, "xpar: invalid value '%s' for %s; expected",
                v ? v : "", nm);
   for (i = 0; words[i]; i++) xpar_fprintf(xpar_stderr, " %s", words[i]);
   xpar_fputs("\n", xpar_stderr);
@@ -228,7 +227,7 @@ static const struct { const char * name;  u32 bits, lit; } pres_tokens[] = {
 };
 
 static void bad_token(const char * nm, const char * tok) {
-  xpar_fprintf(xpar_stderr, "xpar: invalid token '%s' for %s. Expected "
+  xpar_fprintf(xpar_stderr, "xpar: invalid token '%s' for %s; expected "
                "mtime atime ctime btime times mode setid attrs owner\n"
                "xpar: xattr xattr-all links all none\n", tok, nm);
   xpar_exit(XPAR_EXIT_USAGE);
@@ -239,20 +238,16 @@ static u32 parse_pres(const char * nm, const char * v, u32 dflt, u32 * lit,
   u32 set = dflt;
   bool replaced = false;
   const char * p = v;
-  FATAL_UNLESS("Option %s expects a comma-separated token list.", v && *v, nm);
+  FATAL_UNLESS(v && *v, "option %s expects a comma-separated token list", nm);
   while (*p) {
     char tok[24];
     int sign = 0, n = 0;
     sz i;
     if (*p == '+' || *p == '-') { sign = *p;  p++; }
-    while (*p && *p != ',') {
-      if (n < (int) sizeof tok - 1) tok[n++] = *p;
-      p++;
-    }
+    while (*p && *p != ',') { if (n < (int) sizeof tok - 1) tok[n++] = *p;  p++; }
     tok[n] = '\0';
     if (*p == ',') p++;
-    for (i = 0; i < ARRAY_LEN(pres_tokens); i++)
-      if (!xpar_strcmp(tok, pres_tokens[i].name)) break;
+    Fi(ARRAY_LEN(pres_tokens), if (!xpar_strcmp(tok, pres_tokens[i].name)) break);
     if (i == ARRAY_LEN(pres_tokens)) bad_token(nm, tok);
     if (sign == '-') { set &= ~pres_tokens[i].bits;  continue; }
     if (!sign && !replaced) { set = 0;  replaced = true; }
@@ -264,22 +259,19 @@ static u32 parse_pres(const char * nm, const char * v, u32 dflt, u32 * lit,
 }
 
 static void parse_genref(const char * nm, const char * v, xpar_genref * g) {
-  FATAL_UNLESS("Option %s expects a generation number or a set id.",
-               v && *v, nm);
+  FATAL_UNLESS(v && *v,
+               "option %s expects a generation number or a set id", nm);
   g->by_id = false;  g->number = 0;  g->id_prefix = NULL;
   /*  Reject generation selectors that would narrow to u32.  */
-  if (all_digits(v)) {
-    g->number = need_range(nm, v, 0, 0xFFFFFFFFu);
-    return;
-  }
+  if (all_digits(v)) { g->number = need_range(nm, v, 0, 0xFFFFFFFFu);  return; }
   for (const char * p = v; *p; p++) {
     int c = lower((u8) *p);
-    FATAL_UNLESS("Option %s expects a generation number or hexadecimal "
-                 "set-id prefix, not '%s'.",
-                 (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'), nm, v);
+    FATAL_UNLESS((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
+                 "option %s expects a generation number or hexadecimal "
+                 "set-id prefix, not '%s'", nm, v);
   }
-  FATAL_UNLESS("Option %s takes at most 32 hexadecimal digits: a set id "
-               "is 16 bytes.", xpar_strlen(v) <= 32, nm);
+  FATAL_UNLESS(xpar_strlen(v) <= 32, "option %s takes at most 32 hexadecimal digits: a set id "
+               "is 16 bytes", nm);
   g->by_id = true;
   g->id_prefix = dup_str(v);
   for (char * q = g->id_prefix; *q; q++) *q = (char) lower((u8) *q);
@@ -386,8 +378,7 @@ static const yarg_options t_repair[] = {
   { O_DRY_RUN,        no_argument,       "dry-run"           },
   { O_EXIT_ON_CHANGE, no_argument,       "exit-on-change"    },
   { O_REQUIRE,        required_argument, "require"           },
-  /*  Repair runs the same resynchronising pass and prints the same advice
-      to widen it, so it has to take the options that advice names.  */
+  /*  Repair shares the resync pass and its widening advice.  */
   { O_RESYNC,         required_argument, "resync"            },
   { O_RESYNC_STEP,    required_argument, "resync-step"       },
   { O_RESYNC_WINDOW,  required_argument, "resync-window"     },
@@ -498,7 +489,7 @@ static const yarg_options t_benchmark[] = {
   { 0,       no_argument, NULL    }
 };
 
-/*  `add` and `consolidate` inherit the whole of create's table  */
+/*  `add` and `consolidate` inherit create's table.  */
 static const yarg_verb verbs[] = {
   { XPAR_VERB_CREATE,      "create",      t_create,      NULL     },
   { XPAR_VERB_VERIFY,      "verify",      t_verify,      NULL     },
@@ -521,22 +512,22 @@ static const yarg_verb verbs[] = {
 
 static const char * const verb_desc[] = {
   NULL,
-  "Build a protection set from the given input paths",
-  "Check a set; writes nothing",
-  "Check a set and repair what the recovery data covers",
-  "Full algebraic pass over a set",
-  "Reconstruct entries from a split or armoured set",
-  "Regenerate one volume of a set",
-  "Add recovery slices to an existing generation",
-  "Append a generation protecting new or changed files",
-  "Collapse a chain of generations into one",
-  "Remove older generations from a chain",
-  "Print the manifest",
-  "Print geometry, codec, plan and redundancy",
-  "Print the hand-recovery recipe",
-  "Replay an in-place repair journal",
-  "Brute-force a destroyed armoured prologue",
-  "Measure the low-level SIMD kernels"
+  "build a protection set from the given input paths",
+  "check a set; writes nothing",
+  "check a set and repair what the recovery data covers",
+  "full algebraic pass over a set",
+  "reconstruct entries from a split or armoured set",
+  "regenerate one volume of a set",
+  "add recovery slices to an existing generation",
+  "append a generation protecting new or changed files",
+  "collapse a chain of generations into one",
+  "remove older generations from a chain",
+  "print the manifest",
+  "print geometry, codec, plan and redundancy",
+  "print the hand-recovery recipe",
+  "replay an in-place repair journal",
+  "brute-force a destroyed armoured prologue",
+  "measure the low-level SIMD kernels"
 };
 
 const char * xpar_verb_name(xpar_verb v) {
@@ -565,21 +556,21 @@ void xpar_cli_version(void) {
 }
 
 static const char help_global[] =
-  "Global options (after the verb):\n"
-  "  -v, --verbose        Repeatable; -vv reports per-slice detail\n"
-  "  -q, --quiet          Diagnostics only\n"
-  "  -f, --force          Overwrite, and permit the guarded operations\n"
-  "  -j, --jobs=N         Worker threads (default: one per core)\n"
-  "  -m, --memory=SIZE    Working-set ceiling for the planner\n"
+  "global options (after the verb):\n"
+  "  -v, --verbose        repeatable; -vv reports per-slice detail\n"
+  "  -q, --quiet          diagnostics only\n"
+  "  -f, --force          overwrite, and permit the guarded operations\n"
+  "  -j, --jobs=N         worker threads (default: one per core)\n"
+  "  -m, --memory=SIZE    working-set ceiling for the planner\n"
   "      --json           JSON Lines on stdout, human output on stderr\n"
-  "      --progress       Progress on stderr, at most one line a second\n"
-  "      --no-progress    Never report progress\n"
+  "      --progress       progress on stderr, at most one line a second\n"
+  "      --no-progress    never report progress\n"
   "      --color=WHEN     auto (default), always, never\n"
-  "      --reproducible   Omit source times and the version from the set\n"
-  "      --simd=TIER      Force a SIMD tier; 'auto' is the default\n"
-  "      --auth-key=FILE  Authenticate a set with the key in FILE\n"
-  "  -h, --help           This message, or a verb's own options\n"
-  "  -V, --version        Print the version and exit\n";
+  "      --reproducible   omit source times and the version from the set\n"
+  "      --simd=TIER      force a SIMD tier; 'auto' is the default\n"
+  "      --auth-key=FILE  authenticate a set with the key in FILE\n"
+  "  -h, --help           this message, or a verb's own options\n"
+  "  -V, --version        print the version and exit\n";
 
 static const char help_preserve[] =
   "\n"
@@ -587,8 +578,7 @@ static const char help_preserve[] =
   "  owner xattr xattr-all links all none.  A bare list replaces the\n"
   "  default (mtime,mode,attrs,links), +token adds and -token removes.\n";
 
-/*  Indexed by xpar_verb. The usage line is separate so that every entry
-    can be a plain option block.  */
+/*  Indexed by xpar_verb; usage stays separate from options.  */
 static const char * const verb_usage[] = {
   NULL,
   "xpar create [options] <path>...",
@@ -612,13 +602,13 @@ static const char * const verb_usage[] = {
 static const char * const verb_opts[] = {
   NULL,
   /*  create  */
-  "  -o, --output=BASE          Base name for the output volumes\n"
+  "  -o, --output=BASE          base name for the output volumes\n"
   "  -r, --recovery=SPEC        count | N% | SIZE | Nx\n"
-  "      --min-recovery=N       Floor for the derived slice count\n"
-  "      --max-recovery=SPEC    Recovery-axis space held for top-ups\n"
-  "  -s, --slice-size=SIZE      Slice size Z; excludes -b\n"
-  "  -b, --slices=N             Slice count S; excludes -s\n"
-  "      --cell=SIZE            Cell size Y, the erasure unit\n"
+  "      --min-recovery=N       floor for the derived slice count\n"
+  "      --max-recovery=SPEC    recovery-axis space held for top-ups\n"
+  "  -s, --slice-size=SIZE      slice size Z; excludes -b\n"
+  "  -b, --slices=N             slice count S; excludes -s\n"
+  "      --cell=SIZE            cell size Y, the erasure unit\n"
   "      --layout=WHICH         sidecar (default), split, armoured\n"
   "      --codec=WHICH          auto (default), fft, matrix\n"
   "      --field=W              auto (default), 8, 16\n"
@@ -627,141 +617,141 @@ static const char * const verb_opts[] = {
   "      --armour=WHICH         none, metadata (default), all;\n"
   "                             --layout=armoured is always all\n"
   "      --armour-field=W       auto (default), 8, 16\n"
-  "      --armour-t=N           Symbols corrected per inner codeword\n"
-  "      --armour-pct=P         Inner-code overhead 2t/k, 0 < P <= 50\n"
-  "      --burst=SIZE           Burst to tolerate; excludes --depth\n"
-  "      --depth=D              Interleave depth (default 1)\n"
+  "      --armour-t=N           symbols corrected per inner codeword\n"
+  "      --armour-pct=P         inner-code overhead 2t/k, 0 < P <= 50\n"
+  "      --burst=SIZE           burst to tolerate; excludes --depth\n"
+  "      --depth=D              interleave depth (default 1)\n"
   "      --volumes=WHICH        ladder (default), equal, or a count\n"
   "      --dedup=WHICH          none, file (default), chunk\n"
-  "      --dedup-chunk=SIZE     Chunk size for --dedup=chunk\n"
-  "      --dedup-memory=SIZE    Ceiling for the dedup index\n"
-  "      --dedup-max-refs=N     Cap on aliases of one blob\n"
-  "      --preserve=LIST        Metadata to record (see below)\n"
-  "  -R, --recurse              Descend into directories\n"
-  "      --exclude=GLOB         Repeatable\n"
-  "      --include=GLOB         Repeatable; restricts to matches\n"
-  "      --follow-symlinks      Store the target, not the link\n"
-  "      --base=DIR             Store names relative to DIR\n"
-  "      --labels               Write a label file per volume\n"
-  "      --auth-only            Omit public CRC and whole-file hashes\n"
-  "      --no-verify-after      Skip the read-back pass\n"
-  "      --strict               Refuse names the format cannot carry\n"
-  "      --spool                Buffer a pipe to a file first\n"
-  "      --spool-dir=DIR        Buffer it under DIR; implies --spool\n"
-  "      --stdin-name=PATH      Manifest path for a lone '-' input\n",
+  "      --dedup-chunk=SIZE     chunk size for --dedup=chunk\n"
+  "      --dedup-memory=SIZE    ceiling for the dedup index\n"
+  "      --dedup-max-refs=N     cap on aliases of one blob\n"
+  "      --preserve=LIST        metadata to record (see below)\n"
+  "  -R, --recurse              descend into directories\n"
+  "      --exclude=GLOB         repeatable\n"
+  "      --include=GLOB         repeatable; restricts to matches\n"
+  "      --follow-symlinks      store the target, not the link\n"
+  "      --base=DIR             store names relative to DIR\n"
+  "      --labels               write a label file per volume\n"
+  "      --auth-only            omit public CRC and whole-file hashes\n"
+  "      --no-verify-after      skip the read-back pass\n"
+  "      --strict               refuse names the format cannot carry\n"
+  "      --spool                buffer a pipe to a file first\n"
+  "      --spool-dir=DIR        buffer it under DIR; implies --spool\n"
+  "      --stdin-name=PATH      manifest path for a lone '-' input\n",
   /*  verify  */
-  "      --fast                 Tags only; skip the algebraic pass\n"
-  "      --strong               Check slice tags, not just slice CRCs\n"
+  "      --fast                 tags only; skip the algebraic pass\n"
+  "      --strong               check slice tags, not just slice CRCs\n"
   "      --resync=WHICH         off, auto (default), always\n"
-  "      --resync-step=N        Sample every Nth offset\n"
-  "      --resync-window=SIZE   Displacement searched either way\n"
-  "      --resync-exhaustive    Confirm every candidate; expensive\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first (default)\n",
+  "      --resync-step=N        sample every Nth offset\n"
+  "      --resync-window=SIZE   displacement searched either way\n"
+  "      --resync-exhaustive    confirm every candidate; expensive\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n"
+  "      --chain                every generation, oldest first (default)\n",
   /*  repair  */
-  "      --in-place             Rewrite the originals\n"
-  "      --to=DIR               Write the repaired tree into DIR\n"
-  "      --backup               Rewrite, keeping the damaged original\n"
-  "      --paranoid             Re-read and re-verify every write\n"
-  "      --keep-journal         Keep the undo journal on success\n"
-  "      --no-journal           Do not write one; excludes the above\n"
-  "      --replace-journal      Overwrite a journal an earlier repair left\n"
-  "      --dry-run              Report what would change\n"
-  "      --exit-on-change       Exit 1 if anything was or would be repaired\n"
-  "      --require=LIST         Turn a degradation into an error\n"
+  "      --in-place             rewrite the originals\n"
+  "      --to=DIR               write the repaired tree into DIR\n"
+  "      --backup               rewrite, keeping the damaged original\n"
+  "      --paranoid             re-read and re-verify every write\n"
+  "      --keep-journal         keep the undo journal on success\n"
+  "      --no-journal           do not write one; excludes the above\n"
+  "      --replace-journal      overwrite a journal an earlier repair left\n"
+  "      --dry-run              report what would change\n"
+  "      --exit-on-change       exit 1 if anything was or would be repaired\n"
+  "      --require=LIST         turn a degradation into an error\n"
   "      --resync=WHICH         off, auto (default), always\n"
-  "      --resync-step=N        Sample every Nth offset\n"
-  "      --resync-window=SIZE   Displacement searched either way\n"
-  "      --resync-exhaustive    Confirm every candidate; expensive\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first (default)\n",
+  "      --resync-step=N        sample every Nth offset\n"
+  "      --resync-window=SIZE   displacement searched either way\n"
+  "      --resync-exhaustive    confirm every candidate; expensive\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n"
+  "      --chain                every generation, oldest first (default)\n",
   /*  scrub  */
-  "      --deep                 Re-encode recovery and compare it\n"
-  "      --rewrite              Write back what the pass corrected\n"
-  "      --rebuild-cells        Rebuild the cell CRC table\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first (default)\n",
+  "      --deep                 re-encode recovery and compare it\n"
+  "      --rewrite              write back what the pass corrected\n"
+  "      --rebuild-cells        rebuild the cell CRC table\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n"
+  "      --chain                every generation, oldest first (default)\n",
   /*  extract  */
-  "      --to=DIR               Extract into DIR\n"
-  "      --stdout               Write the stream to stdout\n"
-  "      --preserve=LIST        Metadata to apply (see below)\n"
+  "      --to=DIR               extract into DIR\n"
+  "      --stdout               write the stream to stdout\n"
+  "      --preserve=LIST        metadata to apply (see below)\n"
   "      --owner-map=WHICH      name (default), numeric\n"
-  "      --require=LIST         Turn a degradation into an error\n"
-  "      --strict-names         Apply Windows and DOS naming rules\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n",
+  "      --require=LIST         turn a degradation into an error\n"
+  "      --strict-names         apply Windows and DOS naming rules\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n",
   /*  recover  */
-  "      --volume=WHICH         Volume number, or its name\n"
-  "      --to=DIR               Write the volume into DIR\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n",
+  "      --volume=WHICH         volume number, or its name\n"
+  "      --to=DIR               write the volume into DIR\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n",
   /*  addrecovery  */
   "  -r, --recovery=SPEC        count | N% | SIZE | Nx\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n",
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n",
   /*  add  */
   "      --rescan=WHICH         stat (default), hash, none\n"
-  "      --verify-unchanged     Alias for --rescan=hash\n"
-  "      --allow-missing        Do not stop on a vanished entry\n"
+  "      --verify-unchanged     alias for --rescan=hash\n"
+  "      --allow-missing        do not stop on a vanished entry\n"
   "      --dedup-scope=WHICH    generation (default), chain\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
   "  ... and everything create accepts.\n",
   /*  consolidate  */
-  "      --replace              Remove the collapsed generations\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --dry-run              Report what would change\n"
+  "      --replace              remove the collapsed generations\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --dry-run              report what would change\n"
   "  ... and everything create accepts.\n",
   /*  prune  */
-  "      --before=G             Remove every generation before G\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Remove G; repeatable\n"
-  "      --dry-run              Report what would change\n",
+  "      --before=G             remove every generation before G\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         remove G; repeatable\n"
+  "      --dry-run              report what would change\n",
   /*  list  */
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first\n"
-  "      --links                Group hard-link aliases by target\n"
-  "      --dedup                Show extents and reference counts\n",
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n"
+  "      --chain                every generation, oldest first\n"
+  "      --links                group hard-link aliases by target\n"
+  "      --dedup                show extents and reference counts\n",
   /*  info  */
-  "      --deps                 Per-generation dependency table\n"
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n"
-  "      --chain                Every generation, oldest first\n",
+  "      --deps                 per-generation dependency table\n"
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n"
+  "      --chain                every generation, oldest first\n",
   /*  explain  */
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Number, or a set-id prefix\n",
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         number, or a set-id prefix\n",
   /*  undo  */
-  "      --scan=DIR             Also look for volumes in DIR\n"
-  "      --generation=G         Undo only G; every journal by default\n"
-  "      --keep-journal         Replay the journal but leave it in place\n",
+  "      --scan=DIR             also look for volumes in DIR\n"
+  "      --generation=G         undo only G; every journal by default\n"
+  "      --keep-journal         replay the journal but leave it in place\n",
   /*  recover-prologue  */
   "",
   /*  benchmark  */
-  "      --tiers                Time every runnable kernel tier\n"
+  "      --tiers                time every runnable kernel tier\n"
 };
 
 void xpar_cli_help(xpar_verb v) {
   if (v == XPAR_VERB_NONE) {
     xpar_fputs(
-      "Usage: xpar <verb> [options] [arguments]\n"
+      "usage: xpar <verb> [options] [arguments]\n"
       "       xpar <set>                    same as: xpar verify <set>\n"
       "\n"
-      "Verbs, of which any unambiguous prefix will do:\n", xpar_stdout);
+      "verbs, of which any unambiguous prefix will do:\n", xpar_stdout);
     for (int i = 0; verbs[i].name; i++)
       xpar_fprintf(xpar_stdout, "  %-18s%s\n", verbs[i].name,
                    verb_desc[verbs[i].verb]);
     xpar_fprintf(xpar_stdout, "\n%s", help_global);
     xpar_fputs(
       "\n"
-      "Sizes take K, M, G, T (1024-based) or KB, MB, GB, TB (1000-based);\n"
+      "sizes take K, M, G, T (1024-based) or KB, MB, GB, TB (1000-based);\n"
       "a bare number is bytes.  Run 'xpar <verb> --help' for a verb.\n",
       xpar_stdout);
     return;
   }
-  xpar_fprintf(xpar_stdout, "Usage: %s\n\n", verb_usage[v]);
+  xpar_fprintf(xpar_stdout, "usage: %s\n\n", verb_usage[v]);
   if (*verb_opts[v]) xpar_fprintf(xpar_stdout, "%s\n", verb_opts[v]);
   xpar_fputs(help_global, xpar_stdout);
   if (v == XPAR_VERB_CREATE || v == XPAR_VERB_EXTRACT ||
@@ -784,20 +774,20 @@ static void v1_flag_refuse(int argc, char ** argv) {
     { "-Ld",  "repair"                               },
     { "-Lt",  "verify"                               }
   };
-  for (sz i = 0; i < ARRAY_LEN(tab); i++) {
+  sz i;
+  Fi(ARRAY_LEN(tab),
     sz n = xpar_strlen(tab[i].flag);
     if (xpar_strncmp(argv[1], tab[i].flag, n)) continue;
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag. Use xpar %s",
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag; use xpar %s",
                  tab[i].flag, tab[i].v2);
     for (int k = 2; k < argc; k++)
       xpar_fprintf(xpar_stderr, " %s", argv[k]);
     xpar_fputs("\n", xpar_stderr);
-    xpar_exit(XPAR_EXIT_USAGE);
-  }
+    xpar_exit(XPAR_EXIT_USAGE));
   /*  Handle bare v1 flags without suggesting a verb.  */
   if (!argv[1][2]) {
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag. Use create, "
-                 "verify, repair or extract.\n", argv[1]);
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag; use create, "
+                 "verify, repair or extract\n", argv[1]);
     xpar_exit(XPAR_EXIT_USAGE);
   }
 }
@@ -882,34 +872,33 @@ static void say_rollback_residue(const char * arg) {
                  "xpar: interrupted consolidate or prune left rollback "
                  "volumes for '%s':\n",
                  xpar_name_escape(arg));
-    for (i = 0; i < count; i++) {
+    Fi(count,
       char * back = xpar_strndup(name[i], rollback_stem(name[i]));
       char * from = join_path(dir, name[i]);
       char * to   = join_path(dir, back);
       xpar_fprintf(xpar_stderr, "xpar:   mv '%s' '%s'\n", from, to);
-      xpar_free(back);  xpar_free(from);  xpar_free(to);
-    }
+      xpar_free(back);  xpar_free(from);  xpar_free(to));
   }
-  for (i = 0; i < count; i++) xpar_free(name[i]);
+  Fi(count, xpar_free(name[i]));
   xpar_free(name);  xpar_free(dir);
   if (a_set)
-    FATAL_FORMAT("No xpar set found for '%s'; restore the rollback names "
-                 "above.", xpar_name_escape(arg));
+    FATAL_FORMAT("no xpar set found for '%s'; restore the rollback names "
+                 "above", xpar_name_escape(arg));
 }
 
 static void push_vol(xpar_setref * s, char * path) {
   char ** nv = (char **) xpar_realloc(s->vol, (s->count + 1) * sizeof(char *));
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
   nv[s->count] = path;  s->vol = nv;  s->count++;
 }
 
 static void push_vol_once(xpar_setref * s, char * path) {
   u32 i;
-  for (i = 0; i < s->count; i++)
+  Fi(s->count,
     if (xpar_path_same(s->vol[i], path)) {
       xpar_free(path);
       return;
-    }
+    });
   push_vol(s, path);
 }
 
@@ -939,9 +928,7 @@ static void sort_vols(xpar_setref * s) {
   for (u32 i = 1; i < s->count; i++) {
     char * v = s->vol[i];
     u32 j = i;
-    while (j && vol_cmp(s, s->vol[j - 1], v) > 0) {
-      s->vol[j] = s->vol[j - 1];  j--;
-    }
+    while (j && vol_cmp(s, s->vol[j - 1], v) > 0) { s->vol[j] = s->vol[j - 1];  j--; }
     s->vol[j] = v;
   }
 }
@@ -954,7 +941,7 @@ static char * swap_ext(const char * p) {
     if (p[i] == '.') {
       char * head = xpar_strndup(p, i);
       char * out;
-      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", head != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, head != NULL, "out of memory");
       out = xpar_vname_index(head, 0);
       xpar_free(head);
       return out;
@@ -1005,12 +992,9 @@ static void gather_chain_siblings(xpar_setref * s) {
   char * dir;
   sz i;
   for (i = 0; s->base[i]; i++)
-    if (xpar_path_sep(s->base[i])) {
-      dlen = i + 1;
-      leaf = s->base + dlen;
-    }
+    if (xpar_path_sep(s->base[i])) { dlen = i + 1;  leaf = s->base + dlen; }
   dir = dlen ? xpar_strndup(s->base, dlen) : dup_str("");
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", dir != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, dir != NULL, "out of memory");
   gather_from(s, dir, leaf);
   /*  Also gather matching volumes from --scan.  */
   if (xpar_path_scan()) gather_from(s, xpar_path_scan(), leaf);
@@ -1036,11 +1020,7 @@ static bool set_absent(const char * arg) {
   a = xpar_vname_index(arg, 0);
   if (is_file(a)) none = false;
   xpar_free(a);
-  if (none) {
-    char * b = swap_ext(arg);
-    if (b && is_file(b)) none = false;
-    xpar_free(b);
-  }
+  if (none) { char * b = swap_ext(arg);  if (b && is_file(b)) none = false;  xpar_free(b); }
   return none;
 }
 
@@ -1056,20 +1036,20 @@ static void maint_gate(const char * arg) {
   if (verb == XPAR_VERB_REPAIR) {
     int rc = xpar_maint_recover(j, false);
     if (rc != XPAR_EXIT_OK)
-      FATAL_CODE(rc, "Cannot recover interrupted %s from '%s'.", op, j);
+      FATAL_CODE(rc, "cannot recover interrupted %s from '%s'", op, j);
     xpar_free(j);
     return;
   }
   FATAL_CODE(XPAR_EXIT_REPAIRABLE,
-             "Interrupted %s left no set at '%s' (journal: '%s'); run "
-             "'xpar repair %s'.", op, xpar_name_escape(arg), j,
+             "interrupted %s left no set at '%s' (journal: '%s'); run "
+             "'xpar repair %s'", op, xpar_name_escape(arg), j,
              xpar_name_escape(arg));
 }
 
 void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   out->vol = NULL;  out->count = 0;  out->base = NULL;  out->dir = NULL;
   out->home = NULL;
-  FATAL_UNLESS("A set argument is required.", arg && *arg);
+  FATAL_UNLESS(arg && *arg, "a set argument is required");
   maint_gate(arg);
   /*  --scan supplies volumes, not protected entries.  */
   out->home = is_dir(arg) ? dup_str(arg) : xpar_path_dir(arg);
@@ -1085,12 +1065,12 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     xpar_closedir(d);
     sort_vols(out);
     FATAL_UNLESS_CODE(XPAR_EXIT_NOTFOUND,
-                      "Directory '%s' holds no " XPAR_EXT " file.",
-                      out->count > 0, xpar_name_escape(arg));
+                      out->count > 0,
+                      "directory '%s' holds no " XPAR_EXT " file", xpar_name_escape(arg));
   } else if (is_file(arg)) {
     if (xpar_vname_has_ext(arg)) {
       char * b = xpar_strndup(arg, xpar_strlen(arg) - XPAR_EXT_LEN);
-      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", b != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, b != NULL, "out of memory");
       strip_volume_suffix(b);
       strip_gen_suffix(b);
       out->base = b;
@@ -1104,15 +1084,15 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
         push_vol(out, b);
         if (!out->base) {
           out->base = xpar_strndup(b, xpar_strlen(b) - XPAR_EXT_LEN);
-          FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.",
-                            out->base != NULL);
+          FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, out->base != NULL,
+                            "out of memory");
         }
       } else xpar_free(b);
       if (!out->count) {
         char * safe = xpar_name_escape(arg);
-        FATAL_FORMAT("No xpar set guards '%s': neither '%s" XPAR_EXT
+        FATAL_FORMAT("no xpar set guards '%s': neither '%s" XPAR_EXT
                      "' nor the same name with its extension replaced by '"
-                     XPAR_EXT "' is here.", safe, safe);
+                     XPAR_EXT "' is here", safe, safe);
       }
     }
   } else {
@@ -1122,13 +1102,14 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
     else {
       xpar_free(a);
       say_rollback_residue(arg);
-      FATAL_FORMAT("No xpar set found for '%s'. See 'xpar --help'.",
+      FATAL_FORMAT("no xpar set found for '%s'; see 'xpar --help'",
                    xpar_name_escape(arg));
     }
   }
   if (out->base) gather_chain_siblings(out);
   sort_vols(out);
-  for (u32 i = 0; i < out->count; i++) xpar_v1_refuse_if_v1(out->vol[i]);
+  u32 i;
+  Fi(out->count, xpar_v1_refuse_if_v1(out->vol[i]));
 }
 
 void xpar_setref_free(xpar_setref * s) {
@@ -1175,7 +1156,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case 'f': o->force = true;  break;
     case 'j': o->jobs = (int) need_range(nm, v, 1, 1024);  break;
     case 'm': o->memory = need_size(nm, v);
-              FATAL_UNLESS("Option -m expects a positive size.", o->memory);
+              FATAL_UNLESS(o->memory, "option -m expects a positive size");
               break;
     case O_JSON:         o->json = true;  xpar_json_fatal_enable(true);
                          break;
@@ -1187,35 +1168,35 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       xpar_free(o->simd);  o->simd = dup_str(v ? v : "");
       break;
 
-    case 'o': FATAL_UNLESS("Option -o expects an output base name.", v && *v);
+    case 'o': FATAL_UNLESS(v && *v, "option -o expects an output base name");
               xpar_free(o->output);  o->output = dup_str(v);  break;
     case 'r':
-      FATAL_UNLESS("Option %s expects a count, a percentage, a size or a "
-                   "multiple, as in 100, 15%%, 2.5M or 1x.",
-                   v && !xpar_cli_parse_recovery(v, &o->recovery), nm);
+      FATAL_UNLESS(v && !xpar_cli_parse_recovery(v, &o->recovery),
+                   "option %s expects a count, a percentage, a size or a "
+                   "multiple, as in 100, 15%%, 2.5M or 1x", nm);
       break;
     case O_MIN_RECOVERY: o->min_recovery = need_u64(nm, v);  break;
     case O_MAX_RECOVERY:
-      FATAL_UNLESS("Option %s expects a count, a percentage, a size or a "
-                   "multiple, as in 100, 15%%, 2.5M or 1x.",
-                   v && !xpar_cli_parse_recovery(v, &o->max_recovery), nm);
+      FATAL_UNLESS(v && !xpar_cli_parse_recovery(v, &o->max_recovery),
+                   "option %s expects a count, a percentage, a size or a "
+                   "multiple, as in 100, 15%%, 2.5M or 1x", nm);
       break;
     case 's': o->slice_size = need_size(nm, v);
-              FATAL_UNLESS("Option -s expects a positive size.",
-                           o->slice_size);
+              FATAL_UNLESS(o->slice_size,
+                           "option -s expects a positive size");
               break;
     case 'b': o->slices = need_u64(nm, v);
-              FATAL_UNLESS("Option -b expects a positive slice count.",
-                           o->slices);
+              FATAL_UNLESS(o->slices,
+                           "option -b expects a positive slice count");
               break;
     case O_CELL:
       o->cell_bytes = need_size(nm, v);
       /* Do not round an explicit cell size. */
-      FATAL_UNLESS("--cell must be a multiple of 64 and at least %d bytes.",
-                   o->cell_bytes >= XPAR_CELL_MIN &&
-                          o->cell_bytes % 64 == 0, XPAR_CELL_MIN);
-      FATAL_UNLESS("--cell cannot exceed %" PRIu64 " bytes.",
-                   o->cell_bytes <= XPAR_SLICE_REFUSE, XPAR_SLICE_REFUSE);
+      FATAL_UNLESS(o->cell_bytes >= XPAR_CELL_MIN &&
+                          o->cell_bytes % 64 == 0,
+                   "--cell must be a multiple of 64 and at least %d bytes", XPAR_CELL_MIN);
+      FATAL_UNLESS(o->cell_bytes <= XPAR_SLICE_REFUSE,
+                   "--cell cannot exceed %" PRIu64 " bytes", XPAR_SLICE_REFUSE);
       break;
     case O_LAYOUT:    o->layout = need_word(nm, v, w_layout);
                       o->layout_given = true;  break;
@@ -1238,17 +1219,17 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_ARMOUR_T:  o->armour_t = (u32) need_range(nm, v, 1, 32767);  break;
     case O_ARMOUR_PCT: {
       u64 ip = 0, num = 0, den = 1;  const char * end = "";
-      FATAL_UNLESS("Option %s expects a percentage such as 5 or 2.5.",
-                   v && !scan_decimal(v, &ip, &num, &den, &end) &&
-                   (!end[0] || (end[0] == '%' && !end[1])), nm);
+      FATAL_UNLESS(v && !scan_decimal(v, &ip, &num, &den, &end) &&
+                   (!end[0] || (end[0] == '%' && !end[1])),
+                   "option %s expects a percentage such as 5 or 2.5", nm);
       o->armour_pct = (f64) ip + (f64) num / (f64) den;
-      FATAL_UNLESS("Option %s must be above 0 and at most 50.",
-                   o->armour_pct > 0.0 && o->armour_pct <= 50.0, nm);
+      FATAL_UNLESS(o->armour_pct > 0.0 && o->armour_pct <= 50.0,
+                   "option %s must be above 0 and at most 50", nm);
       break;
     }
     case O_BURST: o->burst = need_size(nm, v);
-                  FATAL_UNLESS("Option --burst expects a positive size.",
-                               o->burst);
+                  FATAL_UNLESS(o->burst,
+                               "option --burst expects a positive size");
                   break;
     case O_DEPTH: o->depth = (u32) need_range(nm, v, 1, 65535);  break;
     case O_VOLUMES:
@@ -1257,7 +1238,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       else if (all_digits(v)) {
         o->volumes = XPAR_VOLS_FIXED;
         o->volume_count = (u32) need_range(nm, v, 1, 65535);
-      } else FATAL("Option %s takes ladder, equal or a volume count.", nm);
+      } else FATAL("option %s takes ladder, equal or a volume count", nm);
       break;
     case O_DEDUP:           o->dedup = need_word(nm, v, w_dedup);  break;
     case O_DEDUP_CHUNK:     o->dedup_chunk = need_size(nm, v);  break;
@@ -1308,7 +1289,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       parse_genref(nm, v, &g);
       nv = (xpar_genref *) xpar_realloc(o->gens,
                                         (o->gen_count + 1) * sizeof g);
-      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", nv != NULL);
+      FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
       nv[o->gen_count] = g;  o->gens = nv;  o->gen_count++;
       break;
     }
@@ -1324,12 +1305,10 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_TO: {
       int want = a->opt == O_IN_PLACE ? XPAR_DEST_IN_PLACE
                : a->opt == O_BACKUP   ? XPAR_DEST_BACKUP : XPAR_DEST_TO;
-      FATAL_UNLESS("Options --in-place, --to, and --backup are exclusive.",
-                   o->dest == XPAR_DEST_DEFAULT || o->dest == want);
+      FATAL_UNLESS(o->dest == XPAR_DEST_DEFAULT || o->dest == want,
+                   "options --in-place, --to, and --backup are exclusive");
       o->dest = want;
-      if (want == XPAR_DEST_TO) {
-        xpar_free(o->to_dir);  o->to_dir = dup_str(v);
-      }
+      if (want == XPAR_DEST_TO) { xpar_free(o->to_dir);  o->to_dir = dup_str(v); }
       break;
     }
     case O_PARANOID:       o->paranoid = true;  break;
@@ -1348,8 +1327,8 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_STRICT_NAMES: o->strict_names = true;  break;
 
     case O_VOLUME:
-      FATAL_UNLESS("Option %s expects a volume number or a volume name.",
-                   v && *v, nm);
+      FATAL_UNLESS(v && *v,
+                   "option %s expects a volume number or a volume name", nm);
       o->volume_given = true;
       if (all_digits(v)) o->volume_index = need_u64(nm, v);
       else { xpar_free(o->volume_name);  o->volume_name = dup_str(v); }
@@ -1362,7 +1341,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
                              break;
     case O_REPLACE:          o->replace = true;  break;
     case O_DEPS:             o->deps = true;  break;
-    default: FATAL("internal: option %d has no handler.", a->opt);
+    default: FATAL("internal: option %d has no handler", a->opt);
   }
 }
 
@@ -1376,11 +1355,11 @@ static bool takes_set(xpar_verb v) {
 static void positionals(xpar_options * o, char ** pos, int n) {
   int first = 0;
   if (o->verb == XPAR_VERB_BENCHMARK) {
-    FATAL_UNLESS("Verb benchmark takes no arguments.", n == 0);
+    FATAL_UNLESS(n == 0, "verb benchmark takes no arguments");
     return;
   }
   if (takes_set(o->verb) || o->verb == XPAR_VERB_RECOVER_PROLOGUE) {
-    FATAL_UNLESS("Verb %s needs one %s argument.", n >= 1,
+    FATAL_UNLESS(n >= 1, "verb %s needs one %s argument",
                  xpar_verb_name(o->verb),
                  o->verb == XPAR_VERB_RECOVER_PROLOGUE ? "file" : "set");
     o->set = dup_str(pos[0]);
@@ -1391,18 +1370,18 @@ static void positionals(xpar_options * o, char ** pos, int n) {
       push_str(&o->paths, &o->path_count, pos[i]);
       if (!xpar_strcmp(pos[i], "-")) o->from_stdin = true;
     }
-    FATAL_UNLESS("Verb %s needs at least one input path.", o->path_count > 0,
+    FATAL_UNLESS(o->path_count > 0, "verb %s needs at least one input path",
                  xpar_verb_name(o->verb));
   } else
-    FATAL_UNLESS("Verb %s takes one argument, and %d were given.",
-                 n == first, xpar_verb_name(o->verb), n);
+    FATAL_UNLESS(n == first,
+                 "verb %s takes one argument, and %d were given", xpar_verb_name(o->verb), n);
 }
 
 /*  Resolve armour defaults and constraints for LAYOUT.  */
 void xpar_cli_armour_for_layout(xpar_options * o, int layout) {
   if (layout == XPAR_LAYOUT_ARMOURED) {
-    FATAL_UNLESS("--layout=armoured requires --armour=all.",
-                 !o->armour_given || o->armour == XPAR_ARMOUR_ALL);
+    FATAL_UNLESS(!o->armour_given || o->armour == XPAR_ARMOUR_ALL,
+                 "--layout=armoured requires --armour=all");
     o->armour = XPAR_ARMOUR_ALL;
     return;
   }
@@ -1410,100 +1389,102 @@ void xpar_cli_armour_for_layout(xpar_options * o, int layout) {
 }
 
 static void validate(xpar_options * o, u32 pres_lit) {
-  FATAL_UNLESS("Options -s and -b are mutually exclusive.",
-               !(o->slice_size && o->slices));
-  FATAL_UNLESS("Options --armour-t and --armour-pct are mutually exclusive.",
-               !(o->armour_t && o->armour_pct > 0.0));
+  u32 i;
+  FATAL_UNLESS(!(o->slice_size && o->slices),
+               "options -s and -b are mutually exclusive");
+  FATAL_UNLESS(!(o->armour_t && o->armour_pct > 0.0),
+               "options --armour-t and --armour-pct are mutually exclusive");
   /*  Generation verbs may resolve this after loading the chain.  */
   if (o->verb == XPAR_VERB_CREATE || o->layout_given)
     xpar_cli_armour_for_layout(o, o->layout);
-  FATAL_UNLESS("Options --burst and --depth are mutually exclusive.",
-               !(o->burst && o->depth));
-  FATAL_UNLESS("Options --keep-journal and --no-journal contradict each "
-               "other.", !(o->keep_journal && o->no_journal));
-  FATAL_UNLESS("Options --before and --generation are mutually exclusive.",
-               !(o->have_before && o->gen_count));
+  FATAL_UNLESS(!(o->burst && o->depth),
+               "options --burst and --depth are mutually exclusive");
+  FATAL_UNLESS(!(o->keep_journal && o->no_journal),
+               "options --keep-journal and --no-journal contradict each "
+               "other");
+  FATAL_UNLESS(!(o->have_before && o->gen_count),
+               "options --before and --generation are mutually exclusive");
   /*  Tiny chunk averages exceed extent and index limits.  */
-  FATAL_UNLESS("--dedup-chunk must be between 4 KiB and 1 GiB.",
-               !o->dedup_chunk ||
-               (o->dedup_chunk >= 4096 && o->dedup_chunk <= ((u64) 1 << 30)));
-  FATAL_UNLESS("--auth-only needs --auth-key=FILE.",
-               !o->auth_only || o->auth_key);
+  FATAL_UNLESS(!o->dedup_chunk ||
+               (o->dedup_chunk >= 4096 && o->dedup_chunk <= ((u64) 1 << 30)),
+               "--dedup-chunk must be between 4 KiB and 1 GiB");
+  FATAL_UNLESS(!o->auth_only || o->auth_key,
+               "--auth-only needs --auth-key=FILE");
   /*  Sidecar verification uses lstat, so followed links cannot match.  */
-  FATAL_UNLESS("--follow-symlinks requires split or armoured layout.",
-               !o->follow_symlinks || o->layout != XPAR_LAYOUT_SIDECAR ||
+  FATAL_UNLESS(!o->follow_symlinks || o->layout != XPAR_LAYOUT_SIDECAR ||
                (o->verb != XPAR_VERB_CREATE && o->verb != XPAR_VERB_ADD &&
-                o->verb != XPAR_VERB_CONSOLIDATE));
+                o->verb != XPAR_VERB_CONSOLIDATE),
+               "--follow-symlinks requires split or armoured layout");
 
   if (o->from_stdin) {
     xpar_path_status ns;
-    FATAL_UNLESS("Pipe input requires --stdin-name=PATH.",
-                 o->stdin_name && o->stdin_name[0]);
+    FATAL_UNLESS(o->stdin_name && o->stdin_name[0],
+                 "pipe input requires --stdin-name=PATH");
     ns = xpar_path_check(o->stdin_name,
                          (u32) xpar_strlen(o->stdin_name), 0);
-    FATAL_UNLESS("--stdin-name must be a safe relative manifest path: %s.",
-                 ns == XPAR_PATH_OK, xpar_path_reason(ns));
-    FATAL_UNLESS("Creating from a pipe requires -o/--output.",
-                 o->verb != XPAR_VERB_CREATE ||
-                 (o->output && o->output[0]));
-    FATAL_UNLESS("A pipe must be the only input.",
-                 o->path_count == 1);
+    FATAL_UNLESS(ns == XPAR_PATH_OK,
+                 "--stdin-name must be a safe relative manifest path: %s", xpar_path_reason(ns));
+    FATAL_UNLESS(o->verb != XPAR_VERB_CREATE ||
+                 (o->output && o->output[0]),
+                 "creating from a pipe requires -o/--output");
+    FATAL_UNLESS(o->path_count == 1,
+                 "a pipe must be the only input");
     if (o->verb == XPAR_VERB_CREATE && !o->spool) {
-      FATAL_UNLESS("Direct pipe input requires the matrix codec.",
-                   o->codec != XPAR_CODEC_FFT);
-      FATAL_UNLESS("Armoured pipe input requires --spool.",
-                   o->layout != XPAR_LAYOUT_ARMOURED);
-      FATAL_UNLESS("Direct pipe input requires -s, not -b.",
-                   !o->slices);
+      FATAL_UNLESS(o->codec != XPAR_CODEC_FFT,
+                   "direct pipe input requires the matrix codec");
+      FATAL_UNLESS(o->layout != XPAR_LAYOUT_ARMOURED,
+                   "armoured pipe input requires --spool");
+      FATAL_UNLESS(!o->slices,
+                   "direct pipe input requires -s, not -b");
       o->codec = XPAR_CODEC_MATRIX;
     }
-    FATAL_UNLESS("Direct pipe input requires --spool or -r as a count or size.",
-                 o->verb == XPAR_VERB_ADD || o->spool ||
+    FATAL_UNLESS(o->verb == XPAR_VERB_ADD || o->spool ||
                  o->recovery.kind == XPAR_R_COUNT ||
-                 o->recovery.kind == XPAR_R_BYTES);
+                 o->recovery.kind == XPAR_R_BYTES,
+                 "direct pipe input requires --spool or -r as a count or size");
   } else {
-    FATAL_UNLESS("--stdin-name is meaningful only when the create input is "
-                 "'-'.", !o->stdin_name);
+    FATAL_UNLESS(!o->stdin_name, "--stdin-name is meaningful only when the create input is "
+                 "'-'");
   }
 
   if (o->verb == XPAR_VERB_RECOVER)
-    FATAL_UNLESS("Verb recover needs --volume to say which volume to "
-                 "regenerate.", o->volume_given);
+    FATAL_UNLESS(o->volume_given, "verb recover needs --volume to say which volume to "
+                 "regenerate");
 
   if (o->verb == XPAR_VERB_EXTRACT) {
-    FATAL_UNLESS("ctime cannot be restored because metadata writes reset it.",
-                 !(pres_lit & XPAR_PRES_CTIME));
-    FATAL_UNLESS("Restoring privileged mode bits requires -f.",
-                 !(pres_lit & XPAR_PRES_SETID) || o->force);
-    FATAL_UNLESS("Restoring privileged xattr namespaces requires -f.",
-                 !(pres_lit & XPAR_PRES_XATTR_ALL) || o->force);
+    FATAL_UNLESS(!(pres_lit & XPAR_PRES_CTIME),
+                 "ctime cannot be restored because metadata writes reset it");
+    FATAL_UNLESS(!(pres_lit & XPAR_PRES_SETID) || o->force,
+                 "restoring privileged mode bits requires -f");
+    FATAL_UNLESS(!(pres_lit & XPAR_PRES_XATTR_ALL) || o->force,
+                 "restoring privileged xattr namespaces requires -f");
     o->preserve &= ~(u32) XPAR_PRES_CTIME;
     if (!(pres_lit & XPAR_PRES_SETID)) o->preserve &= ~(u32) XPAR_PRES_SETID;
     if (!(pres_lit & XPAR_PRES_XATTR_ALL))
       o->preserve &= ~(u32) XPAR_PRES_XATTR_ALL;
 
-    FATAL_UNLESS("Options --stdout and --json both claim stdout; send "
-                 "the extracted stream to a file, or drop --json.",
-                 !(o->to_stdout && o->json));
-    FATAL_UNLESS("Refusing to write binary data to a terminal; -f "
-                 "overrides.", !o->to_stdout || o->force ||
-                 !xpar_is_tty(xpar_stdout));
+    FATAL_UNLESS(!(o->to_stdout && o->json),
+                 "options --stdout and --json both claim stdout; send "
+                 "the extracted stream to a file, or drop --json");
+    FATAL_UNLESS(!o->to_stdout || o->force ||
+                 !xpar_is_tty(xpar_stdout), "refusing to write binary data to a terminal; -f "
+                 "overrides");
   }
 
   if (o->set && !xpar_strcmp(o->set, "-"))
-    FATAL_UNLESS("Verb %s requires random access. Spool the set first.",
-                 o->verb != XPAR_VERB_VERIFY && o->verb != XPAR_VERB_REPAIR &&
+    FATAL_UNLESS(o->verb != XPAR_VERB_VERIFY && o->verb != XPAR_VERB_REPAIR &&
                  o->verb != XPAR_VERB_SCRUB && o->verb != XPAR_VERB_RECOVER,
+                 "verb %s requires random access; spool the set first",
                  xpar_verb_name(o->verb));
 
   if (o->verb == XPAR_VERB_CREATE && !o->recurse)
-    for (u32 i = 0; i < o->path_count; i++)
-      FATAL_UNLESS("'%s' is a directory. Use -R to descend.",
-                   !is_dir(o->paths[i]), xpar_name_escape(o->paths[i]));
+    Fi(o->path_count,
+      FATAL_UNLESS(!is_dir(o->paths[i]),
+       "'%s' is a directory; use -R to descend", xpar_name_escape(o->paths[i])));
 
-  FATAL_UNLESS("--labels requires --layout=split.",
-               !o->labels || o->verb != XPAR_VERB_CREATE ||
-               o->layout == XPAR_LAYOUT_SPLIT);
+  FATAL_UNLESS(!o->labels || o->verb != XPAR_VERB_CREATE ||
+               o->layout == XPAR_LAYOUT_SPLIT,
+               "--labels requires --layout=split");
 }
 
 /*  Whether ARG can use the `xpar <set>` shorthand.  */
@@ -1547,22 +1528,22 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     v1_flag_refuse(argc, argv);
 
   r = yarg_parse_verb(argc, argv, verbs, t_global, st);
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", r != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, r != NULL, "out of memory");
   if (r->status == YARG_VERB_AMBIGUOUS) {
-    xpar_fprintf(xpar_stderr, "xpar: '%s' is an ambiguous verb prefix.\n",
+    xpar_fprintf(xpar_stderr, "xpar: '%s' is an ambiguous verb prefix\n",
                  argv[1]);
     xpar_fprintf(xpar_stderr, "xpar: candidates: %s\n",
                  r->cands ? r->cands : "");
     xpar_exit(XPAR_EXIT_USAGE);
   }
-  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, "Out of memory.", r->res != NULL);
+  FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, r->res != NULL, "out of memory");
   if (!r->verb) {
     const char * v = misplaced_verb(argc, argv);
-    if (v) FATAL("'%s' must come first.", v);
+    if (v) FATAL("'%s' must come first", v);
   }
   if (r->res->error) {
-    xpar_fprintf(xpar_stderr, "xpar: %s", r->res->error);
-    xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes.\n",
+    xpar_fprintf(xpar_stderr, "xpar: %s\n", r->res->error);
+    xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes\n",
                xpar_stderr);
     for (int a = 1; a < argc; a++)
       if (!xpar_strcmp(argv[a], "--json")) xpar_json_fatal_enable(true);
@@ -1571,18 +1552,17 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   }
   o->verb = r->verb ? (xpar_verb) r->verb->verb : XPAR_VERB_NONE;
 
-  for (k = 0; k < r->res->argc; k++) {
+  Fk(r->res->argc,
     if (r->res->args[k].opt == 'h') {
       xpar_cli_help(o->verb);  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK);
     }
     if (r->res->args[k].opt == 'V') {
       xpar_cli_version();  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK);
-    }
-  }
+    });
 
   if (o->verb == XPAR_VERB_NONE) {
-    FATAL_UNLESS("A verb is required; 'xpar --help' lists them.",
-                 r->res->pos_argc > 0);
+    FATAL_UNLESS(r->res->pos_argc > 0,
+                 "a verb is required; 'xpar --help' lists them");
     if (!names_a_set(r->res->pos_args[0])) {
       /*  A set name that is simply absent is not found, not a typo.  */
       const char * a = r->res->pos_args[0];
@@ -1591,17 +1571,16 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
       maint_gate(a);
       if (looks) say_rollback_residue(a);
       FATAL_CODE(looks ? XPAR_EXIT_NOTFOUND : XPAR_EXIT_USAGE,
-                 looks ? "No xpar set found for '%s'. See 'xpar --help'."
-                       : "Unknown verb '%s'. See 'xpar --help'.",
+                 looks ? "no xpar set found for '%s'; see 'xpar --help'"
+                       : "unknown verb '%s'; see 'xpar --help'",
                  xpar_name_escape(a));
     }
-    FATAL_UNLESS("Only one set may stand in for a verb. See 'xpar --help'.",
-                 r->res->pos_argc == 1);
+    FATAL_UNLESS(r->res->pos_argc == 1,
+                 "only one set may stand in for a verb; see 'xpar --help'");
     o->verb = XPAR_VERB_VERIFY;
   }
 
-  for (k = 0; k < r->res->argc; k++)
-    apply(o, &r->res->args[k], &pres_lit, &pres_named);
+  Fk(r->res->argc, apply(o, &r->res->args[k], &pres_lit, &pres_named));
 
   o->preserve_explicit = pres_named;
 
@@ -1615,9 +1594,9 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     const char * leaf = xpar_path_base(o->output);
     sz n = xpar_strlen(leaf), i = n;
     while (i && leaf[i - 1] >= '0' && leaf[i - 1] <= '9') i--;
-    FATAL_UNLESS("Output base '%s' conflicts with generated .gNNN names.",
-                 !(i < n && i >= 2 && leaf[i - 1] == 'g' &&
-                   leaf[i - 2] == '.'), o->output);
+    FATAL_UNLESS(!(i < n && i >= 2 && leaf[i - 1] == 'g' &&
+                   leaf[i - 2] == '.'),
+                 "output base '%s' conflicts with generated .gNNN names", o->output);
   }
   xpar_path_scan_set(o->scan_dir);
   resolve_verb = o->verb;
@@ -1629,7 +1608,8 @@ void xpar_cli_free(xpar_options * o) {
   free_strv(o->paths, o->path_count);
   free_strv(o->exclude, o->exclude_count);
   free_strv(o->include, o->include_count);
-  for (u32 i = 0; i < o->gen_count; i++) xpar_free(o->gens[i].id_prefix);
+  u32 i;
+  Fi(o->gen_count, xpar_free(o->gens[i].id_prefix));
   xpar_free(o->gens);
   xpar_free(o->before.id_prefix);
   xpar_free(o->set);         xpar_free(o->output);

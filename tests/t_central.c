@@ -15,7 +15,6 @@
 /* Central recovery tests: each column has an independent erasure budget. */
 
 #include "t_harness.h"
-
 #include "slice.h"
 #include "kernel/codec.h"
 #include "kernel/gf.h"
@@ -69,23 +68,20 @@ static void ct_free(ct * c) {
 
 static void ct_columns(ct * c, u32 j) {
   u64 i, off = col_off(c, j);
-  for (i = 0; i < c->g.slice_count; i++) {
+  Fi(c->g.slice_count,
     c->data[i]  = c->stream + i * c->g.slice_size + off;
-    c->cdata[i] = c->data[i];
-  }
-  for (i = 0; i < c->r; i++)
-    c->rec[i] = c->recovery + i * c->g.slice_size + off;
+    c->cdata[i] = c->data[i]);
+  Fi(c->r, c->rec[i] = c->recovery + i * c->g.slice_size + off);
 }
 
 static void ct_encode(ct * c) {
   xpar_codec * k = xpar_codec_new(c->kind, c->field, c->g.slice_count, c->r);
   u32 j;
-  for (j = 0; j < c->g.cells_per_slice; j++) {
+  Fj(c->g.cells_per_slice,
     sz bytes = (sz) xpar_cell_size(&c->g, j);
     ct_columns(c, j);
     CHECK(xpar_codec_encode(k, c->cdata, c->rec, bytes) == XPAR_CODEC_OK,
-          "encoding column %" PRIu32 " failed", j);
-  }
+          "encoding column %" PRIu32 " failed", j));
   xpar_codec_free(k);
 }
 
@@ -111,17 +107,13 @@ static void ct_repair(ct * c, const xpar_erasures * e, const u8 * rpres,
     xpar_codec_status st = XPAR_CODEC_OK;
     xpar_codec_plan * pl = xpar_codec_plan_new(k, cg.group[gi].present,
                                                rpres, &st);
-    if (!pl) {
-      out->refused += cg.group[gi].column_count;
-      continue;
-    }
+    if (!pl) { out->refused += cg.group[gi].column_count;  continue; }
     for (n = 0; n < cg.group[gi].column_count; n++) {
       u32 j = cg.group[gi].column[n];
       sz bytes = (sz) xpar_cell_size(&c->g, j);
       ct_columns(c, j);
       /* Do not let decoding depend on erased bytes. */
-      for (i = 0; i < c->g.slice_count; i++)
-        if (xpar_cell_bad(e, i, j)) xpar_memset(c->data[i], 0, bytes);
+      Fi(c->g.slice_count, if (xpar_cell_bad(e, i, j)) xpar_memset(c->data[i], 0, bytes));
       if (xpar_codec_plan_apply(pl, c->data, (const u8 * const *) c->rec,
                                 bytes) !=
           XPAR_CODEC_OK) {
@@ -129,12 +121,11 @@ static void ct_repair(ct * c, const xpar_erasures * e, const u8 * rpres,
         continue;
       }
       out->recovered++;
-      for (i = 0; i < c->g.slice_count; i++) {
+      Fi(c->g.slice_count,
         u64 at = i * c->g.slice_size + col_off(c, j);
         if (!xpar_memcmp(c->stream + at, c->pristine + at, bytes)) continue;
         out->wrong++;
-        break;
-      }
+        break);
     }
     xpar_codec_plan_free(pl);
   }
@@ -147,7 +138,7 @@ static void mark_profile(xpar_erasures * e, const u64 * depth, xt_rng * rng) {
   u32 j;
   u64 i;
   xpar_erasures_clear(e);
-  for (j = 0; j < e->cells_per_slice; j++) {
+  Fj(e->cells_per_slice,
     u64 want = depth[j], done = 0;
     if (want > e->slice_count) want = e->slice_count;
     while (done < want) {
@@ -155,8 +146,7 @@ static void mark_profile(xpar_erasures * e, const u64 * depth, xt_rng * rng) {
       if (xpar_cell_bad(e, i, j)) continue;
       xpar_cell_mark(e, i, j);
       done++;
-    }
-  }
+    });
 }
 
 /* Each column has its own R-erasure budget. */
@@ -174,7 +164,7 @@ static void test_full_budget_every_column(u8 kind, u8 field, u64 z, u32 y,
   ct_encode(&c);
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
   depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
-  for (j = 0; j < c.g.cells_per_slice; j++) depth[j] = r;
+  Fj(c.g.cells_per_slice, depth[j] = r);
   mark_profile(&e, depth, rng);
 
   CHECK_U64(e.bad_count, (u64) c.g.cells_per_slice * r,
@@ -214,8 +204,7 @@ static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
   depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
   victim = xt_below(rng, c.g.cells_per_slice);
-  for (j = 0; j < c.g.cells_per_slice; j++)
-    depth[j] = j == victim ? r + 1 : r;
+  Fj(c.g.cells_per_slice, depth[j] = j == victim ? r + 1 : r);
   if (depth[victim] > s) { xpar_free(depth);  xpar_erasures_free(&e);
                            ct_free(&c);  return; }
   mark_profile(&e, depth, rng);
@@ -235,13 +224,12 @@ static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
   /* Validate decoded columns where the refused column remains damaged. */
   {
     u64 i, bad = 0;
-    for (i = 0; i < s; i++)
-      for (j = 0; j < c.g.cells_per_slice; j++) {
+    Fi(s,
+      Fj(c.g.cells_per_slice,
         u64 at = i * z + col_off(&c, j);
         sz bytes = (sz) xpar_cell_size(&c.g, j);
         if (j == victim) continue;
-        if (xpar_memcmp(c.stream + at, c.pristine + at, bytes)) bad++;
-      }
+        if (xpar_memcmp(c.stream + at, c.pristine + at, bytes)) bad++));
     CHECK_U64(bad, 0, "every cell outside the refused column is intact");
   }
 
@@ -266,16 +254,16 @@ static void test_missing_recovery(u8 kind, u8 field, u64 z, u32 y, u64 s,
   depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
   rpres = (u8 *) xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
-  for (j = 0; j < gone && j < r; j++) rpres[j] = 0;
+  for (j = 0; j < gone && j < r; j++) { rpres[j] = 0; }
 
-  for (j = 0; j < c.g.cells_per_slice; j++) depth[j] = r - gone;
+  Fj(c.g.cells_per_slice, depth[j] = r - gone);
   mark_profile(&e, depth, rng);
   ct_repair(&c, &e, rpres, &res);
   CHECK_U64(res.refused, 0, "R minus the missing recovery still decodes");
   CHECK_U64(res.wrong, 0, "and decodes correctly");
 
   xpar_memcpy(c.stream, c.pristine, (sz) (s * z));
-  for (j = 0; j < c.g.cells_per_slice; j++) depth[j] = r - gone + 1;
+  Fj(c.g.cells_per_slice, depth[j] = r - gone + 1);
   if (depth[0] <= s) {
     mark_profile(&e, depth, rng);
     ct_repair(&c, &e, rpres, &res);
@@ -346,13 +334,12 @@ static void test_random_profiles(u8 kind, u8 field, u64 z, u32 y, u64 s,
     ct_result res;
     u64 worst = 0, over = 0, total = 0;
     xpar_memcpy(c.stream, c.pristine, (sz) (s * z));
-    for (j = 0; j < c.g.cells_per_slice; j++) {
+    Fj(c.g.cells_per_slice,
       depth[j] = xt_below(rng, (u32) (r + 2));
       if (depth[j] > s) depth[j] = s;
       total += depth[j];
       if (depth[j] > worst) worst = depth[j];
-      if (depth[j] > r) over++;
-    }
+      if (depth[j] > r) over++);
     mark_profile(&e, depth, rng);
     CHECK_U64(xpar_erasures_max_depth(&e), worst,
               "max_depth follows the profile");
@@ -394,9 +381,9 @@ void xt_run_central(void) {
 
   xt_seed(&rng, 0xCE27A1ull);
 
-  for (i = 0; i < ARRAY_LEN(shapes); i++) {
+  Fi(ARRAY_LEN(shapes),
     u32 k;
-    for (k = 0; k < ARRAY_LEN(codecs); k++) {
+    Fk(ARRAY_LEN(codecs),
       xt_trace("Z=%" PRIu64 " Y=%" PRIu32 " S=%" PRIu64 " R=%" PRIu64
                " %s GF(2^%" PRIu32 ")", shapes[i].z, shapes[i].y,
                shapes[i].s, shapes[i].r, codec_name_of(codecs[k].kind),
@@ -422,8 +409,6 @@ void xt_run_central(void) {
       xt_section_begin("random profiles");
       test_random_profiles(codecs[k].kind, codecs[k].field, shapes[i].z,
                            shapes[i].y, shapes[i].s, shapes[i].r,
-                           xt_scale(3), &rng);
-    }
-  }
+                           xt_scale(3), &rng)));
 
 }

@@ -33,7 +33,8 @@ int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
   (void) p;
-  For(sz, i, n, fn(i, ctx))
+  sz i;
+  Fi(n, fn(i, ctx));
 }
 
 void xpar_pool_destroy(xpar_pool * p) { xpar_free(p); }

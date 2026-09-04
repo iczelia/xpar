@@ -24,7 +24,6 @@
     AC_USE_SYSTEM_EXTENSIONS defines. It must precede every system header
     or pread, fsync and clock_gettime go missing under -std=c99.  */
 #include "common.h"
-
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -236,11 +235,7 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
     sz want = n - got;
     if (want > 0x10000000u) want = 0x10000000u;
     ssize_t r = read(f->fd, p + got, want);
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      f->last_errno = errno;
-      break;
-    }
+    if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (r == 0) { f->at_eof = true;  break; }
     got += (sz) r;
   }
@@ -255,11 +250,7 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
     sz want = n - done;
     if (want > 0x10000000u) want = 0x10000000u;
     ssize_t r = write(f->fd, p + done, want);
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      f->last_errno = errno;
-      break;
-    }
+    if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (r == 0) break;
     done += (sz) r;
   }
@@ -271,10 +262,7 @@ int xpar_seek(xpar_file * f, i64 off, int whence) {
         : whence == XPAR_SEEK_CUR ? SEEK_CUR : SEEK_END;
   f->last_errno = 0;
   if (off > 0 && !off_fits((u64) off)) { errno = EOVERFLOW;  return -1; }
-  if (lseek(f->fd, (off_t) off, w) == (off_t) -1) {
-    f->last_errno = errno;
-    return -1;
-  }
+  if (lseek(f->fd, (off_t) off, w) == (off_t) -1) { f->last_errno = errno;  return -1; }
   f->at_eof = false;
   return 0;
 }
@@ -315,10 +303,7 @@ int  xpar_error (xpar_file * f) { return f->last_errno; }
 int xpar_lock(xpar_file * f, bool exclusive) {
 #if defined(XPAR_LOCK_FLOCK)
   int op = (exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB;
-  while (flock(f->fd, op) != 0) {
-    if (errno == EINTR) continue;
-    return -1;
-  }
+  while (flock(f->fd, op) != 0) { if (errno == EINTR) continue;  return -1; }
   return 0;
 #else
   /* Use nonblocking whole-file locks with matching descriptor access. */
@@ -327,10 +312,7 @@ int xpar_lock(xpar_file * f, bool exclusive) {
   fl.l_whence = SEEK_SET;
   fl.l_start  = 0;
   fl.l_len    = 0;
-  while (fcntl(f->fd, F_SETLK, &fl) != 0) {
-    if (errno == EINTR) continue;
-    return -1;
-  }
+  while (fcntl(f->fd, F_SETLK, &fl) != 0) { if (errno == EINTR) continue;  return -1; }
   return 0;
 #endif
 }
@@ -379,11 +361,7 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
     else r = read(f->fd, p + got, want);
     OFS_UNLOCK();
 #endif
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      f->last_errno = errno;
-      break;
-    }
+    if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     /*  A short positional read is self-describing through the count, and
         the EOF flag belongs to the sequential cursor: setting it here
         would tell a streaming reader on the same handle that its own
@@ -486,14 +464,14 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
   if (!count) return false;
   if (count > 1024 || count > (sz) UINT32_MAX)
     return xpar_pread_serial(r, count);
-  for (i = 0; i < count; i++)
+  Fi(count,
     if (r[i].length > (sz) UINT32_MAX)
-      return xpar_pread_serial(r, count);
+      return xpar_pread_serial(r, count));
   URING_LOCK();
   if (u->state == 0 && !uring_open(u, count)) goto fallback;
   if (u->state != 1 || count > u->p.sq_entries) goto fallback;
 
-  for (i = 0; i < count; i++) {
+  Fi(count,
     u32 tail, slot;
     r[i].result = 0;
     if (!r[i].file || !r[i].length) continue;
@@ -507,8 +485,7 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
     u->sqe[slot].len = (u32) r[i].length;
     u->sqe[slot].user_data = (u64) i + 1;
     u->sq_array[slot] = slot;
-    submitted++;
-  }
+    submitted++);
   if (!submitted) { used = true;  goto done; }
   __atomic_store_n(u->sq_tail, *u->sq_tail + (u32) submitted,
                    __ATOMIC_RELEASE);
@@ -535,13 +512,13 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
   used = true;
 done:
   URING_UNLOCK();
-  for (i = 0; i < count; i++)
+  Fi(count,
     if (r[i].file && r[i].result < r[i].length) {
       sz n = xpar_pread(r[i].file, (u8 *) r[i].buf + r[i].result,
                         r[i].length - r[i].result,
                         r[i].offset + r[i].result);
       r[i].result += n;
-    }
+    });
   return used;
 
 fallback:
@@ -569,11 +546,7 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
     else r = write(f->fd, p + done, want);
     OFS_UNLOCK();
 #endif
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      f->last_errno = errno;
-      break;
-    }
+    if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (r == 0) break;
     done += (sz) r;
   }
@@ -604,12 +577,12 @@ static void mapreg_add(const u8 * at, sz size, const char * path) {
 
 static void mapreg_drop(const u8 * at) {
   u32 i;
-  for (i = 0; i < mapreg_count; i++)
+  Fi(mapreg_count,
     if (mapreg_held[i].at == at) {
       mapreg_held[i] = mapreg_held[mapreg_count - 1];
       mapreg_count--;
       return;
-    }
+    });
 }
 #endif
 
@@ -641,10 +614,10 @@ int xpar_ftruncate(xpar_file * f, u64 length) {
 /*  A rename or a create is not on disk until the *directory* is synced;
     syncing the file only covers its contents.  */
 int xpar_fsync_dir(const char * path) {
-  sz len = xpar_strlen(path), cut = 0;
+  sz len = xpar_strlen(path), cut = 0, i;
   char * dir;
-  int fd, r;
-  for (sz i = 0; i < len; i++) if (path[i] == '/') cut = i;
+  int fd, r, e;
+  Fi(len, if (path[i] == '/') cut = i);
   dir = cut ? xpar_strndup(path, cut) : xpar_strdup(len && path[0] == '/'
                                                     ? "/" : ".");
 #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
@@ -659,7 +632,7 @@ int xpar_fsync_dir(const char * path) {
       lost that a different call could have saved, so this is not a
       failure the caller can act on.  */
   if (r != 0 && (errno == EINVAL || errno == ENOTSUP)) r = 0;
-  { int e = errno;  close(fd);  errno = e; }
+  e = errno;  close(fd);  errno = e;
   return r;
 }
 
@@ -667,8 +640,8 @@ sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = xpar_read(f, p, n);
   if (f->last_errno) {
     errno = f->last_errno;
-    FATAL_IO("Reading %" PRIu64 " bytes on descriptor %d failed after %"
-             PRIu64 ": %s.", (u64) n, f->fd, (u64) got,
+    FATAL_IO("reading %" PRIu64 " bytes on descriptor %d failed after %"
+             PRIu64 ": %s", (u64) n, f->fd, (u64) got,
              xpar_strerror(f->last_errno));
   }
   return got;
@@ -705,25 +678,15 @@ void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
   at = 0;
   while (at < used) {
     ssize_t n = writev(f->fd, vec + at, (int) (used - at));
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      f->last_errno = errno;
-      break;
-    }
+    if (n < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (n == 0) break;
-    while (at < used && (sz) n >= vec[at].iov_len) {
-      n -= (ssize_t) vec[at].iov_len;
-      at++;
-    }
+    while (at < used && (sz) n >= vec[at].iov_len) { n -= (ssize_t) vec[at].iov_len;  at++; }
     if (at < used && n > 0) {
       vec[at].iov_base = (u8 *) vec[at].iov_base + n;
       vec[at].iov_len -= (sz) n;
     }
   }
-  if (at != used) {
-    errno = f->last_errno ? f->last_errno : ENOSPC;
-    FATAL_PERROR("writev");
-  }
+  if (at != used) { errno = f->last_errno ? f->last_errno : ENOSPC;  FATAL_PERROR("writev"); }
 }
 
 void xpar_xclose(xpar_file * f) {
@@ -749,9 +712,7 @@ xpar_mmap xpar_map(const char * path) {
 #endif
                   );
     if (fd < 0) return m;
-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
-      close(fd);  return m;
-    }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) { close(fd);  return m; }
     /*  sz is 32-bit on some hosts and st_size is not: a file larger than
         the address space cannot be mapped and the caller streams it.  */
     if ((u64) st.st_size > (u64) (sz) -1) { close(fd);  return m; }
@@ -770,10 +731,7 @@ xpar_mmap xpar_map(const char * path) {
 
 void xpar_unmap(xpar_mmap * m) {
 #if defined(HAVE_MMAP)
-  if (m->map) {
-    mapreg_drop(m->map);
-    munmap(m->map, m->size);
-  }
+  if (m->map) { mapreg_drop(m->map);  munmap(m->map, m->size); }
 #endif
   m->map = NULL;  m->size = 0;  m->valid = false;
 }
@@ -807,27 +765,27 @@ void xpar_advise_random(xpar_file * f, u64 off, u64 len) {
 
 void * xpar_malloc(sz n) {
   void * p = calloc(n ? n : 1, 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
 void * xpar_calloc(sz n, sz size) {
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
   { void * p = calloc(n ? n : 1, size ? size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     return p; }
 }
 
 void * xpar_alloc_raw(sz n) {
   void * p = malloc(n ? n : 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
 void * xpar_realloc(void * p, sz n) {
   void * q = realloc(p, n ? n : 1);
-  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return q;
 }
 
@@ -835,21 +793,21 @@ void xpar_free(void * p) { free(p); }
 
 void * xpar_alloc_aligned(sz n, sz align) {
   if (align < sizeof(void *)) align = sizeof(void *);
-  if (!xpar_is_pow2(align)) FATAL("Alignment is not a power of two.");
+  if (!xpar_is_pow2(align)) FATAL("alignment is not a power of two");
   if (n == 0) n = 1;
 #if defined(HAVE_POSIX_MEMALIGN)
   { void * p = NULL;
     if (posix_memalign(&p, align, n) != 0 || !p)
-      FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+      FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     return p; }
 #else
   { sz pad = align + sizeof(void *);
     u8 * raw;
     uintptr_t a;
     if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
     raw = (u8 *) malloc(n + pad);
-    if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+    if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
         ~(uintptr_t) (align - 1);
     ((void **) a)[-1] = raw;
@@ -879,12 +837,13 @@ bool xpar_is_rotational(const char * path) {
   struct stat st;
   char name[64];
   unsigned maj, min;
+  int fd, i;
+  ssize_t r;
   if (stat(path, &st) != 0) return false;
   maj = (unsigned) major(st.st_dev);
   min = (unsigned) minor(st.st_dev);
-  for (int i = 0; i < 2; i++) {
+  Fi(2,
     char c;
-    int fd;
     if (i == 0)
       xpar_snprintf(name, sizeof name,
                     "/sys/dev/block/%u:%u/queue/rotational", maj, min);
@@ -893,10 +852,9 @@ bool xpar_is_rotational(const char * path) {
                     "/sys/dev/block/%u:%u/../queue/rotational", maj, min);
     fd = open(name, O_RDONLY);
     if (fd < 0) continue;
-    { ssize_t r = read(fd, &c, 1);
-      close(fd);
-      if (r == 1) return c == '1'; }
-  }
+    r = read(fd, &c, 1);
+    close(fd);
+    if (r == 1) return c == '1');
 #else
   (void) path;
 #endif
@@ -976,7 +934,7 @@ void xpar_random_bytes(void * buf, sz n) {
     }
   }
   if (got == n) return;
-  FATAL("No source of cryptographically strong random bytes.");
+  FATAL("no source of cryptographically strong random bytes");
 #endif
 }
 
@@ -1050,8 +1008,8 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
     }
   }
 #if defined(HAVE_BACKTRACE)
-  { int got = backtrace(frames, XPAR_CRASH_FRAMES);
-    if (got > 0) n = (unsigned) got; }
+  int got = backtrace(frames, XPAR_CRASH_FRAMES);
+  if (got > 0) n = (unsigned) got;
 #else
   n = xpar_crash_walk_fp((void * const *) __builtin_frame_address(0),
                          frames, XPAR_CRASH_FRAMES);
@@ -1062,15 +1020,15 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
   /*  Avoid backtrace_symbols(), which allocates.  */
   if (n) backtrace_symbols_fd(frames, (int) n, 2);
 #else
-  { unsigned i;
-    for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], NULL); }
+  unsigned i;
+  Fi(n, xpar_crash_frame(i, frames[i], NULL));
 #endif
   xpar_crash_tail(n != 0);
   /*  Preserve normal core-dump behavior.  */
-  { struct sigaction sa;
-    xpar_memset(&sa, 0, sizeof sa);
-    sa.sa_handler = SIG_DFL;
-    sigaction(sig, &sa, NULL); }
+  struct sigaction sa;
+  xpar_memset(&sa, 0, sizeof sa);
+  sa.sa_handler = SIG_DFL;
+  sigaction(sig, &sa, NULL);
   raise(sig);
   _exit(XPAR_EXIT_INTERNAL);
 }
@@ -1121,8 +1079,7 @@ void xpar_crash_install(void) {
   sa.sa_flags = (int) (unsigned) (SA_SIGINFO | SA_NODEFER |
                                   SA_RESETHAND);
   sigemptyset(&sa.sa_mask);
-  for (i = 0; i < sizeof sigs / sizeof *sigs; i++)
-    (void) sigaction(sigs[i], &sa, NULL);
+  Fi(sizeof sigs / sizeof *sigs, (void) sigaction(sigs[i], &sa, NULL));
 }
 
 #else

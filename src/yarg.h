@@ -94,16 +94,16 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
           if (amb)
-            yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
+            yarg_asprintf(&res->error, "ambiguous option '--%.*s'",
                           (int) len, long_opt);
           else
-            yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
+            yarg_asprintf(&res->error, "unknown option '--%.*s'",
                           (int) len, long_opt);
           return 0;
         }
         if (o->type == no_argument) {
           if (long_opt[len] == '=') {
-            yarg_asprintf(&res->error, "--%s -- unexpected argument\n",
+            yarg_asprintf(&res->error, "option '--%s' takes no argument",
                           o->long_opt);
             return 0;
           }
@@ -111,7 +111,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
           if (long_opt[len] == '=') /* Ignore. */ ;
           else if (i + 1 < argc && argv[i + 1][0] != '-') i++;
           else {
-            yarg_asprintf(&res->error, "--%s -- missing argument\n",
+            yarg_asprintf(&res->error, "option '--%s' needs an argument",
                           o->long_opt);
             return 0;
           }
@@ -127,17 +127,11 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
-          if (!o) {
-            yarg_asprintf(&res->error, "-%c -- unknown option\n", c);
-            return 0;
-          }
+          if (!o) { yarg_asprintf(&res->error, "unknown option '-%c'", c);  return 0; }
           if (o->type == required_argument) {
             if (argv[i][j + 1]) /* Ignore. */ ;
             else if (i + 1 < argc && argv[i + 1][0] != '-') i++;
-            else {
-              yarg_asprintf(&res->error, "-%c -- missing argument\n", c);
-              return 0;
-            }
+            else { yarg_asprintf(&res->error, "option '-%c' needs an argument", c);  return 0; }
             no_args++;
             break;
           } else if(o->type == optional_argument) {
@@ -171,10 +165,10 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
         yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
         if (!o) {
           if (amb)
-            yarg_asprintf(&res->error, "Option --%.*s is ambiguous.\n",
+            yarg_asprintf(&res->error, "ambiguous option '--%.*s'",
                           (int) len, long_opt);
           else
-            yarg_asprintf(&res->error, "Unknown option --%.*s.\n",
+            yarg_asprintf(&res->error, "unknown option '--%.*s'",
                           (int) len, long_opt);
           return 0;
         }
@@ -197,10 +191,7 @@ static int yarg_parse_unix(int argc, char * argv[], yarg_options opt[],
           for (int k = 0; opt[k].opt; k++)
             if (opt[k].opt == c)
               { o = &opt[k]; break; }
-          if (!o) {
-            yarg_asprintf(&res->error, "-%c -- unknown option\n", c);
-            return 0;
-          }
+          if (!o) { yarg_asprintf(&res->error, "unknown option '-%c'", c);  return 0; }
           res->args[res->argc].opt = c;
           res->args[res->argc].long_opt = o->long_opt;
           if (o->type == required_argument || o->type == optional_argument) {
@@ -237,23 +228,23 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
         if (amb)
-          yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
+          yarg_asprintf(&res->error, "ambiguous option '%c%.*s'",
                         opt_char, (int) len, long_opt);
         else
-          yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
+          yarg_asprintf(&res->error, "unknown option '%c%.*s'",
                         opt_char, (int) len, long_opt);
         return 0;
       }
       if (o->type == no_argument) {
         if (long_opt[len] == '=') {
-          yarg_asprintf(&res->error, "%c%s -- unexpected argument\n", opt_char, o->long_opt);
+          yarg_asprintf(&res->error, "option '%c%s' takes no argument", opt_char, o->long_opt);
           return 0;
         }
       } else if (o->type == required_argument) {
         if (long_opt[len] == '=') /* Ignore. */ ;
         else if (i + 1 < argc && argv[i + 1][0] != opt_char) i++;
         else {
-          yarg_asprintf(&res->error, "%c%s -- missing argument\n", opt_char, o->long_opt);
+          yarg_asprintf(&res->error, "option '%c%s' needs an argument", opt_char, o->long_opt);
           return 0;
         }
       } else if (o->type == optional_argument) {
@@ -282,10 +273,10 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
       yarg_options * o = yarg_find_long(opt, long_opt, len, &amb);
       if (!o) {
         if (amb)
-          yarg_asprintf(&res->error, "Option %c%.*s is ambiguous.\n",
+          yarg_asprintf(&res->error, "ambiguous option '%c%.*s'",
                         opt_char, (int) len, long_opt);
         else
-          yarg_asprintf(&res->error, "Unknown option %c%.*s.\n",
+          yarg_asprintf(&res->error, "unknown option '%c%.*s'",
                         opt_char, (int) len, long_opt);
         return 0;
       }
@@ -310,9 +301,9 @@ static int yarg_parse_unix_short(int argc, char * argv[], yarg_options opt[],
 
 static inline void yarg_destroy(yarg_result * r) {
   if(r) {
-    if(r->args) for (int i = 0; i < r->argc; i++) free(r->args[i].arg);
+    if(r->args) { int i; Fi(r->argc, free(r->args[i].arg)); }
     free(r->args);
-    if(r->pos_args) for (int i = 0; i < r->pos_argc; i++) free(r->pos_args[i]);
+    if(r->pos_args) { int i; Fi(r->pos_argc, free(r->pos_args[i])); }
     free(r->pos_args);
     if (r->error != yarg_oom) free(r->error);
   }
@@ -396,9 +387,10 @@ static yarg_options * yarg_merge_opts(const yarg_options * a,
   size_t k = 0;
   yarg_options * m = (yarg_options *) calloc(na + nb + nc + 1, sizeof *m);
   if (!m) return NULL;
-  for (size_t i = 0; i < na; i++) m[k++] = a[i];
-  for (size_t i = 0; i < nb; i++) m[k++] = b[i];
-  for (size_t i = 0; i < nc; i++) m[k++] = c[i];
+  size_t i;
+  Fi(na, m[k++] = a[i]);
+  Fi(nb, m[k++] = b[i]);
+  Fi(nc, m[k++] = c[i]);
   return m;
 }
 

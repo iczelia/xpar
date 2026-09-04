@@ -43,14 +43,13 @@ const u16 xpar_gf16_cantor[16] = {
 
 static void gf8_tables(void) {
   u32 x = 1, i;
-  for (i = 0; i < 255; i++) {
+  Fi(255,
     /*  Order exactly 255, not merely dividing it. Every nonzero element
         satisfies a^255 = 1 under any irreducible modulus, so only an
         early return to 1 distinguishes a non-primitive one.  */
     xpar_assert(i == 0 || x != 1);
     xpar_gf8_exp[i] = (u8) x;  xpar_gf8_log[x] = (u8) i;
-    x <<= 1;  if (x & 0x100u) x ^= XPAR_GF8_POLY;
-  }
+    x <<= 1;  if (x & 0x100u) x ^= XPAR_GF8_POLY);
   xpar_assert(x == 1);
   /*  Doubling the exp table lets a product index it with the plain sum
       of two logs, which is at most 508, and removes the reduction from
@@ -66,11 +65,10 @@ static void gf16_tables(void) {
   u32 x = 1, i;
   gf16_exp_store = (u16 *) xpar_alloc_raw(131070u * sizeof(u16));
   gf16_log_store = (u16 *) xpar_alloc_raw(65536u * sizeof(u16));
-  for (i = 0; i < 65535u; i++) {
+  Fi(65535u,
     xpar_assert(i == 0 || x != 1);
     gf16_exp_store[i] = (u16) x;  gf16_log_store[x] = (u16) i;
-    x <<= 1;  if (x & 0x10000u) x ^= XPAR_GF16_POLY;
-  }
+    x <<= 1;  if (x & 0x10000u) x ^= XPAR_GF16_POLY);
   xpar_assert(x == 1);
   for (i = 65535u; i < 131070u; i++)
     gf16_exp_store[i] = gf16_exp_store[i - 65535u];
@@ -84,11 +82,10 @@ static void gf16_tables(void) {
 
 static u64 gf8_affine(u8 c) {
   u64 mx = 0;  int k, i;
-  for (k = 0; k < 8; k++) {
+  Fk(8,
     u8 col = xpar_gf8_mul((u8) (1u << k), c);
     for (i = 0; i < 8; i++)
-      if ((col >> i) & 1) mx |= (u64) 1 << (8 * (7 - i) + k);
-  }
+      if ((col >> i) & 1) mx |= (u64) 1 << (8 * (7 - i) + k));
   return mx;
 }
 
@@ -99,17 +96,15 @@ static u64 gf8_affine(u8 c) {
 static void gf16_affine(u16 c, u64 blk[4]) {
   int k, i;
   blk[0] = blk[1] = blk[2] = blk[3] = 0;
-  for (k = 0; k < 8; k++) {
+  Fk(8,
     u16 cl = xpar_gf16_mul((u16) (1u << k), c);
     u16 ch = xpar_gf16_mul((u16) (0x100u << k), c);
-    for (i = 0; i < 8; i++) {
+    Fi(8,
       u64 bit = (u64) 1 << (8 * (7 - i) + k);
       if ((cl >> i) & 1)       blk[0] |= bit;
       if ((ch >> i) & 1)       blk[1] |= bit;
       if ((cl >> (i + 8)) & 1) blk[2] |= bit;
-      if ((ch >> (i + 8)) & 1) blk[3] |= bit;
-    }
-  }
+      if ((ch >> (i + 8)) & 1) blk[3] |= bit));
 }
 
 /*  Always build affine and nibble tables. Build tab6 only for vbmi512.
@@ -128,11 +123,10 @@ void xpar_gf8_prepare(xpar_gf8_coef * m, u8 c) {
   col[0] = c;
   for (j = 1; j < 8; j++) col[j] = gf8_xtime(col[j - 1]);
   m->tab[0] = 0;  m->tab[16] = 0;
-  for (j = 0; j < 4; j++)
-    for (i = 0; i < (1 << j); i++) {
+  Fj(4,
+    Fi((1 << j),
       m->tab[(1 << j) + i]      = (u8) (m->tab[i] ^ col[j]);
-      m->tab[16 + (1 << j) + i] = (u8) (m->tab[16 + i] ^ col[4 + j]);
-    }
+      m->tab[16 + (1 << j) + i] = (u8) (m->tab[16 + i] ^ col[4 + j])));
 }
 
 static bool gf_want_tab6 = false;
@@ -141,42 +135,34 @@ void xpar_gf16_prepare(xpar_gf16_coef * m, u16 c) {
   u16 col[16], t[16];  int i, j, k;
   m->c = c;
   m->affine[0] = m->affine[1] = m->affine[2] = m->affine[3] = 0;
-  for (j = 0; j < 16; j++)
+  Fj(16,
     if ((c >> j) & 1) {
       m->affine[0] ^= gf16_aff_basis[j][0];
       m->affine[1] ^= gf16_aff_basis[j][1];
       m->affine[2] ^= gf16_aff_basis[j][2];
       m->affine[3] ^= gf16_aff_basis[j][3];
-    }
+    });
   col[0] = c;
   for (j = 1; j < 16; j++) col[j] = gf16_xtime(col[j - 1]);
-  for (k = 0; k < 4; k++) {
+  Fk(4,
     t[0] = 0;
-    for (j = 0; j < 4; j++)
-      for (i = 0; i < (1 << j); i++)
-        t[(1 << j) + i] = (u16) (t[i] ^ col[4 * k + j]);
-    for (i = 0; i < 16; i++) {
+    Fj(4, Fi((1 << j), t[(1 << j) + i] = (u16) (t[i] ^ col[4 * k + j])));
+    Fi(16,
       m->tab[2 * k    ][i] = (u8) t[i];
-      m->tab[2 * k + 1][i] = (u8) (t[i] >> 8);
-    }
-  }
+      m->tab[2 * k + 1][i] = (u8) (t[i] >> 8)));
   /*  Only vbmi512 uses tab6.  */
   if (!gf_want_tab6) return;
-  for (k = 0; k < 3; k++) {
+  Fk(3,
     int bits = k == 2 ? 4 : 6;
     u16 w[64];
     w[0] = 0;
     /*  Extend each block with one basis column.  */
-    for (j = 0; j < bits; j++)
-      for (i = 0; i < (1 << j); i++)
-        w[(1 << j) + i] = (u16) (w[i] ^ col[6 * k + j]);
+    Fj(bits, Fi((1 << j), w[(1 << j) + i] = (u16) (w[i] ^ col[6 * k + j])));
     /*  Repeat the final four-bit table to fill 64 entries.  */
     for (i = 1 << bits; i < 64; i++) w[i] = w[i & ((1 << bits) - 1)];
-    for (i = 0; i < 64; i++) {
+    Fi(64,
       m->tab6[2 * k][i] = (u8) w[i];
-      m->tab6[2 * k + 1][i] = (u8) (w[i] >> 8);
-    }
-  }
+      m->tab6[2 * k + 1][i] = (u8) (w[i] >> 8)));
 }
 
 /*  Reference kernels.
@@ -198,13 +184,15 @@ static u16 gf16_mulc(u16 a, u32 lc) {
 void xpar_gf8_mac_ref(u8 * d, const u8 * s, sz n, u8 c) {
   if (!c) return;
   u32 lc = xpar_gf8_log[c];
-  for (sz i = 0; i < n; i++) d[i] ^= gf8_mulc(s[i], lc);
+  sz i;
+  Fi(n, d[i] ^= gf8_mulc(s[i], lc));
 }
 
 void xpar_gf8_mul_ref(u8 * d, const u8 * s, sz n, u8 c) {
   if (!c) { xpar_memset(d, 0, n);  return; }
   u32 lc = xpar_gf8_log[c];
-  for (sz i = 0; i < n; i++) d[i] = gf8_mulc(s[i], lc);
+  sz i;
+  Fi(n, d[i] = gf8_mulc(s[i], lc));
 }
 
 /*  GF(2^16) regions are little-endian u16 on every host. Scalar code uses
@@ -226,11 +214,13 @@ void xpar_gf16_mul_ref(u8 * d, const u8 * s, sz n, u16 c) {
 }
 
 void xpar_xor2_ref(u8 * d, const u8 * s, sz n) {
-  for (sz i = 0; i < n; i++) d[i] ^= s[i];
+  sz i;
+  Fi(n, d[i] ^= s[i]);
 }
 
 void xpar_xor3_ref(u8 * d, const u8 * a, const u8 * b, sz n) {
-  for (sz i = 0; i < n; i++) d[i] = (u8) (a[i] ^ b[i]);
+  sz i;
+  Fi(n, d[i] = (u8) (a[i] ^ b[i]));
 }
 
 /*  The additive-FFT butterflies, fused so that x and y are read once and
@@ -239,19 +229,19 @@ void xpar_xor3_ref(u8 * d, const u8 * a, const u8 * b, sz n) {
 void xpar_gf8_fft2_ref(u8 * x, u8 * y, sz n, u8 c) {
   if (!c) { xpar_xor2_ref(y, x, n);  return; }
   u32 lc = xpar_gf8_log[c];
-  for (sz i = 0; i < n; i++) {
+  sz i;
+  Fi(n,
     u8 vx = (u8) (x[i] ^ gf8_mulc(y[i], lc));
-    x[i] = vx;  y[i] = (u8) (y[i] ^ vx);
-  }
+    x[i] = vx;  y[i] = (u8) (y[i] ^ vx));
 }
 
 void xpar_gf8_ifft2_ref(u8 * x, u8 * y, sz n, u8 c) {
   if (!c) { xpar_xor2_ref(y, x, n);  return; }
   u32 lc = xpar_gf8_log[c];
-  for (sz i = 0; i < n; i++) {
+  sz i;
+  Fi(n,
     u8 vy = (u8) (y[i] ^ x[i]);
-    y[i] = vy;  x[i] = (u8) (x[i] ^ gf8_mulc(vy, lc));
-  }
+    y[i] = vy;  x[i] = (u8) (x[i] ^ gf8_mulc(vy, lc)));
 }
 
 void xpar_gf16_fft2_ref(u8 * x, u8 * y, sz n, u16 c) {
@@ -355,24 +345,24 @@ bool xpar_gf_use_tier(int tier) {
 }
 
 bool xpar_gf_use_tier_name(const char * name) {
-  for (int i = 0; i < GF_NTIERS; i++)
-    if (!xpar_strcmp(name, gf_tiers[i].k->name)) return xpar_gf_use_tier(i);
+  int i;
+  Fi(GF_NTIERS, if (!xpar_strcmp(name, gf_tiers[i].k->name)) return xpar_gf_use_tier(i));
   return false;
 }
 
 void xpar_gf_use_default_tier(void) {
-  for (int i = 0; i < GF_NTIERS; i++)
-    if (xpar_gf_use_tier(i)) return;
+  int i;
+  Fi(GF_NTIERS, if (xpar_gf_use_tier(i)) return);
 }
 
 void xpar_gf_init(void) {
   static bool done = false;
   if (done) return;
   gf8_tables();
-  for (int c = 0; c < 256; c++) gf8_aff_tab[c] = gf8_affine((u8) c);
+  for (int c = 0; c < (256); c++) { gf8_aff_tab[c] = gf8_affine((u8) c); }
   gf16_tables();
-  for (int j = 0; j < 16; j++)
-    gf16_affine((u16) (1u << j), gf16_aff_basis[j]);
+  int j;
+  Fj(16, gf16_affine((u16) (1u << j), gf16_aff_basis[j]));
   xpar_gf_use_default_tier();
   done = true;
 }

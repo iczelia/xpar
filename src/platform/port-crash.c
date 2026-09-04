@@ -70,9 +70,7 @@ void xpar_crash_head(const char * what, u64 code, int have_code,
   if (have_code) { cw(" (code 0x");  cw_hex(code, 8);  cw(")"); }
   cw("\n");
 
-  if (have_addr) {
-    cw("xpar:   faulting address ");  cw_ptr(addr);  cw("\n");
-  }
+  if (have_addr) { cw("xpar:   faulting address ");  cw_ptr(addr);  cw("\n"); }
   if (pc) {
     cw("xpar:   program counter  ");  cw_ptr(pc);
     if (module_base && (const char *) pc >= (const char *) module_base) {
@@ -85,9 +83,7 @@ void xpar_crash_head(const char * what, u64 code, int have_code,
   }
 
   cw("xpar:   build " PACKAGE_VERSION " for " XPAR_HOST_TRIPLE "\n");
-  if (module_base) {
-    cw("xpar:   image base       ");  cw_ptr(module_base);  cw("\n");
-  }
+  if (module_base) { cw("xpar:   image base       ");  cw_ptr(module_base);  cw("\n"); }
   cw("xpar:   call chain, innermost first:\n");
 }
 

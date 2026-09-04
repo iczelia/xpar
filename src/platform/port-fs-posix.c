@@ -18,7 +18,6 @@
 
 #include "common.h"
 #include "port-fs.h"
-
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -248,10 +247,7 @@ static int parent_open(const char * path, char ** storage,
     }
     p = slash + 1;
     while (*p == '/') p++;
-    if (!*p) {
-      close(dfd);  xpar_free(work);  errno = EINVAL;
-      return -1;
-    }
+    if (!*p) { close(dfd);  xpar_free(work);  errno = EINVAL;  return -1; }
   }
   *storage = work;  *leaf = p;
   return dfd;
@@ -424,9 +420,7 @@ int xpar_mkdir_p(const char * path, u32 mode) {
       struct stat st;
       work[i] = '\0';
       if (lstat(work, &st) == 0) {
-        if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) {
-          errno = ENOTDIR;  rc = -1;
-        }
+        if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) { errno = ENOTDIR;  rc = -1; }
       } else if (mkdir(work, (mode_t) (mode & XPAR_MODE_PERM)) != 0 &&
                  errno != EEXIST) {
         rc = -1;

@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: Galois field kernels, GFNI affine variant at 256 bits.  */
+/*  Galois field kernels, GFNI affine variant at 256 bits.  */
 
 #define XPAR_GF_VARIANT_GFNI256
 #define XPAR_GF_HAVE_SIMD

@@ -12,8 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  XPAR 2.0 on-disk constants and shared decoded structures.  Packet field
-    offsets and widths remain with their readers and writers in container.c.  */
+/*  XPAR 2.0 constants and decoded structures.  */
 
 #ifndef XPAR_XPAR2_H
 #define XPAR_XPAR2_H
@@ -25,8 +24,7 @@
 #define XPAR_SET_ID_LEN  16
 #define XPAR_PKT_ALIGN   8        /*  Every packet length is a multiple.  */
 
-/*  The extension every packet-bearing volume carries. Bare split-layout
-    data volumes are the one exception: they have none.  */
+/*  Extension for packet-bearing volumes.  */
 #define XPAR_EXT         ".xpa"
 #define XPAR_EXT_LEN     4
 
@@ -37,8 +35,7 @@
 #define XPAR_PF_KNOWN          (XPAR_PF_CRITICAL | XPAR_PF_KEYED |            \
                                 XPAR_PF_BODY_UNCHECKED)
 
-/*  Packet type tags. Four ASCII characters, compared as four bytes rather
-    than as a string so that a type never needs a terminator on disk.  */
+/*  Four-byte packet tags.  */
 #define XPAR_T_VOLH "VOLH"
 #define XPAR_T_SETD "SETD"
 #define XPAR_T_FILE "FILE"

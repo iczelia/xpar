@@ -5,7 +5,6 @@
     the Free Software Foundation; version 3 of the License only.  */
 
 #include "t_harness.h"
-
 #include "kernel/crc32c.h"
 #include "kernel/gf.h"
 

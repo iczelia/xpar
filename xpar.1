@@ -29,9 +29,8 @@ same as
 .RE
 .SH DESCRIPTION
 .B xpar
-creates recovery volumes for files and directories. These volumes can restore
-data damaged by bad sectors, bit flips, truncation, media rot, or transmission
-failures.
+adds recovery data to files and directories. It repairs bad sectors, bit flips,
+truncation, media rot, and transmission damage.
 .SH VERBS
 Any unambiguous verb prefix is accepted. An exact match takes precedence.
 .TP
@@ -80,8 +79,7 @@ Re-encode a generation chain as one generation. Without
 it inherits the chain's widest redundancy.
 .TP
 .B prune
-Remove older generations from a chain, keeping any generation that a
-surviving entry still depends on unless
+Remove old generations, retaining dependencies unless
 .B \-f
 is given.
 .PP
@@ -91,21 +89,20 @@ Both exit 2 rather than rewrite a chain containing an unreadable generation.
 Print the manifest of the set.
 .TP
 .B info
-Print geometry, codec, plan, redundancy, creator, and comments. For
+Print geometry, codec, plan, redundancy, creator, and comments. With
 .BR \-\-layout=armoured ,
 report the actual on-disk armour overhead.
 .B \-\-deps
-adds the dependency table used by
+print the dependency table used by
 .BR prune .
 Its
 .B superseded/R
 column shows recovery consumed by superseded slices.
 .TP
 .B explain
-Print the exact
+Print
 .BR dd (1)
-commands needed to extract the armoured region without xpar or correction.
-For
+commands that extract the armoured region without xpar or correction. With
 .BR \-\-layout=armoured ,
 this is protected data. For sidecar and split sets it is critical metadata.
 .TP

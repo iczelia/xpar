@@ -15,7 +15,6 @@
 /* Differential codec tests against scalar generation, Cauchy form and SIMD. */
 
 #include "t_harness.h"
-
 #include "kernel/armour.h"
 #include "kernel/codec.h"
 #include "kernel/gf.h"
@@ -74,31 +73,27 @@ static void cc_init(cc * c, u8 kind, u8 field, u64 s, u64 r, sz bytes) {
   c->ref   = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
   c->cdata = (const u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
   c->rec   = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  for (i = 0; i < s; i++) {
+  Fi(s,
     c->data[i] = (u8 *) xpar_alloc_aligned(bytes, 64);
     c->ref [i] = (u8 *) xpar_alloc_aligned(bytes, 64);
-    c->cdata[i] = c->data[i];
-  }
-  for (i = 0; i < r; i++) c->rec[i] = (u8 *) xpar_alloc_aligned(bytes, 64);
+    c->cdata[i] = c->data[i]);
+  Fi(r, c->rec[i] = (u8 *) xpar_alloc_aligned(bytes, 64));
   c->gen = NULL;
 }
 
 static void cc_free(cc * c) {
   u64 i;
-  for (i = 0; i < c->s; i++) {
-    xpar_free_aligned(c->data[i]);  xpar_free_aligned(c->ref[i]);
-  }
-  for (i = 0; i < c->r; i++) xpar_free_aligned(c->rec[i]);
+  Fi(c->s, xpar_free_aligned(c->data[i]);  xpar_free_aligned(c->ref[i]));
+  Fi(c->r, xpar_free_aligned(c->rec[i]));
   xpar_free(c->data);  xpar_free(c->ref);  xpar_free(c->cdata);
   xpar_free(c->rec);   xpar_free(c->gen);
 }
 
 static void cc_random(cc * c, xt_rng * r) {
   u64 i;
-  for (i = 0; i < c->s; i++) {
+  Fi(c->s,
     xt_fill(r, c->data[i], c->bytes);
-    xpar_memcpy(c->ref[i], c->data[i], c->bytes);
-  }
+    xpar_memcpy(c->ref[i], c->data[i], c->bytes));
 }
 
 static void cc_encode(cc * c) {
@@ -119,23 +114,20 @@ static void cc_extract(cc * c) {
   const u8 ** cd = (const u8 **) xpar_alloc_raw((sz) c->s * sizeof(u8 *));
   u8 ** rec = (u8 **) xpar_alloc_raw((sz) c->r * sizeof(u8 *));
 
-  for (i = 0; i < c->s; i++) {
+  Fi(c->s,
     d[i] = (u8 *) xpar_alloc_aligned(unit, 64);
-    cd[i] = d[i];
-  }
-  for (j = 0; j < c->r; j++) rec[j] = (u8 *) xpar_alloc_aligned(unit, 64);
+    cd[i] = d[i]);
+  Fj(c->r, rec[j] = (u8 *) xpar_alloc_aligned(unit, 64));
 
   c->gen = (u32 *) xpar_alloc_raw((sz) c->r * (sz) c->s * sizeof(u32));
-  for (i = 0; i < c->s; i++) {
-    for (j = 0; j < c->s; j++) xpar_memset(d[j], 0, unit);
+  Fi(c->s,
+    Fj(c->s, xpar_memset(d[j], 0, unit));
     sym_put(d[i], 0, 1, c->f16);
     xpar_codec_encode(k, cd, rec, unit);
-    for (j = 0; j < c->r; j++)
-      c->gen[j * c->s + i] = sym_get(rec[j], 0, c->f16);
-  }
+    Fj(c->r, c->gen[j * c->s + i] = sym_get(rec[j], 0, c->f16)));
 
-  for (i = 0; i < c->s; i++) xpar_free_aligned(d[i]);
-  for (j = 0; j < c->r; j++) xpar_free_aligned(rec[j]);
+  Fi(c->s, xpar_free_aligned(d[i]));
+  Fj(c->r, xpar_free_aligned(rec[j]));
   xpar_free(d);  xpar_free(cd);  xpar_free(rec);
   xpar_codec_free(k);
 }
@@ -144,42 +136,39 @@ static void cc_extract(cc * c) {
 static void cc_oracle(const cc * c, u8 ** out) {
   u64 i, j;
   sz t;
-  for (j = 0; j < c->r; j++) {
+  Fj(c->r,
     xpar_memset(out[j], 0, c->bytes);
-    for (i = 0; i < c->s; i++) {
+    Fi(c->s,
       u32 g = c->gen[j * c->s + i];
       if (!g) continue;
       for (t = 0; t < c->symbols; t++)
         sym_put(out[j], t,
                 sym_get(out[j], t, c->f16) ^
                 fmul(g, sym_get(c->data[i], t, c->f16), c->f16),
-                c->f16);
-    }
-  }
+                c->f16)));
 }
 
 static void cc_check_generator(const cc * c) {
   u64 i, j;
-  for (j = 0; j < c->r; j++)
-    for (i = 0; i < c->s; i++)
+  Fj(c->r,
+    Fi(c->s,
       if (!c->gen[j * c->s + i]) {
         CHECK(false, "%s GF(2^%" PRIu32 "): generator entry (%" PRIu64
               ", %" PRIu64 ") is zero", codec_name(c->kind), (u32) c->field,
               j, i);
         return;
-      }
+      }));
   /* Check the Cauchy generator against its closed form. */
   if (c->kind == XPAR_CODEC_MATRIX) {
     u32 base = c->f16 ? 65535u : 255u;
-    for (j = 0; j < c->r; j++)
-      for (i = 0; i < c->s; i++) {
+    Fj(c->r,
+      Fi(c->s,
         u32 want = finv((base - (u32) j) ^ (u32) i, c->f16);
         if (c->gen[j * c->s + i] == want) continue;
         CHECK(false, "matrix GF(2^%" PRIu32 "): entry (%" PRIu64 ", %"
               PRIu64 ") is %" PRIu32 ", not the Cauchy value %" PRIu32,
               (u32) c->field, j, i, c->gen[j * c->s + i], want);
-        return;
-      }
+        return));
   }
 }
 
@@ -198,17 +187,16 @@ static void test_encode_differential(u8 kind, u8 field, u64 s, u64 r,
   cc_encode(&c);
 
   want = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  for (j = 0; j < r; j++) want[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64);
+  Fj(r, want[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64));
   cc_oracle(&c, want);
-  for (j = 0; j < r; j++) {
+  Fj(r,
     char label[96];
     xpar_snprintf(label, sizeof label,
                   "%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64
                   " recovery slice %" PRIu64,
                   codec_name(kind), (u32) field, s, r, j);
-    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break;
-  }
-  for (j = 0; j < r; j++) xpar_free_aligned(want[j]);
+    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break);
+  Fj(r, xpar_free_aligned(want[j]));
   xpar_free(want);
   cc_free(&c);
 }
@@ -221,8 +209,7 @@ static void decode_once(cc * c, const u8 * dpres, const u8 * rpres, u64 e,
   xpar_codec_plan * pl;
   u64 i;
 
-  for (i = 0; i < c->s; i++)
-    if (!dpres[i]) xpar_memset(c->data[i], 0, c->bytes);
+  Fi(c->s, if (!dpres[i]) xpar_memset(c->data[i], 0, c->bytes));
 
   pl = xpar_codec_plan_new(k, dpres, rpres, &st);
   if (keep < e) {
@@ -245,15 +232,14 @@ static void decode_once(cc * c, const u8 * dpres, const u8 * rpres, u64 e,
                              c->bytes);
   CHECK(st == XPAR_CODEC_OK, "%s: plan_apply returned %d",
         codec_name(c->kind), (int) st);
-  for (i = 0; i < c->s; i++) {
+  Fi(c->s,
     char label[96];
     if (dpres[i]) continue;
     xpar_snprintf(label, sizeof label,
                   "%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64
                   ": decoded slice %" PRIu64, codec_name(c->kind),
                   (u32) c->field, c->s, c->r, i);
-    if (!xt_bytes_equal(label, c->data[i], c->ref[i], c->bytes)) break;
-  }
+    if (!xt_bytes_equal(label, c->data[i], c->ref[i], c->bytes)) break);
   xpar_codec_plan_free(pl);
   xpar_codec_free(k);
 }
@@ -293,8 +279,8 @@ static void test_decode(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng,
         rpres[pick] = 0;  done++;
       }
     }
-    for (i = 0; i < r; i++) keep += rpres[i] ? 1 : 0;
-    for (i = 0; i < s; i++) xpar_memcpy(c.data[i], c.ref[i], c.bytes);
+    Fi(r, keep += rpres[i] ? 1 : 0);
+    Fi(s, xpar_memcpy(c.data[i], c.ref[i], c.bytes));
     decode_once(&c, dpres, rpres, e, keep);
   }
 
@@ -314,7 +300,7 @@ typedef struct { u8 * a, * b, * c, * d; } ke_buf;
 
 static void ke_fill(xt_rng * r, u8 * p, sz n) {
   sz i;
-  for (i = 0; i < n; i++) p[i] = (u8) xt_next(r);
+  Fi(n, p[i] = (u8) xt_next(r));
 }
 
 static bool ke_same(const u8 * x, const u8 * y, sz n, const char * what,
@@ -504,33 +490,31 @@ static void test_tiers(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng) {
   rpres = (u8 *) xpar_alloc_raw((sz) r);
   xpar_memset(dpres, 1, (sz) s);
   xpar_memset(rpres, 1, (sz) r);
-  for (i = 0; i < r && i < s; i++) dpres[i] = 0;
+  for (i = 0; i < r && i < s; i++) { dpres[i] = 0; }
 
   xpar_gf_use_tier(scalar);
   cc_encode(&c);
   base = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  for (j = 0; j < r; j++) {
+  Fj(r,
     base[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64);
-    xpar_memcpy(base[j], c.rec[j], c.bytes);
-  }
+    xpar_memcpy(base[j], c.rec[j], c.bytes));
 
   for (t = 0; t < n; t++) {
     char label[96];
     if (t == scalar || !xpar_gf_tier_usable(t)) continue;
     if (!xpar_gf_use_tier(t)) continue;
-    for (j = 0; j < r; j++) xpar_memset(c.rec[j], 0xCC, c.bytes);
+    Fj(r, xpar_memset(c.rec[j], 0xCC, c.bytes));
     cc_encode(&c);
-    for (j = 0; j < r; j++) {
+    Fj(r,
       xpar_snprintf(label, sizeof label, "%s encode on tier %s, slice %"
                     PRIu64, codec_name(kind), xpar_gf_tier_name(t), j);
-      if (!xt_bytes_equal(label, c.rec[j], base[j], c.bytes)) break;
-    }
-    for (i = 0; i < s; i++) xpar_memcpy(c.data[i], c.ref[i], c.bytes);
+      if (!xt_bytes_equal(label, c.rec[j], base[j], c.bytes)) break);
+    Fi(s, xpar_memcpy(c.data[i], c.ref[i], c.bytes));
     decode_once(&c, dpres, rpres, r < s ? r : s, r);
   }
 
   xpar_gf_use_tier(saved);
-  for (j = 0; j < r; j++) xpar_free_aligned(base[j]);
+  Fj(r, xpar_free_aligned(base[j]));
   xpar_free(base);  xpar_free(dpres);  xpar_free(rpres);
   cc_free(&c);
 }
@@ -547,24 +531,22 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
   cc_random(&c, rng);
   cc_encode(&c);
   want = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  for (j = 0; j < r; j++) {
+  Fj(r,
     want[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64);
-    xpar_memcpy(want[j], c.rec[j], c.bytes);
-  }
+    xpar_memcpy(want[j], c.rec[j], c.bytes));
 
   k = xpar_codec_new(XPAR_CODEC_MATRIX, field, s, r);
-  for (i = 0; i < s; i++)
+  Fi(s,
     xpar_codec_matrix_accumulate(k, i, c.data[i], 0, c.rec, r, c.bytes,
-                                 i == 0);
-  for (j = 0; j < r; j++) {
+     i == 0));
+  Fj(r,
     char label[96];
     xpar_snprintf(label, sizeof label,
                   "matrix streaming GF(2^%" PRIu32 ") slice %" PRIu64,
                   (u32) field, j);
-    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break;
-  }
+    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break);
 
-  for (j = 0; j < r; j++) xpar_memset(c.rec[j], 0xA5, c.bytes);
+  Fj(r, xpar_memset(c.rec[j], 0xA5, c.bytes));
   i = 0;
   while (i < s) {
     u64 take = 1 + xt_below(rng, 5);
@@ -573,25 +555,24 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
                                       c.bytes, i == 0);
     i += take;
   }
-  for (j = 0; j < r; j++) {
+  Fj(r,
     char label[96];
     xpar_snprintf(label, sizeof label,
                   "matrix batched GF(2^%" PRIu32 ") slice %" PRIu64,
                   (u32) field, j);
-    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break;
-  }
+    if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break);
 
   /* Partial recovery ranges must not alter excluded rows. */
   if (r >= 2) {
-    for (j = 0; j < r; j++) xpar_memset(c.rec[j], 0x11, c.bytes);
-    for (i = 0; i < s; i++)
+    Fj(r, xpar_memset(c.rec[j], 0x11, c.bytes));
+    Fi(s,
       xpar_codec_matrix_accumulate(k, i, c.data[i], 1, c.rec + 1, r - 1,
-                                   c.bytes, i == 0);
-    for (j = 0; j < c.bytes; j++)
+           c.bytes, i == 0));
+    Fj(c.bytes,
       if (c.rec[0][j] != 0x11) {
         CHECK(false, "a recovery range starting at 1 wrote row 0");
         break;
-      }
+      });
     {
       char label[96];
       xpar_snprintf(label, sizeof label,
@@ -601,7 +582,7 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
   }
 
   xpar_codec_free(k);
-  for (j = 0; j < r; j++) xpar_free_aligned(want[j]);
+  Fj(r, xpar_free_aligned(want[j]));
   xpar_free(want);
   cc_free(&c);
 }
@@ -623,7 +604,7 @@ static void test_matrix_odd_bytes(void) {
   dat[0] = d0;  dat[1] = d1;  rec[0] = rc;
 
   k = xpar_codec_new(XPAR_CODEC_MATRIX, 16, 2, 1);
-  for (i = 0; i < ARRAY_LEN(odd); i++) {
+  Fi(ARRAY_LEN(odd),
     sz n = odd[i];
     xpar_memset(rc, 0x5A, cap);
     CHECK(xpar_codec_matrix_accumulate_many(k, 0, dat, 2, 0, rec, 1, n,
@@ -635,8 +616,7 @@ static void test_matrix_odd_bytes(void) {
     /*  One byte fewer is a whole number of symbols and must be accepted.  */
     CHECK(xpar_codec_matrix_accumulate_many(k, 0, dat, 2, 0, rec, 1, n - 1,
                                             true) == XPAR_CODEC_OK,
-          "GF(2^16) streaming must accept %lu bytes", (unsigned long) n - 1);
-  }
+          "GF(2^16) streaming must accept %lu bytes", (unsigned long) n - 1));
   xpar_codec_free(k);
 
   /*  GF(2^8) accepts odd byte counts.  */
@@ -686,11 +666,10 @@ static void arm_close(arm_case * c) {
 static void arm_damage(const arm_case * c, u8 * region, u32 count) {
   sz lane = (sz) c->p.depth * c->wb;
   u32 i;
-  for (i = 0; i < count; i++) {
+  Fi(count,
     u8 * p = region + (sz) i * lane;   /*  Symbol i, codeword 0.  */
     u32 q;
-    for (q = 0; q < c->wb; q++) p[q] = (u8) (p[q] ^ 0xA5u);
-  }
+    for (q = 0; q < c->wb; q++) p[q] = (u8) (p[q] ^ 0xA5u));
 }
 
 /*  Independent root-by-root reference for the linear q-binomial builder.  */
@@ -701,15 +680,14 @@ static void arm_generator_ref(const xpar_armour_params * p, u32 * g) {
 
   xpar_memset(g, 0, (sz) (m + 1) * sizeof(u32));
   g[0] = 1;
-  for (j = 0; j < m; j++) {
+  Fj(m,
     u32 e = (u32) (((u64) p->fcr + (u64) j * p->prim) % order);
     u32 root = f16 ? (u32) xpar_gf16_alpha_pow(e)
                    : (u32) xpar_gf8_alpha_pow(e);
     g[j + 1] = g[j];
     for (i = j; i > 0; i--)
       g[i] = g[i - 1] ^ fmul(g[i], root, f16);
-    g[0] = fmul(g[0], root, f16);
-  }
+    g[0] = fmul(g[0], root, f16));
 }
 
 static void test_armour_generators(void) {
@@ -923,19 +901,18 @@ static void test_prefix_stable(u8 kind, u8 field, u64 s, u64 grown, u64 r,
   cc_init(&a, kind, field, s, r, 512);
   cc_init(&b, kind, field, grown, r, 512);
   cc_random(&a, rng);
-  for (i = 0; i < grown; i++)
+  Fi(grown,
     if (i < s) xpar_memcpy(b.data[i], a.data[i], a.bytes);
-    else       xpar_memset(b.data[i], 0, b.bytes);
+    else       xpar_memset(b.data[i], 0, b.bytes));
   cc_encode(&a);
   cc_encode(&b);
-  for (j = 0; j < r; j++) {
+  Fj(r,
     char label[96];
     xpar_snprintf(label, sizeof label,
                   "%s GF(2^%" PRIu32 "): S=%" PRIu64 " to %" PRIu64
                   ", recovery slice %" PRIu64,
                   codec_name(kind), (u32) field, s, grown, j);
-    if (!xt_bytes_equal(label, b.rec[j], a.rec[j], a.bytes)) break;
-  }
+    if (!xt_bytes_equal(label, b.rec[j], a.rec[j], a.bytes)) break);
   cc_free(&a);  cc_free(&b);
 }
 
@@ -1012,48 +989,43 @@ void xt_run_codec(void) {
   test_supports();
 
   xt_section_begin("encode differential");
-  for (i = 0; i < ARRAY_LEN(small_cases); i++) {
+  Fi(ARRAY_LEN(small_cases),
     xt_trace("%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64,
              codec_name(small_cases[i].kind), (u32) small_cases[i].field,
              small_cases[i].s, small_cases[i].r);
     test_encode_differential(small_cases[i].kind, small_cases[i].field,
-                             small_cases[i].s, small_cases[i].r, &rng);
-  }
+                             small_cases[i].s, small_cases[i].r, &rng));
 
   xt_section_begin("decode");
-  for (i = 0; i < ARRAY_LEN(small_cases); i++) {
+  Fi(ARRAY_LEN(small_cases),
     xt_trace("%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64,
              codec_name(small_cases[i].kind), (u32) small_cases[i].field,
              small_cases[i].s, small_cases[i].r);
     test_decode(small_cases[i].kind, small_cases[i].field, small_cases[i].s,
-                small_cases[i].r, &rng, xt_scale(6));
-  }
-  for (i = 0; i < ARRAY_LEN(big_cases); i++) {
+                small_cases[i].r, &rng, xt_scale(6)));
+  Fi(ARRAY_LEN(big_cases),
     xt_trace("%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64,
              codec_name(big_cases[i].kind), (u32) big_cases[i].field,
              big_cases[i].s, big_cases[i].r);
     test_decode(big_cases[i].kind, big_cases[i].field, big_cases[i].s,
-                big_cases[i].r, &rng, xt_scale(2));
-  }
+                big_cases[i].r, &rng, xt_scale(2)));
 
   xt_section_begin("kernel edges");
   { xt_rng kr;  xt_seed(&kr, 0x9E37);  test_kernel_edges(&kr); }
 
   xt_section_begin("tier agreement");
-  for (i = 0; i < ARRAY_LEN(small_cases); i++) {
+  Fi(ARRAY_LEN(small_cases),
     xt_trace("%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64,
              codec_name(small_cases[i].kind), (u32) small_cases[i].field,
              small_cases[i].s, small_cases[i].r);
     test_tiers(small_cases[i].kind, small_cases[i].field, small_cases[i].s,
-               small_cases[i].r, &rng);
-  }
-  for (i = 0; i < ARRAY_LEN(big_cases); i++) {
+               small_cases[i].r, &rng));
+  Fi(ARRAY_LEN(big_cases),
     xt_trace("%s GF(2^%" PRIu32 ") S=%" PRIu64 " R=%" PRIu64,
              codec_name(big_cases[i].kind), (u32) big_cases[i].field,
              big_cases[i].s, big_cases[i].r);
     test_tiers(big_cases[i].kind, big_cases[i].field, big_cases[i].s,
-               big_cases[i].r, &rng);
-  }
+               big_cases[i].r, &rng));
 
   xt_section_begin("matrix streaming");
   test_matrix_streaming(8, 32, 8, &rng);

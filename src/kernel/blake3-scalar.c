@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: portable BLAKE3 compression variant.  */
+/*  portable BLAKE3 compression variant.  */
 
 #define XPAR_BLAKE3_VARIANT_SCALAR
 #include "blake3-impl.h"

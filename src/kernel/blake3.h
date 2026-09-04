@@ -24,14 +24,10 @@
 #define XPAR_BLAKE3_BLOCK_LEN  64
 #define XPAR_BLAKE3_CHUNK_LEN  1024
 
-/*  An input is at most 2^64 bytes, so at most 2^54 chunks, so the stack
-    of pending subtree chaining values never exceeds 54 entries plus the
-    one being pushed.  */
+/*  Pending subtree stack for a 2^64-byte input.  */
 #define XPAR_BLAKE3_MAX_DEPTH  54
 
-/*  Lanes of the widest hash_many built here (AVX2). A wider kernel must
-    raise this, or the subtree compressor overruns its chaining-value
-    array; blake3.c asserts the dispatched degree against it.  */
+/*  Widest hash_many kernel; raise before adding wider kernels.  */
 #define XPAR_BLAKE3_MAX_DEGREE 8
 
 /*  C99 forbids repeating a typedef, so every declarer shares a guard.  */
@@ -80,8 +76,7 @@ void xpar_blake3_subtree_tag(const void * buf, sz len, u64 chunk_counter,
 void xpar_blake3_subtree_tag_keyed(const u8 * key, const void * buf, sz len,
                                    u64 chunk_counter, u8 * out, sz n);
 
-/*  Streaming form of the subtree tag for repair gates whose slice is larger
-    than the memory budget.  */
+/*  Streaming subtree tag for repair gates.  */
 void xpar_blake3_subtree_stream_init(xpar_blake3_t *, const u8 * key,
                                      u64 chunk_counter);
 void xpar_blake3_subtree_stream_final(const xpar_blake3_t *, u8 * out, sz n);
@@ -106,15 +101,11 @@ extern const u32 xpar_blake3_iv[8];
 void xpar_blake3_compress_scalar(u32 * cv, const u8 * block, u8 block_len,
                                  u64 counter, u8 flags);
 
-/*  One 64-byte block, producing the full 64-byte output word set rather
-    than a chaining value. Only the root node needs it, and only it can
-    extend the output past 32 bytes.  */
+/*  One root block, producing the full 64-byte output.  */
 void xpar_blake3_xof_scalar(const u32 * cv, const u8 * block, u8 block_len,
                             u64 counter, u8 flags, u8 * out);
 
-/*  hash_many compresses `count` inputs of `blocks` full 64-byte blocks
-    each, in parallel lanes, all from the same key and flags, writing one
-    32-byte chaining value per input.  */
+/*  Parallel full-block compression; one chaining value per input.  */
 #define XPAR_BLAKE3_HASH_MANY_DECL(sfx)                                       \
   void xpar_blake3_hash_many##sfx(const u8 * const * inputs, sz count,        \
                                   sz blocks, const u32 * key, u64 counter,   \

@@ -50,29 +50,23 @@ static void crc_init(void) {
   unsigned int i, j, c;
   int seen[256];
   if (crc_ready) return;
-  for (i = 0; i < 256; i++) {
+  Fi(256,
     c = i;
-    for (j = 0; j < 8; j++)
-      c = (c >> 1) ^ (CRC32C_POLY & (unsigned int) -(int) (c & 1));
-    crc_tab[i] = c;
-  }
+    Fj(8, c = (c >> 1) ^ (CRC32C_POLY & (unsigned int) -(int) (c & 1)));
+    crc_tab[i] = c);
   memset(seen, 0, sizeof seen);
-  for (i = 0; i < 256; i++) {
+  Fi(256,
     unsigned int top = crc_tab[i] >> 24;
-    if (seen[top]) {
-      fprintf(stderr, "damage: CRC reverse table is not invertible\n");
-      exit(3);
-    }
+    if (seen[top]) { fprintf(stderr, "damage: CRC reverse table is not invertible\n");  exit(3); }
     seen[top] = 1;
-    crc_rev[top] = i;
-  }
+    crc_rev[top] = i);
   crc_ready = 1;
 }
 
 static unsigned int crc_raw(unsigned int c, const unsigned char * p,
                             unsigned long long n) {
   unsigned long long i;
-  for (i = 0; i < n; i++) c = (c >> 8) ^ crc_tab[(c ^ p[i]) & 0xFF];
+  Fi(n, c = (c >> 8) ^ crc_tab[(c ^ p[i]) & 0xFF]);
   return c;
 }
 
@@ -89,10 +83,9 @@ static void crc_backpatch(unsigned int s, unsigned int f,
     st[k]  = (st[k + 1] ^ crc_tab[idx[k]]) << 8;
   }
   c = s;
-  for (k = 0; k < 4; k++) {
+  Fk(4,
     out[k] = (unsigned char) ((c & 0xFF) ^ idx[k]);
-    c = (c >> 8) ^ crc_tab[(c ^ out[k]) & 0xFF];
-  }
+    c = (c >> 8) ^ crc_tab[(c ^ out[k]) & 0xFF]);
   if (c != f) {
     fprintf(stderr, "damage: internal: backpatch landed on %08X, not %08X\n",
             c, f);
@@ -184,10 +177,9 @@ static void op_flip(unsigned long long off, unsigned long long len) {
   while (len) {
     size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
     io_read(off, buf, take);
-    for (i = 0; i < take; i++) {
+    Fi(take,
       unsigned char d = (unsigned char) rng_next();
-      buf[i] ^= (unsigned char) (d ? d : 0xA5);
-    }
+      buf[i] ^= (unsigned char) (d ? d : 0xA5));
     io_write(off, buf, take);
     off += take;  len -= take;
   }
@@ -199,11 +191,10 @@ static void op_rand(unsigned long long off, unsigned long long len) {
   while (len) {
     size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
     io_read(off, buf, take);
-    for (i = 0; i < take; i++) {
+    Fi(take,
       unsigned char v = (unsigned char) rng_next();
       if (v == buf[i]) v ^= 0x5Au;
-      buf[i] = v;
-    }
+      buf[i] = v);
     io_write(off, buf, take);
     off += take;  len -= take;
   }
@@ -253,11 +244,10 @@ static void op_forge(unsigned long long off, unsigned long long len) {
   body = (unsigned char *) malloc((size_t) len);
   if (!body) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
   io_read(off, body, (size_t) len);
-  for (i = 0; i < n; i++) {
+  Fi(n,
     unsigned char v = (unsigned char) rng_next();
     if (v == body[i]) v ^= 0x5Au;
-    body[i] = v;
-  }
+    body[i] = v);
   state = crc_raw(0xFFFFFFFFu, body, (size_t) n);
   crc_backpatch(state, ~want, body + n);
   io_write(off, body, (size_t) len);
@@ -279,10 +269,7 @@ static void op_truncate(unsigned long long len) {
   unsigned long long off = 0, left;
   char * tmp;
   FILE * out;
-  if (len > img_len) {
-    fprintf(stderr, "damage: truncate: %llu is past the end\n", len);
-    exit(2);
-  }
+  if (len > img_len) { fprintf(stderr, "damage: truncate: %llu is past the end\n", len);  exit(2); }
 #if defined(__MSDOS__)
   {
     const char * p, * leaf = img_path;
@@ -291,10 +278,7 @@ static void op_truncate(unsigned long long len) {
       if (*p == '/' || *p == '\\') leaf = p + 1;
     dir = (size_t) (leaf - img_path);
     tmp = (char *) malloc(dir + sizeof "XPDAM.TMP");
-    if (tmp) {
-      memcpy(tmp, img_path, dir);
-      memcpy(tmp + dir, "XPDAM.TMP", sizeof "XPDAM.TMP");
-    }
+    if (tmp) { memcpy(tmp, img_path, dir);  memcpy(tmp + dir, "XPDAM.TMP", sizeof "XPDAM.TMP"); }
   }
 #else
   tmp = (char *) malloc(strlen(img_path) + 8);
@@ -332,7 +316,7 @@ static void op_extend(unsigned long long len) {
   unsigned long long at = img_len;
   while (len) {
     size_t take = len > sizeof buf ? sizeof buf : (size_t) len, i;
-    for (i = 0; i < take; i++) buf[i] = (unsigned char) rng_next();
+    Fi(take, buf[i] = (unsigned char) rng_next());
     io_write(at, buf, take);
     at += take;  len -= take;
   }
@@ -373,11 +357,7 @@ static void op_unpacket(const char * type) {
     for (len = 0, i = 8; i-- > 0; ) len = (len << 8) | hdr[8 + i];
     if (len < 48 || (len & 7) != 0 || len > img_len - off) { off += 8;
                                                              continue; }
-    if (!memcmp(hdr + 32, type, 4)) {
-      memset(hdr, 0, 8);
-      io_write(off, hdr, 8);
-      n++;
-    }
+    if (!memcmp(hdr + 32, type, 4)) { memset(hdr, 0, 8);  io_write(off, hdr, 8);  n++; }
     off += len;
   }
   printf("%u\n", n);

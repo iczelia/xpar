@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: shared generation-chain reader interface.  */
+/*  shared generation-chain reader interface.  */
 #ifndef XPAR_OPS_CHAIN_H
 #define XPAR_OPS_CHAIN_H
 

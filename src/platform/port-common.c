@@ -17,7 +17,6 @@
     so a new port implements the primitives and inherits all of this.  */
 
 #include <string.h>
-
 #include "common.h"
 
 /*  Shared C-library wrappers.  */
@@ -41,11 +40,7 @@ int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
   va_copy(ap2, ap);
   n = xpar_vsnprintf(stack, sizeof stack, fmt, ap);
   if (n < 0) { va_end(ap2);  return -1; }
-  if ((sz) n < sizeof stack) {
-    va_end(ap2);
-    xpar_port_write_text(f, stack, (sz) n);
-    return n;
-  }
+  if ((sz) n < sizeof stack) { va_end(ap2);  xpar_port_write_text(f, stack, (sz) n);  return n; }
   { char * big = (char *) xpar_alloc_raw((sz) n + 1);
     xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
     va_end(ap2);
@@ -95,10 +90,10 @@ int xpar_parse_u64(const char * s, u64 * out) {
 
 bool xpar_pread_serial(xpar_read_req * r, sz count) {
   sz i;
-  for (i = 0; i < count; i++)
+  Fi(count,
     r[i].result = r[i].file
-                    ? xpar_pread(r[i].file, r[i].buf, r[i].length,
-                                 r[i].offset) : 0;
+    ? xpar_pread(r[i].file, r[i].buf, r[i].length,
+                 r[i].offset) : 0);
   return false;
 }
 

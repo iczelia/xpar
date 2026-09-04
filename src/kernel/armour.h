@@ -12,9 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Shortened Reed-Solomon codes over GF(2^8) or GF(2^16). Frames interleave
-    D codewords and keep plaintext at the front. Validate corrections with
-    the frame tag.  */
+/*  Shortened Reed-Solomon frames over GF(2^8) or GF(2^16).  */
 
 #ifndef XPAR_ARMOUR_H
 #define XPAR_ARMOUR_H
@@ -40,9 +38,7 @@ void xpar_armour_defaults(xpar_armour_params * p, u32 symbol_bits);
 /*  Return NULL when the parameters are supported, else an error.  */
 const char * xpar_armour_check(const xpar_armour_params * p);
 
-/*  A codec owns scratch and is not thread-safe.  Build one per worker.
-    Construction binds the current kernel tier and requires valid
-    parameters and an initialised field.  */
+/*  One scratch-owning codec per worker.  */
 
 typedef struct xpar_armour xpar_armour;
 
@@ -97,8 +93,7 @@ typedef struct {
   u64   failed;      /*  Codewords the decoder would not accept.  */
   u64   symbols;     /*  Symbols corrected, summed over codewords.  */
   u32   worst;       /*  Largest single-codeword count corrected.  */
-  u64 * hist;        /*  hist[e] counts codewords that took e errors,
-                         e = 0 included; t+1 entries covers every case.  */
+  u64 * hist;        /*  Codewords by corrected-error count, including 0.  */
   u32   hist_len;    /*  Entries in hist; counts past it are dropped.  */
 } xpar_armour_stat;
 
@@ -120,9 +115,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       const void * ctx,
                                       xpar_armour_stat * st);
 
-/*  Region kernels over D*W bytes.  The encoder uses a rotating parity
-    register; the decoder fuses Horner multiply and XOR.  Source buffers
-    must not overlap the register.  */
+/*  Region kernels over D*W bytes; sources must not overlap registers.  */
 
 typedef struct {
   const char * name;
@@ -137,9 +130,7 @@ typedef struct {
                     const xpar_gf16_coef * rt, const u8 * restrict sym, sz n);
 } xpar_armour_kernels;
 
-/*  The scalar tier, and the tail of every vector kernel, so a tail that
-    disagrees with a body is not expressible. `xpar benchmark --tiers`
-    compares every vector tier against these.  */
+/*  Scalar references and vector tails.  */
 
 void xpar_armour_taps8_ref   (u8 * restrict par, sz stride, u32 t2, u32 head,
                               const xpar_gf8_coef  * gen,

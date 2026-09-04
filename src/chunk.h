@@ -21,8 +21,7 @@
 typedef bool (*xpar_chunk_emit)(void *, u64 file_offset, u32 length,
                                 const u8 hash[16]);
 
-/*  Walk one regular file with deterministic normalised Gear chunking.
-    Returns false only when the file cannot be opened.  */
+/*  Deterministic Gear chunks; false if the file cannot be opened.  */
 bool xpar_chunk_file(const char * path, u64 average,
                      xpar_chunk_emit emit, void * user,
                      u8 content_hash[32], u8 prefix_hash[16]);

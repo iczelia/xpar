@@ -235,12 +235,11 @@ void        xpar_layt_free (xpar_layt *);
 
 xpar_status xpar_layt_tiles(const xpar_layt *, u64 stream_length);
 
-/*  A DATA volume's BLAKE3-64 tag is its identity; its name is only a hint.  */
+/*  A DATA volume is identified by its BLAKE3-64 tag, not its name.  */
 void xpar_vol_tag_begin(xpar_blake3_t *);
 u64  xpar_vol_tag_final(xpar_blake3_t *);
 
-/*  Whether the file at `path` is that volume: the right size, and, where
-    the layout records a tag, the right bytes. A missing file is not.  */
+/*  Whether `path` has this volume's size and optional tag.  */
 bool xpar_vol_tag_match(const char * path, const xpar_vol *);
 
 typedef struct {
@@ -255,8 +254,7 @@ void        xpar_auth_write(xpar_buf *, const xpar_auth *, const u8 * set_id,
 
 bool xpar_auth_key_ok(const xpar_auth *, const u8 * master);
 
-/*  Body text with its zero padding removed. `*out` is NUL terminated for
-    convenience and `*out_len` carries the true length.  */
+/*  Unpadded body text; `*out` is NUL terminated.  */
 void xpar_text_write(xpar_buf *, const char * type, const char * text,
                      const u8 * set_id, const xpar_key *);
 
@@ -342,11 +340,10 @@ typedef struct {
 void xpar_critset_init(xpar_critset *);
 void xpar_critset_free(xpar_critset *);
 
-/*  Add a packet body by reference. Its storage must remain stable for the
-    set's lifetime. Repeats update counts and retain the highest-ranked body.  */
+/*  Add a borrowed packet body. Repeats retain the best-ranked body.  */
 bool xpar_critset_add(xpar_critset *, const xpar_pkt *, const u8 * body);
 
-/*  Preserve bodies borrowed from a range that is about to be released.  */
+/*  Copy bodies borrowed from a range about to be released.  */
 void xpar_critset_detach(xpar_critset *, const void * base, sz size);
 
 const xpar_crit_pkt * xpar_critset_find(const xpar_critset *,

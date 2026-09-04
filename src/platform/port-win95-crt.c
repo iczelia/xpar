@@ -18,9 +18,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
 #include "common.h"
-
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,10 +142,7 @@ XPAR_KEEP void * memset(void * d, int c, size_t n) {
 XPAR_KEEP int memcmp(const void * a, const void * b, size_t n) {
   const unsigned char * ap = a;
   const unsigned char * bp = b;
-  while (n--) {
-    if (*ap != *bp) return (int) *ap - (int) *bp;
-    ap++;  bp++;
-  }
+  while (n--) { if (*ap != *bp) return (int) *ap - (int) *bp;  ap++;  bp++; }
   return 0;
 }
 

@@ -61,54 +61,46 @@ static u32 addm(u32 a, u32 b, u32 mod) {
 static void cauchy_inv8(u32 n, const u8 * x, const u8 * y, u8 * b) {
   u32 * rk = (u32 *) xpar_alloc_raw((sz) 2 * n * sizeof(u32));
   u32 * cl = rk + n;
-  for (u32 k = 0; k < n; k++) {
+  u32 k;
+  Fk(n,
     u32 a = 0;
-    for (u32 t = 0; t < n; t++) a = addm(a, xpar_gf8_log[x[k] ^ y[t]], 255);
-    for (u32 t = 0; t < n; t++)
-      if (t != k) a = addm(a, 255u - xpar_gf8_log[x[k] ^ x[t]], 255);
-    rk[k] = a;
-  }
+    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf8_log[x[k] ^ y[t]], 255); }
+    for (u32 t = 0; t < (n); t++) { if (t != k) a = addm(a, 255u - xpar_gf8_log[x[k] ^ x[t]], 255); }
+    rk[k] = a);
   for (u32 l = 0; l < n; l++) {
     u32 a = 0;
-    for (u32 t = 0; t < n; t++) a = addm(a, xpar_gf8_log[x[t] ^ y[l]], 255);
-    for (u32 t = 0; t < n; t++)
-      if (t != l) a = addm(a, 255u - xpar_gf8_log[y[l] ^ y[t]], 255);
+    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf8_log[x[t] ^ y[l]], 255); }
+    for (u32 t = 0; t < (n); t++) { if (t != l) a = addm(a, 255u - xpar_gf8_log[y[l] ^ y[t]], 255); }
     cl[l] = a;
   }
   for (u32 l = 0; l < n; l++)
-    for (u32 k = 0; k < n; k++) {
+    Fk(n,
       u32 t = addm(rk[k], cl[l], 255);
       t = addm(t, 255u - xpar_gf8_log[x[k] ^ y[l]], 255);
-      b[(sz) l * n + k] = xpar_gf8_exp[t];
-    }
+      b[(sz) l * n + k] = xpar_gf8_exp[t]);
   xpar_free(rk);
 }
 
 static void cauchy_inv16(u32 n, const u16 * x, const u16 * y, u16 * b) {
   u32 * rk = (u32 *) xpar_alloc_raw((sz) 2 * n * sizeof(u32));
   u32 * cl = rk + n;
-  for (u32 k = 0; k < n; k++) {
+  u32 k;
+  Fk(n,
     u32 a = 0;
-    for (u32 t = 0; t < n; t++)
-      a = addm(a, xpar_gf16_log[x[k] ^ y[t]], 65535);
-    for (u32 t = 0; t < n; t++)
-      if (t != k) a = addm(a, 65535u - xpar_gf16_log[x[k] ^ x[t]], 65535);
-    rk[k] = a;
-  }
+    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf16_log[x[k] ^ y[t]], 65535); }
+    for (u32 t = 0; t < (n); t++) { if (t != k) a = addm(a, 65535u - xpar_gf16_log[x[k] ^ x[t]], 65535); }
+    rk[k] = a);
   for (u32 l = 0; l < n; l++) {
     u32 a = 0;
-    for (u32 t = 0; t < n; t++)
-      a = addm(a, xpar_gf16_log[x[t] ^ y[l]], 65535);
-    for (u32 t = 0; t < n; t++)
-      if (t != l) a = addm(a, 65535u - xpar_gf16_log[y[l] ^ y[t]], 65535);
+    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf16_log[x[t] ^ y[l]], 65535); }
+    for (u32 t = 0; t < (n); t++) { if (t != l) a = addm(a, 65535u - xpar_gf16_log[y[l] ^ y[t]], 65535); }
     cl[l] = a;
   }
   for (u32 l = 0; l < n; l++)
-    for (u32 k = 0; k < n; k++) {
+    Fk(n,
       u32 t = addm(rk[k], cl[l], 65535);
       t = addm(t, 65535u - xpar_gf16_log[x[k] ^ y[l]], 65535);
-      b[(sz) l * n + k] = xpar_gf16_exp[t];
-    }
+      b[(sz) l * n + k] = xpar_gf16_exp[t]);
   xpar_free(rk);
 }
 
@@ -143,6 +135,7 @@ static void mat_run(const mat_coefs * cf, u8 * const * dst, u32 nd,
                     const u8 * const * src, u32 ns, sz bytes,
                     mat_tile * tl) {
   const xpar_gf_kernels * gk = xpar_gf_active();
+  u32 i, j, k;
   /*  Paired destinations help shuffle tiers but slow affine and VBMI.  */
   bool macx2 = xpar_strcmp(gk->name, "gfni256") &&
                xpar_strcmp(gk->name, "gfni512") &&
@@ -153,35 +146,33 @@ static void mat_run(const mat_coefs * cf, u8 * const * dst, u32 nd,
     u32 jn = MIN((u32) MAT_DST, nd - j0);
     for (u32 i0 = 0; i0 < ns; i0 += MAT_SRC) {
       u32 in = MIN((u32) MAT_SRC, ns - i0);
-      for (u32 i = 0; i < in; i++)
-        for (u32 j = 0; j < jn; j++) {
+      Fi(in,
+        Fj(jn,
           u32 c = mat_entry(cf, i0 + i, j0 + j);
           if (cf->f16) xpar_gf16_prepare(&tl->c16[i * MAT_DST + j], (u16) c);
-          else         xpar_gf8_prepare (&tl->c8 [i * MAT_DST + j], (u8)  c);
-        }
+          else         xpar_gf8_prepare (&tl->c8 [i * MAT_DST + j], (u8)  c)));
       for (sz off = 0; off < bytes; off += MAT_BLK) {
         sz len = MIN((sz) MAT_BLK, bytes - off);
-        for (u32 i = 0; i < in; i++) {
+        Fi(in,
           const u8 * sp = src[i0 + i] + off;
-          u32 j = 0;
+          j = 0;
           if (cf->f16 && mac16x2)
             for (; j + 2 <= jn; j += 2) {
               u8 * d[2];
-              for (u32 k = 0; k < 2; k++) d[k] = dst[j0 + j + k] + off;
+              Fk(2, d[k] = dst[j0 + j + k] + off);
               gk->mac16x2(d, sp, len, &tl->c16[i * MAT_DST + j]);
             }
           else if (!cf->f16 && macx2)
             for (; j + 2 <= jn; j += 2) {
               u8 * d[2];
-              for (u32 k = 0; k < 2; k++) d[k] = dst[j0 + j + k] + off;
+              Fk(2, d[k] = dst[j0 + j + k] + off);
               gk->mac8x2(d, sp, len, &tl->c8[i * MAT_DST + j]);
             }
           for (; j < jn; j++)
             if (cf->f16)
               gk->mac16(dst[j0 + j] + off, sp, len, &tl->c16[i * MAT_DST + j]);
             else
-              gk->mac8 (dst[j0 + j] + off, sp, len, &tl->c8 [i * MAT_DST + j]);
-        }
+              gk->mac8 (dst[j0 + j] + off, sp, len, &tl->c8 [i * MAT_DST + j]));
       }
     }
   }
@@ -210,7 +201,8 @@ static xpar_codec_status mat_encode(void * self, const u8 * const * data,
   xpar_assert(!cd->f16 || (bytes & 1) == 0);
   if (!bytes) return XPAR_CODEC_OK;
   tl = (mat_tile *) xpar_alloc_raw(sizeof(mat_tile));
-  for (u32 j = 0; j < cd->r; j++) xpar_memset(rec[j], 0, bytes);
+  u32 j;
+  Fj(cd->r, xpar_memset(rec[j], 0, bytes));
   xpar_memset(&cf, 0, sizeof cf);
   cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535u : 255u;
   mat_run(&cf, rec, cd->r, data, cd->s, bytes, tl);
@@ -223,9 +215,9 @@ static xpar_codec_status mat_encode(void * self, const u8 * const * data,
 static void * mat_plan_new(void * self, const u8 * dpres, const u8 * rpres,
                            xpar_codec_status * status) {
   mat_codec * cd = (mat_codec *) self;
-  u32 s = cd->s, r = cd->r, e = 0, got = 0;
-  for (u32 i = 0; i < s; i++) if (!dpres[i]) e++;
-  for (u32 i = 0; i < r; i++) if (rpres[i]) got++;
+  u32 s = cd->s, r = cd->r, e = 0, got = 0, i, k, t;
+  Fi(s, if (!dpres[i]) e++);
+  Fi(r, if (rpres[i]) got++);
   if (got < e) { *status = XPAR_CODEC_TOO_MANY_LOST;  return NULL; }
   *status = XPAR_CODEC_OK;
   mat_plan * pl = (mat_plan *) xpar_calloc(1, sizeof(mat_plan));
@@ -235,23 +227,23 @@ static void * mat_plan_new(void * self, const u8 * dpres, const u8 * rpres,
   pl->use  = (u32 *) xpar_alloc_raw((sz) e * sizeof(u32));
   pl->keep = (u32 *) xpar_alloc_raw((sz) (pl->nkeep ? pl->nkeep : 1) *
                                     sizeof(u32));
-  for (u32 i = 0, k = 0, t = 0; i < s; i++) {
+  for (i = 0, k = 0, t = 0; i < s; i++) {
     if (dpres[i]) pl->keep[t++] = i;  else pl->lost[k++] = i;
   }
-  for (u32 i = 0, k = 0; i < r && k < e; i++) if (rpres[i]) pl->use[k++] = i;
+  for (i = 0, k = 0; i < r && k < e; i++) if (rpres[i]) pl->use[k++] = i;
   if (cd->f16) {
     u16 * x = (u16 *) xpar_alloc_raw((sz) 2 * e * sizeof(u16));
     u16 * y = x + e;
-    for (u32 k = 0; k < e; k++) x[k] = (u16) (65535u - pl->use[k]);
-    for (u32 l = 0; l < e; l++) y[l] = (u16) pl->lost[l];
+    Fk(e, x[k] = (u16) (65535u - pl->use[k]));
+    for (u32 l = 0; l < (e); l++) { y[l] = (u16) pl->lost[l]; }
     pl->inv = xpar_alloc_raw((sz) e * e * sizeof(u16));
     cauchy_inv16(e, x, y, (u16 *) pl->inv);
     xpar_free(x);
   } else {
     u8 * x = (u8 *) xpar_alloc_raw((sz) 2 * e);
     u8 * y = x + e;
-    for (u32 k = 0; k < e; k++) x[k] = (u8) (255u - pl->use[k]);
-    for (u32 l = 0; l < e; l++) y[l] = (u8) pl->lost[l];
+    Fk(e, x[k] = (u8) (255u - pl->use[k]));
+    for (u32 l = 0; l < (e); l++) { y[l] = (u8) pl->lost[l]; }
     pl->inv = xpar_alloc_raw((sz) e * e);
     cauchy_inv8(e, x, y, (u8 *) pl->inv);
     xpar_free(x);
@@ -280,8 +272,8 @@ static xpar_codec_status mat_plan_apply(const void * self,
   if (!e || !bytes) return XPAR_CODEC_OK;
   sz stride = mat_stride(bytes);
   u64 need = (u64) e * (u64) stride;
-  FATAL_UNLESS("Column chunk too wide for this host's address space.",
-               need <= (u64) (sz) -1);
+  FATAL_UNLESS(need <= (u64) (sz) -1,
+               "column chunk too wide for this host's address space");
   u8 * pool = (u8 *) xpar_alloc_aligned((sz) need, 64);
   u8 ** syn = (u8 **) xpar_alloc_raw((sz) e * sizeof(u8 *));
   u8 ** out = (u8 **) xpar_alloc_raw((sz) e * sizeof(u8 *));
@@ -289,20 +281,18 @@ static xpar_codec_status mat_plan_apply(const void * self,
                      (sz) (pl->nkeep ? pl->nkeep : 1) * sizeof(u8 *));
   mat_tile * tl = (mat_tile *) xpar_alloc_raw(sizeof(mat_tile));
   mat_coefs cf;
-  for (u32 k = 0; k < e; k++) {
+  u32 k;
+  Fk(e,
     syn[k] = pool + (sz) k * stride;
-    xpar_memcpy(syn[k], rec[pl->use[k]], bytes);
-  }
-  for (u32 i = 0; i < pl->nkeep; i++) in[i] = data[pl->keep[i]];
+    xpar_memcpy(syn[k], rec[pl->use[k]], bytes));
+  u32 i;
+  Fi(pl->nkeep, in[i] = data[pl->keep[i]]);
   xpar_memset(&cf, 0, sizeof cf);
   cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535u : 255u;
   cf.rowmap = pl->use;
   cf.colmap = pl->keep;
   mat_run(&cf, syn, e, in, pl->nkeep, bytes, tl);
-  for (u32 l = 0; l < e; l++) {
-    out[l] = data[pl->lost[l]];
-    xpar_memset(out[l], 0, bytes);
-  }
+  for (u32 l = 0; l < e; l++) { out[l] = data[pl->lost[l]];  xpar_memset(out[l], 0, bytes); }
   cf.rowmap = NULL;  cf.colmap = NULL;
   cf.mat = pl->inv;  cf.stride = e;
   mat_run(&cf, out, e, (const u8 * const *) syn, e, bytes, tl);
@@ -340,8 +330,8 @@ xpar_codec * xpar_codec_new(u8 codec, u8 field_log2, u64 s, u64 r) {
 
 xpar_codec * xpar_codec_new_axis(u8 codec, u8 field_log2, u64 s, u64 r,
                                  u8 axis_log2) {
-  FATAL_UNLESS("internal: unsupported codec geometry.",
-               xpar_codec_supports_axis(codec, field_log2, s, r, axis_log2));
+  FATAL_UNLESS(xpar_codec_supports_axis(codec, field_log2, s, r, axis_log2),
+               "internal: unsupported codec geometry");
   xpar_codec * c = (xpar_codec *) xpar_calloc(1, sizeof(xpar_codec));
   c->kind = codec;
   c->impl = codec_is_fft(codec)
@@ -382,7 +372,7 @@ xpar_codec_status xpar_codec_matrix_accumulate_many(
   if (cd->f16 && (bytes & 1)) return XPAR_CODEC_UNSUPPORTED;
   if (!bytes || !data_count || !recovery_count) return XPAR_CODEC_OK;
   if (clear)
-    for (j = 0; j < recovery_count; j++) xpar_memset(recovery[j], 0, bytes);
+    Fj(recovery_count, xpar_memset(recovery[j], 0, bytes));
   xpar_memset(&cf, 0, sizeof cf);
   cf.f16 = cd->f16;
   cf.base = (cd->f16 ? 65535u : 255u) - (u32) recovery_first;

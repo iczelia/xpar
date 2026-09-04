@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: NEON BLAKE3 compression variant, four chunks at a time.  */
+/*  NEON BLAKE3 compression variant, four chunks at a time.  */
 
 #define XPAR_BLAKE3_VARIANT_NEON
 #define XPAR_BLAKE3_HAVE_SIMD

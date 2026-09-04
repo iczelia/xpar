@@ -12,10 +12,9 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: RISC-V V table-gather Galois-field kernels.  */
+/*  RISC-V V table-gather Galois-field kernels.  */
 
 #include "gf-rvv-int.h"
-
 #include <riscv_vector.h>
 
 /*  Replicate each 16-byte table so every vector lane can gather from it.  */

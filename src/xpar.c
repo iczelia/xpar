@@ -56,18 +56,17 @@ static void apply_simd(const char * want) {
   t = xpar_cpu_tier_find(want);
   if (t < 0) {
     int i, n = xpar_cpu_tier_count();
-    xpar_fprintf(xpar_stderr, "xpar: unknown SIMD tier '%s'.\n", want);
+    xpar_fprintf(xpar_stderr, "xpar: unknown SIMD tier '%s'\n", want);
     xpar_fputs("xpar: this build has:", xpar_stderr);
-    for (i = 0; i < n; i++) {
+    Fi(n,
       const xpar_cpu_tier * ct = xpar_cpu_tier_at(i);
       xpar_fprintf(xpar_stderr, " %s%s", ct->name,
-                   xpar_cpu_tier_usable(i) ? "" : " (unsupported here)");
-    }
+                   xpar_cpu_tier_usable(i) ? "" : " (unsupported here)"));
     xpar_fputs("\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE);
   }
   if (!xpar_cpu_tier_usable(t))
-    FATAL("SIMD tier '%s' is unavailable on this machine.", want);
+    FATAL("SIMD tier '%s' is unavailable on this machine", want);
 
   xpar_cpu_force(xpar_cpu_tier_at(t)->need);
   xpar_gf_use_default_tier();
@@ -86,14 +85,14 @@ int xpar_main(int argc, char ** argv) {
   /*  XPAR_SIMD forces a tier process-wide; --simd takes precedence.  */
   apply_simd(o.simd ? o.simd : xpar_getenv("XPAR_SIMD"));
 
-  for (i = 0; i < ARRAY_LEN(dispatch); i++)
+  Fi(ARRAY_LEN(dispatch),
     if (dispatch[i].verb == o.verb) {
       rc = dispatch[i].fn(&o);
       xpar_cli_free(&o);
       return rc;
-    }
+    });
 
   FATAL_CODE(XPAR_EXIT_INTERNAL,
              "internal: verb %d has no implementation in the dispatch "
-             "table.", (int) o.verb);
+             "table", (int) o.verb);
 }

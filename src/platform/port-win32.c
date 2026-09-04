@@ -33,10 +33,8 @@
 /*  WIN32_LEAN_AND_MEAN drops the crypto headers, and HCRYPTPROV is needed
     for the pre-XP random-bytes path below.  */
 #include <wincrypt.h>
-
 #include "common.h"
 #include "port-win-path.h"
-
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
@@ -179,10 +177,7 @@ static bool win_same_parent(const wchar_t * parent, HANDLE h) {
   bool same = false;
   if (!final) return false;
   slash = wcsrchr(final, L'\\');
-  if (slash) {
-    *slash = 0;
-    same = _wcsicmp(parent, final) == 0;
-  }
+  if (slash) { *slash = 0;  same = _wcsicmp(parent, final) == 0; }
   HeapFree(GetProcessHeap(), 0, final);
   return same;
 }
@@ -226,10 +221,7 @@ static HANDLE win_open_nofollow(const wchar_t * path, DWORD access,
   }
   parent = win_final_name(ph);
   CloseHandle(ph);
-  if (!parent) {
-    HeapFree(GetProcessHeap(), 0, full);
-    return INVALID_HANDLE_VALUE;
-  }
+  if (!parent) { HeapFree(GetProcessHeap(), 0, full);  return INVALID_HANDLE_VALUE; }
   if (slash + 1 == root) { keep = slash[1];  slash[1] = 0; }
   else                   { keep = *slash;    *slash = 0; }
   if (_wcsicmp(parent, full) != 0) {
@@ -247,10 +239,7 @@ static HANDLE win_open_nofollow(const wchar_t * path, DWORD access,
                   attrs | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
   made = GetLastError();
   HeapFree(GetProcessHeap(), 0, full);
-  if (h == INVALID_HANDLE_VALUE) {
-    HeapFree(GetProcessHeap(), 0, parent);
-    return h;
-  }
+  if (h == INVALID_HANDLE_VALUE) { HeapFree(GetProcessHeap(), 0, parent);  return h; }
   if (!win_same_parent(parent, h) ||
       !GetFileInformationByHandle(h, &info) ||
       (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
@@ -372,10 +361,7 @@ int xpar_seek(xpar_file * f, i64 off, int whence) {
 #if _WIN32_WINNT >= 0x0500
   LARGE_INTEGER li;
   li.QuadPart = off;
-  if (!SetFilePointerEx(f->h, li, NULL, method)) {
-    f->last_err = GetLastError();
-    return -1;
-  }
+  if (!SetFilePointerEx(f->h, li, NULL, method)) { f->last_err = GetLastError();  return -1; }
 #else
   /*  Pre-Win2K has no SetFilePointerEx, and SetFilePointer signals failure
       with a value that is also a legal position, so the error case is
@@ -597,7 +583,8 @@ void xpar_xwrite(xpar_file * f, const void * p, sz n) {
 }
 
 void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
-  For(u32, i, count, xpar_xwrite(f, part[i].data, part[i].length))
+  u32 i;
+  Fi(count, xpar_xwrite(f, part[i].data, part[i].length));
 }
 
 void xpar_xclose(xpar_file * f) {
@@ -633,10 +620,7 @@ xpar_mmap xpar_map(const char * path) {
 
   SetLastError(NO_ERROR);
   size_lo = GetFileSize(fh, &size_hi);
-  if (size_lo == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) {
-    CloseHandle(fh);
-    return m;
-  }
+  if (size_lo == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) { CloseHandle(fh);  return m; }
   total = ((u64) size_hi << 32) | (u64) size_lo;
   /*  A file larger than the address space cannot be mapped; the caller
       streams it instead, which every caller of xpar_map can do.  */
@@ -677,22 +661,22 @@ void xpar_advise_random(xpar_file * f, u64 off, u64 len) {
 
 void * xpar_malloc(sz n) {
   void * p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, n ? n : 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
 void * xpar_calloc(sz n, sz size) {
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
   { void * p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                          n && size ? n * size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     return p; }
 }
 
 void * xpar_alloc_raw(sz n) {
   void * p = HeapAlloc(GetProcessHeap(), 0, n ? n : 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
@@ -700,7 +684,7 @@ void * xpar_realloc(void * p, sz n) {
   void * q;
   if (!p) return xpar_alloc_raw(n);
   q = HeapReAlloc(GetProcessHeap(), 0, p, n ? n : 1);
-  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return q;
 }
 
@@ -717,13 +701,13 @@ void * xpar_alloc_aligned(sz n, sz align) {
   uintptr_t a;
   sz pad;
   if (align < sizeof(void *)) align = sizeof(void *);
-  if (!xpar_is_pow2(align)) FATAL("Alignment is not a power of two.");
+  if (!xpar_is_pow2(align)) FATAL("alignment is not a power of two");
   if (n == 0) n = 1;
   pad = align + sizeof(void *);
   if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
   raw = HeapAlloc(GetProcessHeap(), 0, n + pad);
-  if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
       ~(uintptr_t) (align - 1);
   ((void **) a)[-1] = raw;
@@ -762,15 +746,11 @@ static void write_raw(xpar_file * f, const char * s, sz n) {
   if (f == xpar_stdout || f == xpar_stderr) {
     char out[512];
     sz i, used = 0;
-    for (i = 0; i < n; i++) {
+    Fi(n,
       sz need = s[i] == '\n' && (i == 0 || s[i - 1] != '\r') ? 2 : 1;
-      if (sizeof out - used < need) {
-        if (xpar_write(f, out, used) != used) return;
-        used = 0;
-      }
+      if (sizeof out - used < need) { if (xpar_write(f, out, used) != used) return;  used = 0; }
       if (need == 2) out[used++] = '\r';
-      out[used++] = s[i];
-    }
+      out[used++] = s[i]);
     if (used) xpar_write(f, out, used);
     return;
   }
@@ -906,7 +886,7 @@ void xpar_random_bytes(void * buf, sz n) {
       } }
     FreeLibrary(adv);
   }
-  FATAL("No source of cryptographically strong random bytes.");
+  FATAL("no source of cryptographically strong random bytes");
 }
 
 #if !defined(XPAR_WIN_LEGACY)
@@ -928,11 +908,10 @@ static int utf8_argv(int * argc_out, char *** argv_out) {
   argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                    (sz) (wargc + 1) * sizeof(char *));
   if (!argv) return -1;
-  for (i = 0; i < wargc; i++) {
+  Fi(wargc,
     argv[i] = to_utf8(wargv[i]);
     HeapFree(GetProcessHeap(), 0, wargv[i]);
-    if (!argv[i]) return -1;
-  }
+    if (!argv[i]) return -1);
   HeapFree(GetProcessHeap(), 0, wargv);
   *argc_out = wargc;
   *argv_out = argv;
@@ -1018,7 +997,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS * ep) {
   n = crash_frames(ep, frames, XPAR_CRASH_FRAMES);
 
   xpar_crash_head(crash_name(code), (u64) code, 1, pc, addr, have_addr, base);
-  for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], base);
+  Fi(n, xpar_crash_frame(i, frames[i], base));
   xpar_crash_tail(n != 0);
 
   return EXCEPTION_EXECUTE_HANDLER;

@@ -117,7 +117,7 @@ static inline void xt_report(bool ok, const char * fmt, ...) {
 static inline bool xt_bytes_equal(const char * what, const u8 * got,
                                   const u8 * want, sz n) {
   sz i;
-  for (i = 0; i < n; i++) {
+  Fi(n,
     if (got[i] == want[i]) continue;
     xt_checks++;  xt_failures++;
     xpar_fprintf(xpar_stderr,
@@ -129,8 +129,7 @@ static inline bool xt_bytes_equal(const char * what, const u8 * got,
                    "FAIL [%s] %s differs at byte %" PRIu64 " of %" PRIu64
                    ": got %02X, want %02X\n",
                    xt_section, what, (u64) i, (u64) n, got[i], want[i]);
-    return false;
-  }
+    return false);
   xt_checks++;
   return true;
 }
@@ -170,7 +169,8 @@ static inline u32 xt_below(xt_rng * r, u32 n) {
 }
 
 static inline void xt_fill(xt_rng * r, u8 * p, sz n) {
-  For(sz, i, n, p[i] = (u8) xt_next(r))
+  sz i;
+  Fi(n, p[i] = (u8) xt_next(r));
 }
 
 void xt_run_unit(void);

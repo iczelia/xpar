@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: SSE4.2 CRC-32C with PCLMULQDQ or table recombination.  */
+/*  SSE4.2 CRC-32C with PCLMULQDQ or table recombination.  */
 
 #define XPAR_CRC32C_VARIANT_SSE42
 #define XPAR_CRC32C_HAVE_HW

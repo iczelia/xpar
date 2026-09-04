@@ -153,10 +153,7 @@ bool xt_write_pattern(const char * path, u64 bytes, u64 seed) {
   while (bytes) {
     sz take = bytes > sizeof buf ? sizeof buf : (sz) bytes;
     xt_fill(&rng, buf, take);
-    if (xpar_write(f, buf, take) != take) {
-      xpar_close(f);
-      return false;
-    }
+    if (xpar_write(f, buf, take) != take) { xpar_close(f);  return false; }
     bytes -= take;
   }
   return xpar_close(f) == 0;
@@ -205,11 +202,7 @@ bool xt_files_equal(const char * a, const char * b) {
   xpar_file * af = xpar_open(a, XPAR_O_RDONLY);
   xpar_file * bf = xpar_open(b, XPAR_O_RDONLY);
   bool equal = true;
-  if (!af || !bf) {
-    if (af) xpar_close(af);
-    if (bf) xpar_close(bf);
-    return false;
-  }
+  if (!af || !bf) { if (af) xpar_close(af);  if (bf) xpar_close(bf);  return false; }
   for (;;) {
     sz an = xpar_read(af, ab, sizeof ab);
     sz bn = xpar_read(bf, bb, sizeof bb);
@@ -266,18 +259,11 @@ bool xt_damage(const char * path, u64 offset, u64 bytes, u64 seed) {
   xt_seed(&rng, seed);
   while (bytes) {
     sz i, take = bytes > sizeof buf ? sizeof buf : (sz) bytes;
-    if (xpar_pread(f, buf, take, offset) != take) {
-      xpar_close(f);
-      return false;
-    }
-    for (i = 0; i < take; i++) {
+    if (xpar_pread(f, buf, take, offset) != take) { xpar_close(f);  return false; }
+    Fi(take,
       u8 v = (u8) xt_next(&rng);
-      buf[i] ^= v ? v : 0xA5;
-    }
-    if (xpar_pwrite(f, buf, take, offset) != take) {
-      xpar_close(f);
-      return false;
-    }
+      buf[i] ^= v ? v : 0xA5);
+    if (xpar_pwrite(f, buf, take, offset) != take) { xpar_close(f);  return false; }
     offset += take;
     bytes -= take;
   }
@@ -305,14 +291,13 @@ static bool file_contains(const char * path, const char * needle, bool fold) {
     sz have = keep + n, i;
     for (i = 0; i + nn <= have; i++) {
       sz j;
-      for (j = 0; j < nn; j++) {
+      Fj(nn,
         int a = buf[i + j], b = (u8) needle[j];
         if (fold) {
           if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
           if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
         }
-        if (a != b) break;
-      }
+        if (a != b) break);
       if (j == nn) { xpar_close(f); return true; }
     }
     if (!n) break;
@@ -424,9 +409,9 @@ static bool starts_with(const char * s, const char * p) {
 static bool ends_with(const char * s, const char * p) {
   sz sn = xpar_strlen(s), pn = xpar_strlen(p), i;
   if (sn < pn) return false;
-  for (i = 0; i < pn; i++)
+  Fi(pn,
     if (fold_ascii((u8) s[sn - pn + i]) != fold_ascii((u8) p[i]))
-      return false;
+      return false);
   return true;
 }
 
@@ -453,14 +438,8 @@ static bool cmd_append(char * out, sz cap, sz * used, const char * arg) {
   bool quote = !*arg;
   for (i = 0; arg[i]; i++)
     if (arg[i] == ' ' || arg[i] == '\t' || arg[i] == '"') quote = true;
-  if (*used) {
-    if (*used + 1 >= cap) return false;
-    out[(*used)++] = ' ';
-  }
-  if (quote) {
-    if (*used + 1 >= cap) return false;
-    out[(*used)++] = '"';
-  }
+  if (*used) { if (*used + 1 >= cap) return false;  out[(*used)++] = ' '; }
+  if (quote) { if (*used + 1 >= cap) return false;  out[(*used)++] = '"'; }
   for (i = 0; arg[i]; i++) {
     if (arg[i] == '\\') { slashes++; continue; }
     if (arg[i] == '"') {
@@ -472,9 +451,7 @@ static bool cmd_append(char * out, sz cap, sz * used, const char * arg) {
       if (*used + 2 >= cap) return false;
       out[(*used)++] = '\\'; out[(*used)++] = '"';
     } else {
-      while (slashes && *used + 1 < cap) {
-        out[(*used)++] = '\\'; slashes--;
-      }
+      while (slashes && *used + 1 < cap) { out[(*used)++] = '\\'; slashes--; }
       if (*used + 1 >= cap) return false;
       out[(*used)++] = arg[i];
     }
@@ -489,10 +466,7 @@ static bool cmd_append(char * out, sz cap, sz * used, const char * arg) {
     }
     slashes--;
   }
-  if (quote) {
-    if (*used + 1 >= cap) return false;
-    out[(*used)++] = '"';
-  }
+  if (quote) { if (*used + 1 >= cap) return false;  out[(*used)++] = '"'; }
   if (*used >= cap) return false;
   out[*used] = 0;
   return true;
@@ -576,11 +550,7 @@ static int run_process(const char * exe, const char * cwd,
   int err = open(err_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   pid_t pid;
   int status;
-  if (out < 0 || err < 0) {
-    if (out >= 0) close(out);
-    if (err >= 0) close(err);
-    return 127;
-  }
+  if (out < 0 || err < 0) { if (out >= 0) close(out);  if (err >= 0) close(err);  return 127; }
   pid = fork();
   if (pid == 0) {
     if (chdir(cwd) != 0 || dup2(out, 1) < 0 || dup2(err, 2) < 0)

@@ -23,9 +23,7 @@
 typedef struct xpar_codec      xpar_codec;
 typedef struct xpar_codec_plan xpar_codec_plan;
 
-/*  Status returned by the operations that a caller must distinguish.
-    Anything not listed is a programming error and is fatal at the call
-    site rather than returned.  */
+/*  Recoverable codec outcomes; programming errors are fatal.  */
 typedef enum {
   XPAR_CODEC_OK = 0,
   XPAR_CODEC_TOO_MANY_LOST,   /*  More erasures than recovery slices.  */
@@ -48,9 +46,7 @@ xpar_codec_status xpar_codec_encode(xpar_codec *,
                                     const u8 * const * data,
                                     u8 * const * recovery, sz bytes);
 
-/*  Matrix-only streaming entry point. Accumulate one data slice into a
-    contiguous range of recovery rows. `clear` zeroes those accumulators
-    first.  */
+/*  Matrix streaming over a contiguous recovery range.  */
 xpar_codec_status xpar_codec_matrix_accumulate(xpar_codec *, u64 data_index,
                                                const u8 * data,
                                                u64 recovery_first,
@@ -62,8 +58,7 @@ xpar_codec_status xpar_codec_matrix_accumulate_many(
   u64 recovery_first, u8 * const * recovery, u64 recovery_count,
   sz bytes, bool clear);
 
-/*  Build an immutable plan for one erasure pattern. A zero presence entry
-    marks an erased slice. Returns NULL and sets `*status` if unrecoverable.  */
+/*  Build a plan for one erasure pattern; zero marks an erasure.  */
 xpar_codec_plan * xpar_codec_plan_new(xpar_codec *,
                                       const u8 * data_present,
                                       const u8 * recovery_present,
@@ -76,9 +71,7 @@ xpar_codec_status xpar_codec_plan_apply(const xpar_codec_plan *,
                                         const u8 * const * recovery,
                                         sz bytes);
 
-/*  Working-set size in bytes for encoding or decoding `bytes` per slice, so
-    that plan.c can choose a column width that fits `-m` before committing
-    to a codec. Must not allocate.  */
+/*  Allocation-free working-set estimates for `bytes` per slice.  */
 u64 xpar_codec_encode_footprint(u8 codec, u8 field_log2, u64 s, u64 r,
                                 sz bytes);
 u64 xpar_codec_decode_footprint(u8 codec, u8 field_log2, u64 s, u64 r,

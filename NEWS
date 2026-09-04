@@ -1,17 +1,13 @@
-This file contains release notes for major and minor releases of xpar.
-For a complete list of source-level changes, consult the ChangeLog file.
+Release notes for xpar. See ChangeLog for source-level changes.
 
-===============================================================================
 v2.0 (26-08-2026)
-- FILE FORMAT BREAKAGE. Version 2 uses a new container format and has
-  no v1 decoder. It identifies and refuses v1 files. Migrate by decoding
-  with xpar 1.x and protecting the result with xpar 2; there is no
-  in-place upgrade.
-- COMMAND-LINE BREAKAGE. Verbs replace mode flags. The v1 flags '-J',
+- Version 2 uses a new, incompatible container and has no v1 decoder.
+  It identifies and refuses v1 files. Decode with xpar 1.x, then protect
+  the result with xpar 2; there is no in-place upgrade.
+- Verbs replace mode flags. The v1 flags '-J',
   '-W', '-L', '-s', '-t', '--interlacing', '-H / --integrity' and
   '--auth' are gone, as are v1 shard files. V1 scripts require changes.
-- doc/xpar-format.tex is the normative format specification and is
-  published as a PDF with each release.
+- doc/xpar-format.tex is the normative format specification.
 - xpar now protects file sets and directory trees. Manifests record
   names, sizes, modes, four timestamps, POSIX ownership, extended
   attributes, hard links and symbolic links; '--preserve' controls
@@ -70,7 +66,6 @@ v2.0 (26-08-2026)
 - Tests include unit, codec, container, damage, fault and safety suites at
   three depths: 'make check', 'make check-full' and 'make check-torture'.
 
-===============================================================================
 v1.1 (20-04-2026)
 - The format is unchanged and fully compatible with v1.0 in both
   directions.
@@ -94,7 +89,6 @@ v1.1 (20-04-2026)
 - Release tarballs have reproducible mtimes. CI adds Win95 and DOS release
   workflows.
 
-===============================================================================
 v1.0 (16-04-2026)
 - Format bump to v1.0. v0.x archives are rejected and must be re-encoded;
   future v1.x releases remain decodable by v1.0+ tools.
@@ -124,7 +118,6 @@ v1.0 (16-04-2026)
   macOS. Releases add a KERNEL32-only Win95 i686 binary and a DJGPP/MS-DOS
   binary with CWSDPMI, alongside existing Windows binaries.
 
-===============================================================================
 v0.7 (19-09-2025)
 - Rename sharded mode to Vandermonde-sharded mode ('-S' to '-W').
 - Add architecture- and OS-specific build instructions.
@@ -135,18 +128,15 @@ v0.7 (19-09-2025)
 - Fix a gf256mat_inv leak in Vandermonde-sharded mode.
 - Update the man page.
 
-===============================================================================
 v0.6 (10-09-2025)
 - Move the project page to iczelia/xpar.
 - Fix command parsing and clean up its style.
 
-===============================================================================
 v0.5 (17-10-2024)
 - Add OpenMP to sharded mode; performance remains I/O-bound.
 - Switch command-line parsing to yarg and remove the getopt_long dependency.
 - Freeze the v0 file format except for critical defects.
 
-===============================================================================
 v0.4 (16-10-2024)
 - Stop providing static x86_64 Linux binaries.
 - Add OpenMP for joint mode with high interlacing factors.
@@ -154,18 +144,15 @@ v0.4 (16-10-2024)
 - Improve sharded-mode performance.
 - Fix undefined integer shifts in sharded mode.
 
-===============================================================================
 v0.3 (16-10-2024)
 - Improve joint encoding performance on x86_64 machines.
 - Support aarch64 Linux.
 - Improve cross-platform compatibility of the sharded mode.
 
-===============================================================================
 v0.2 (15-10-2024)
 - Add the xpar manual page.
 - Add AArch64 code, enabled with '--enable-aarch64'.
 
-===============================================================================
 v0.1 (14-10-2024)
 - Initial release.
 - Support joint and sharded error and erasure correction.

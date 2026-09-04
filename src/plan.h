@@ -12,9 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Planning interface for codec, column, cell, and memory decisions.
-    Plans are computed without allocation or file access and retain enough
-    information to explain rejected candidates.  */
+/*  Allocation-free geometry and memory planning.  */
 
 #ifndef XPAR_PLAN_H
 #define XPAR_PLAN_H

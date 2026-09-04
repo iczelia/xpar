@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: Galois field kernels, portable scalar variant.  */
+/*  Galois field kernels, portable scalar variant.  */
 
 #define XPAR_GF_VARIANT_SCALAR
 #include "gf-impl.h"

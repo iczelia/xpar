@@ -36,8 +36,9 @@ const xpar_cpu_tier * xpar_cpu_tier_at(int i) {
 }
 
 int xpar_cpu_tier_find(const char * name) {
-  for (int i = 0; i < xpar_cpu_tier_table_n; i++)
-    if (xpar_strcmp(name, xpar_cpu_tier_table[i].name) == 0) return i;
+  int i;
+  Fi(xpar_cpu_tier_table_n,
+    if (!xpar_strcmp(name, xpar_cpu_tier_table[i].name)) return i);
   return -1;
 }
 
@@ -48,8 +49,7 @@ bool xpar_cpu_tier_usable(int i) {
 }
 
 int xpar_cpu_tier_best(void) {
-  int best = 0;
-  for (int i = 0; i < xpar_cpu_tier_table_n; i++)
-    if (xpar_cpu_tier_usable(i)) best = i;
+  int best = 0, i;
+  Fi(xpar_cpu_tier_table_n, if (xpar_cpu_tier_usable(i)) best = i);
   return best;
 }

@@ -103,11 +103,7 @@ int main(int argc, char ** argv) {
     gettimeofday(&a, NULL);
     pid = fork();
     if (pid < 0) { perror("fork");  return 2; }
-    if (pid == 0) {
-      execvp(argv[2], argv + 2);
-      perror(argv[2]);
-      _exit(127);
-    }
+    if (pid == 0) { execvp(argv[2], argv + 2);  perror(argv[2]);  _exit(127); }
     while (waitpid(pid, &wstatus, 0) < 0) {
       if (errno == EINTR) continue;
       perror("waitpid");

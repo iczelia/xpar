@@ -15,7 +15,6 @@
 /*  Volume naming and volume-name recognition.  */
 
 #include "volname.h"
-
 #include "pathname.h"
 
 static char dos_fold(char c) {
@@ -32,15 +31,15 @@ static char * dos_base4(const char * base) {
   sz dir = (sz) (leaf - base), n = xpar_strlen(leaf), i;
   char * out = (char *) xpar_alloc_raw(dir + 5);
   if (dir) xpar_memcpy(out, base, dir);
-  for (i = 0; i < 4; i++) out[dir + i] = i < n ? dos_fold(leaf[i]) : '_';
+  Fi(4, out[dir + i] = i < n ? dos_fold(leaf[i]) : '_');
   out[dir + 4] = 0;
   return out;
 }
 
 #if defined(XPAR_DOS) || defined(__MSDOS__)
 static void dos_generation(u32 gen) {
-  FATAL_UNLESS("DOS 8.3 names can represent generations 0 through 9.",
-               gen <= 9);
+  FATAL_UNLESS(gen <= 9,
+               "DOS 8.3 names can represent generations 0 through 9");
 }
 #endif
 
@@ -67,13 +66,10 @@ char * xpar_vname_recovery(const char * base, u32 gen, u64 first, u64 count,
   sz n = xpar_strlen(b);
   (void) first;  (void) count;  (void) wfirst;  (void) wcount;
   dos_generation(gen);
-  FATAL_UNLESS("DOS 8.3 names can represent at most 100 recovery volumes.",
-               ordinal < 100);
+  FATAL_UNLESS(ordinal < 100,
+               "DOS 8.3 names can represent at most 100 recovery volumes");
   if (!gen) xpar_asprintf(&s, "%s.V%02" PRIu32, b, ordinal);
-  else {
-    b[n - 1] = 'G';
-    xpar_asprintf(&s, "%s%" PRIu32 ".V%02" PRIu32, b, gen, ordinal);
-  }
+  else { b[n - 1] = 'G';  xpar_asprintf(&s, "%s%" PRIu32 ".V%02" PRIu32, b, gen, ordinal); }
   xpar_free(b);
 #else
   (void) ordinal;
@@ -96,13 +92,10 @@ char * xpar_vname_data(const char * base, u32 gen, u32 index, int width) {
   sz n = xpar_strlen(b);
   (void) width;
   dos_generation(gen);
-  FATAL_UNLESS("DOS 8.3 names can represent at most 100 data volumes.",
-               index < 100);
+  FATAL_UNLESS(index < 100,
+               "DOS 8.3 names can represent at most 100 data volumes");
   if (!gen) xpar_asprintf(&s, "%s.D%02" PRIu32, b, index);
-  else {
-    b[n - 1] = 'G';
-    xpar_asprintf(&s, "%s%" PRIu32 ".D%02" PRIu32, b, gen, index);
-  }
+  else { b[n - 1] = 'G';  xpar_asprintf(&s, "%s%" PRIu32 ".D%02" PRIu32, b, gen, index); }
   xpar_free(b);
 #else
   if (!gen) xpar_asprintf(&s, "%s.d%0*" PRIu32, base, width, index);
@@ -173,7 +166,7 @@ static char fold(char c) { return c >= 'A' && c <= 'Z' ? (char) (c + 32) : c; }
 
 static bool dos_equal_n(const char * a, const char * b, sz n) {
   sz i;
-  for (i = 0; i < n; i++) if (fold(a[i]) != fold(b[i])) return false;
+  Fi(n, if (fold(a[i]) != fold(b[i])) return false);
   return true;
 }
 
@@ -192,8 +185,7 @@ static bool vname_has_xpa_ext(const char * name) {
   sz n = xpar_strlen(name), i;
   static const char ext[] = XPAR_EXT;
   if (n <= XPAR_EXT_LEN) return false;
-  for (i = 0; i < XPAR_EXT_LEN; i++)
-    if (fold(name[n - XPAR_EXT_LEN + i]) != ext[i]) return false;
+  Fi(XPAR_EXT_LEN, if (fold(name[n - XPAR_EXT_LEN + i]) != ext[i]) return false);
   return true;
 }
 

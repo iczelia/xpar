@@ -39,7 +39,7 @@ static void emit_random(FILE * f, unsigned long long n) {
   unsigned char buf[65536];
   while (n) {
     size_t take = n > sizeof buf ? sizeof buf : (size_t) n, i;
-    for (i = 0; i < take; i++) buf[i] = (unsigned char) rng_next();
+    Fi(take, buf[i] = (unsigned char) rng_next());
     if (fwrite(buf, 1, take, f) != take) exit(2);
     n -= take;
   }

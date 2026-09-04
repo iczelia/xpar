@@ -12,12 +12,11 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: whole volume images, and the armoured frames inside them.  */
+/*  whole volume images, and the armoured frames inside them.  */
 #ifndef XPAR_OPS_VOLIMG_H
 #define XPAR_OPS_VOLIMG_H
 
 #include "ops.h"
-
 #include "armour.h"
 #include "container.h"
 #include "platform/port-thread.h"

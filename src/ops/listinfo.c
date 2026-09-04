@@ -16,7 +16,6 @@
 
 #include "ops.h"
 #include "chain.h"
-
 #include "armour.h"
 #include "auth.h"
 #include "gf.h"
@@ -46,13 +45,12 @@ static xpar_file * li_out(void) {
 /*  Escape control bytes in archive-derived text.  */
 static void li_safe(const char * s, u32 n) {
   u32 i, run = 0;
-  for (i = 0; i < n; i++) {
+  Fi(n,
     u8 b = (u8) s[i];
     if (b >= 0x20 && b != 0x7F) { run++;  continue; }
     if (run) xpar_fprintf(li_out(), "%.*s", (int) run, s + i - run);
     run = 0;
-    xpar_fprintf(li_out(), "\\x%02X", (unsigned) b);
-  }
+    xpar_fprintf(li_out(), "\\x%02X", (unsigned) b));
   if (run) xpar_fprintf(li_out(), "%.*s", (int) run, s + n - run);
 }
 
@@ -104,9 +102,7 @@ static const char * li_size(char * buf, sz cap, u64 v) {
 static void li_time(char * buf, sz cap, i64 ns) {
   i64 s, days, rem;
   i64 era, doe, yoe, y, doy, mp, d, mo;
-  if (ns == XPAR_ABSENT_TIME) {
-    xpar_snprintf(buf, cap, "%-20s", "-");  return;
-  }
+  if (ns == XPAR_ABSENT_TIME) { xpar_snprintf(buf, cap, "%-20s", "-");  return; }
   s = ns / 1000000000;
   rem = ns % 1000000000;
   if (rem < 0) s--;
@@ -149,15 +145,14 @@ static void li_refs_build(li_refs * t, const xpar_manifest * m) {
   u64 total = 0, reach = 0;
   u32 i, k, at = 0;
   xpar_memset(t, 0, sizeof *t);
-  for (i = 0; i < m->count; i++) total += m->entry[i].extent_count;
+  Fi(m->count, total += m->entry[i].extent_count);
   if (!total || total > 0xFFFFFFFFu) { t->live = total == 0;  return; }
   t->v = (li_ref *) xpar_calloc((sz) total, sizeof(li_ref));
-  for (i = 0; i < m->count; i++)
-    for (k = 0; k < m->entry[i].extent_count; k++) {
+  Fi(m->count,
+    Fk(m->entry[i].extent_count,
       t->v[at].off = m->entry[i].extents[k].stream_offset;
       t->v[at].len = m->entry[i].extents[k].length;
-      at++;
-    }
+      at++));
   t->n = at;
   /*  Insertion sort by start; extent lists are short and nearly sorted.  */
   for (i = 1; i < t->n; i++) {
@@ -167,11 +162,10 @@ static void li_refs_build(li_refs * t, const xpar_manifest * m) {
     t->v[j] = x;
   }
   /*  Track the maximum end for bounded backward scans.  */
-  for (i = 0; i < t->n; i++) {
+  Fi(t->n,
     u64 end = t->v[i].off + t->v[i].len;
     if (end > reach) reach = end;
-    t->v[i].reach = reach;
-  }
+    t->v[i].reach = reach);
   t->live = true;
 }
 
@@ -213,8 +207,8 @@ int xpar_op_list(const xpar_options * o) {
       member[at] = 1;
       at = c.gen[at].parent;
     }
-    FATAL_UNLESS("The selected generation's ancestry is cyclic.",
-                 at == XPAR_GEN_NONE);
+    FATAL_UNLESS(at == XPAR_GEN_NONE,
+                 "the selected generation's ancestry is cyclic");
   } else member[sel] = 1;
 
   for (g = 0; g < c.gen_count; g++) {
@@ -265,7 +259,7 @@ int xpar_op_list(const xpar_options * o) {
     xpar_fprintf(li_out(),
                  "  t %12s  gen  mode   %-20s  name\n", "size", "mtime");
 
-    for (i = 0; i < m.count; i++) {
+    Fi(m.count,
       const xpar_entry * e = &m.entry[i];
       char tbuf[40], mbuf[8];
       if (o->list_links && !o->json &&
@@ -293,7 +287,7 @@ int xpar_op_list(const xpar_options * o) {
         /*  Match the human --dedup output.  */
         if (o->list_dedup) {
           u32 k;
-          for (k = 0; k < e->extent_count; k++) {
+          Fk(e->extent_count,
             i64 h = xpar_gchain_gen_of(&c, e->extents[k].stream_offset,
                                        e->extents[k].length);
             xpar_json_begin(&js, "extent");
@@ -304,8 +298,7 @@ int xpar_op_list(const xpar_options * o) {
             if (h < 0) xpar_json_null(&js, "generation");
             else xpar_json_u64(&js, "generation", c.gen[h].sd.generation);
             xpar_json_u64(&js, "refs", li_extent_refs(&refs, &e->extents[k]));
-            xpar_json_end(&js);
-          }
+            xpar_json_end(&js));
         }
       }
       xpar_fprintf(li_out(), "  %c %12" PRIu64 "  %3" PRIu32
@@ -326,7 +319,7 @@ int xpar_op_list(const xpar_options * o) {
           xpar_hex(hb, e->content_hash, 32);
           xpar_fprintf(li_out(), "      hash %s\n", hb);
         }
-        for (k = 0; k < e->extent_count; k++) {
+        Fk(e->extent_count,
           i64 h = xpar_gchain_gen_of(&c, e->extents[k].stream_offset,
                                      e->extents[k].length);
           char gb[32];
@@ -345,8 +338,7 @@ int xpar_op_list(const xpar_options * o) {
             xpar_fprintf(li_out(), "      extent %" PRIu64 " + %" PRIu64
                          "  in %s\n",
                          e->extents[k].stream_offset,
-                         e->extents[k].length, gb);
-        }
+                         e->extents[k].length, gb));
         if (e->posix_index != XPAR_ABSENT_U32 && e->posix_index < pcount) {
           const xpar_posix_rec * r = &posix[e->posix_index];
           xpar_fputs("      owner ", li_out());
@@ -365,8 +357,7 @@ int xpar_op_list(const xpar_options * o) {
           xpar_fprintf(li_out(), "      hard-link %.*s -> %.*s\n",
                        (int) m.entry[a].name_len, m.entry[a].name,
                        (int) e->name_len, e->name);
-      }
-    }
+      });
     li_refs_free(&refs);
     xpar_free(link_head);  xpar_free(link_next);
     if (posix) xpar_gchain_posix_free(posix, pcount);
@@ -385,7 +376,7 @@ static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
   u32 i;
   *whole_file = false;
   *plain_len = *disk_len = 0;
-  for (i = 0; i < c->vol_count; i++) {
+  Fi(c->vol_count,
     xpar_arm_prologue pr;
     if (c->vol[i].gen != g) continue;
     if (c->vol[i].armoured_file &&
@@ -397,8 +388,7 @@ static bool li_armour_of(const xpar_chain * c, u32 g, xpar_armour_params * p,
       *plain_len = pr.plain_length;
       *disk_len  = 384 + pr.armoured_length;
       return true;
-    }
-  }
+    });
   return xpar_gchain_crit_armour(c, g, p);
 }
 
@@ -429,7 +419,7 @@ static void li_chain_table(const xpar_chain * c, u32 sel) {
   }
   if (c->gen_count > 1)
     xpar_fprintf(li_out(),
-                 "  note       : redundancy is per generation. One "
+                 "  note       : redundancy is per generation; one "
                  "generation's recovery\n"
                  "               volumes cannot repair another's stream.\n"
                  "               `xpar consolidate` collapses the chain "
@@ -461,15 +451,14 @@ static void li_deps(const xpar_chain * c, u32 sel) {
                "would be lost  superseded/R\n", c->gen[sel].sd.generation);
   for (g = 0; g < c->gen_count; g++) {
     u64 lost = 0;
-    for (i = 0; i < m.count; i++) {
+    Fi(m.count,
       bool hit = owner[i] == g;
       for (k = 0; k < m.entry[i].extent_count && !hit; k++) {
         i64 h = xpar_gchain_gen_of(c, m.entry[i].extents[k].stream_offset,
                                    m.entry[i].extents[k].length);
         if (h == (i64) g) hit = true;
       }
-      if (hit) lost++;
-    }
+      if (hit) lost++);
     xpar_fprintf(li_out(),
                  "    %-3" PRIu32 "  %12" PRIu64 "  %12" PRIu64 "  %13" PRIu64
                  "  %13" PRIu64 "  %6" PRIu64 "/%-5" PRIu64 "%s\n",
@@ -487,7 +476,7 @@ static void li_deps(const xpar_chain * c, u32 sel) {
                "remaining entries can no longer be repaired.\n");
   xpar_fprintf(li_out(),
                "               `prune` refuses to remove a generation whose "
-               "last column\n               is non-zero. That count comes "
+               "last column\n               is non-zero; that count comes "
                "from the extents recorded in\n               the manifest, "
                "not from --dedup-scope.\n");
   xpar_free(ext);  xpar_free(pkt);  xpar_free(sup);  xpar_free(owner);
@@ -518,8 +507,8 @@ int xpar_op_info(const xpar_options * o) {
       member[at] = 1;
       at = c.gen[at].parent;
     }
-    FATAL_UNLESS("The selected generation's ancestry is cyclic.",
-                 at == XPAR_GEN_NONE);
+    FATAL_UNLESS(at == XPAR_GEN_NONE,
+                 "the selected generation's ancestry is cyclic");
     if (o->json) {
       xpar_json_init(&js, xpar_stdout, true);
       for (g = 0; g < c.gen_count; g++) if (member[g]) {
@@ -746,7 +735,7 @@ int xpar_op_info(const xpar_options * o) {
 
   if (have_layt) {
     xpar_fprintf(li_out(), "  volumes    : %" PRIu32 "\n", layt.count);
-    for (i = 0; i < layt.count; i++) {
+    Fi(layt.count,
       const char * kind = layt.vol[i].kind == XPAR_VOL_INDEX ? "index" :
                           (layt.vol[i].kind == XPAR_VOL_DATA ? "data"
                                                              : "recovery");
@@ -788,13 +777,12 @@ int xpar_op_info(const xpar_options * o) {
                        present ? "present"
                                : (named_here ? "DAMAGED" : "MISSING"));
       }
-      xpar_free(data_path);
-    }
+      xpar_free(data_path));
   }
 
-  for (i = 0; i < c.vol_count; i++)
+  Fi(c.vol_count,
     if (c.vol[i].gen == sel && c.vol[i].volume_kind == XPAR_VOL_INDEX)
-      crit_bytes = c.vol[i].len;
+      crit_bytes = c.vol[i].len);
   if (have_layt && crit_bytes) {
     xpar_fprintf(li_out(),
                  "  replication: the critical group is about %s per copy. "
@@ -809,7 +797,7 @@ int xpar_op_info(const xpar_options * o) {
   /*  Report creator and comments.  */
   {
     u32 comments = 0;
-    for (i = 0; i < c.crit.count; i++) {
+    Fi(c.crit.count,
       const xpar_crit_pkt * p = &c.crit.pkt[i];
       sz n = 0;
       if (xpar_memcmp(p->hdr.set_id, c.gen[sel].set_id, XPAR_SET_ID_LEN) ||
@@ -817,9 +805,8 @@ int xpar_op_info(const xpar_options * o) {
       if (xpar_text_read(p->body, (sz) p->body_len, &n) != XPAR_OK) break;
       xpar_fprintf(li_out(), "  creator    : %.*s\n", (int) n,
                    (const char *) p->body);
-      break;
-    }
-    for (i = 0; i < c.crit.count; i++) {
+      break);
+    Fi(c.crit.count,
       const xpar_crit_pkt * p = &c.crit.pkt[i];
       sz n = 0;
       if (xpar_memcmp(p->hdr.set_id, c.gen[sel].set_id, XPAR_SET_ID_LEN) ||
@@ -827,8 +814,7 @@ int xpar_op_info(const xpar_options * o) {
       if (xpar_text_read(p->body, (sz) p->body_len, &n) != XPAR_OK) continue;
       xpar_fprintf(li_out(), "  %-11s: %.*s\n",
                    comments++ ? "" : "comment", (int) n,
-                   (const char *) p->body);
-    }
+                   (const char *) p->body));
   }
 
   li_chain_table(&c, sel);
@@ -871,17 +857,17 @@ static void li_recipe(const char * file, u64 hdr, u64 w, u64 n, u64 k,
     "off=%" PRIu64 "               # stream_offset from the prologue\n"
     "len=%" PRIu64 "               # stream_length from the prologue\n"
     "\n"
-    "# 1. Remove the prologue.\n"
+    "# 1; remove the prologue.\n"
     "dd if=\"$in\" of=region.bin bs=$hdr skip=1 2>/dev/null\n"
     "\n"
-    "# 2. Copy the plaintext prefix from each frame.\n"
+    "# 2; copy the plaintext prefix from each frame.\n"
     "f=0\n"
     "while [ $f -lt $frames ]; do\n"
     "  dd if=region.bin bs=$Fx skip=$f count=1 2>/dev/null | head -c $Fd\n"
     "  f=$((f+1))\n"
     "done > plain.bin\n"
     "\n"
-    "# 3. Extract the protected stream range.\n"
+    "# 3; extract the protected stream range.\n"
     "if [ $off -gt 0 ]; then\n"
     "  dd if=plain.bin bs=$off skip=1 2>/dev/null | head -c $len > \"$out\"\n"
     "else\n"
@@ -904,10 +890,7 @@ static bool li_auth_plain(const xpar_options * o, const u8 * data, u64 len) {
   bool loaded = false, saw = false;
   xpar_memset(&key, 0, sizeof key);
   xpar_memset(master, 0, sizeof master);
-  if (o->auth_key) {
-    xpar_keyfile_load_or_die(o->auth_key, &key, master);
-    loaded = true;
-  }
+  if (o->auth_key) { xpar_keyfile_load_or_die(o->auth_key, &key, master);  loaded = true; }
   xpar_scan_init(&sc, data, len, NULL, false);
   sc.accept_unverified_keyed = true;
   while (xpar_scan_next(&sc, &hdr, &body, &off)) {
@@ -917,10 +900,10 @@ static bool li_auth_plain(const xpar_options * o, const u8 * data, u64 len) {
       continue;
     if (!loaded)
       FATAL_CODE(XPAR_EXIT_AUTH,
-                 "This set is authenticated; supply --auth-key=FILE.");
+                 "this set is authenticated; supply --auth-key=FILE");
     if (!xpar_auth_key_ok(&a, master))
       FATAL_CODE(XPAR_EXIT_AUTH,
-                 "The authentication key is wrong for this set.");
+                 "the authentication key is wrong for this set");
     saw = true;
     break;
   }
@@ -963,7 +946,7 @@ static bool li_auth_gate(const xpar_options * o, const u8 * data, u64 len) {
 /*  Every verb refuses a key an unauthenticated set has no use for.  */
 static void li_auth_unused(const xpar_options * o, bool saw) {
   if (o->auth_key && !saw)
-    FATAL_CODE(XPAR_EXIT_AUTH, "This set is not authenticated.");
+    FATAL_CODE(XPAR_EXIT_AUTH, "this set is not authenticated");
 }
 
 /*  Decode whole-file armour, zero-filling a short tail.  */
@@ -1011,40 +994,36 @@ int xpar_op_explain(const xpar_options * o) {
   xpar_json_init(&js, xpar_stdout, o->json);
 
   f = xpar_open(path, XPAR_O_RDONLY);
-  if (!f) FATAL_IO("Cannot open '%s': %s.", path,
+  if (!f) FATAL_IO("cannot open '%s': %s", path,
                    xpar_strerror(xpar_errno()));
   fsize = xpar_size(f);
   if (fsize < 0 || (u64) fsize >= (u64) (sz) -1)
-    FATAL_IO("Cannot size '%s'.", path);
+    FATAL_IO("cannot size '%s'", path);
   len = (sz) fsize;
   got = len < sizeof head ? len : sizeof head;
   xpar_memset(head, 0, sizeof head);
   if (got && xpar_pread(f, head, got, 0) != got)
-    FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
+    FATAL_IO("cannot read '%s': %s", path, xpar_strerror(xpar_errno()));
 
-  /* Values 0-2 identify a copy; 3 means majority recovery. */
+  /*  Values 0-2 identify a copy; 3 is majority recovery.  */
   static const char * const prologue_found[4] = {
-    "Prologue copy 1 of 3 verifies.",
-    "Prologue copy 2 of 3 verifies.",
-    "Prologue copy 3 of 3 verifies.",
-    "Prologue recovered by majority vote."
+    "prologue copy 1 of 3 verifies",
+    "prologue copy 2 of 3 verifies",
+    "prologue copy 3 of 3 verifies",
+    "prologue recovered by majority vote"
   };
   if (xpar_garm_prologue(head, len, &pr, &which)) {
     u64 w = pr.symbol_bits / 8;
     u8 * arm_plain = li_archive_plain(f, len, &pr);
     bool saw = false;
-    if (arm_plain) {
-      saw = li_auth_gate(o, arm_plain, pr.plain_length);
-      xpar_free(arm_plain);
-    }
+    if (arm_plain) { saw = li_auth_gate(o, arm_plain, pr.plain_length);  xpar_free(arm_plain); }
     li_auth_unused(o, saw);
     u64 fx = pr.depth * pr.n * w;
     u64 frames = fx ? xpar_ceil_div(pr.armoured_length, fx) : 0;
     if (!o->quiet) {
       xpar_fprintf(li_out(),
-                   "%s is an armoured xpar archive. %s\n"
-                   "The prologue contains all parameters needed by this "
-                   "dd recipe:\n\n"
+                   "%s: armoured xpar archive; %s\n"
+                   "parameters for the dd recipe:\n\n"
                    "  symbol width W   %" PRIu64 " byte%s (GF(2^%" PRIu8 "))\n"
                    "  code             RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32 "\n"
                    "  interleave D     %" PRIu64 "\n"
@@ -1096,7 +1075,7 @@ int xpar_op_explain(const xpar_options * o) {
   /*  Not armoured: finding ARMG packets does need the whole file.  */
   data = (u8 *) xpar_alloc_raw(len + 1);
   if (len && xpar_pread(f, data, len, 0) != len)
-    FATAL_IO("Cannot read '%s': %s.", path, xpar_strerror(xpar_errno()));
+    FATAL_IO("cannot read '%s': %s", path, xpar_strerror(xpar_errno()));
   xpar_xclose(f);
   li_auth_unused(o, li_auth_gate(o, data, len));
 
@@ -1140,32 +1119,22 @@ int xpar_op_explain(const xpar_options * o) {
       frames = fx ? xpar_ceil_div(ag.armoured_length, fx) : 0;
       if (!o->quiet)
         xpar_fprintf(li_out(),
-                     "%s is a packet-bearing xpar volume.\n\n"
-                     "The protected data is not in here: in the sidecar and "
-                     "split layouts the\n"
-                     "original files are the data, and they are never "
-                     "rewritten or armoured.\n"
+                     "%s: packet-bearing xpar volume\n\n"
+                     "sidecar and split data remains in the original files.\n"
                      "%s"
-                     "The recipe below recovers the first ARMG packet's "
-                     "plaintext, which begins\nwith \"XPAR2PKT\". That "
-                     "packet is at file offset %" PRIu64 " and its payload\n"
-                     "begins at %" PRIu64 ".\n\n"
+                     "the recipe recovers the first ARMG plaintext, which "
+                     "starts with \"XPAR2PKT\";\n"
+                     "packet offset %" PRIu64 ", payload offset %" PRIu64
+                     ".\n\n"
                      "  code             RS(%" PRIu32 ", %" PRIu32 "), t = %" PRIu32 " over GF(2^%" PRIu8 ")"
                      "\n  interleave D     %" PRIu64 "\n"
                      "  frame            %" PRIu64 " bytes on disk, %" PRIu64 " of "
                      "plaintext\n  frames           %" PRIu64 "\n\n",
                      path,
                      wrapped
-                       ? "What is armoured is the critical metadata group, "
-                         "one ARMG packet holding\nthe set descriptor, the "
-                         "manifest and the slice checksums. This volume was "
-                         "also\nwritten with --armour=all, so every SLTG, "
-                         "SLCL and RCVS packet in it is\nthe whole "
-                         "plaintext of an ARMG packet of its own, and the "
-                         "same recipe\nrecovers each of them.\n"
-                       : "What is armoured is the critical metadata group, "
-                         "one ARMG packet holding\nthe set descriptor, the "
-                         "manifest and the slice checksums.\n",
+                       ? "armour covers critical metadata and every SLTG, "
+                         "SLCL, and RCVS packet.\n"
+                       : "armour covers the critical metadata group.\n",
                      off,
                      (off + XPAR_PKT_HDR + 48),
                      ag.n, ag.k,
@@ -1217,15 +1186,11 @@ int xpar_op_explain(const xpar_options * o) {
       }
       if (!o->quiet)
         xpar_fprintf(li_out(),
-                     "%s is an armoured xpar archive whose prologue is "
-                     "gone.\n\n"
-                     "The set descriptor inside it still records the "
-                     "armoured layout, but all\nthree 128-byte prologue "
-                     "copies at the front of the file are unreadable, so\n"
-                     "the frame geometry needed for a dd recipe cannot be "
-                     "read from here.\n\n"
-                     "Run `xpar recover-prologue %s` to rebuild the header "
-                     "from the frames,\nthen run explain again.\n", path,
+                     "%s: armoured xpar archive with no readable prologue\n\n"
+                     "SETD records the layout, but the frame geometry is "
+                     "lost.\n"
+                     "run `xpar recover-prologue %s`, then explain again.\n",
+                     path,
                      path);
       xpar_free(data);
       return XPAR_EXIT_UNREPAIRABLE;
@@ -1233,7 +1198,7 @@ int xpar_op_explain(const xpar_options * o) {
     if (!found) {
       if (!packet)
         FATAL_FORMAT("'%s' contains no valid xpar 2.0 packet or armoured "
-                     "prologue.", path);
+                     "prologue", path);
       if (o->json) {
         xpar_json_begin(&js, "set");
         xpar_json_str(&js, "volume", "packet-bearing");
@@ -1246,23 +1211,14 @@ int xpar_op_explain(const xpar_options * o) {
         xpar_json_end(&js);
       }
       xpar_fprintf(li_out(),
-                   "%s is a packet-bearing xpar volume with no armoured "
-                   "region.\n\n"
-                   "Every packet in it is framed the same way: the eight "
-                   "bytes \"XPAR2PKT\",\n"
-                   "a little-endian 64-bit total length at offset 8, the "
-                   "set identity at 16,\n"
-                   "the four-character type at 32, flags at 36, an 8-byte "
-                   "BLAKE3 tag at 40 and\n"
-                   "the body from 48. Packets are 8-byte aligned, so the "
-                   "whole file can be\n"
-                   "walked with nothing but that rule, and any packet can "
-                   "be found by\n"
-                   "searching for the magic.\n\n"
-                   "The protected data is the original files themselves; "
-                   "this volume holds\n"
-                   "their checksums, their manifest and the recovery "
-                   "slices.\n", path);
+                   "%s: packet-bearing xpar volume with no armoured region\n\n"
+                   "packet layout: \"XPAR2PKT\", 64-bit length at 8, set id "
+                   "at 16, type at 32,\n"
+                   "flags at 36, BLAKE3 tag at 40, body at 48; 8-byte "
+                   "alignment.\n\n"
+                   "protected data stays in the original files; this volume "
+                   "holds checksums,\n"
+                   "the manifest, and recovery slices.\n", path);
     }
     if (o->json) xpar_json_summary(&js, "ok", XPAR_EXIT_OK);
   }

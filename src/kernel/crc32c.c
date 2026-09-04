@@ -15,7 +15,6 @@
 /*  CRC-32C tables, GF(2) combination, rolling windows, and dispatch.  */
 
 #include "crc32c.h"
-
 #include "platform/port-cpu.h"
 
 /*  Reflected CRC-32C polynomial: 0x1EDC6F41 read from the other end, the
@@ -28,41 +27,34 @@ u32 xpar_crc32c_tab[8][256];
 static u32 xpar_crc_apply(const u32 * op, u32 v) {
   u32 r = 0;
   int k = 0;
-  while (v) {
-    if (v & 1) r ^= op[k];
-    v >>= 1;  k++;
-  }
+  while (v) { if (v & 1) r ^= op[k];  v >>= 1;  k++; }
   return r;
 }
 
 static void xpar_crc_compose(u32 * out, const u32 * a, const u32 * b) {
-  Fi(32, out[i] = xpar_crc_apply(a, b[i]))
+  u32 i;
+  Fi(32, out[i] = xpar_crc_apply(a, b[i]));
 }
 
 static void xpar_crc_op_bit(u32 * op) {
+  u32 i;
   op[0] = XPAR_CRC32C_POLY;
-  Fi0(32, 1, op[i] = (u32) 1 << (i - 1))
+  for (i = 1; i < 32; i++) op[i] = (u32) 1 << (i - 1);
 }
 
 /*  The operator for `n` zero bytes, by square and multiply over the
     bits of n.  */
 static void xpar_crc_op_zeros(u32 * op, u64 n) {
-  u32 cur[32], acc[32], tmp[32];
+  u32 cur[32], acc[32], tmp[32], i, j;
   xpar_crc_op_bit(cur);
-  Fi(3, xpar_crc_compose(tmp, cur, cur);  Fj(32, cur[j] = tmp[j]))
-  Fi(32, acc[i] = (u32) 1 << i)
+  Fi(3, xpar_crc_compose(tmp, cur, cur);  Fj(32, cur[j] = tmp[j]));
+  Fi(32, acc[i] = (u32) 1 << i);
   while (n) {
-    if (n & 1) {
-      xpar_crc_compose(tmp, cur, acc);
-      Fi(32, acc[i] = tmp[i])
-    }
+    if (n & 1) { xpar_crc_compose(tmp, cur, acc);  Fi(32, acc[i] = tmp[i]); }
     n >>= 1;
-    if (n) {
-      xpar_crc_compose(tmp, cur, cur);
-      Fi(32, cur[i] = tmp[i])
-    }
+    if (n) { xpar_crc_compose(tmp, cur, cur);  Fi(32, cur[i] = tmp[i]); }
   }
-  Fi(32, op[i] = acc[i])
+  Fi(32, op[i] = acc[i]);
 }
 
 /*  Dispatch and one-time state.  */
@@ -80,31 +72,27 @@ static u32           xpar_crc_seen;  /*  Features the choice was made on.  */
 static void xpar_crc_dispatch(u32 f) {
   xpar_crc_impl = xpar_crc32c_scalar;  xpar_crc_name = "scalar";
 #ifdef HAVE_SSE42
-  if (f & XPAR_CPU_SSE42) {
-    xpar_crc_impl = xpar_crc32c_sse42;  xpar_crc_name = "sse4.2";
-  }
+  if (f & XPAR_CPU_SSE42) { xpar_crc_impl = xpar_crc32c_sse42;  xpar_crc_name = "sse4.2"; }
 #endif
 #ifdef HAVE_ARM_CRC32
-  if (f & XPAR_CPU_ARMCRC) {
-    xpar_crc_impl = xpar_crc32c_arm;  xpar_crc_name = "armv8";
-  }
+  if (f & XPAR_CPU_ARMCRC) { xpar_crc_impl = xpar_crc32c_arm;  xpar_crc_name = "armv8"; }
 #endif
   xpar_crc_seen = f;
 }
 
 void xpar_crc32c_init(void) {
-  u32 f = xpar_cpu_features();
+  u32 f = xpar_cpu_features(), i, j;
   if (xpar_crc_ready && f == xpar_crc_seen) return;
-  if (xpar_crc_ready) {
-    xpar_crc_dispatch(f);
-    return;
-  }
+  if (xpar_crc_ready) { xpar_crc_dispatch(f);  return; }
   Fi(256, u32 c = (u32) i;
           Fj(8, c = (c & 1) ? (c >> 1) ^ XPAR_CRC32C_POLY : c >> 1)
-          xpar_crc32c_tab[0][i] = c)
-  Fi(256, Fj0(8, 1, u32 v = xpar_crc32c_tab[j - 1][i];
-                    xpar_crc32c_tab[j][i] =
-                      (v >> 8) ^ xpar_crc32c_tab[0][v & 0xFF]))
+          xpar_crc32c_tab[0][i] = c);
+  Fi(256,
+    for (j = 1; j < 8; j++) {
+      u32 v = xpar_crc32c_tab[j - 1][i];
+      xpar_crc32c_tab[j][i] =
+          (v >> 8) ^ xpar_crc32c_tab[0][v & 0xFF];
+    });
   xpar_crc_op_zeros(xpar_crc_op_long,   XPAR_CRC32C_LONG);
   xpar_crc_op_zeros(xpar_crc_op_long2,  2 * XPAR_CRC32C_LONG);
   xpar_crc_op_zeros(xpar_crc_op_short,  XPAR_CRC32C_SHORT);
@@ -159,11 +147,11 @@ u32 xpar_crc32c_join3_short(u32 a, u32 b, u32 c) {
 /*  The rolling window.  */
 
 void xpar_crc32c_roll_init(xpar_crc32c_roll * r, sz window) {
-  u32 op[32];
+  u32 op[32], i;
   xpar_crc32c_init();
   xpar_assert(window >= 1);
   xpar_crc_op_zeros(op, (u64) window - 1);
   Fi(256, r->enter[i] = xpar_crc32c_tab[0][i];
-          r->leave[i] = xpar_crc_apply(op, xpar_crc32c_tab[0][i]))
+          r->leave[i] = xpar_crc_apply(op, xpar_crc32c_tab[0][i]));
   r->fold = 0xFFFFFFFFu ^ xpar_crc32c_shift(0xFFFFFFFFu, (u64) window);
 }

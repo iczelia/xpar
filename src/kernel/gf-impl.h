@@ -302,6 +302,7 @@ static void k_mac8(u8 * d, const u8 * s, sz n, const xpar_gf8_coef * m) {
 static void k_mac8x2(u8 * const d[2], const u8 * s, sz n,
                      const xpar_gf8_coef m[2]) {
   sz i = 0, body = GF_BODY8(n);
+  u32 j;
 #ifdef GF_SPLIT
   const GF_V a0 = GF_TAB(m[0].tab), a1 = GF_TAB(m[0].tab + 16);
   const GF_V b0 = GF_TAB(m[1].tab), b1 = GF_TAB(m[1].tab + 16);
@@ -323,8 +324,7 @@ static void k_mac8x2(u8 * const d[2], const u8 * s, sz n,
     GF_ST(d[1] + i, GF_XOR(GF_LD(d[1] + i), p));
   }
   if (i < n)
-    for (u32 j = 0; j < 2; j++)
-      xpar_gf8_mac_ref(d[j] + i, s + i, n - i, m[j].c);
+    Fj(2, xpar_gf8_mac_ref(d[j] + i, s + i, n - i, m[j].c));
 }
 
 static void k_mul8(u8 * d, const u8 * s, sz n, const xpar_gf8_coef * m) {
@@ -374,6 +374,7 @@ static void k_mac16(u8 * d, const u8 * s, sz n, const xpar_gf16_coef * m) {
 static void k_mac16x2(u8 * const d[2], const u8 * s, sz n,
                       const xpar_gf16_coef m[2]) {
   sz i = 0, body = GF_BODY16(n);
+  u32 j;
   const GF_V a0 = GF_SET64(m[0].affine[0]);
   const GF_V a1 = GF_SET64(m[0].affine[1]);
   const GF_V a2 = GF_SET64(m[0].affine[2]);
@@ -400,8 +401,7 @@ static void k_mac16x2(u8 * const d[2], const u8 * s, sz n,
           GF_XOR(GF_LD(d[1] + i + GF_VB), p1));
   }
   if (i < n)
-    for (u32 j = 0; j < 2; j++)
-      xpar_gf16_mac_ref(d[j] + i, s + i, n - i, m[j].c);
+    Fj(2, xpar_gf16_mac_ref(d[j] + i, s + i, n - i, m[j].c));
 }
 #else
 static void k_mac16x2(u8 * const d[2], const u8 * s, sz n,
@@ -476,7 +476,8 @@ static void k_mac8(u8 * d, const u8 * s, sz n, const xpar_gf8_coef * m) {
 }
 static void k_mac8x2(u8 * const d[2], const u8 * s, sz n,
                      const xpar_gf8_coef m[2]) {
-  for (u32 j = 0; j < 2; j++) xpar_gf8_mac_ref(d[j], s, n, m[j].c);
+  u32 j;
+  Fj(2, xpar_gf8_mac_ref(d[j], s, n, m[j].c));
 }
 static void k_mul8(u8 * d, const u8 * s, sz n, const xpar_gf8_coef * m) {
   xpar_gf8_mul_ref(d, s, n, m->c);
@@ -492,7 +493,8 @@ static void k_mac16(u8 * d, const u8 * s, sz n, const xpar_gf16_coef * m) {
 }
 static void k_mac16x2(u8 * const d[2], const u8 * s, sz n,
                       const xpar_gf16_coef m[2]) {
-  for (u32 j = 0; j < 2; j++) xpar_gf16_mac_ref(d[j], s, n, m[j].c);
+  u32 j;
+  Fj(2, xpar_gf16_mac_ref(d[j], s, n, m[j].c));
 }
 static void k_mul16(u8 * d, const u8 * s, sz n, const xpar_gf16_coef * m) {
   xpar_gf16_mul_ref(d, s, n, m->c);

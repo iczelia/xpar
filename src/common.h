@@ -34,15 +34,11 @@ void xpar_on_fatal(void (* fn)(void));
 #define FATAL_FORMAT(fmt, ...) FATAL_CODE(XPAR_EXIT_NOTFOUND, fmt,            \
                                           ##__VA_ARGS__)
 
-#define FATAL_UNLESS(fmt, cond, ...)                                          \
-  do {                                                                        \
-    if (!(cond)) FATAL(fmt, ##__VA_ARGS__);                                   \
-  } while (0)
+#define FATAL_UNLESS(cond, ...)                                               \
+  do { if (!(cond)) FATAL(__VA_ARGS__); } while (0)
 
-#define FATAL_UNLESS_CODE(code, fmt, cond, ...)                               \
-  do {                                                                        \
-    if (!(cond)) FATAL_CODE(code, fmt, ##__VA_ARGS__);                        \
-  } while (0)
+#define FATAL_UNLESS_CODE(code, cond, ...)                                    \
+  do { if (!(cond)) FATAL_CODE(code, __VA_ARGS__); } while (0)
 
 #define FATAL_PERROR(who)                                                     \
   FATAL_CODE(XPAR_EXIT_IO, "%s: %s", (who), xpar_strerror(xpar_errno()))
@@ -55,15 +51,10 @@ void xpar_on_fatal(void (* fn)(void));
                  __LINE__);                                                   \
   } while (0)
 
-/*  Loop macros.  */
-#define For(t, v, n, ...)  for (t v = 0; v < (n); v++) { __VA_ARGS__; }
-
-#define Fi(n, ...)  For(int, i, n, __VA_ARGS__)
-#define Fj(n, ...)  For(int, j, n, __VA_ARGS__)
-#define Fk(n, ...)  For(int, k, n, __VA_ARGS__)
-#define Fi0(n, s, ...)  for (int i = (s); i < (n); i++) { __VA_ARGS__; }
-#define Fj0(n, s, ...)  for (int j = (s); j < (n); j++) { __VA_ARGS__; }
-#define Fk0(n, s, ...)  for (int k = (s); k < (n); k++) { __VA_ARGS__; }
+/*  Loop macros require predeclared induction variables.  */
+#define Fi(n, ...) for (i = 0; i < (n); i++) {  __VA_ARGS__; }
+#define Fj(n, ...) for (j = 0; j < (n); j++) {  __VA_ARGS__; }
+#define Fk(n, ...) for (k = 0; k < (n); k++) {  __VA_ARGS__; }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -86,7 +77,7 @@ void xpar_on_fatal(void (* fn)(void));
 #define XPAR_EXIT_NOPLAN       7  /*  No plan fits -m, or out of memory.  */
 #define XPAR_EXIT_INTERNAL     8  /*  A bug; should never occur.  */
 
-/*  Round up to a multiple of a power of two. `a` must be a power of two.  */
+/*  Round up to the power-of-two multiple `a`.  */
 static inline u64 xpar_align_up(u64 v, u64 a) { return (v + a - 1) & ~(a - 1); }
 
 /*  ceil(a / b) without overflowing on a + b.  */
@@ -94,7 +85,7 @@ static inline u64 xpar_ceil_div(u64 a, u64 b) {
   return a / b + (a % b != 0);
 }
 
-/*  Smallest power of two >= v, for v <= 2^63. Returns 1 for v == 0.  */
+/*  Smallest power of two >= v; zero maps to one.  */
 static inline u64 xpar_next_pow2(u64 v) {
   if (v <= 1) return 1;
   v--;
@@ -137,19 +128,17 @@ static inline void xpar_wr64(u8 * p, u64 v) {
   xpar_wr32(p, (u32) v);  xpar_wr32(p + 4, (u32) (v >> 32));
 }
 
-/*  Lower-case hexadecimal text for `n` bytes, NUL-terminated; the buffer
-    holds 2n + 1.  */
+/*  Lower-case hex for `n` bytes; `out` holds 2n + 1.  */
 static inline void xpar_hex(char * out, const u8 * p, sz n) {
   static const char d[] = "0123456789abcdef";
-  for (sz i = 0; i < n; i++) {
+  sz i;
+  Fi(n,
     out[2 * i]     = d[p[i] >> 4];
-    out[2 * i + 1] = d[p[i] & 15];
-  }
+    out[2 * i + 1] = d[p[i] & 15]);
   out[2 * n] = 0;
 }
 
-/*  Whether `pfx`, folded to lower case, is a hexadecimal prefix of the
-    `n` bytes at `id`. An empty prefix matches; a longer one cannot.  */
+/*  Case-folded hex prefix match.  */
 static inline bool xpar_hex_prefix(const u8 * id, sz n, const char * pfx) {
   static const char d[] = "0123456789abcdef";
   for (sz i = 0; pfx[i]; i++) {
@@ -161,18 +150,17 @@ static inline bool xpar_hex_prefix(const u8 * id, sz n, const char * pfx) {
   return true;
 }
 
-/*  Decimal digits in `v`, and so the field width that prints it: 1 for
-    zero, which is what every name-padding caller wants.  */
+/*  Decimal width; zero has width one.  */
 static inline int xpar_digits10(u64 v) {
   int d = 1;
   while (v >= 10) { v /= 10;  d++; }
   return d;
 }
 
-/*  Whether any of `n` bytes is NUL, which is how a length-counted field
-    that will become a C string is rejected on the way in.  */
+/*  Whether `n` bytes contain NUL.  */
 static inline bool xpar_has_nul(const u8 * p, sz n) {
-  For(sz, i, n, if (!p[i]) return true)
+  sz i;
+  Fi(n, if (!p[i]) return true);
   return false;
 }
 
@@ -180,7 +168,8 @@ static inline bool xpar_has_nul(const u8 * p, sz n) {
 static inline bool xpar_ct_equal(const void * a, const void * b, sz n) {
   const u8 * x = (const u8 *) a, * y = (const u8 *) b;
   u8 acc = 0;
-  for (sz i = 0; i < n; i++) acc |= (u8) (x[i] ^ y[i]);
+  sz i;
+  Fi(n, acc |= (u8) (x[i] ^ y[i]));
   return acc == 0;
 }
 
@@ -204,7 +193,7 @@ typedef struct {
   u64 start_usec;
   u64 last_usec;
   u64 since_check;     /*  Bytes since the clock was last read.  */
-  const char * op;     /*  "Creating", "Verifying", "Repairing", ...  */
+  const char * op;     /*  "creating", "verifying", "repairing", ...  */
   xpar_progress_fn sink;
   void * sink_user;
 } xpar_progress_t;

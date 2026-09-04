@@ -12,9 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Manifest construction, validation, and occurrence lookup. Canonical
-    extents advance the stream and aliases refer backward. Readers treat paths
-    and extents as untrusted.  */
+/*  Manifest construction, validation, and occurrence lookup.  */
 
 #ifndef XPAR_MANIFEST_H
 #define XPAR_MANIFEST_H
@@ -146,9 +144,7 @@ typedef struct {
   u64 stream_cache_limit;
   u32 preserve;           /*  XPAR_PRES_* mask, cli.h.  */
   u32 preserve_explicit;
-  u32 caps_mask;          /*  ANDed with xpar_fs_caps(); clearing
-                              XPAR_FS_LINKID here is how a caller, or a
-                              test, disables hard-link detection.  */
+  u32 caps_mask;          /*  xpar_fs_caps mask.  */
   u32 path_flags;         /*  XPAR_PATH_* for the names emitted.  */
   const char * base_dir;  /*  Names are relative to this when set.  */
   char * const * exclude; /*  Manifest-name globs, matched bytewise.  */
@@ -165,14 +161,11 @@ typedef struct {
 void xpar_walk_opts_default(xpar_walk_opts * o);
 bool xpar_manifest_name_selected(const xpar_walk_opts *, const char *);
 
-/*  Phase one enumerates, sorts, and records metadata and hard links. Regular
-    entries receive content data in phase two.  */
+/*  Enumerate, sort, and record metadata and hard links.  */
 void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
                         u32 root_count, const xpar_walk_opts * o);
 
-/*  Phase two hashes and deduplicates regular entries, then lays them out in
-    manifest order. Sets stream_length, dedup_level, shared_bytes, and file_id.
-    `prog` may be NULL.  */
+/*  Hash, deduplicate, and lay out regular entries.  */
 void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
                         xpar_progress_t * prog);
 
@@ -250,8 +243,7 @@ typedef struct {
 void xpar_occindex_build(const xpar_manifest * m, xpar_occindex * ix);
 void xpar_occindex_free (xpar_occindex * ix);
 
-/*  Every occurrence overlapping [off, off+len), in stream order. The
-    callback may not modify the index. Returns the number of hits.  */
+/*  Visit overlaps in stream order; return the hit count.  */
 typedef void (* xpar_occ_fn)(const xpar_occurrence * o, void * user);
 u32 xpar_occindex_overlaps(const xpar_occindex * ix, u64 off, u64 len,
                            xpar_occ_fn fn, void * user);

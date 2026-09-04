@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Parsed command-line interface.  */
+/*  Command-line state.  */
 
 #ifndef XPAR_CLI_H
 #define XPAR_CLI_H
@@ -170,12 +170,10 @@ typedef struct {
   int  dest;             /*  XPAR_DEST_*  */
   char * to_dir;         /*  --to, shared with extract and recover.  */
   bool paranoid, keep_journal, no_journal, dry_run, exit_on_change;
-  /*  Internal to a --chain walk: repair generation N's code against the
-      effective head manifest, whose extents identify current file offsets.  */
+  /*  Repair a chain member against the effective head manifest.  */
   bool repair_head_set;
   char * repair_head_id;
-  /*  Private root containing materialised ancestor generations during an
-      owned-layout `repair --chain --to` walk. Not a command-line option.  */
+  /*  Materialised ancestors for owned-layout chain repair.  */
   char * repair_chain_stage;
   bool chain_metadata_only; /*  Internal: do not scan recovery payloads.  */
   bool chain_member;     /*  Processing one chain generation.  */

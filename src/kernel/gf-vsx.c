@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: Galois field kernels, PowerPC VSX split-table variant.  */
+/*  Galois field kernels, PowerPC VSX split-table variant.  */
 
 #define XPAR_GF_VARIANT_VSX
 #define XPAR_GF_HAVE_SIMD

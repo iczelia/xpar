@@ -26,7 +26,6 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
 #include "common.h"
 #include "port-fs.h"
 #include "port-win-path.h"
@@ -227,9 +226,7 @@ u32 xpar_fs_caps(const char * path) {
     wchar_t root[MAX_PATH], fsname[64];
     DWORD flags = 0, maxcomp = 0;
     if (!wp) return 0;
-    if (GetFileAttributesW(wp) == INVALID_FILE_ATTRIBUTES) {
-      xpar_free(wp);  return 0;
-    }
+    if (GetFileAttributesW(wp) == INVALID_FILE_ATTRIBUTES) { xpar_free(wp);  return 0; }
     if (!GetVolumePathNameW(wp, root, MAX_PATH)) { xpar_free(wp);  return c; }
     xpar_free(wp);
     if (!GetVolumeInformationW(root, NULL, 0, NULL, &maxcomp, &flags,
@@ -360,10 +357,7 @@ i64 xpar_readlink(const char * path, char * buf, sz n) {
                        &got, NULL)) { CloseHandle(h);  return -1; }
   CloseHandle(h);
   rp = (xpar_reparse_symlink *) (void *) raw;
-  if (rp->ReparseTag != IO_REPARSE_TAG_SYMLINK) {
-    fail_unsupported();
-    return -1;
-  }
+  if (rp->ReparseTag != IO_REPARSE_TAG_SYMLINK) { fail_unsupported();  return -1; }
   /*  The print name is the form a user typed; the substitute name carries
       the \??\ device prefix. Prefer the print name and fall back.  */
   if (rp->PrintNameLength)
@@ -376,11 +370,7 @@ i64 xpar_readlink(const char * path, char * buf, sz n) {
                        (int) (rp->SubstituteNameLength / sizeof(WCHAR)));
   if (!target) return -1;
   tlen = xpar_strlen(target);
-  if (tlen + 1 > n) {
-    xpar_free(target);
-    SetLastError(ERROR_BUFFER_OVERFLOW);
-    return -1;
-  }
+  if (tlen + 1 > n) { xpar_free(target);  SetLastError(ERROR_BUFFER_OVERFLOW);  return -1; }
   xpar_memcpy(buf, target, tlen + 1);
   xpar_free(target);
   return (i64) tlen;

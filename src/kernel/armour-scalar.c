@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: inner-code region kernels, portable scalar variant.  */
+/*  inner-code region kernels, portable scalar variant.  */
 
 #define XPAR_ARM_VARIANT_SCALAR
 #include "armour-impl.h"

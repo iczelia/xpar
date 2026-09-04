@@ -90,9 +90,9 @@ static inline void xpar_b3_round(u32 * v, const u32 * m, int r) {
     length, 15 the flags.  */
 static void xpar_b3_permute(u32 * v, const u32 * cv, const u8 * block,
                             u8 block_len, u64 counter, u8 flags) {
-  u32 m[16];
-  Fi(16, m[i] = xpar_rd32(block + 4 * i))
-  Fi(8, v[i] = cv[i])
+  u32 m[16], i;
+  Fi(16, m[i] = xpar_rd32(block + 4 * i));
+  Fi(8, v[i] = cv[i]);
   v[ 8] = xpar_blake3_iv[0];  v[ 9] = xpar_blake3_iv[1];
   v[10] = xpar_blake3_iv[2];  v[11] = xpar_blake3_iv[3];
   v[12] = (u32) counter;      v[13] = (u32) (counter >> 32);
@@ -106,9 +106,9 @@ static void xpar_b3_permute(u32 * v, const u32 * cv, const u8 * block,
 XPAR_B3_LINK void XPAR_B3_FN(xpar_blake3_compress)(u32 * cv, const u8 * block,
                                                    u8 block_len, u64 counter,
                                                    u8 flags) {
-  u32 v[16];
+  u32 v[16], i;
   xpar_b3_permute(v, cv, block, block_len, counter, flags);
-  Fi(8, cv[i] = v[i] ^ v[i + 8])
+  Fi(8, cv[i] = v[i] ^ v[i + 8]);
 }
 
 #if defined(XPAR_BLAKE3_VARIANT_SCALAR)
@@ -117,10 +117,10 @@ XPAR_B3_LINK void XPAR_B3_FN(xpar_blake3_compress)(u32 * cv, const u8 * block,
     just 32 bytes wide.  */
 void xpar_blake3_xof_scalar(const u32 * cv, const u8 * block, u8 block_len,
                             u64 counter, u8 flags, u8 * out) {
-  u32 v[16];
+  u32 v[16], i;
   xpar_b3_permute(v, cv, block, block_len, counter, flags);
   Fi(8, xpar_wr32(out + 4 * i, v[i] ^ v[i + 8]);
-        xpar_wr32(out + 32 + 4 * i, v[i + 8] ^ cv[i]))
+        xpar_wr32(out + 32 + 4 * i, v[i + 8] ^ cv[i]));
 }
 #endif
 
@@ -128,15 +128,15 @@ void xpar_blake3_xof_scalar(const u32 * cv, const u8 * block, u8 block_len,
     path of every hash_many and the whole of the scalar one.  */
 static void xpar_b3_one(const u8 * in, sz blocks, const u32 * key,
                         u64 counter, u8 flags, u8 first, u8 last, u8 * out) {
-  u32 cv[8];
-  Fi(8, cv[i] = key[i])
+  u32 cv[8], i;
+  Fi(8, cv[i] = key[i]);
   for (sz b = 0; b < blocks; b++) {
     u8 bf = (u8) (flags | (b == 0 ? first : 0) |
                   (b + 1 == blocks ? last : 0));
     XPAR_B3_FN(xpar_blake3_compress)(cv, in + b * XPAR_BLAKE3_BLOCK_LEN,
                                      XPAR_BLAKE3_BLOCK_LEN, counter, bf);
   }
-  Fi(8, xpar_wr32(out + 4 * i, cv[i]))
+  Fi(8, xpar_wr32(out + 4 * i, cv[i]));
 }
 
 /*  Vector core.  */
@@ -191,6 +191,7 @@ static inline xpar_b3_vec xpar_b3_ldw(const u32 * p) {
     boundary AVX2 imposes.  */
 static inline void xpar_b3_transpose(xpar_b3_vec * v) {
   xpar_b3_vec t[8], u[8];
+  u32 i;
   Fi(4, t[2 * i]     = _mm256_unpacklo_epi32(v[2 * i], v[2 * i + 1]);
         t[2 * i + 1] = _mm256_unpackhi_epi32(v[2 * i], v[2 * i + 1]))
   Fi(2, u[4 * i]     = _mm256_unpacklo_epi64(t[4 * i], t[4 * i + 2]);
@@ -198,24 +199,26 @@ static inline void xpar_b3_transpose(xpar_b3_vec * v) {
         u[4 * i + 2] = _mm256_unpacklo_epi64(t[4 * i + 1], t[4 * i + 3]);
         u[4 * i + 3] = _mm256_unpackhi_epi64(t[4 * i + 1], t[4 * i + 3]))
   Fi(4, v[i]     = _mm256_permute2x128_si256(u[i], u[i + 4], 0x20);
-        v[i + 4] = _mm256_permute2x128_si256(u[i], u[i + 4], 0x31))
+        v[i + 4] = _mm256_permute2x128_si256(u[i], u[i + 4], 0x31));
 }
 
 static inline void xpar_b3_load_msg(const u8 * const * in, sz off,
                                     xpar_b3_vec * m) {
   xpar_b3_vec t[8];
-  Fi(8, t[i] = _mm256_loadu_si256((const __m256i *) (in[i] + off)))
+  u32 i;
+  Fi(8, t[i] = _mm256_loadu_si256((const __m256i *) (in[i] + off)));
   xpar_b3_transpose(t);
-  Fi(8, m[i] = t[i])
-  Fi(8, t[i] = _mm256_loadu_si256((const __m256i *) (in[i] + off + 32)))
-  Fi(8, XPAR_B3_PREFETCH(in[i] + off + XPAR_B3_AHEAD))
+  Fi(8, m[i] = t[i]);
+  Fi(8, t[i] = _mm256_loadu_si256((const __m256i *) (in[i] + off + 32)));
+  Fi(8, XPAR_B3_PREFETCH(in[i] + off + XPAR_B3_AHEAD));
   xpar_b3_transpose(t);
-  Fi(8, m[i + 8] = t[i])
+  Fi(8, m[i + 8] = t[i]);
 }
 
 static inline void xpar_b3_store_cv(xpar_b3_vec * h, u8 * out) {
+  u32 i;
   xpar_b3_transpose(h);
-  Fi(8, _mm256_storeu_si256((__m256i *) (out + 32 * i), h[i]))
+  Fi(8, _mm256_storeu_si256((__m256i *) (out + 32 * i), h[i]));
 }
 
 #elif defined(XPAR_BLAKE3_VARIANT_NEON)
@@ -259,18 +262,20 @@ static inline void xpar_b3_transpose(xpar_b3_vec * v) {
 
 static inline void xpar_b3_load_msg(const u8 * const * in, sz off,
                                     xpar_b3_vec * m) {
+  u32 i, j;
   Fj(4, xpar_b3_vec t[4];
-        Fi(4, t[i] = vreinterpretq_u32_u8(vld1q_u8(in[i] + off + 16 * j)))
+        Fi(4, t[i] = vreinterpretq_u32_u8(vld1q_u8(in[i] + off + 16 * j)));
         xpar_b3_transpose(t);
-        Fi(4, m[4 * j + i] = t[i]))
-  Fi(4, XPAR_B3_PREFETCH(in[i] + off + XPAR_B3_AHEAD))
+        Fi(4, m[4 * j + i] = t[i]));
+  Fi(4, XPAR_B3_PREFETCH(in[i] + off + XPAR_B3_AHEAD));
 }
 
 static inline void xpar_b3_store_cv(xpar_b3_vec * h, u8 * out) {
+  u32 i;
   xpar_b3_transpose(h);
   xpar_b3_transpose(h + 4);
   Fi(4, vst1q_u8(out + 32 * i, vreinterpretq_u8_u32(h[i]));
-        vst1q_u8(out + 32 * i + 16, vreinterpretq_u8_u32(h[i + 4])))
+        vst1q_u8(out + 32 * i + 16, vreinterpretq_u8_u32(h[i + 4])));
 }
 
 #endif
@@ -306,16 +311,16 @@ static void xpar_b3_batch(const u8 * const * in, sz blocks, const u32 * key,
                           u64 counter, bool inc, u8 flags, u8 first, u8 last,
                           u8 * out) {
   xpar_b3_vec h[8], v[16], m[16], ctr_lo, ctr_hi;
-  u32 lo[XPAR_B3_DEG], hi[XPAR_B3_DEG];
+  u32 lo[XPAR_B3_DEG], hi[XPAR_B3_DEG], i;
   Fi(XPAR_B3_DEG, u64 c = counter + (inc ? (u64) i : 0);
-                  lo[i] = (u32) c;  hi[i] = (u32) (c >> 32))
+                  lo[i] = (u32) c;  hi[i] = (u32) (c >> 32));
   ctr_lo = xpar_b3_ldw(lo);  ctr_hi = xpar_b3_ldw(hi);
-  Fi(8, h[i] = XPAR_B3_SET1(key[i]))
+  Fi(8, h[i] = XPAR_B3_SET1(key[i]));
   for (sz b = 0; b < blocks; b++) {
     u8 bf = (u8) (flags | (b == 0 ? first : 0) |
                   (b + 1 == blocks ? last : 0));
     xpar_b3_load_msg(in, b * XPAR_BLAKE3_BLOCK_LEN, m);
-    Fi(8, v[i] = h[i])
+    Fi(8, v[i] = h[i]);
     v[ 8] = XPAR_B3_SET1(xpar_blake3_iv[0]);
     v[ 9] = XPAR_B3_SET1(xpar_blake3_iv[1]);
     v[10] = XPAR_B3_SET1(xpar_blake3_iv[2]);
@@ -327,7 +332,7 @@ static void xpar_b3_batch(const u8 * const * in, sz blocks, const u32 * key,
     xpar_b3_vround(v, m, 2);  xpar_b3_vround(v, m, 3);
     xpar_b3_vround(v, m, 4);  xpar_b3_vround(v, m, 5);
     xpar_b3_vround(v, m, 6);
-    Fi(8, h[i] = XPAR_B3_XOR(v[i], v[i + 8]))
+    Fi(8, h[i] = XPAR_B3_XOR(v[i], v[i + 8]));
   }
   xpar_b3_store_cv(h, out);
 }
@@ -350,7 +355,7 @@ void XPAR_B3_FN(xpar_blake3_hash_many)(const u8 * const * inputs, sz count,
     const u8 * pad[XPAR_B3_DEG];
     u8 tmp[XPAR_B3_DEG * XPAR_BLAKE3_OUT_LEN];
     sz i;
-    for (i = 0; i < count; i++) pad[i] = inputs[i];
+    Fi(count, pad[i] = inputs[i]);
     for (; i < XPAR_B3_DEG; i++) pad[i] = inputs[0];
     xpar_b3_batch(pad, blocks, key, counter, inc, flags, first, last, tmp);
     xpar_memcpy(out, tmp, count * XPAR_BLAKE3_OUT_LEN);

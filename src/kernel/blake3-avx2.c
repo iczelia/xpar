@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: AVX2 BLAKE3 compression variant, eight chunks at a time.  */
+/*  AVX2 BLAKE3 compression variant, eight chunks at a time.  */
 
 #define XPAR_BLAKE3_VARIANT_AVX2
 #define XPAR_BLAKE3_HAVE_SIMD

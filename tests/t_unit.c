@@ -15,7 +15,6 @@
 /* Property tests for geometry, erasures, occurrences, paths and packets. */
 
 #include "t_harness.h"
-
 #include "container.h"
 #include "manifest.h"
 #include "pathname.h"
@@ -48,7 +47,7 @@ static void test_helpers(void) {
   CHECK_U64(xpar_next_pow2(65), 128, "next_pow2(65)");
   CHECK_U64(xpar_next_pow2((u64) 1 << 62), (u64) 1 << 62, "next_pow2(2^62)");
 
-  for (i = 0; i < xt_scale(4096); i++) {
+  Fi(xt_scale(4096),
     u64 v = ((u64) xt_next(&r) << 32) | xt_next(&r);
     u64 a = (u64) 1 << (xt_below(&r, 20) + 1);
     u64 up;
@@ -62,11 +61,10 @@ static void test_helpers(void) {
     if (!xpar_is_pow2(xpar_next_pow2(v & 0xFFFFFFu))) {
       CHECK(false, "next_pow2 produced a non-power of two");
       break;
-    }
-  }
+    });
   CHECK(i == xt_scale(4096), "the alignment sweep ran to the end");
 
-  for (i = 0; i < xt_scale(2048); i++) {
+  Fi(xt_scale(2048),
     u64 v = ((u64) xt_next(&r) << 32) | xt_next(&r);
     xpar_wr16(buf, (u16) v);
     xpar_wr32(buf + 2, (u32) v);
@@ -76,8 +74,7 @@ static void test_helpers(void) {
     }
     xpar_wr64(buf, v);
     if (xpar_rd64(buf) != v) { CHECK(false, "64 bit round trip failed");
-                               break; }
-  }
+                               break; });
   CHECK(i == xt_scale(2048), "the byte-order sweep ran to the end");
 
   xt_fill(&r, buf, 8);
@@ -114,11 +111,9 @@ static u32 crc_reference(const u8 * p, sz n) {
   u32 c = 0xFFFFFFFFu;
   sz i;
   int k;
-  for (i = 0; i < n; i++) {
+  Fi(n,
     c ^= p[i];
-    for (k = 0; k < 8; k++)
-      c = (c >> 1) ^ (0x82F63B78u & (u32) -(i32) (c & 1));
-  }
+    Fk(8, c = (c >> 1) ^ (0x82F63B78u & (u32) -(i32) (c & 1))));
   return ~c;
 }
 
@@ -141,7 +136,7 @@ static void test_crc32c(void) {
   CHECK_U64(xpar_crc32c(0, buf, cap), crc_reference(buf, cap),
             "crc32c of %" PRIu64 " bytes", (u64) cap);
 
-  for (i = 0; i < xt_scale(256); i++) {
+  Fi(xt_scale(256),
     sz cut = (sz) xt_below(&r, (u32) cap + 1);
     u32 a = xpar_crc32c(0, buf, cut);
     u32 b = xpar_crc32c(0, buf + cut, cap - cut);
@@ -154,11 +149,10 @@ static void test_crc32c(void) {
               "combine_op at cut %" PRIu64, (u64) cut);
     CHECK_U64(xpar_crc32c_combine_op(op, a ^ 0x5A5A5A5Au, b),
               xpar_crc32c_combine(a ^ 0x5A5A5A5Au, b, cap - cut),
-              "reused operator at cut %" PRIu64, (u64) cut);
-  }
+              "reused operator at cut %" PRIu64, (u64) cut));
 
   /* Stored CRC shifting includes the zero suffix CRC. */
-  for (i = 0; i < xt_scale(64); i++) {
+  Fi(xt_scale(64),
     u32 pad = xt_below(&r, 1024);
     u8 * tmp = (u8 *) xpar_calloc(2048 + pad, 1);
     xpar_memcpy(tmp, buf, 2048);
@@ -166,8 +160,7 @@ static void test_crc32c(void) {
               xpar_crc32c(0, tmp + 2048, pad),
               xpar_crc32c(0, tmp, 2048 + pad),
               "shift by %" PRIu32 " zero bytes", pad);
-    xpar_free(tmp);
-  }
+    xpar_free(tmp));
 
   xpar_free(buf);
 }
@@ -186,7 +179,7 @@ static void test_blake3(void) {
   xt_fill(&r, buf, cap);
   xt_fill(&r, key, 32);
 
-  for (i = 0; i < xt_scale(96); i++) {
+  Fi(xt_scale(96),
     xpar_blake3_t h;
     sz cut = (sz) xt_below(&r, (u32) cap + 1);
     xpar_blake3_hash(buf, cap, a, 32);
@@ -194,8 +187,7 @@ static void test_blake3(void) {
     xpar_blake3_update(&h, buf, cut);
     xpar_blake3_update(&h, buf + cut, cap - cut);
     xpar_blake3_final(&h, b, 32);
-    if (!xt_bytes_equal("streamed digest", b, a, 32)) break;
-  }
+    if (!xt_bytes_equal("streamed digest", b, a, 32)) break);
 
   xpar_blake3_hash(buf, cap, a, 32);
   xpar_blake3_hash_keyed(key, buf, cap, b, 32);
@@ -283,7 +275,7 @@ static void test_geometry(void) {
         "more slices than bytes must be refused");
 
   accepted = 0;
-  for (i = 0; i < xt_scale(512); i++) {
+  Fi(xt_scale(512),
     u64 cap;
     xpar_memset(&q, 0, sizeof q);
     q.field_log2 = (xt_next(&r) & 1) ? 8 : 16;
@@ -312,8 +304,7 @@ static void test_geometry(void) {
         (u32) xpar_ceil_div(g.slice_size, g.cell_bytes)) {
       CHECK(false, "K does not follow from Z and Y");  break;
     }
-    if (g.cell_bytes > g.slice_size) { CHECK(false, "Y exceeds Z");  break; }
-  }
+    if (g.cell_bytes > g.slice_size) { CHECK(false, "Y exceeds Z");  break; });
   /*  Ensure the sweep exercises accepted geometries.  */
   CHECK(accepted > xt_scale(512) / 4,
         "the sweep accepted %" PRIu32 " of %" PRIu32 " parameter sets",
@@ -328,7 +319,7 @@ static void test_cell_mapping(void) {
   xt_section_begin("cell mapping");
   xt_seed(&r, 0x5555);
 
-  for (i = 0; i < xt_scale(256); i++) {
+  Fi(xt_scale(256),
     xpar_geom g;
     u64 s, covered = 0;
     u32 c;
@@ -382,8 +373,7 @@ static void test_cell_mapping(void) {
               " of %" PRIu64 " content bytes", s, sum, have);
         break;
       }
-    }
-  }
+    });
 }
 
 static void test_erasures(void) {
@@ -422,8 +412,8 @@ static void test_erasures(void) {
   CHECK_U64(e.bad_count, 0, "a fault past L marks nothing");
 
   xpar_erasures_clear(&e);
-  For(u64, s, 6, xpar_cell_mark(&e, s, 0))
-  For(u64, s, 3, xpar_cell_mark(&e, s, 2))
+  for (u64 s = 0; s < (6); s++) { xpar_cell_mark(&e, s, 0); }
+  for (u64 s = 0; s < (3); s++) { xpar_cell_mark(&e, s, 2); }
   CHECK_U64(e.bad_count, 9, "nine cells marked");
   CHECK_U64(xpar_erasures_max_depth(&e), 6, "the deepest column has six");
 
@@ -432,7 +422,7 @@ static void test_erasures(void) {
   CHECK_U64(e.bad_count, g.cells_per_slice, "a slice marks K cells");
   CHECK_U64(xpar_erasures_max_depth(&e), 1, "and one erasure per column");
 
-  for (i = 0; i < xt_scale(64); i++) {
+  Fi(xt_scale(64),
     xpar_col_groups cg;
     u32 seen = 0, a, b;
     u64 s;
@@ -465,17 +455,14 @@ static void test_erasures(void) {
       for (b = a + 1; b < cg.group_count; b++) {
         bool same = true;
         for (s = 0; s < e.slice_count; s++)
-          if (cg.group[a].present[s] != cg.group[b].present[s]) {
-            same = false;  break;
-          }
+          if (cg.group[a].present[s] != cg.group[b].present[s]) { same = false;  break; }
         if (same) {
           CHECK(false, "groups %" PRIu32 " and %" PRIu32 " are duplicates",
                 a, b);
           b = cg.group_count;  a = cg.group_count;
         }
       }
-    xpar_col_groups_free(&cg);
-  }
+    xpar_col_groups_free(&cg));
 
   xpar_erasures_free(&e);
 }
@@ -485,7 +472,7 @@ static void build_gapped(xpar_manifest * m, u32 n, u64 len, u64 gap) {
   u64 off = 0;
   u32 i;
   xpar_memset(m, 0, sizeof *m);
-  for (i = 0; i < n; i++) {
+  Fi(n,
     xpar_entry * e = xpar_manifest_append(m);
     char name[32];
     xpar_snprintf(name, sizeof name, "f%03" PRIu32 ".bin", i);
@@ -498,8 +485,7 @@ static void build_gapped(xpar_manifest * m, u32 n, u64 len, u64 gap) {
     e->extents = (xpar_extent *) xpar_alloc_raw(sizeof(xpar_extent));
     e->extents[0].stream_offset = off;
     e->extents[0].length = len;
-    off += len + gap;
-  }
+    off += len + gap);
   m->stream_length = off ? off - gap : 0;
 }
 
@@ -793,7 +779,7 @@ static void test_packets(void) {
 
   {
     u32 i, kept = 0;
-    for (i = 0; i < xt_scale(64); i++) {
+    Fi(xt_scale(64),
       sz at = (sz) xt_below(&r, (u32) b.len);
       u8 save = b.data[at];
       b.data[at] ^= (u8) (1u << xt_below(&r, 8));
@@ -801,8 +787,7 @@ static void test_packets(void) {
       xpar_scan_init(&sc, b.data, b.len, NULL, false);
       while (xpar_scan_next(&sc, &hdr, &body, &off)) seen++;
       if (seen == 2) kept++;
-      b.data[at] = save;
-    }
+      b.data[at] = save);
     CHECK_U64(kept, 0, "a flipped bit must never leave both packets valid");
   }
 
@@ -975,13 +960,12 @@ static void test_gf_tables(void) {
   xt_section_begin("gf tables");
 
   seen8 = (u8 *) xpar_calloc(256, 1);
-  for (i = 0; i < 255; i++) {
+  Fi(255,
     u8 v = xpar_gf8_exp[i];
     if (!v) { gap++;  continue; }
     if (seen8[v]) dup++;
     seen8[v] = 1;
-    if (xpar_gf8_log[v] != (u8) i) miss++;
-  }
+    if (xpar_gf8_log[v] != (u8) i) miss++);
   CHECK_U64(dup, 0, "GF(2^8) alpha^i repeats before the group order");
   CHECK_U64(miss, 0, "GF(2^8) log and exp disagree");
   for (i = 1; i < 256; i++) if (!seen8[i]) gap++;
@@ -990,13 +974,12 @@ static void test_gf_tables(void) {
 
   dup = 0;  miss = 0;  gap = 0;
   seen16 = (u8 *) xpar_calloc(65536, 1);
-  for (i = 0; i < 65535u; i++) {
+  Fi(65535u,
     u16 v = xpar_gf16_exp[i];
     if (!v) { gap++;  continue; }
     if (seen16[v]) dup++;
     seen16[v] = 1;
-    if (xpar_gf16_log[v] != (u16) i) miss++;
-  }
+    if (xpar_gf16_log[v] != (u16) i) miss++);
   CHECK_U64(dup, 0, "GF(2^16) alpha^i repeats before the group order");
   CHECK_U64(miss, 0, "GF(2^16) log and exp disagree");
   for (i = 1; i < 65536u; i++) if (!seen16[i]) gap++;
@@ -1136,7 +1119,7 @@ static void test_reader_bounds(void) {
   /*  LAYT: a volume name is one path component, not a relative path.  */
   { static const char * const nm[2] = { "s.r00.xpa", "sub/s.r00.xpa" };
     sz i;
-    for (i = 0; i < 2; i++) {
+    Fi(2,
       sz ln = xpar_strlen(nm[i]);
       sz e1 = xpar_align_up(32 + 5, XPAR_PKT_ALIGN);
       sz e2 = xpar_align_up(32 + ln, XPAR_PKT_ALIGN);
@@ -1158,8 +1141,7 @@ static void test_reader_bounds(void) {
         CHECK(xpar_layt_read(b, n, &lt) == XPAR_E_MALFORMED,
               "LAYT volume name containing a path separator");
       xpar_layt_free(&lt);
-      xpar_free(b);
-    } }
+      xpar_free(b)); }
 }
 
 void xt_run_unit(void) {

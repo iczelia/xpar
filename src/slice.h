@@ -12,12 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  Stream, slice, and cell geometry interface.
-
-    The stream is cut uniformly at Z independently of entry boundaries.
-    Cells are Y-byte columns and record erasure granularity; codec tiling C
-    is not part of the format.  Columns with equal erasure patterns share
-    decode plans.  */
+/*  Stream, slice, and cell geometry.  */
 
 #ifndef XPAR_SLICE_H
 #define XPAR_SLICE_H
@@ -84,10 +79,7 @@ void xpar_geom_reach(const xpar_geom_req * req, u64 * slices, u64 * recovery);
 
 u32 xpar_cell_choose(u64 slice_size, u32 want, u32 armour_frame);
 
-/*  Fill in slice_count, cell_bytes and cells_per_slice from a Z, an L
-    and a Y that came off the wire rather than from the planner. Returns
-    false when SETD's own constraints do not hold, which a reader treats
-    as a malformed packet.  */
+/*  Decode and validate SETD geometry.  */
 bool xpar_geom_from_setd(const xpar_setd * sd, xpar_geom * out);
 
 u64 xpar_slice_begin(const xpar_geom * g, u64 slice);
@@ -95,9 +87,7 @@ u64 xpar_slice_of   (const xpar_geom * g, u64 stream_off);
 
 u64 xpar_slice_bytes(const xpar_geom * g, u64 slice);
 
-/*  Compute the SLTG value selected by SETD.required_features. The ordinary
-    form is a standard BLAKE3 digest; the aligned form is the chaining value
-    of the complete slice subtree at its absolute stream chunk position.  */
+/*  Compute the SLTG form selected by SETD.  */
 void xpar_slice_tag(const xpar_setd * sd, u64 slice, const u8 * bytes,
                     u8 * out, sz n);
 void xpar_slice_tag_keyed(const xpar_setd * sd, u64 slice, const u8 * bytes,
@@ -106,10 +96,7 @@ void xpar_slice_tag_keyed(const xpar_setd * sd, u64 slice, const u8 * bytes,
 u32 xpar_cell_of    (const xpar_geom * g, u64 stream_off);
 u64 xpar_cell_begin (const xpar_geom * g, u64 slice, u32 col);
 
-/*  Y, or the short remainder in the last column. A function of the
-    column alone: a slice is Z bytes for every coding purpose, padding
-    included, so only the final column of a slice is short and it is
-    short by the same amount in every slice.  */
+/*  Y, or the last column's short remainder.  */
 u64 xpar_cell_size  (const xpar_geom * g, u32 col);
 
 /*  Of those, how many are real content rather than padding.  */
@@ -121,9 +108,7 @@ void xpar_erasures_init (xpar_erasures * e, u64 slices, u32 cells);
 void xpar_erasures_free (xpar_erasures * e);
 void xpar_erasures_clear(xpar_erasures * e);
 
-/*  Mark every cell that overlaps a stream byte range. This is how a
-    failed entry hash, a failed cell CRC or a short file becomes an
-    erasure set.  */
+/*  Mark cells overlapping a stream range.  */
 void xpar_erasures_mark_range(xpar_erasures * e, const xpar_geom * g,
                               u64 off, u64 len);
 void xpar_erasures_mark_slice(xpar_erasures * e, u64 slice);
@@ -154,8 +139,7 @@ typedef struct {
   u32 entry;
 } xpar_span;
 
-/*  The canonical occurrence covering `off`, which is where the bytes of
-    that stream offset are read from and written to. False past L.  */
+/*  Find the canonical occurrence covering `off`; false past L.  */
 bool xpar_stream_locate(const xpar_occindex * ix, u64 off,
                         xpar_span * out);
 

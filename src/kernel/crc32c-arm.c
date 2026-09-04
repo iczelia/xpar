@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: ARMv8 CRC32C variant, three chains and a matrix recombine.  */
+/*  ARMv8 CRC32C variant, three chains and a matrix recombine.  */
 
 #define XPAR_CRC32C_VARIANT_ARM
 #define XPAR_CRC32C_HAVE_HW

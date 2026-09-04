@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: AVX-512 VBMI 6+6+4 GF(2^16) kernel.  */
+/*  AVX-512 VBMI 6+6+4 GF(2^16) kernel.  */
 
 #define XPAR_GF_VARIANT_VBMI512
 #define XPAR_GF_HAVE_SIMD

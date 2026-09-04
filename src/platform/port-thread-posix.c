@@ -17,7 +17,6 @@
 
 #include "common.h"
 #include "port-thread.h"
-
 #include <pthread.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -34,8 +33,7 @@ static bool affinity_get(cpu_set_t * set) {
 
 static int affinity_count(const cpu_set_t * set) {
   int n = 0;
-  for (size_t cpu = 0; cpu < (size_t) CPU_SETSIZE; cpu++)
-    if (CPU_ISSET(cpu, set)) n++;
+  for (size_t cpu = 0; cpu < ((size_t) CPU_SETSIZE); cpu++) { if (CPU_ISSET(cpu, set)) n++; }
   return n;
 }
 #endif
@@ -43,10 +41,7 @@ static int affinity_count(const cpu_set_t * set) {
 int xpar_cpu_count(void) {
 #if defined(__linux__) && defined(HAVE_SCHED_GETAFFINITY)
   cpu_set_t set;
-  if (affinity_get(&set)) {
-    int n = affinity_count(&set);
-    if (n > 0) return n;
-  }
+  if (affinity_get(&set)) { int n = affinity_count(&set);  if (n > 0) return n; }
 #endif
 #if defined(HAVE_SYSCONF) && defined(_SC_NPROCESSORS_ONLN)
   long n = sysconf(_SC_NPROCESSORS_ONLN);
@@ -67,11 +62,10 @@ static int topology_id(const char * item, int cpu) {
   n = read(fd, buf, sizeof buf);
   close(fd);
   if (n <= 0) return -1;
-  for (ssize_t i = 0; i < n; i++) {
-    if (buf[i] < '0' || buf[i] > '9') break;
-    if (value > (INT_MAX - (buf[i] - '0')) / 10) return -1;
-    value = value * 10 + buf[i] - '0';
-  }
+  { ssize_t i; Fi(n,
+      if (buf[i] < '0' || buf[i] > '9') break;
+      if (value > (INT_MAX - (buf[i] - '0')) / 10) return -1;
+      value = value * 10 + buf[i] - '0'); }
   return value;
 }
 #endif
@@ -95,13 +89,8 @@ int xpar_core_count(void) {
     int core = topology_id("core_id", cpu);
     int i;
     if (package < 0 || core < 0) continue;
-    for (i = 0; i < count; i++)
-      if (pair[2 * i] == package && pair[2 * i + 1] == core) break;
-    if (i == count) {
-      pair[2 * count] = package;
-      pair[2 * count + 1] = core;
-      count++;
-    }
+    Fi(count, if (pair[2 * i] == package && pair[2 * i + 1] == core) break);
+    if (i == count) { pair[2 * count] = package;  pair[2 * count + 1] = core;  count++; }
   }
   xpar_free(pair);
   if (count > 0) return MIN(count, xpar_cpu_count());
@@ -172,20 +161,19 @@ xpar_pool * xpar_pool_create(int threads) {
   p->nthreads = threads;  p->tid = NULL;
   p->fn = NULL;  p->ctx = NULL;
   p->n = p->next = 0;  p->gen = 0;  p->busy = 0;  p->stop = false;
-  if (pthread_mutex_init(&p->m, NULL) != 0) FATAL("pthread_mutex_init.");
-  if (pthread_cond_init(&p->ready, NULL) != 0) FATAL("pthread_cond_init.");
-  if (pthread_cond_init(&p->done, NULL) != 0) FATAL("pthread_cond_init.");
+  if (pthread_mutex_init(&p->m, NULL) != 0) FATAL("pthread_mutex_init");
+  if (pthread_cond_init(&p->ready, NULL) != 0) FATAL("pthread_cond_init");
+  if (pthread_cond_init(&p->done, NULL) != 0) FATAL("pthread_cond_init");
   if (threads == 1) return p;
 
   p->tid = xpar_alloc_raw((sz) (threads - 1) * sizeof(pthread_t));
-  for (k = 0; k < threads - 1; k++) {
+  Fk(threads - 1,
     if (pthread_create(&p->tid[k], NULL, worker, p) != 0) {
       /*  Run with the threads that did start rather than failing the
           operation: fewer threads is slower and still correct.  */
       p->nthreads = k + 1;
       break;
-    }
-  }
+    });
   return p;
 }
 
@@ -194,7 +182,8 @@ int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
   if (n == 0) return;
   if (!p || p->nthreads <= 1 || n == 1) {
-    For(sz, i, n, fn(i, ctx))
+    sz i;
+    Fi(n, fn(i, ctx));
     return;
   }
   pthread_mutex_lock(&p->m);
@@ -213,15 +202,13 @@ void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
 }
 
 void xpar_pool_destroy(xpar_pool * p) {
+  int k;
   if (!p) return;
   pthread_mutex_lock(&p->m);
   p->stop = true;
   pthread_cond_broadcast(&p->ready);
   pthread_mutex_unlock(&p->m);
-  if (p->tid) {
-    Fk(p->nthreads - 1, pthread_join(p->tid[k], NULL))
-    xpar_free(p->tid);
-  }
+  if (p->tid) { Fk(p->nthreads - 1, pthread_join(p->tid[k], NULL));  xpar_free(p->tid); }
   pthread_cond_destroy(&p->done);
   pthread_cond_destroy(&p->ready);
   pthread_mutex_destroy(&p->m);

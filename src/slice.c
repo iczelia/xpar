@@ -19,7 +19,6 @@
     patterns and share decode plans when those patterns match.  */
 
 #include "slice.h"
-
 #include "common.h"
 #include "kernel/blake3.h"
 
@@ -129,10 +128,7 @@ xpar_geom_status xpar_geom_solve(const xpar_geom_req * req,
   if (!out->slice_count) return XPAR_GEOM_OK;
 
   /*  Keep the initial geometry when the derived R fits.  */
-  if (geom_fits(req, out->slice_size, derive, ctx, &r)) {
-    *recovery = r;
-    return XPAR_GEOM_OK;
-  }
+  if (geom_fits(req, out->slice_size, derive, ctx, &r)) { *recovery = r;  return XPAR_GEOM_OK; }
   /*  Explicit -s or -b fixes Z.  */
   if (req->slice_size || req->slice_count) return XPAR_GEOM_FIELD;
 
@@ -285,7 +281,7 @@ u64 xpar_cell_bytes(const xpar_geom * g, u64 slice, u32 col) {
 
 void xpar_erasures_init(xpar_erasures * e, u64 slices, u32 cells) {
   u64 n = slices * (cells ? cells : 1);
-  if (n > 0x7FFFFFFFu) FATAL("Erasure table too large for this host.");
+  if (n > 0x7FFFFFFFu) FATAL("erasure table too large for this host");
   e->slice_count     = slices;
   e->cells_per_slice = cells ? cells : 1;
   e->bad_count       = 0;
@@ -328,8 +324,7 @@ u64 xpar_erasures_max_depth(const xpar_erasures * e) {
   u32 c;
   for (c = 0; c < e->cells_per_slice; c++) {
     u64 depth = 0;
-    for (i = 0; i < e->slice_count; i++)
-      if (e->bad[i * e->cells_per_slice + c]) depth++;
+    Fi(e->slice_count, if (e->bad[i * e->cells_per_slice + c]) depth++);
     if (depth > worst) worst = depth;
   }
   return worst;
@@ -337,19 +332,17 @@ u64 xpar_erasures_max_depth(const xpar_erasures * e) {
 
 static u64 pattern_hash(const xpar_erasures * e, u32 col) {
   u64 h = 0xCBF29CE484222325ull, i;
-  for (i = 0; i < e->slice_count; i++) {
+  Fi(e->slice_count,
     h ^= e->bad[i * e->cells_per_slice + col];
-    h *= 0x100000001B3ull;
-  }
+    h *= 0x100000001B3ull);
   return h;
 }
 
 static bool pattern_eq(const xpar_erasures * e, u32 a, const u8 * present) {
   u64 i;
-  for (i = 0; i < e->slice_count; i++) {
+  Fi(e->slice_count,
     u8 bad = e->bad[i * e->cells_per_slice + a];
-    if ((present[i] == 0) != (bad != 0)) return false;
-  }
+    if ((present[i] == 0) != (bad != 0)) return false);
   return true;
 }
 
@@ -373,10 +366,7 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
     u32 slot = (u32) ((h ^ (h >> 32)) & mask), gi = 0xFFFFFFFFu;
     while (bucket[slot] != 0xFFFFFFFFu) {
       u32 cand = bucket[slot];
-      if (hash[cand] == h && pattern_eq(e, col, g->group[cand].present)) {
-        gi = cand;
-        break;
-      }
+      if (hash[cand] == h && pattern_eq(e, col, g->group[cand].present)) { gi = cand;  break; }
       slot = (slot + 1) & mask;
     }
     if (gi == 0xFFFFFFFFu) {
@@ -387,11 +377,10 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
       ng->column  = (u32 *) xpar_alloc_raw((sz) k * sizeof(u32));
       ng->column_count = 0;
       ng->erased  = 0;
-      for (i = 0; i < e->slice_count; i++) {
+      Fi(e->slice_count,
         u8 bad = e->bad[i * k + col];
         ng->present[i] = !bad;
-        if (bad) ng->erased++;
-      }
+        if (bad) ng->erased++);
       gi = g->group_count++;
       hash[gi] = h;
       bucket[slot] = gi;
@@ -402,8 +391,9 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
 }
 
 void xpar_col_groups_free(xpar_col_groups * g) {
-  For(u32, i, g->group_count,
-      xpar_free(g->group[i].present);  xpar_free(g->group[i].column))
+  u32 i;
+  Fi(g->group_count,
+    xpar_free(g->group[i].present);  xpar_free(g->group[i].column));
   xpar_free(g->group);
   g->group = NULL;  g->group_count = 0;
 }

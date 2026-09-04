@@ -27,7 +27,8 @@ static void emit_c(fmt_ctx * c, char ch) {
   c->pos++;
 }
 static void emit_str(fmt_ctx * c, const char * s, sz n) {
-  for (sz i = 0; i < n; i++) emit_c(c, s[i]);
+  sz i;
+  Fi(n, emit_c(c, s[i]));
 }
 static void emit_pad(fmt_ctx * c, int n, char ch) {
   while (n-- > 0) emit_c(c, ch);
@@ -97,7 +98,7 @@ static void emit_double(fmt_ctx * c, double v, int width, int prec,
   char sign = 0, ibuf[24];
   u64 ip, fp, mult = 1;
   double frac;
-  int in = 0, total, pad, keep;
+  int in = 0, total, pad, keep, i;
   if (prec < 0) prec = 6;
   keep = prec > FMT_PREC_MAX ? FMT_PREC_MAX : prec;
   if (v < 0)                { sign = '-';  v = -v; }
@@ -105,7 +106,7 @@ static void emit_double(fmt_ctx * c, double v, int width, int prec,
   else if (flags & F_SPACE) { sign = ' '; }
   ip   = (u64) v;
   frac = v - (double) ip;
-  for (int i = 0; i < keep; i++) mult *= 10;
+  Fi(keep, mult *= 10);
   fp = (u64) (frac * (double) mult + 0.5);
   if (fp >= mult) { ip++;  fp -= mult; }
   if (ip == 0) ibuf[in++] = '0';
@@ -122,8 +123,7 @@ static void emit_double(fmt_ctx * c, double v, int width, int prec,
     int fn = 0;
     u64 x = fp;
     emit_c(c, '.');
-    for (int i = 0; i < keep; i++) { fbuf[fn++] = (char) ('0' + (x % 10));
-                                     x /= 10; }
+    Fi(keep, fbuf[fn++] = (char) ('0' + (x % 10));  x /= 10);
     while (fn) emit_c(c, fbuf[--fn]);
     emit_pad(c, prec - keep, '0');
   }

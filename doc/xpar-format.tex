@@ -30,10 +30,9 @@
 
 \chapter{Scope}\label{scope}
 
-\specp This document specifies the xpar 2.0 file format: its byte
-representation, coding geometry, integrity and authentication data, packet
-constraints, volume layouts, deterministic representation, validation rules and
-security requirements.
+\specp This document specifies the xpar 2.0 byte representation, coding
+geometry, integrity, authentication, packets, volumes, deterministic output,
+validation and security.
 
 \specp xpar 2.0 is not compatible with PAR2, PAR3 or xpar 1.0. When identifying
 an input that has not already been associated with a LAYT data entry, a
@@ -41,8 +40,7 @@ conforming reader shall detect an xpar 1.0 signature, report that the version is
 not supported, and not interpret the input as xpar 2.0.
 
 \specp The following byte sequences are xpar 1.0
-signatures\footnote{the test exists so that a 1.0 archive is diagnosed by
-version rather than reported as malformed input}:
+signatures\footnote{so 1.0 input is reported by version, not as malformed}:
 \begin{itemize}
 \item a five-byte sequence consisting of \verb|XP|, a major-version byte from
 0 through 1, a minor-version byte from 0 through 9, and a final byte equal to

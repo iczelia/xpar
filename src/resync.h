@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: sliding-window misplaced-data search interface.  */
+/*  Sliding-window misplaced-data search.  */
 
 #ifndef XPAR_RESYNC_H
 #define XPAR_RESYNC_H
@@ -20,8 +20,7 @@
 #include "common.h"
 #include "port.h"
 
-/*  One full slice whose canonical occurrence lies wholly in an entry.
-    `expected` is its byte offset in that entry, not in the set stream.  */
+/*  One full slice; `expected` is its entry offset.  */
 typedef struct {
   u32 crc;
   u64 expected;

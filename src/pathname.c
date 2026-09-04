@@ -15,7 +15,6 @@
 /*  Path-name manipulation and private staging files.  */
 
 #include "pathname.h"
-
 #include "port-fs.h"
 
 /*  Random stage names prevent pre-planted symlinks in shared directories.  */
@@ -128,12 +127,11 @@ char * xpar_name_escape(const char * s) {
   sz n = s ? xpar_strlen(s) : 0, i, j = 0;
   char * out = (char *) xpar_alloc_raw(4 * n + 1);
   static const char d[] = "0123456789ABCDEF";
-  for (i = 0; i < n; i++) {
+  Fi(n,
     u8 b = (u8) s[i];
     if (b >= 0x20 && b != 0x7F) { out[j++] = (char) b;  continue; }
     out[j++] = '\\';  out[j++] = 'x';
-    out[j++] = d[b >> 4];  out[j++] = d[b & 15];
-  }
+    out[j++] = d[b >> 4];  out[j++] = d[b & 15]);
   out[j] = 0;
   xpar_free(ring[at]);
   ring[at] = out;
@@ -171,8 +169,8 @@ char * xpar_path_vol(const char * dir, const char * name) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
 static void dos_stage_hex(char out[9], const u8 in[4]) {
   xpar_hex(out, in, 4);
-  for (sz i = 0; i < 8; i++)
-    if (out[i] >= 'a' && out[i] <= 'f') out[i] -= 'a' - 'A';
+  sz i;
+  Fi(8, if (out[i] >= 'a' && out[i] <= 'f') out[i] -= 'a' - 'A');
 }
 #endif
 
@@ -195,7 +193,7 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   char * dir = xpar_path_dir(stem);
   sz tl = xpar_strlen(dos_tag);
-  FATAL_UNLESS("Internal DOS staging tag '%s' exceeds four bytes.", tl <= 4,
+  FATAL_UNLESS(tl <= 4, "internal DOS staging tag '%s' exceeds four bytes",
                dos_tag);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[4];  char hex[9], leaf[13];
@@ -208,10 +206,7 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
     path = xpar_path_join(dir, leaf);
     f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL |
                         XPAR_O_PRIVATE);
-    if (f) {
-      (void) xpar_set_mode(path, nofollow, 0600);
-      *out = path;  xpar_free(dir);  return f;
-    }
+    if (f) { (void) xpar_set_mode(path, nofollow, 0600);  *out = path;  xpar_free(dir);  return f; }
     { xpar_stat_t st;
       bool collided = xpar_lstat(path, &st) == 0;
       xpar_free(path);
@@ -253,7 +248,7 @@ char * xpar_stage_dir(const char * stem, const char * dos_tag) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   char * dir = xpar_path_dir(stem);
   sz tl = xpar_strlen(dos_tag);
-  FATAL_UNLESS("Internal DOS directory tag '%s' exceeds four bytes.", tl <= 4,
+  FATAL_UNLESS(tl <= 4, "internal DOS directory tag '%s' exceeds four bytes",
                dos_tag);
   for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
     u8 rnd[4];  char hex[9], leaf[9];
@@ -297,8 +292,8 @@ char * xpar_dos_numbered(const char * path, const char * tag,
   char * dir = xpar_path_dir(path), * out;
   char leaf[13];
   sz tl = xpar_strlen(tag), el = xpar_strlen(ext);
-  FATAL_UNLESS("Internal DOS numbered name is not 8.3.",
-               tl <= 5 && tl + 3 <= 8 && el <= 3 && number < 1000);
+  FATAL_UNLESS(tl <= 5 && tl + 3 <= 8 && el <= 3 && number < 1000,
+               "internal DOS numbered name is not 8.3");
   if (el)
     xpar_snprintf(leaf, sizeof leaf, "%s%03" PRIu32 ".%s", tag, number, ext);
   else

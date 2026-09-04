@@ -23,7 +23,6 @@
 #endif
 
 #include "common.h"
-
 #include <dos.h>
 #include <dpmi.h>
 #include <errno.h>
@@ -91,10 +90,7 @@ static int dos_seek(int fd, i32 off, unsigned int whence, u32 * position) {
   r.x.cx = (u16) (bits >> 16);
   r.x.dx = (u16) bits;
   if (__dpmi_int(0x21, &r) < 0) { errno = EIO;  return -1; }
-  if (r.x.flags & 1) {
-    errno = __doserr_to_errno(r.x.ax);
-    return -1;
-  }
+  if (r.x.flags & 1) { errno = __doserr_to_errno(r.x.ax);  return -1; }
   if (position) *position = (u32) r.x.ax | ((u32) r.x.dx << 16);
   return 0;
 }
@@ -107,10 +103,7 @@ static int dos_truncate_here(int fd) {
   r.x.ds = __tb_segment;
   r.x.dx = __tb_offset;
   if (__dpmi_int(0x21, &r) < 0) { errno = EIO;  return -1; }
-  if (r.x.flags & 1) {
-    errno = __doserr_to_errno(r.x.ax);
-    return -1;
-  }
+  if (r.x.flags & 1) { errno = __doserr_to_errno(r.x.ax);  return -1; }
   return 0;
 }
 
@@ -142,16 +135,10 @@ xpar_file * xpar_open(const char * path, int flags) {
   else {
     err = _dos_open(path, (unsigned int) mode, &fd);
     if (err && (flags & XPAR_O_CREAT)) err = _dos_creatnew(path, 0, &fd);
-    if (!err && (flags & XPAR_O_TRUNC) && dos_resize(fd, 0) != 0) {
-      _dos_close(fd);
-      return NULL;
-    }
+    if (!err && (flags & XPAR_O_TRUNC) && dos_resize(fd, 0) != 0) { _dos_close(fd);  return NULL; }
   }
   if (err) { errno = __doserr_to_errno(err);  return NULL; }
-  if ((flags & XPAR_O_APPEND) && dos_seek(fd, 0, 2, NULL) != 0) {
-    _dos_close(fd);
-    return NULL;
-  }
+  if ((flags & XPAR_O_APPEND) && dos_seek(fd, 0, 2, NULL) != 0) { _dos_close(fd);  return NULL; }
   f = malloc(sizeof(*f));
   if (!f) { _dos_close(fd);  errno = ENOMEM;  return NULL; }
   f->fd = fd;  f->is_char = fd_is_char(fd);  f->owned = true;
@@ -178,10 +165,7 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
     unsigned int got = 0, err;
     if (want > 0xffffu) want = 0xffffu;
     err = _dos_read(f->fd, p + total, (unsigned int) want, &got);
-    if (err) {
-      f->last_errno = errno = __doserr_to_errno(err);
-      break;
-    }
+    if (err) { f->last_errno = errno = __doserr_to_errno(err);  break; }
     if (got == 0) { f->at_eof = true;       break; }
     total += (sz) got;
   }
@@ -197,10 +181,7 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
     unsigned int wrote = 0, err;
     if (want > 0xffffu) want = 0xffffu;
     err = _dos_write(f->fd, p + total, (unsigned int) want, &wrote);
-    if (err) {
-      f->last_errno = errno = __doserr_to_errno(err);
-      break;
-    }
+    if (err) { f->last_errno = errno = __doserr_to_errno(err);  break; }
     if (wrote == 0) break;
     total += (sz) wrote;
   }
@@ -212,10 +193,7 @@ int xpar_seek(xpar_file * f, i64 off, int whence) {
                  : whence == XPAR_SEEK_CUR ? 1 : 2;
   if (off > 0 && !off_fits((u64) off)) { errno = EOVERFLOW;  return -1; }
   if (off < -0x7fffffffLL)             { errno = EOVERFLOW;  return -1; }
-  if (dos_seek(f->fd, (i32) off, w, NULL) != 0) {
-    f->last_errno = errno;
-    return -1;
-  }
+  if (dos_seek(f->fd, (i32) off, w, NULL) != 0) { f->last_errno = errno;  return -1; }
   f->at_eof = false;
   return 0;
 }
@@ -269,14 +247,8 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
   bool saved_eof = f->at_eof;
   sz got;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
-  if (dos_seek(f->fd, 0, 1, &saved) != 0) {
-    f->last_errno = errno;
-    return 0;
-  }
-  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) {
-    f->last_errno = errno;
-    return 0;
-  }
+  if (dos_seek(f->fd, 0, 1, &saved) != 0) { f->last_errno = errno;  return 0; }
+  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) { f->last_errno = errno;  return 0; }
   got = xpar_read(f, buf, n);
   f->at_eof = saved_eof;
   if (dos_seek(f->fd, (i32) saved, 0, NULL) != 0)
@@ -293,14 +265,8 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
   u32 saved;
   sz put;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
-  if (dos_seek(f->fd, 0, 1, &saved) != 0) {
-    f->last_errno = errno;
-    return 0;
-  }
-  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) {
-    f->last_errno = errno;
-    return 0;
-  }
+  if (dos_seek(f->fd, 0, 1, &saved) != 0) { f->last_errno = errno;  return 0; }
+  if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) { f->last_errno = errno;  return 0; }
   put = xpar_write(f, buf, n);
   if (dos_seek(f->fd, (i32) saved, 0, NULL) != 0)
     f->last_errno = errno;
@@ -309,10 +275,7 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
 
 int xpar_ftruncate(xpar_file * f, u64 length) {
   if (!off_fits(length)) { errno = EOVERFLOW;  return -1; }
-  if (dos_resize(f->fd, (u32) length) != 0) {
-    f->last_errno = errno;
-    return -1;
-  }
+  if (dos_resize(f->fd, (u32) length) != 0) { f->last_errno = errno;  return -1; }
   return 0;
 }
 
@@ -334,7 +297,8 @@ void xpar_xwrite(xpar_file * f, const void * p, sz n) {
 }
 
 void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
-  For(u32, i, count, xpar_xwrite(f, part[i].data, part[i].length))
+  u32 i;
+  Fi(count, xpar_xwrite(f, part[i].data, part[i].length));
 }
 
 void xpar_xclose(xpar_file * f) {
@@ -342,10 +306,7 @@ void xpar_xclose(xpar_file * f) {
   if (!f || !f->owned) return;
   err = _dos_close(f->fd);
   free(f);
-  if (err) {
-    errno = __doserr_to_errno(err);
-    FATAL_PERROR("close");
-  }
+  if (err) { errno = __doserr_to_errno(err);  FATAL_PERROR("close"); }
 }
 
 xpar_mmap xpar_map(const char * path) {
@@ -356,10 +317,7 @@ xpar_mmap xpar_map(const char * path) {
   f = xpar_open(path, XPAR_O_RDONLY);
   if (!f) return m;
   n = xpar_size(f);
-  if (n < 0 || (u64) n > (u64) (sz) -1) {
-    xpar_close(f);
-    return m;
-  }
+  if (n < 0 || (u64) n > (u64) (sz) -1) { xpar_close(f);  return m; }
   m.map = (u8 *) malloc(n ? (sz) n : 1);
   if (!m.map || (n && xpar_read(f, m.map, (sz) n) != (sz) n)) {
     free(m.map);
@@ -387,27 +345,27 @@ void xpar_advise_random(xpar_file * f, u64 off, u64 len) {
 
 void * xpar_malloc(sz n) {
   void * p = calloc(n ? n : 1, 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
 void * xpar_calloc(sz n, sz size) {
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
   { void * p = calloc(n ? n : 1, size ? size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     return p; }
 }
 
 void * xpar_alloc_raw(sz n) {
   void * p = malloc(n ? n : 1);
-  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return p;
 }
 
 void * xpar_realloc(void * p, sz n) {
   void * q = realloc(p, n ? n : 1);
-  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!q) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   return q;
 }
 
@@ -418,13 +376,13 @@ void * xpar_alloc_aligned(sz n, sz align) {
   uintptr_t a;
   sz pad;
   if (align < sizeof(void *)) align = sizeof(void *);
-  if (!xpar_is_pow2(align)) FATAL("Alignment is not a power of two.");
+  if (!xpar_is_pow2(align)) FATAL("alignment is not a power of two");
   if (n == 0) n = 1;
   pad = align + sizeof(void *);
   if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
-                              "Allocation size overflow.");
+                              "allocation size overflow");
   raw = malloc(n + pad);
-  if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "Out of memory.");
+  if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
   a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
       ~(uintptr_t) (align - 1);
   ((void **) a)[-1] = raw;
@@ -487,8 +445,8 @@ static const struct { int n; const char * s; } err_tab[] = {
 static char err_gen[32];
 
 const char * xpar_strerror(int err) {
-  for (sz i = 0; i < ARRAY_LEN(err_tab); i++)
-    if (err_tab[i].n == err) return err_tab[i].s;
+  sz i;
+  Fi(ARRAY_LEN(err_tab), if (err_tab[i].n == err) return err_tab[i].s);
   xpar_snprintf(err_gen, sizeof err_gen, "error %d", err);
   return err_gen;
 }
@@ -531,10 +489,9 @@ void xpar_random_bytes(void * buf, sz n) {
   sz i;
   state ^= (u64) xpar_usec_now() + ((u64) xpar_wall_ns() << 16) + ++calls;
   if (!state) state = 1;
-  for (i = 0; i < n; i++) {
+  Fi(n,
     state = state * 6364136223846793005ULL + 1442695040888963407ULL;
-    p[i] = (u8) (state >> 56);   /*  Use the high bits of the LCG.  */
-  }
+    p[i] = (u8) (state >> 56)   /*  Use the high bits of the LCG.  */);
 }
 
 int main(int argc, char ** argv) {
@@ -564,7 +521,7 @@ static void crash_handler(int sig) {
   n = xpar_crash_walk_fp((void * const *) __builtin_frame_address(0),
                          frames, XPAR_CRASH_FRAMES);
   xpar_crash_head(crash_name(sig), (u64) sig, 1, NULL, NULL, 0, NULL);
-  for (i = 0; i < n; i++) xpar_crash_frame(i, frames[i], NULL);
+  Fi(n, xpar_crash_frame(i, frames[i], NULL));
   xpar_crash_tail(n != 0);
   signal(sig, SIG_DFL);
   raise(sig);

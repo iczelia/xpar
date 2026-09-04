@@ -15,7 +15,6 @@
 /*  Whole volume images, and the armoured frames inside them.  */
 
 #include "volimg.h"
-
 #include "gf.h"
 
 xpar_volimg_status xpar_volimg_read(xpar_volimg * v, const char * path,
@@ -36,10 +35,7 @@ xpar_volimg_status xpar_volimg_read(xpar_volimg * v, const char * path,
     n = xpar_size(f);
     /*  Half the address space, so that a later copy of the image still
         has somewhere to live on a 32-bit host.  */
-    if (n < 0) {
-      if (err) *err = xpar_error(f);
-      xpar_close(f);  return XPAR_VOLIMG_IO;
-    }
+    if (n < 0) { if (err) *err = xpar_error(f);  xpar_close(f);  return XPAR_VOLIMG_IO; }
     if ((u64) n > (u64) (sz) -1 / 2) { xpar_close(f);  return XPAR_VOLIMG_IO; }
     v->heap = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
     got = xpar_read(f, v->heap, (sz) n);
@@ -211,7 +207,7 @@ void xpar_armg_wrap(xpar_buf * out, const xpar_options * o,
   const char * why;
   xpar_armour_wrap_params(o, plain_len, &ap);
   why = xpar_armour_check(&ap);
-  if (why) FATAL("Invalid armour parameters: %s", why);
+  if (why) FATAL("invalid armour parameters: %s", why);
   xpar_gf_init();
   a = xpar_armour_new(&ap);
   xpar_armg_wrap_with(out, a, plain, plain_len, set_id, key);
@@ -224,14 +220,14 @@ void xpar_armg_wrap_each(xpar_buf * out, const xpar_options * o,
   sz at = 0;
   while (at + XPAR_PKT_HDR <= len) {
     u64 n = xpar_rd64(pkts + at + 8);
-    FATAL_UNLESS("internal: a packet buffer to be armoured is malformed.",
-                 n >= XPAR_PKT_HDR && !(n % XPAR_PKT_ALIGN) &&
-                 n <= (u64) (len - at));
+    FATAL_UNLESS(n >= XPAR_PKT_HDR && !(n % XPAR_PKT_ALIGN) &&
+                 n <= (u64) (len - at),
+                 "internal: a packet buffer to be armoured is malformed");
     xpar_armg_wrap(out, o, pkts + at, (sz) n, set_id, key);
     at += (sz) n;
   }
-  FATAL_UNLESS("internal: a packet buffer to be armoured is malformed.",
-               at == len);
+  FATAL_UNLESS(at == len,
+               "internal: a packet buffer to be armoured is malformed");
 }
 
 /*  Default frame-batch memory before tuning.  */

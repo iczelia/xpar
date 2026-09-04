@@ -12,12 +12,10 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  xpar: content-defined chunking and transient chunk fingerprints.  */
+/*  content-defined chunking and transient chunk fingerprints.  */
 
 #include "chunk.h"
-
 #include "pathname.h"
-
 #include "blake3.h"
 #include "container.h"
 #include "crc32c.h"
@@ -75,7 +73,7 @@ bool xpar_chunk_file(const char * path, u64 average,
       xpar_blake3_update(&prefix, buf, take);
       prefix_left -= take;
     }
-    for (i = 0; i < got; i++) {
+    Fi(got,
       bool cut = false;
       h = (h << 1) + gear[buf[i]];
       chunk_len++;
@@ -93,8 +91,7 @@ bool xpar_chunk_file(const char * path, u64 average,
       }
       chunk_at += chunk_len;
       chunk_len = 0;  h = 0;  run = i + 1;
-      xpar_blake3_init(&ch);
-    }
+      xpar_blake3_init(&ch));
     if (run < got) xpar_blake3_update(&ch, buf + run, got - run);
     file_at += got;
   }
@@ -155,8 +152,7 @@ static bool chunk_grow(xpar_chunk_index * x) {
   if ((u64) oldn * 2 * sizeof *old > x->max_bytes) return false;
   x->capacity *= 2;
   x->slot = (xpar_chunk_slot *) xpar_calloc(x->capacity, sizeof *x->slot);
-  for (i = 0; i < oldn; i++)
-    if (old[i].length) *chunk_probe(x, old[i].hash, old[i].length) = old[i];
+  Fi(oldn, if (old[i].length) *chunk_probe(x, old[i].hash, old[i].length) = old[i]);
   xpar_free(old);
   return true;
 }
@@ -207,7 +203,7 @@ bool xpar_chunk_cache_load(const char * path,
       xpar_rd32(h + 52) != xpar_crc32c(0, h, 52) || xpar_rd64(h + 56))
     goto done;
   ok = true;
-  for (i = 0; i < count; i++) {
+  Fi(count,
     u32 len;
     if (xpar_xread(f, r, sizeof r) != sizeof r) { ok = false;  break; }
     payload_crc = xpar_crc32c(payload_crc, r, sizeof r);
@@ -219,8 +215,7 @@ bool xpar_chunk_cache_load(const char * path,
       break;
     }
     chunk_probe(x, r, len)->refs = xpar_rd64(r + 32);
-    chunk_probe(x, r, len)->trust = 0;
-  }
+    chunk_probe(x, r, len)->trust = 0);
   if (ok && payload_crc != xpar_rd32(h + 48)) ok = false;
 done:
   xpar_xclose(f);
@@ -243,7 +238,7 @@ bool xpar_chunk_cache_write(const char * path,
   xpar_crc32c_init();
   /*  Compute the payload checksum without materialising a second copy of
       the index. This cache is explicitly bounded by --dedup-memory.  */
-  for (i = 0; i < x->capacity; i++) {
+  Fi(x->capacity,
     const xpar_chunk_slot * s = &x->slot[i];
     if (!s->length) continue;
     xpar_memset(r, 0, sizeof r);
@@ -251,8 +246,7 @@ bool xpar_chunk_cache_write(const char * path,
     xpar_wr64(r + 16, s->stream_offset);
     xpar_wr32(r + 24, s->length);
     xpar_wr64(r + 32, s->refs);
-    payload_crc = xpar_crc32c(payload_crc, r, sizeof r);
-  }
+    payload_crc = xpar_crc32c(payload_crc, r, sizeof r));
   xpar_wr32(h + 48, payload_crc);
   xpar_wr32(h + 52, xpar_crc32c(0, h, 52));
   for (suffix = 0; suffix < 1000; suffix++) {
@@ -267,7 +261,7 @@ bool xpar_chunk_cache_write(const char * path,
   }
   if (!f) return false;
   xpar_xwrite(f, h, sizeof h);
-  for (i = 0; i < x->capacity; i++) {
+  Fi(x->capacity,
     const xpar_chunk_slot * s = &x->slot[i];
     if (!s->length) continue;
     xpar_memset(r, 0, sizeof r);
@@ -275,18 +269,10 @@ bool xpar_chunk_cache_write(const char * path,
     xpar_wr64(r + 16, s->stream_offset);
     xpar_wr32(r + 24, s->length);
     xpar_wr64(r + 32, s->refs);
-    xpar_xwrite(f, r, sizeof r);
-  }
-  if (xpar_fsync(f) != 0) {
-    xpar_xclose(f);  xpar_remove(tmp);
-    xpar_free(tmp);
-    return false;
-  }
+    xpar_xwrite(f, r, sizeof r));
+  if (xpar_fsync(f) != 0) { xpar_xclose(f);  xpar_remove(tmp);  xpar_free(tmp);  return false; }
   xpar_xclose(f);
-  if (xpar_rename(tmp, path) != 0) {
-    xpar_remove(tmp);  xpar_free(tmp);
-    return false;
-  }
+  if (xpar_rename(tmp, path) != 0) { xpar_remove(tmp);  xpar_free(tmp);  return false; }
   if (xpar_fsync_dir(path) != 0) { xpar_free(tmp);  return false; }
   xpar_free(tmp);
   return true;

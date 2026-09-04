@@ -12,22 +12,14 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  GF(2^8) and GF(2^16) arithmetic interface.
-
-    Scalar operations use log tables.  Region operations dispatch to a
-    supported vector tier and operate on interleaved symbols without a
-    dependency between lanes.  */
+/*  GF(2^8) and GF(2^16) arithmetic.  */
 
 #ifndef XPAR_GF_H
 #define XPAR_GF_H
 
 #include "common.h"
 
-/*  The two fields.
-    alpha = 2, the class of x, generates the multiplicative group of both
-    fields. xpar_gf_init asserts that alpha returns to 1 only after the
-    full group order: a modulus that is irreducible but not primitive
-    repeats early and leaves most of the field without a logarithm.  */
+/*  Primitive fields with alpha = 2.  */
 
 #define XPAR_GF8_POLY   0x11DU     /*  x^8+x^4+x^3+x^2+1  */
 #define XPAR_GF16_POLY  0x1002DU   /*  x^16+x^5+x^3+x^2+1  */
@@ -68,10 +60,7 @@ static inline u16 xpar_gf16_alpha_pow(u32 e) {
 extern const u8  xpar_gf8_cantor[8];
 extern const u16 xpar_gf16_cantor[16];
 
-/*  Prepared coefficients contain both shuffle tables and affine matrices.
-    Callers prepare once and reuse across regions.  Preparation reads the
-    active tier, so a cached coefficient must be prepared after the tier is
-    chosen and rebuilt if the tier changes.  */
+/*  Tier-specific coefficients; rebuild after changing tier.  */
 
 typedef struct {
   u64 affine;    /*  The 8x8 GF(2) matrix of `x -> x * c`, GFNI order.  */
@@ -124,8 +113,7 @@ typedef struct {
   void (* ifft16)(u8 * x, u8 * y, sz n, const xpar_gf16_coef * m);
 } xpar_gf_kernels;
 
-/*  The resolved tier. Hot loops load it once outside every loop they
-    have; the convenience wrappers below go through it per call.  */
+/*  Resolved tier; hot loops should load it once.  */
 const xpar_gf_kernels * xpar_gf_active(void);
 
 /*  Convenience wrappers.  */
@@ -153,15 +141,11 @@ const char * xpar_gf_tier_name(int tier);
 bool         xpar_gf_tier_usable(int tier);  /*  Compiled and supported.  */
 int          xpar_gf_tier(void);             /*  The active index.  */
 
-/*  Force a tier. False, and no change, when the index is out of range or
-    the host lacks the instructions; running a kernel the host cannot
-    execute is a fault, not a slow path.  */
+/*  Force a tier; return false without change if unusable.  */
 bool xpar_gf_use_tier(int tier);
 bool xpar_gf_use_tier_name(const char * name);  /*  The --simd override.  */
 
-/*  Re-resolve the preference list against the current feature mask.
-    xpar_gf_init calls it; call it again after xpar_cpu_force, or the
-    selection made at startup outlives the mask it was made under.  */
+/*  Re-resolve after xpar_cpu_force.  */
 void xpar_gf_use_default_tier(void);
 
 /*  Per-ISA tables are built in separately flagged translation units.  */

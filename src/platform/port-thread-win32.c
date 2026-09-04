@@ -24,7 +24,6 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
 #include "common.h"
 #include "port-thread.h"
 
@@ -48,8 +47,7 @@ int xpar_core_count(void) {
   p = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION) xpar_alloc_raw(bytes);
   if (!glpi(p, &bytes)) { xpar_free(p);  return xpar_cpu_count(); }
   n = bytes / sizeof(*p);
-  for (i = 0; i < n; i++)
-    if (p[i].Relationship == RelationProcessorCore) cores++;
+  Fi(n, if (p[i].Relationship == RelationProcessorCore) cores++);
   xpar_free(p);
   return cores > 0 ? cores : xpar_cpu_count();
 }
@@ -118,8 +116,8 @@ xpar_pool * xpar_pool_create(int threads) {
   p->joined = CreateEvent(NULL, FALSE, FALSE, NULL);
   p->thread = xpar_alloc_raw((sz) (threads - 1) * sizeof(HANDLE));
   p->wake   = xpar_alloc_raw((sz) (threads - 1) * sizeof(HANDLE));
-  for (k = 0; k < threads - 1; k++) { p->thread[k] = NULL;  p->wake[k] = NULL; }
-  for (k = 0; k < threads - 1; k++) {
+  Fk(threads - 1, p->thread[k] = NULL;  p->wake[k] = NULL);
+  Fk(threads - 1,
     struct worker_arg * a;
     p->wake[k] = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (!p->wake[k] || !p->joined) { p->nthreads = k + 1;  break; }
@@ -134,17 +132,18 @@ xpar_pool * xpar_pool_create(int threads) {
       p->wake[k] = NULL;
       p->nthreads = k + 1;
       break;
-    }
-  }
+    });
   return p;
 }
 
 int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
+  int k;
   if (n == 0) return;
   if (!p || p->nthreads <= 1 || n == 1) {
-    For(sz, i, n, fn(i, ctx))
+    sz i;
+    Fi(n, fn(i, ctx));
     return;
   }
   EnterCriticalSection(&p->cs);
@@ -156,7 +155,7 @@ void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
   /*  SetEvent carries the publication of the fields above to the woken
       thread; the kernel transition is a full barrier on every Windows
       target.  */
-  Fk(p->nthreads - 1, SetEvent(p->wake[k]))
+  Fk(p->nthreads - 1, SetEvent(p->wake[k]));
 
   drain(p);
 
@@ -168,15 +167,12 @@ void xpar_pool_destroy(xpar_pool * p) {
   if (!p) return;
   if (p->thread) {
     p->stop = 1;
-    for (k = 0; k < p->nthreads - 1; k++)
-      if (p->wake[k]) SetEvent(p->wake[k]);
-    for (k = 0; k < p->nthreads - 1; k++) {
+    Fk(p->nthreads - 1, if (p->wake[k]) SetEvent(p->wake[k]));
+    Fk(p->nthreads - 1,
       if (!p->thread[k]) continue;
       WaitForSingleObject(p->thread[k], INFINITE);
-      CloseHandle(p->thread[k]);
-    }
-    for (k = 0; k < p->nthreads - 1; k++)
-      if (p->wake[k]) CloseHandle(p->wake[k]);
+      CloseHandle(p->thread[k]));
+    Fk(p->nthreads - 1, if (p->wake[k]) CloseHandle(p->wake[k]));
     xpar_free(p->thread);
     xpar_free(p->wake);
   }

@@ -30,14 +30,13 @@ typedef struct {
   u8 ifactor;         /*  Interlacing digit '1'..'4'; JOINT only.  */
 } xpar_v1_info;
 
-/*  Classify the first `n` bytes of a file. `n` below 8 always yields
-    XPAR_V1_NONE, since no v1 header is shorter.  */
+/*  Classify a file prefix; fewer than 8 bytes is never v1.  */
 xpar_v1_kind xpar_v1_detect(const u8 * head, sz n, xpar_v1_info * out);
 
-/*  Print the refusal of to stderr.  */
+/*  Report a v1 refusal.  */
 void xpar_v1_report(const char * path, const xpar_v1_info * info);
 
-/*  Open `path`, classify it, and if it is v1 report and exit non-zero.  */
+/*  Refuse `path` if it is v1.  */
 void xpar_v1_refuse_if_v1(const char * path);
 
 #endif

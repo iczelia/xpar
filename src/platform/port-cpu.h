@@ -12,10 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/*  CPU feature detection and cumulative SIMD tiers.
-
-    Only built kernels appear.  Forced tiers mask probed features down and
-    can never enable unsupported instructions.  */
+/*  CPU features and cumulative SIMD tiers.  */
 
 #ifndef XPAR_PORT_CPU_H
 #define XPAR_PORT_CPU_H
@@ -41,15 +38,10 @@
 
 #define XPAR_CPU_ALL       0xffffffffu
 
-/*  The probed mask intersected with whatever xpar_cpu_force last allowed.
-    Probing happens on the first call. The cache is a plain store with no
-    barrier, so the first call must happen before any thread pool exists;
-    the dispatcher tables are built at startup, which satisfies that.  */
+/*  Probed features restricted by xpar_cpu_force. Call before threading.  */
 u32 xpar_cpu_features(void);
 
-/*  Restrict the answer to `allow`. XPAR_CPU_ALL restores the probed set,
-    which is what a tier sweep does between iterations. Never widens: a
-    forced tier the CPU cannot run stays off.  */
+/*  Restrict features; XPAR_CPU_ALL restores the probe. Never widen.  */
 void xpar_cpu_force(u32 allow);
 
 /*  The tier ladder.  */
@@ -62,16 +54,13 @@ typedef struct {
 int                   xpar_cpu_tier_count(void);
 const xpar_cpu_tier * xpar_cpu_tier_at  (int i);
 
-/*  Index of `name` in the ladder, or -1. Unknown names are the caller's to
-    report, with xpar_cpu_tier_at to list what this build does have.  */
+/*  Tier index, or -1.  */
 int  xpar_cpu_tier_find(const char * name);
 
-/*  True when this CPU can run tier `i`. A compiled tier is not a runnable
-    one: a binary built on an AVX-512 host must still start on a Core 2.  */
+/*  Whether this CPU can run tier `i`.  */
 bool xpar_cpu_tier_usable(int i);
 
-/*  Highest usable tier, which is what the dispatcher selects by default.
-    Always >= 0 because tier 0 is `scalar` and needs nothing.  */
+/*  Highest usable tier; always at least scalar.  */
 int  xpar_cpu_tier_best(void);
 
 /*  Per-architecture feature probe and tier table.  */

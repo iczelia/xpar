@@ -18,7 +18,6 @@
 #include "chain.h"
 #include "vset.h"
 #include "volimg.h"
-
 #include "common.h"
 #include "auth.h"
 #include "chunk.h"
@@ -137,10 +136,7 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
   w = sym / 8;
 
   /* Keep the field's full-width code when parity is disabled. */
-  if (!o->armour_t && pct <= 0.0) {
-    p->depth = 1;
-    return;
-  }
+  if (!o->armour_t && pct <= 0.0) { p->depth = 1;  return; }
 
   /*  Solve n' = min(n, ceil(bytes/W) + 2t), with 2t = round(p*k').  */
   n = p->n;
@@ -231,17 +227,17 @@ static void armour_growth_or_die(const xpar_options * o, u64 object_bytes,
   u32 most, honoured = (p->n - p->k) / 2;
   if (o->armour_t && honoured < o->armour_t)
     FATAL("--armour-t %" PRIu32 " exceeds the GF(2^%" PRIu32
-          ") maximum of %" PRIu32 ".",
+          ") maximum of %" PRIu32 ,
           o->armour_t, p->symbol_bits, honoured);
   if (!armour_inflates(p, metadata)) return;
   most = armour_t_affordable(o, object_bytes, metadata);
   if (!most)
     FATAL("--armour-t %" PRIu32 " expands data %" PRIu64
           "x; a %" PRIu64 "-byte object is too small for any inner code "
-          "this wide.",
+          "this wide",
           o->armour_t, (u64) p->n / (p->k ? p->k : 1), object_bytes);
   FATAL("--armour-t %" PRIu32 " expands data %" PRIu64
-        "x; this input affords --armour-t %" PRIu32 ".",
+        "x; this input affords --armour-t %" PRIu32 ,
         o->armour_t, (u64) p->n / (p->k ? p->k : 1), most);
 }
 
@@ -264,10 +260,10 @@ static void armour_depth_or_die(const xpar_options * o, u64 budget,
   most.depth = armour_depth_max(budget, p);
   if (o->depth)
     FATAL("--depth %" PRIu32 " needs -m %" PRIu64
-          "; -m as given affords --depth %" PRIu64 ".", o->depth, need,
+          "; -m as given affords --depth %" PRIu64 , o->depth, need,
           most.depth);
   FATAL("--burst %" PRIu64 " needs -m %" PRIu64
-        "; -m as given affords --burst %" PRIu64 ".", o->burst, need,
+        "; -m as given affords --burst %" PRIu64 , o->burst, need,
         armour_burst(&most));
 }
 
@@ -294,10 +290,7 @@ static void rd_bytes(reader * r, u64 off, u8 * buf, u64 len) {
   ctx * c = r->c;
   if (c->stream_cache) {
     u64 rel, take;
-    if (off < c->m.stream_base) {
-      xpar_memset(buf, 0, (sz) len);
-      return;
-    }
+    if (off < c->m.stream_base) { xpar_memset(buf, 0, (sz) len);  return; }
     rel = off - c->m.stream_base;
     take = rel < c->stream_cache_length
              ? MIN(len, c->stream_cache_length - rel) : 0;
@@ -324,9 +317,9 @@ static void rd_bytes(reader * r, u64 off, u8 * buf, u64 len) {
       r->entry = sp.entry;  r->open = true;
     }
     if (xpar_seek(r->f, (i64) sp.file_offset, XPAR_SEEK_SET) != 0)
-      FATAL_IO("Cannot seek in '%s'.", c->m.source[sp.entry]);
+      FATAL_IO("cannot seek in '%s'", c->m.source[sp.entry]);
     if (xpar_xread(r->f, buf, (sz) take) != (sz) take)
-      FATAL_IO("'%s' is shorter than it was when it was scanned.",
+      FATAL_IO("'%s' is shorter than it was when it was scanned",
                c->m.source[sp.entry]);
     buf += take;  off += take;  len -= take;
   }
@@ -373,11 +366,10 @@ static void tag_pass(ctx * c) {
   buf = (u8 *) xpar_alloc_raw((sz) z);
   tag_alloc(c);
   rd_init(&r, c);
-  for (i = 0; i < s; i++) {
+  Fi(s,
     rd_bytes(&r, xpar_slice_begin(&c->geom, i), buf, z);
     tag_slice(c, i, buf);
-    xpar_progress_tick(&c->prog, xpar_slice_bytes(&c->geom, i));
-  }
+    xpar_progress_tick(&c->prog, xpar_slice_bytes(&c->geom, i)));
   rd_free(&r);
   xpar_free(buf);
 }
@@ -419,7 +411,7 @@ static void rs_open(recstore * rs, u64 count, u64 z, u64 budget,
     xpar_free(stem);
   }
   if (!rs->spill)
-    FATAL_IO("Cannot create a recovery spill file beside '%s': %s.", base,
+    FATAL_IO("cannot create a recovery spill file beside '%s': %s", base,
              xpar_strerror(xpar_errno()));
 }
 
@@ -458,10 +450,10 @@ static u64 encode_chunk(const ctx * c, u64 budget) {
              c->plan.codec, c->plan.field_log2, s, r,
              c->sd.recovery_axis_log2, (sz) want) > budget)
       want = (want / 2) & ~(u64) 63;
-    FATAL_UNLESS("The reserved FFT axis does not fit the memory limit.",
-                 xpar_codec_encode_footprint_axis(
+    FATAL_UNLESS(xpar_codec_encode_footprint_axis(
                    c->plan.codec, c->plan.field_log2, s, r,
-                   c->sd.recovery_axis_log2, (sz) want) <= budget);
+                   c->sd.recovery_axis_log2, (sz) want) <= budget,
+                 "the reserved FFT axis does not fit the memory limit");
     return want;
   }
   (void) s;
@@ -470,9 +462,9 @@ static u64 encode_chunk(const ctx * c, u64 budget) {
   if (want > z) want = z;
   if (!want)
     FATAL_CODE(XPAR_EXIT_NOPLAN,
-               "The matrix encoder needs %" PRIu64 " resident column buffers and "
+               "the matrix encoder needs %" PRIu64 " resident column buffers and "
                "-m admits none at the 64-byte minimum; raise -m to at "
-               "least %" PRIu64 " bytes.", per,
+               "least %" PRIu64 " bytes", per,
                (per * 64));
   return want;
 }
@@ -498,8 +490,8 @@ static void matrix_accumulate_job(sz index, void * arg) {
   st = xpar_codec_matrix_accumulate_many(
          b->cd, b->data_first, b->data, b->data_count, first,
          b->rec + first, count, b->bytes, b->clear);
-  FATAL_UNLESS("internal: matrix streaming encoder rejected a planned "
-               "recovery-row range.", st == XPAR_CODEC_OK);
+  FATAL_UNLESS(st == XPAR_CODEC_OK, "internal: matrix streaming encoder rejected a planned "
+               "recovery-row range");
 }
 
 static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
@@ -518,15 +510,15 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
   if (chunk == z) tag_alloc(c);
   else            tag_pass(c);
   if (rr > ((u64) -1 - chunk) / (direct ? z : chunk))
-    FATAL_CODE(XPAR_EXIT_NOPLAN, "Matrix column buffers exceed this host's "
-               "address space; lower -m or -b.");
+    FATAL_CODE(XPAR_EXIT_NOPLAN, "matrix column buffers exceed this host's "
+               "address space; lower -m or -b");
   used = direct ? rr * z + chunk : (rr + 1) * chunk;
   spare = budget > used ? budget - used : 0;
   input_count = cached ? s : 1 + spare / chunk;
   if (input_count > s) input_count = s;
   if (input_count + (direct ? 0 : rr) > (u64) (sz) -1 / chunk)
-    FATAL_CODE(XPAR_EXIT_NOPLAN, "Matrix column buffers exceed this host's "
-               "address space; lower -m or -b.");
+    FATAL_CODE(XPAR_EXIT_NOPLAN, "matrix column buffers exceed this host's "
+               "address space; lower -m or -b");
   if (!cached || !direct)
     pool = (u8 *) xpar_alloc_aligned(
              (sz) ((cached ? 0 : input_count) * chunk +
@@ -534,8 +526,7 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
   data = (u8 **) xpar_alloc_raw(
            (sz) (input_count + rr) * sizeof(u8 *));
   rec = data + input_count;
-  for (i = 0; i < input_count; i++)
-    data[i] = cached ? c->stream_cache + i * z : pool + i * chunk;
+  Fi(input_count, data[i] = cached ? c->stream_cache + i * z : pool + i * chunk);
   cd = xpar_codec_new_axis(c->plan.codec, c->plan.field_log2, s, rr,
                            c->sd.recovery_axis_log2);
   workers = xpar_pool_create(c->o->jobs > 0 ? c->o->jobs
@@ -548,14 +539,14 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
   rd_init(&r, c);
   for (at = 0; at < z; at += chunk) {
     u64 n = MIN(chunk, z - at);
-    for (i = 0; i < rr; i++)
+    Fi(rr,
       rec[i] = direct ? rs->mem + i * z + at
-                      : pool + (cached ? 0 : input_count * chunk) +
-                               i * chunk;
+          : pool + (cached ? 0 : input_count * chunk) +
+                   i * chunk);
     batch.bytes = (sz) n;
     for (first = 0; first < s; first += input_count) {
       count = MIN(input_count, s - first);
-      for (i = 0; i < count; i++) {
+      Fi(count,
         if (!cached)
           rd_bytes(&r, xpar_slice_begin(&c->geom, first + i) + at,
                    data[i], n);
@@ -563,8 +554,7 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
           tag_slice(c, first + i, data[i]);
           xpar_progress_tick(&c->prog,
                              xpar_slice_bytes(&c->geom, first + i));
-        }
-      }
+        });
       batch.data_first = first;
       batch.data_count = count;
       batch.clear = first == 0;
@@ -573,7 +563,7 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
       xpar_progress_tick(&c->prog, count * n);
     }
     if (!direct)
-      for (i = 0; i < rr; i++) rs_put(rs, i, at, rec[i], n);
+      Fi(rr, rs_put(rs, i, at, rec[i], n));
   }
   rd_free(&r);
   xpar_pool_destroy(workers);
@@ -590,31 +580,27 @@ static void encode(ctx * c, recstore * rs, u64 budget) {
   u8 * pool, ** data, ** rec;
   if (!s) return;
   if (!rr) { tag_pass(c);  return; }
-  if (c->plan.codec == XPAR_CODEC_MATRIX) {
-    encode_matrix(c, rs, budget);
-    return;
-  }
+  if (c->plan.codec == XPAR_CODEC_MATRIX) { encode_matrix(c, rs, budget);  return; }
   tag_pass(c);
   if ((s + rr) * chunk > (u64) (sz) -1)
-    FATAL_CODE(XPAR_EXIT_NOPLAN, "Column buffers exceed this host's "
-               "address space; lower -m or -b.");
+    FATAL_CODE(XPAR_EXIT_NOPLAN, "column buffers exceed this host's "
+               "address space; lower -m or -b");
   pool = (u8 *) xpar_alloc_aligned((sz) ((s + rr) * chunk), 64);
   data = (u8 **) xpar_alloc_raw((sz) (s + rr) * sizeof(u8 *));
   rec  = data + s;
-  for (i = 0; i < s + rr; i++) data[i] = pool + i * chunk;
+  Fi(s + rr, data[i] = pool + i * chunk);
   cd = xpar_codec_new_axis(c->plan.codec, c->plan.field_log2, s, rr,
                            c->sd.recovery_axis_log2);
   rd_init(&r, c);
   for (at = 0; at < z; at += chunk) {
     u64 n = MIN(chunk, z - at);
-    for (i = 0; i < s; i++)
-      rd_bytes(&r, xpar_slice_begin(&c->geom, i) + at, data[i], n);
+    Fi(s, rd_bytes(&r, xpar_slice_begin(&c->geom, i) + at, data[i], n));
     if (xpar_codec_encode(cd, (const u8 * const *) data, rec, (sz) n) !=
         XPAR_CODEC_OK)
       FATAL_CODE(XPAR_EXIT_INTERNAL,
                  "internal: the codec refused a geometry the planner "
-                 "accepted.");
-    for (i = 0; i < rr; i++) rs_put(rs, i, at, rec[i], n);
+                 "accepted");
+    Fi(rr, rs_put(rs, i, at, rec[i], n));
     xpar_progress_tick(&c->prog, s * n);
   }
   rd_free(&r);
@@ -634,8 +620,9 @@ static void compute_set_id(ctx * c) {
   xpar_memset(zero, 0, sizeof zero);
   xpar_buf_init(&b);
   xpar_setd_write(&b, &c->sd, zero, NULL);
-  For(u32, i, c->m.count,
-      xpar_entry_write(&b, &c->m.entry[i], zero, NULL, &c->wr))
+  u32 i;
+  Fi(c->m.count,
+    xpar_entry_write(&b, &c->m.entry[i], zero, NULL, &c->wr));
   while (p + XPAR_PKT_HDR <= b.len) {
     u64 len = xpar_rd64(b.data + p + 8);
     const u8 * body = b.data + p + XPAR_PKT_HDR;
@@ -656,7 +643,7 @@ static void auth_only_hashes(ctx * c) {
   xpar_nameidx ix;
   u32 i;
   xpar_nameidx_build(&c->m, &ix);
-  for (i = 0; i < c->m.count; i++) {
+  Fi(c->m.count,
     xpar_entry * e = &c->m.entry[i];
     xpar_blake3_t h;
     if (e->entry_type == XPAR_ENTRY_HARDLINK) continue;
@@ -671,7 +658,7 @@ static void auth_only_hashes(ctx * c) {
         sz n = xpar_read(f, buf, sizeof buf);
         if (n) xpar_blake3_update(&h, buf, n);
         if (n < sizeof buf) {
-          if (xpar_error(f)) FATAL_IO("Reading '%s' failed.", c->m.source[i]);
+          if (xpar_error(f)) FATAL_IO("reading '%s' failed", c->m.source[i]);
           if (xpar_eof(f) || !n) break;
         }
       }
@@ -679,17 +666,15 @@ static void auth_only_hashes(ctx * c) {
       xpar_secure_zero(buf, sizeof buf);
     }
     xpar_blake3_final(&h, e->content_hash, 32);
-    xpar_secure_zero(&h, sizeof h);
-  }
-  for (i = 0; i < c->m.count; i++) {
+    xpar_secure_zero(&h, sizeof h));
+  Fi(c->m.count,
     xpar_entry * e = &c->m.entry[i];
     i64 t;
     if (e->entry_type != XPAR_ENTRY_HARDLINK) continue;
     t = xpar_link_target(&c->m, &ix, i);
-    FATAL_UNLESS("Hard-link entry '%.*s' has no canonical target.",
-                 t >= 0, (int) e->name_len, e->name);
-    xpar_memcpy(e->content_hash, c->m.entry[t].content_hash, 32);
-  }
+    FATAL_UNLESS(t >= 0,
+                 "hard-link entry '%.*s' has no canonical target", (int) e->name_len, e->name);
+    xpar_memcpy(e->content_hash, c->m.entry[t].content_hash, 32));
   xpar_nameidx_free(&ix);
 }
 
@@ -782,8 +767,8 @@ static void check_reachable(ctx * c) {
   lost = xpar_manifest_unreachable(&c->m, dir, c->o->stdin_name);
   xpar_free(dir);
   if (lost)
-    FATAL("Sidecar entry '%.*s' is unreachable. Place the set beside its "
-          "data or use --base.",
+    FATAL("sidecar entry '%.*s' is unreachable; place the set beside its "
+          "data or use --base",
           (int) lost->name_len, lost->name);
 }
 
@@ -804,12 +789,12 @@ static void check_manifest(ctx * c) {
     const char * a = c->m.source[res.entry] ? c->m.source[res.entry] : "?";
     const char * b = c->m.source[res.other] ? c->m.source[res.other] : "?";
     if (!xpar_strcmp(a, b))
-      FATAL("Input '%s' is duplicated as '%.*s'.", a,
+      FATAL("input '%s' is duplicated as '%.*s'", a,
             (int) e->name_len, e->name);
-    FATAL("'%s' and '%s' both map to '%.*s'. Use --base to disambiguate.",
+    FATAL("'%s' and '%s' both map to '%.*s'; use --base to disambiguate",
           a, b, (int) e->name_len, e->name);
   }
-  FATAL("Entry '%.*s' cannot be stored: %s.", (int) e->name_len, e->name,
+  FATAL("entry '%.*s' cannot be stored: %s", (int) e->name_len, e->name,
         xpar_mf_reason(res.status));
 }
 
@@ -818,8 +803,8 @@ static void check_manifest(ctx * c) {
     aliases that an archive could otherwise verify against itself.  */
 static void verify_after(ctx * c, char * const * names, u32 count) {
   (void) count;
-  FATAL_UNLESS("internal: no index/archive path was retained for read-back.",
-               names && names[0]);
+  FATAL_UNLESS(names && names[0],
+               "internal: no index/archive path was retained for read-back");
   xpar_verify_written_set_sources(c->o, names[0], &c->m);
 }
 
@@ -858,7 +843,7 @@ static void emit_json_set(ctx * c) {
 static void emit_json_files(ctx * c) {
   u32 i;
   if (!c->o->json) return;
-  for (i = 0; i < c->m.count; i++) {
+  Fi(c->m.count,
     const xpar_entry * e = &c->m.entry[i];
     xpar_json_begin(&c->js, "file");
     xpar_json_u64 (&c->js, "index", i);
@@ -866,8 +851,7 @@ static void emit_json_files(ctx * c) {
     xpar_json_u64 (&c->js, "length", e->length);
     xpar_json_u64 (&c->js, "extents", e->extent_count);
     xpar_json_hex (&c->js, "content_hash", e->content_hash, 32);
-    xpar_json_end (&c->js);
-  }
+    xpar_json_end (&c->js));
 }
 
 static void build_walk(const xpar_options * o, xpar_walk_opts * w, u64 z) {
@@ -917,7 +901,7 @@ static void stage_chunk_cache(ctx * c, const xpar_walk_opts * w) {
       !xpar_chunk_cache_write(c->chunk_cache_stage, c->set_id,
                               w->dedup_chunk, &c->chunk_cache)) {
     if (c->o->verbose)
-      xpar_fprintf(xpar_stderr, "xpar: could not stage chunk cache '%s'.\n",
+      xpar_fprintf(xpar_stderr, "xpar: could not stage chunk cache '%s'\n",
                    c->chunk_cache_path);
     xpar_free(c->chunk_cache_stage);  c->chunk_cache_stage = NULL;
   }
@@ -929,7 +913,7 @@ static void publish_chunk_cache(ctx * c) {
   if (xpar_rename(c->chunk_cache_stage, c->chunk_cache_path) != 0 ||
       xpar_fsync_dir(c->chunk_cache_path) != 0) {
     if (c->o->verbose)
-      xpar_fprintf(xpar_stderr, "xpar: could not publish chunk cache '%s'.\n",
+      xpar_fprintf(xpar_stderr, "xpar: could not publish chunk cache '%s'\n",
                    c->chunk_cache_path);
     xpar_remove(c->chunk_cache_stage);
   }
@@ -976,20 +960,20 @@ static void geometry_refused(const xpar_options * o, const xpar_geom_req * gr,
                              xpar_geom_status gs) {
   u64 field = (u64) 1 << gr->field_log2, s = 0, r = 0, z;
   f64 mult;
-  if (gs != XPAR_GEOM_FIELD) FATAL("%s.", xpar_geom_reason(gs));
+  if (gs != XPAR_GEOM_FIELD) FATAL("%s", xpar_geom_reason(gs));
   xpar_geom_reach(gr, &s, &r);
   if (s >= field) {
     z = (xpar_ceil_div(gr->stream_length, field - 1) + 63) & ~(u64) 63;
     FATAL("S=%" PRIu64 " exceeds the field limit of %" PRIu64
-          "; use -s %" PRIu64 " or larger, or -b %" PRIu64 " or smaller.",
+          "; use -s %" PRIu64 " or larger, or -b %" PRIu64 " or smaller",
           s, field, z, field - 1);
   }
   if (o->slice_size || o->slices)
-    FATAL("Field limit: S+R <= %" PRIu64 "; S=%" PRIu64 " leaves R=%"
-          PRIu64 ". Reduce -r or omit -s/-b.", field, s, r);
+    FATAL("field limit: S+R <= %" PRIu64 "; S=%" PRIu64 " leaves R=%"
+          PRIu64 "; reduce -r or omit -s/-b", field, s, r);
   mult = s ? (f64) r / (f64) s : 0.0;
-  FATAL("Field limit S+R<=%" PRIu64 ": %" PRIu64 " bytes allow S=%" PRIu64
-        " and R=%" PRIu64 " (%.2fx, %.0f%%). Reduce -r or split the set.",
+  FATAL("field limit S+R<=%" PRIu64 ": %" PRIu64 " bytes allow S=%" PRIu64
+        " and R=%" PRIu64 " (%.2fx, %.0f%%); reduce -r or split the set",
         field, gr->stream_length, s, r, mult, mult * 100.0);
 }
 
@@ -1003,7 +987,7 @@ static xpar_file * create_stage_open(const char * dir, char ** path) {
   xpar_file * f = xpar_stage_open(stem, "XSI", XPAR_O_WRONLY, 0, path);
   xpar_free(stem);
   if (!f)
-    FATAL_IO("Cannot create a secure pipe staging file in '%s': %s.", dir,
+    FATAL_IO("cannot create a secure pipe staging file in '%s': %s", dir,
              xpar_strerror(xpar_errno()));
   return f;
 }
@@ -1027,11 +1011,10 @@ static void stage_sweep(void) {
     }
     xpar_closedir(d);
   }
-  for (i = 0; i < count; i++) {
+  Fi(count,
     char * p = xpar_path_join(dir, name[i]);
     (void) xpar_remove(p);
-    xpar_free(p);  xpar_free(name[i]);
-  }
+    xpar_free(p);  xpar_free(name[i]));
   xpar_free(name);
   (void) xpar_rmdir(dir);
 }
@@ -1042,11 +1025,11 @@ static char * create_output_stage(const char * base) {
   char * path = xpar_stage_dir(stem, "XCR");
   xpar_free(parent);  xpar_free(stem);
   if (!path)
-    FATAL_IO("Cannot create an output staging directory beside '%s'.", base);
+    FATAL_IO("cannot create an output staging directory beside '%s'", base);
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   {
     char * absolute = xpar_path_lex_abs(path);
-    if (!absolute) FATAL_IO("Cannot resolve DOS staging directory '%s'.", path);
+    if (!absolute) FATAL_IO("cannot resolve DOS staging directory '%s'", path);
     xpar_free(path);
     path = absolute;
   }
@@ -1061,7 +1044,7 @@ static bool publish_discard(char * const * from, u32 total, u32 extra,
                             const char * stage_dir) {
   u32 i;
   if (extra) return false;
-  for (i = 0; i < total; i++) (void) xpar_remove(from[i]);
+  Fi(total, (void) xpar_remove(from[i]));
   return xpar_rmdir(stage_dir) == 0;
 }
 
@@ -1080,10 +1063,7 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   u32 stranded = 0;
   int saved = 0;
   xpar_stat_t st;
-  if (extra) {
-    from[at] = xpar_strdup(extra_from);
-    to[at++] = xpar_strdup(extra_to);
-  }
+  if (extra) { from[at] = xpar_strdup(extra_from);  to[at++] = xpar_strdup(extra_to); }
   for (i = 1; i < count; i++, at++) {
     from[at] = xpar_strdup(stage[i]);
     to[at] = xpar_strdup(final[i]);
@@ -1097,11 +1077,11 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   /*  Do not overwrite protected inputs.  */
   for (i = 0; m && i < total; i++) {
     u32 j;
-    for (j = 0; j < m->count; j++)
+    Fj(m->count,
       if (m->source[j] && xpar_path_same(m->source[j], to[i])) {
         publish_discard(from, total, extra, stage_dir);
-        FATAL("Output '%s' is also an input. Nothing was published.", to[i]);
-      }
+        FATAL("output '%s' is also an input; nothing was published", to[i]);
+      });
   }
   for (i = 0; i < total; i++) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
@@ -1115,43 +1095,33 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) {
       if (publish_discard(from, total, extra, stage_dir))
-        FATAL("'%s' exists. Use -f to overwrite it.", to[i]);
-      FATAL("'%s' exists. Use -f to overwrite it. The staged set remains "
-            "in '%s'.",
+        FATAL("'%s' exists; use -f to overwrite it", to[i]);
+      FATAL("'%s' exists; use -f to overwrite it; the staged set remains "
+            "in '%s'",
             to[i], stage_dir);
     }
   }
   /* Recheck shared outputs and preserve rollback on refusal. */
-  for (i = 0; i < total; i++) {
+  Fi(total,
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
     if (!o->force) { collision = true;  goto rollback_old; }
     /*  Keep the old output reachable under both names while publishing.  */
-    if (xpar_keep_aside(to[i], backup[i]) != 0) {
-      saved = xpar_errno();  goto rollback_old;
-    }
-    had[i] = true;
-  }
-  for (i = 0; i < total; i++) {
-    if (xpar_rename(from[i], to[i]) != 0) {
-      saved = xpar_errno();  goto rollback_new;
-    }
-    published++;
-  }
-  if (xpar_fsync_dir(to[total - 1]) != 0) {
-    saved = xpar_errno();  goto rollback_new;
-  }
-  for (i = 0; i < total; i++)
+    if (xpar_keep_aside(to[i], backup[i]) != 0) { saved = xpar_errno();  goto rollback_old; }
+    had[i] = true);
+  Fi(total,
+    if (xpar_rename(from[i], to[i]) != 0) { saved = xpar_errno();  goto rollback_new; }
+    published++);
+  if (xpar_fsync_dir(to[total - 1]) != 0) { saved = xpar_errno();  goto rollback_new; }
+  Fi(total,
     if (had[i] && xpar_remove(backup[i]) != 0)
       xpar_fprintf(xpar_stderr,
-                   "xpar: warning: old output remains at '%s'.\n", backup[i]);
+                   "xpar: warning: old output remains at '%s'\n", backup[i]));
   if (xpar_rmdir(stage_dir) != 0)
     xpar_fprintf(xpar_stderr,
-                 "xpar: warning: output staging directory '%s' remains.\n",
+                 "xpar: warning: output staging directory '%s' remains\n",
                  stage_dir);
-  for (i = 0; i < total; i++) {
-    xpar_free(from[i]);  xpar_free(to[i]);  xpar_free(backup[i]);
-  }
+  Fi(total, xpar_free(from[i]);  xpar_free(to[i]);  xpar_free(backup[i]));
   xpar_free(from);  xpar_free(to);  xpar_free(backup);  xpar_free(had);
   return;
 
@@ -1161,7 +1131,7 @@ rollback_new:
     published--;
     if (xpar_rename(to[published], from[published]) != 0) {
       stranded++;
-      xpar_fprintf(xpar_stderr, "xpar: warning: '%s' stays published: %s.\n",
+      xpar_fprintf(xpar_stderr, "xpar: warning: '%s' stays published: %s\n",
                    to[published], xpar_strerror(xpar_errno()));
     }
   }
@@ -1169,19 +1139,19 @@ rollback_old:
   for (u32 j = total; j > 0; j--)
     if (had[j - 1] && xpar_put_back(to[j - 1], backup[j - 1]) != 0)
       xpar_fprintf(xpar_stderr,
-                   "xpar: warning: old output remains at '%s'.\n",
+                   "xpar: warning: old output remains at '%s'\n",
                    backup[j - 1]);
   if (irregular)
-    FATAL("Output '%s' is not regular. The set remains in '%s'.",
+    FATAL("output '%s' is not regular; the set remains in '%s'",
           to[i], stage_dir);
   if (collision)
-    FATAL("Output '%s' appeared. The set remains in '%s'.", to[i], stage_dir);
+    FATAL("output '%s' appeared; the set remains in '%s'", to[i], stage_dir);
   if (stranded)
-    FATAL_IO("Cannot publish '%s'. %s. %" PRIu32 " file%s remain%s published. "
-             "The set remains in '%s'.", to[i < total ? i : total - 1],
+    FATAL_IO("cannot publish '%s'; %s; %" PRIu32 " file%s remain%s published; "
+             "the set remains in '%s'", to[i < total ? i : total - 1],
              xpar_strerror(saved), stranded, PLURAL(stranded),
              stranded == 1 ? "s" : "", stage_dir);
-  FATAL_IO("Cannot publish '%s'. %s. The set remains in '%s'.",
+  FATAL_IO("cannot publish '%s'; %s; the set remains in '%s'",
            to[i < total ? i : total - 1],
            xpar_strerror(saved), stage_dir);
 }
@@ -1198,10 +1168,7 @@ static bool create_copy_file(const char * from, const char * to) {
   for (;;) {
     sz n = xpar_read(in, buf, (sz) 1 << 20);
     if (n && xpar_write(out, buf, n) != n) { ok = false;  break; }
-    if (n < ((sz) 1 << 20)) {
-      if (xpar_error(in)) ok = false;
-      break;
-    }
+    if (n < ((sz) 1 << 20)) { if (xpar_error(in)) ok = false;  break; }
   }
   if (ok && xpar_fsync(out) != 0) ok = false;
   xpar_free(buf);
@@ -1215,20 +1182,20 @@ static void create_stage_input(pipe_ready * ready, const char * to,
   const char * from = ready->source_path;
   u32 i;
   if (xpar_rename(from, to) != 0 && !create_copy_file(from, to))
-    FATAL_IO("Cannot stage pipe input '%s': %s.", to,
+    FATAL_IO("cannot stage pipe input '%s': %s", to,
              xpar_strerror(xpar_errno()));
-  for (i = 0; i < m->count; i++)
+  Fi(m->count,
     if (m->source[i] && !xpar_strcmp(m->source[i], from)) {
       xpar_free(m->source[i]);
       m->source[i] = xpar_strdup(to);
-    }
+    });
 }
 
 char * xpar_spool_stdin(const xpar_options * o) {
   const char * anchor = o->output && o->output[0] ? o->output : o->set;
   char * outdir;
-  FATAL_UNLESS("A pipe spool needs an output or set path.",
-               anchor && anchor[0]);
+  FATAL_UNLESS(anchor && anchor[0],
+               "a pipe spool needs an output or set path");
   outdir = xpar_path_dir(anchor);
   char * dir = o->spool_dir ? xpar_strdup(o->spool_dir) : outdir;
   char * stage = NULL;
@@ -1242,13 +1209,13 @@ char * xpar_spool_stdin(const xpar_options * o) {
     sz got = xpar_read(xpar_stdin, buf, (sz) 1 << 20);
     if (got) xpar_xwrite(f, buf, got);
     if (got < ((sz) 1 << 20)) {
-      if (xpar_error(xpar_stdin)) FATAL_IO("Reading standard input failed.");
+      if (xpar_error(xpar_stdin)) FATAL_IO("reading standard input failed");
       if (xpar_eof(xpar_stdin) || !got) break;
     }
   }
   xpar_free(buf);
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
-    FATAL_IO("Cannot flush pipe staging file '%s'.", stage);
+    FATAL_IO("cannot flush pipe staging file '%s'", stage);
   xpar_xclose(f);
   xpar_free(dir);
   return stage;
@@ -1261,16 +1228,16 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
   u32 i;
   bool had = false;
   xpar_stat_t st;
-  FATAL_UNLESS("Publishing a pipe input needs an output or set path.",
-               anchor && anchor[0]);
+  FATAL_UNLESS(anchor && anchor[0],
+               "publishing a pipe input needs an output or set path");
   outdir = xpar_path_dir(anchor);
   final = xpar_path_join(outdir, o->stdin_name);
   parent = xpar_path_dir(final);
   if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
   if (xpar_lstat(final, &st) == 0) {
     if (!st.is_regular)
-      FATAL("Refusing to replace non-regular pipe destination '%s'.", final);
-    if (!o->force) FATAL("'%s' exists. Use -f to overwrite it.", final);
+      FATAL("refusing to replace non-regular pipe destination '%s'", final);
+    if (!o->force) FATAL("'%s' exists; use -f to overwrite it", final);
     had = true;
   }
   for (i = 0; i < 1000; i++) {
@@ -1284,7 +1251,7 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
       break;
     xpar_free(local);  local = NULL;
   }
-  if (!local) FATAL_IO("Cannot stage pipe input beside '%s'.", final);
+  if (!local) FATAL_IO("cannot stage pipe input beside '%s'", final);
   if (had) {
     for (i = 0; i < 1000; i++) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
@@ -1297,18 +1264,18 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
     }
     if (!backup || xpar_rename(final, backup) != 0) {
       xpar_remove(local);
-      FATAL_IO("Cannot stage the old pipe destination '%s'.", final);
+      FATAL_IO("cannot stage the old pipe destination '%s'", final);
     }
   }
   if (xpar_rename(local, final) != 0 || xpar_fsync_dir(final) != 0) {
     int saved = xpar_errno();
     if (xpar_lstat(final, &st) == 0) (void) xpar_rename(final, local);
     if (backup) (void) xpar_rename(backup, final);
-    FATAL_IO("Cannot publish pipe input as '%s': %s.", final,
+    FATAL_IO("cannot publish pipe input as '%s': %s", final,
              xpar_strerror(saved));
   }
   if (backup && xpar_remove(backup) != 0)
-    xpar_fprintf(xpar_stderr, "xpar: old pipe input remains at '%s'.\n",
+    xpar_fprintf(xpar_stderr, "xpar: old pipe input remains at '%s'\n",
                  backup);
   if (xpar_lstat(stage, &st) == 0) (void) xpar_remove(stage);
   xpar_free(local);  xpar_free(backup);
@@ -1333,7 +1300,7 @@ static int create_from_pipe_spooled(const xpar_options * o) {
       if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
       xpar_free(parent); }
     if (!o->force && xpar_lstat(final, &st) == 0)
-      FATAL("'%s' exists. Use -f to overwrite it.", final);
+      FATAL("'%s' exists; use -f to overwrite it", final);
   }
   one[0] = stage;
   nested.paths = one;  nested.path_count = 1;  nested.from_stdin = false;
@@ -1342,7 +1309,7 @@ static int create_from_pipe_spooled(const xpar_options * o) {
   ready.final_path = final;
   rc = create_regular(&nested, &ready);
   if (xpar_lstat(stage, &st) == 0 && xpar_remove(stage) != 0 && o->verbose)
-    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'.\n",
+    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'\n",
                  stage);
   xpar_free(final);  xpar_free(stage);
   xpar_free(outdir);
@@ -1395,22 +1362,22 @@ static int create_from_pipe_direct(const xpar_options * o) {
   int rc;
 
   xpar_memset(&ready, 0, sizeof ready);
-  FATAL_UNLESS("Direct split pipe input supports one data volume; use "
-               "--spool with --volumes=N.",
-               o->layout != XPAR_LAYOUT_SPLIT ||
-               o->volumes != XPAR_VOLS_FIXED || o->volume_count <= 1);
-  FATAL_UNLESS("Direct pipe slices must be at least 4 KiB and 64-byte aligned.",
-               z >= XPAR_SLICE_MIN && !(z & 63));
+  FATAL_UNLESS(o->layout != XPAR_LAYOUT_SPLIT ||
+               o->volumes != XPAR_VOLS_FIXED || o->volume_count <= 1,
+               "direct split pipe input supports one data volume; use "
+               "--spool with --volumes=N");
+  FATAL_UNLESS(z >= XPAR_SLICE_MIN && !(z & 63),
+               "direct pipe slices must be at least 4 KiB and 64-byte aligned");
   q = (u64) 1 << field;
-  FATAL_UNLESS("Recovery count exhausts GF(2^%" PRIu8 "); reduce -r or use "
-               "--field=16.", r < q, field);
-  FATAL_UNLESS("A one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %"
-               PRIu64 ".",
-               r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
+  FATAL_UNLESS(r < q, "recovery count exhausts GF(2^%" PRIu8 "); reduce -r or use "
+               "--field=16", field);
+  FATAL_UNLESS(r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
+               "a one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %"
+               PRIu64 ,
                ((r + 1) * z),
                budget);
-  FATAL_UNLESS("The pipe buffers exceed this host's address space.",
-               r * z <= (u64) (sz) -1 && z <= (u64) (sz) -1);
+  FATAL_UNLESS(r * z <= (u64) (sz) -1 && z <= (u64) (sz) -1,
+               "the pipe buffers exceed this host's address space");
 
   if (o->layout == XPAR_LAYOUT_SPLIT)
     xpar_asprintf(&final, "%s.d00", o->output);
@@ -1419,41 +1386,36 @@ static int create_from_pipe_direct(const xpar_options * o) {
   parent = xpar_path_dir(final);
   if (xpar_mkdir_p(parent, 0777) != 0) FATAL_PERROR(parent);
   if (!o->force && xpar_lstat(final, &st) == 0)
-    FATAL("'%s' exists. Use -f to overwrite it.", final);
+    FATAL("'%s' exists; use -f to overwrite it", final);
   f = create_stage_open(parent, &stage);
 
   ready.rs.z = z;  ready.rs.count = r;
   ready.rs.mem = (u8 *) xpar_calloc((sz) r, (sz) z);
   data = (u8 *) xpar_alloc_aligned((sz) z, 64);
   rec = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  for (u64 i = 0; i < r; i++) rec[i] = ready.rs.mem + i * z;
+  u64 i;
+  Fi(r, rec[i] = ready.rs.mem + i * z);
   max_s = q - r;
   cd = xpar_codec_new(XPAR_CODEC_MATRIX, field, max_s, r);
   workers = xpar_pool_create(o->jobs);
 
   for (;;) {
     sz got = xpar_read(xpar_stdin, data + filled, (sz) (z - filled));
-    if (got) {
-      xpar_xwrite(f, data + filled, got);
-      filled += got;
-    }
+    if (got) { xpar_xwrite(f, data + filled, got);  filled += got; }
     if (filled == z) {
-      FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+      FATAL_UNLESS(slices < max_s, "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
                    "-slice data limit; "
-                   "raise -s or use --spool.", slices < max_s, field,
+                   "raise -s or use --spool", field,
                    max_s);
       create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
       slices++;  filled = 0;
     }
-    if (got == 0) {
-      if (xpar_error(xpar_stdin)) FATAL_IO("Reading standard input failed.");
-      break;
-    }
+    if (got == 0) { if (xpar_error(xpar_stdin)) FATAL_IO("reading standard input failed");  break; }
   }
   if (filled) {
-    FATAL_UNLESS("The pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+    FATAL_UNLESS(slices < max_s, "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
                  "-slice data limit; "
-                 "raise -s or use --spool.", slices < max_s, field,
+                 "raise -s or use --spool", field,
                  max_s);
     xpar_memset(data + filled, 0, (sz) (z - filled));
     create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
@@ -1464,11 +1426,9 @@ static int create_from_pipe_direct(const xpar_options * o) {
   xpar_free(rec);
   xpar_free_aligned(data);
   if (xpar_flush(f) != 0 || xpar_fsync(f) != 0)
-    FATAL_IO("Cannot flush direct pipe output '%s'.", stage);
+    FATAL_IO("cannot flush direct pipe output '%s'", stage);
   xpar_xclose(f);
-  if (!slices) {
-    xpar_free(ready.rs.mem);  ready.rs.mem = NULL;  ready.rs.count = 0;
-  }
+  if (!slices) { xpar_free(ready.rs.mem);  ready.rs.mem = NULL;  ready.rs.count = 0; }
   ready.slices = slices;  ready.field_log2 = field;
   ready.encoded = true;
   ready.source_path = stage;
@@ -1481,7 +1441,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   rc = create_regular(&nested, &ready);
 
   if (xpar_lstat(stage, &st) == 0 && xpar_remove(stage) != 0 && o->verbose)
-    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'.\n",
+    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'\n",
                  stage);
   xpar_free(stage);  xpar_free(parent);  xpar_free(final);
   xpar_free(outdir);
@@ -1529,7 +1489,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   }
 
   xpar_json_init(&c.js, o->json ? xpar_stdout : xpar_stderr, o->json);
-  xpar_progress_init(&c.prog, xpar_progress_wanted(o), 0, "Creating");
+  xpar_progress_init(&c.prog, xpar_progress_wanted(o), 0, "creating");
   if (o->json) xpar_progress_sink(&c.prog, xpar_json_progress_sink, &c.js);
 
   c.wr.reproducible = o->reproducible;
@@ -1562,13 +1522,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     e->name = xpar_strdup(o->stdin_name);
     e->name_len = (u32) xpar_strlen(o->stdin_name);
   }
-  FATAL_UNLESS("Nothing to protect; all inputs were skipped or filtered.",
-               c.m.count > 0);
+  FATAL_UNLESS(c.m.count > 0,
+               "nothing to protect; all inputs were skipped or filtered");
   check_reachable(&c);
   if (o->align == XPAR_ALIGN_SLICE && !o->slice_size) {
     u64 sum = 0;
     xpar_memset(&gr, 0, sizeof gr);
-    for (i = 0; i < c.m.count; i++) sum += c.m.entry[i].length;
+    Fi(c.m.count, sum += c.m.entry[i].length);
     gr.stream_length = sum;  gr.field_log2 = 16;
     if (xpar_geom_choose(&gr, &c.geom) == XPAR_GEOM_OK)
       w.slice_size = c.geom.slice_size;
@@ -1576,8 +1536,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   xpar_manifest_pack(&c.m, &w, &c.prog);
   if (o->auth_only) auth_only_hashes(&c);
   if (c.keyed)
-    for (i = 0; i < c.m.count; i++)
-      xpar_file_id(&c.m.entry[i], c.key.k_file, c.m.entry[i].file_id);
+    Fi(c.m.count, xpar_file_id(&c.m.entry[i], c.key.k_file, c.m.entry[i].file_id));
   check_manifest(&c);
   xpar_occindex_build(&c.m, &c.ix);
 
@@ -1591,13 +1550,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   gs = xpar_geom_solve(&gr, demand_recovery, &dem, &c.geom, &c.recovery);
   if (gs != XPAR_GEOM_OK) geometry_refused(o, &gr, gs);
   if (o->align == XPAR_ALIGN_1K) {
-    FATAL_UNLESS("--align=1k needs slice tags; choose --slice-tag=8 or 16.",
-                 c.tag_len != 0);
+    FATAL_UNLESS(c.tag_len != 0,
+                 "--align=1k needs slice tags; choose --slice-tag=8 or 16");
     if (c.geom.slice_size < XPAR_BLAKE3_CHUNK_LEN ||
         (c.geom.slice_size & (c.geom.slice_size - 1)) != 0) {
-      FATAL_UNLESS("--align=1k needs a power-of-two slice size of at least "
-                   "1 KiB; the explicit geometry does not provide one.",
-                   !o->slice_size && !o->slices);
+      FATAL_UNLESS(!o->slice_size && !o->slices,
+                   "--align=1k needs a power-of-two slice size of at least "
+                   "1 KiB; the explicit geometry does not provide one");
       /*  A larger Z cannot increase S+R.  */
       gr.slice_size = xpar_next_pow2(MAX(c.geom.slice_size,
                                          (u64) XPAR_BLAKE3_CHUNK_LEN));
@@ -1645,11 +1604,11 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (ps == XPAR_PLAN_NO_FIT) {
     char why[256];
     xpar_plan_explain_no_fit(&pr, why, sizeof why);
-    FATAL_CODE(XPAR_EXIT_NOPLAN, "No plan fits: %s.", why);
+    FATAL_CODE(XPAR_EXIT_NOPLAN, "no plan fits: %s", why);
   }
   if (ps == XPAR_PLAN_BAD_GEOMETRY) geometry_refused(o, &gr, XPAR_GEOM_FIELD);
   if (ps != XPAR_PLAN_OK)
-    FATAL("%s.", xpar_plan_reason(ps));
+    FATAL("%s", xpar_plan_reason(ps));
   c.geom = c.plan.geom;
   /*  Reserve the --max-recovery axis for every codec.  */
   if (o->max_recovery.kind != XPAR_R_NONE &&
@@ -1660,29 +1619,29 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
         !xpar_codec_supports(c.plan.codec, c.plan.field_log2,
                              c.geom.slice_count, mx)) {
       FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN,
-                        "--max-recovery=%" PRIu64 " does not fit beside S=%"
-                        PRIu64 " in GF(2^%" PRIu8 ").",
                         o->field == XPAR_CLI_AUTO && c.plan.field_log2 == 8 &&
                         xpar_codec_supports(c.plan.codec, 16,
                                             c.geom.slice_count, mx),
+                        "--max-recovery=%" PRIu64 " does not fit beside S=%"
+                        PRIu64 " in GF(2^%" PRIu8 ")",
                         mx, c.geom.slice_count, c.plan.field_log2);
       pr.field_log2 = 16;
       ps = xpar_plan_make(&pr, &c.plan);
       if (ps == XPAR_PLAN_NO_FIT) {
         char why[256];
         xpar_plan_explain_no_fit(&pr, why, sizeof why);
-        FATAL_CODE(XPAR_EXIT_NOPLAN, "No plan fits: %s.", why);
+        FATAL_CODE(XPAR_EXIT_NOPLAN, "no plan fits: %s", why);
       }
       if (ps == XPAR_PLAN_BAD_GEOMETRY)
         geometry_refused(o, &gr, XPAR_GEOM_FIELD);
-      if (ps != XPAR_PLAN_OK) FATAL("%s.", xpar_plan_reason(ps));
+      if (ps != XPAR_PLAN_OK) FATAL("%s", xpar_plan_reason(ps));
       c.geom = c.plan.geom;
     }
   }
-  FATAL_UNLESS("--cell %" PRIu64 " exceeds the slice size of %" PRIu64
-               " bytes; lower --cell or raise -s.",
-               !o->cell_bytes || c.geom.slice_size < XPAR_CELL_MIN ||
+  FATAL_UNLESS(!o->cell_bytes || c.geom.slice_size < XPAR_CELL_MIN ||
                o->cell_bytes <= c.geom.slice_size,
+               "--cell %" PRIu64 " exceeds the slice size of %" PRIu64
+               " bytes; lower --cell or raise -s",
                o->cell_bytes, c.geom.slice_size);
   if (!budget) budget = c.plan.mem_total;
 
@@ -1717,9 +1676,9 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     if (o->memory && o->dedup != XPAR_DEDUP_NONE &&
         c.plan.mem_total + idx > budget)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
-                 "Plan and deduplication index need %" PRIu64
-                 " bytes; -m allows %" PRIu64 ". Raise -m or use "
-                 "--dedup=none.", c.plan.mem_total + idx, budget);
+                 "plan and deduplication index need %" PRIu64
+                 " bytes; -m allows %" PRIu64 "; raise -m or use "
+                 "--dedup=none", c.plan.mem_total + idx, budget);
   }
 
   if (o->verbose && !o->json)
@@ -1729,7 +1688,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     char advice[192];
     if (!o->quiet && xpar_plan_pass_advice(&pr, &c.plan, advice,
                                            sizeof advice))
-      xpar_fprintf(xpar_stderr, "xpar: warning: %s.\n", advice);
+      xpar_fprintf(xpar_stderr, "xpar: warning: %s\n", advice);
   }
 
   if (o->armour != XPAR_ARMOUR_NONE && o->layout != XPAR_LAYOUT_ARMOURED) {
@@ -1769,12 +1728,12 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       c.sd.recovery_axis_log2 =
         (u8) xpar_log2_floor(xpar_next_pow2(axis));
     /* No recovery needs no codec axis. */
-    FATAL_UNLESS("--max-recovery requires unsupported recovery axis 2^%"
-                 PRIu32 "; lower it or raise --field.",
-                 !c.recovery ||
+    FATAL_UNLESS(!c.recovery ||
                  xpar_codec_supports_axis(c.plan.codec, c.plan.field_log2,
                                           c.geom.slice_count, c.recovery,
                                           c.sd.recovery_axis_log2),
+                 "--max-recovery requires unsupported recovery axis 2^%"
+                 PRIu32 "; lower it or raise --field",
                  (u32) c.sd.recovery_axis_log2);
   }
   c.sd.layout           = (u8) o->layout;
@@ -1791,13 +1750,12 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   c.sd.file_id = (u8 (*)[XPAR_SET_ID_LEN])
                    xpar_alloc_raw((sz) (c.m.count ? c.m.count : 1) *
                                   XPAR_SET_ID_LEN);
-  for (i = 0; i < c.m.count; i++)
-    xpar_memcpy(c.sd.file_id[i], c.m.entry[i].file_id, XPAR_SET_ID_LEN);
+  Fi(c.m.count, xpar_memcpy(c.sd.file_id[i], c.m.entry[i].file_id, XPAR_SET_ID_LEN));
   compute_set_id(&c);
   stage_chunk_cache(&c, &w);
 
   xpar_progress_init(&c.prog, xpar_progress_wanted(o),
-                     c.geom.stream_length * (c.recovery ? 2 : 1), "Creating");
+                     c.geom.stream_length * (c.recovery ? 2 : 1), "creating");
   if (o->json) xpar_progress_sink(&c.prog, xpar_json_progress_sink, &c.js);
   emit_json_set(&c);
   emit_json_files(&c);
@@ -1805,12 +1763,12 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   /*  Recovery storage uses discretionary read-ahead memory, then spills.  */
   if (ready && ready->encoded) {
     tag_pass(&c);
-    FATAL_UNLESS("The direct pipe geometry changed after EOF.",
-                 ready->slices == c.geom.slice_count &&
+    FATAL_UNLESS(ready->slices == c.geom.slice_count &&
                  ready->rs.count == c.recovery &&
                  ready->rs.z == c.geom.slice_size &&
                  ready->field_log2 == c.plan.field_log2 &&
-                 c.plan.codec == XPAR_CODEC_MATRIX);
+                 c.plan.codec == XPAR_CODEC_MATRIX,
+                 "the direct pipe geometry changed after EOF");
   } else {
     rs_open(rsp, c.recovery, c.geom.slice_size,
             MAX(c.plan.mem_readahead,
@@ -1824,13 +1782,13 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (c.recovery && o->layout != XPAR_LAYOUT_ARMOURED) {
     u64 cap = o->volumes == XPAR_VOLS_FIXED
                 ? MIN(c.recovery, (u64) o->volume_count) : 64;
-    FATAL_UNLESS("The recovery-volume count is too large for this host.",
-                 cap <= (u64) (sz) -1 / sizeof(*span));
+    FATAL_UNLESS(cap <= (u64) (sz) -1 / sizeof(*span),
+                 "the recovery-volume count is too large for this host");
     span = (vol_span *) xpar_alloc_raw((sz) cap * sizeof(*span));
     nvol = ladder(o, c.recovery, span, (u32) cap);
-    FATAL_UNLESS("The recovery-volume layout is incomplete.",
-                 nvol && span[nvol - 1].first + span[nvol - 1].count ==
-                         c.recovery);
+    FATAL_UNLESS(nvol && span[nvol - 1].first + span[nvol - 1].count ==
+                         c.recovery,
+                 "the recovery-volume layout is incomplete");
   }
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     data_n = o->volumes == XPAR_VOLS_FIXED ? o->volume_count : 1;
@@ -1839,42 +1797,36 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   }
   name_count = nvol + 1 + data_n;
   { u64 widest = 0;
-    for (i = 0; i < nvol; i++) widest = MAX(widest, span[i].count);
+    Fi(nvol, widest = MAX(widest, span[i].count));
     xpar_vname_widths(c.recovery ? c.recovery - 1 : 0, widest, &wf, &wc); }
   names = (char **) xpar_calloc(name_count ? name_count : 1,
                                  sizeof(char *));
   names[0] = xpar_vname_index(c.base, 0);
-  for (i = 0; i < nvol; i++)
+  Fi(nvol,
     names[i + 1] = xpar_vname_recovery(c.base, 0, span[i].first,
-                                       span[i].count, wf, wc, i);
+       span[i].count, wf, wc, i));
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     int wd = MAX(xpar_digits10(data_n ? data_n - 1 : 0), 2);
-    for (i = 0; i < data_n; i++)
-      names[nvol + 1 + i] = xpar_vname_data(c.base, 0, i, wd);
+    Fi(data_n, names[nvol + 1 + i] = xpar_vname_data(c.base, 0, i, wd));
   }
   /*  Preflight every output before the first write.  */
   if (!o->force)
-    for (i = 0; i < name_count; i++) {
+    Fi(name_count,
       xpar_file * probe;
       if (!names[i]) continue;
       probe = xpar_open(names[i], XPAR_O_RDONLY);
       if (probe) {
         xpar_close(probe);
-        FATAL("'%s' exists. Use -f to overwrite it.", names[i]);
-      }
-    }
+        FATAL("'%s' exists; use -f to overwrite it", names[i]);
+      });
   if (!o->force && o->labels && o->layout == XPAR_LAYOUT_SPLIT)
-    for (i = 0; i < data_n; i++) {
+    Fi(data_n,
       char * label;
       xpar_file * probe;
       label = xpar_vname_label(names[nvol + 1 + i]);
       probe = xpar_open(label, XPAR_O_RDONLY);
-      if (probe) {
-        xpar_close(probe);
-        FATAL("'%s' exists. Use -f to overwrite it.", label);
-      }
-      xpar_free(label);
-    }
+      if (probe) { xpar_close(probe);  FATAL("'%s' exists; use -f to overwrite it", label); }
+      xpar_free(label));
 
   xpar_memset(&layt, 0, sizeof layt);
   layt.this_volume = XPAR_VOL_STANDALONE;
@@ -1897,7 +1849,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     u64 base = data_n ? c.geom.slice_count / data_n : 0;
     u64 rem  = data_n ? c.geom.slice_count % data_n : 0;
     u64 slice = 0;
-    for (i = 0; i < data_n; i++) {
+    Fi(data_n,
       u32 li = nvol + 1 + i;
       u64 count = base + (i < rem ? 1 : 0);
       u64 off = slice * c.geom.slice_size;
@@ -1908,8 +1860,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       layt.vol[li].byte_length   = len;
       layt.vol[li].vol_tag       = create_stream_tag(&c, off, len);
       layt.vol[li].name = xpar_strdup(xpar_path_base(names[nvol + 1 + i]));
-      slice += count;
-    }
+      slice += count);
   }
 
   cr.setd        = &c.sd;
@@ -1933,12 +1884,11 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
 
   output_stage = create_output_stage(c.base);
   write_names = (char **) xpar_calloc(name_count, sizeof(char *));
-  for (i = 0; i < name_count; i++)
-    write_names[i] = xpar_path_join(output_stage, xpar_path_base(names[i]));
+  Fi(name_count, write_names[i] = xpar_path_join(output_stage, xpar_path_base(names[i])));
   if (ready && ready->final_path) {
-    for (i = 0; i < name_count; i++)
-      FATAL_UNLESS("The pipe destination collides with set output '%s'.",
-                   !xpar_path_same(ready->final_path, names[i]), names[i]);
+    Fi(name_count,
+      FATAL_UNLESS(!xpar_path_same(ready->final_path, names[i]),
+       "the pipe destination collides with set output '%s'", names[i]));
 #if defined(XPAR_DOS) || defined(__MSDOS__)
     pipe_stage = xpar_path_join(output_stage, "STDIN.DAT");
 #else
@@ -1962,8 +1912,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     u64 rcvs_one = xpar_align_up(XPAR_PKT_HDR + 16 + c.geom.slice_size,
                                  XPAR_PKT_ALIGN);
     u64 rcvs_len;
-    FATAL_UNLESS("The recovery payload is too large.",
-                 !c.recovery || rcvs_one <= UINT64_MAX / c.recovery);
+    FATAL_UNLESS(!c.recovery || rcvs_one <= UINT64_MAX / c.recovery,
+                 "the recovery payload is too large");
     rcvs_len = c.recovery * rcvs_one;
     ap = c.region_ap;
     ra = xpar_armour_new(&ap);
@@ -2041,7 +1991,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     put_file(write_names[0], &b);
     xpar_buf_free(&b);
 
-    for (i = 0; i < nvol; i++) {
+    Fi(nvol,
       xpar_file * f;
       u64 payload = span[i].count * c.geom.slice_size, j;
       bool copy = xpar_replicate_here(crit_bytes, payload, i, nvol);
@@ -2066,7 +2016,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
         xpar_armour_wrap_params(o, plen, &rap);
         ra = xpar_armour_new(&rap);
         xpar_buf_init(&wb);
-        for (j = 0; j < span[i].count; j++) {
+        Fj(span[i].count,
           const u8 * p = rs_data(rsp, span[i].first + j, scratch);
           xpar_rcvs_stream_header(pkt, span[i].first + j, p,
                                   (sz) c.geom.slice_size, c.set_id,
@@ -2075,13 +2025,12 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
           wb.len = 0;
           xpar_armg_wrap_with(&wb, ra, pkt, (sz) plen, c.set_id,
                               create_key(&c));
-          xpar_xwrite(f, wb.data, wb.len);
-        }
+          xpar_xwrite(f, wb.data, wb.len));
         xpar_buf_free(&wb);
         xpar_armour_free(ra);
         xpar_free(pkt);
       } else
-      for (j = 0; j < span[i].count; j++) {
+      Fj(span[i].count,
         static const u8 zero[XPAR_PKT_ALIGN] = { 0 };
         xpar_write_part part[3];
         u8 head[XPAR_PKT_HDR + 16];
@@ -2092,16 +2041,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
         part[0].data = head;  part[0].length = sizeof head;
         part[1].data = p;     part[1].length = (sz) c.geom.slice_size;
         part[2].data = zero;  part[2].length = pad;
-        xpar_xwritev(f, part, pad ? 3 : 2);
-      }
+        xpar_xwritev(f, part, pad ? 3 : 2));
       xpar_free(scratch);
       xpar_buf_init(&b);
       xpar_crtr_write(&b, "xpar " PACKAGE_VERSION, c.set_id, create_key(&c),
                       &c.wr);
       xpar_xwrite(f, b.data, b.len);
       xpar_buf_free(&b);
-      xpar_xclose(f);
-    }
+      xpar_xclose(f));
 
     if (o->layout == XPAR_LAYOUT_SPLIT) {
       /*  Split data volumes concatenate to the exact unpadded stream.  */
@@ -2109,7 +2056,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       u8 * p;
       p = (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
       rd_init(&rd, &c);
-      for (i = 0; i < data_n; i++) {
+      Fi(data_n,
         u32 li = nvol + 1 + i;
         const xpar_vol * dv = &layt.vol[li];
         bool already = ready && ready->source_path && data_n == 1;
@@ -2138,8 +2085,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
           put_file(label, &lb);
           xpar_buf_free(&lb);
           xpar_free(label);
-        }
-      }
+        });
       rd_free(&rd);
       xpar_free(p);
     }
@@ -2185,14 +2131,11 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->json) xpar_json_summary(&c.js, "ok", XPAR_EXIT_OK);
 
   rs_close(rsp);
-  if (write_names != names) {
-    for (i = 0; i < name_count; i++) xpar_free(write_names[i]);
-    xpar_free(write_names);
-  }
+  if (write_names != names) { Fi(name_count, xpar_free(write_names[i]));  xpar_free(write_names); }
   xpar_free(output_stage);
   xpar_free(pipe_stage);
   xpar_free(span);
-  for (i = 0; i < name_count; i++) xpar_free(names[i]);
+  Fi(name_count, xpar_free(names[i]));
   xpar_free(names);
   /* The layout owns its names. */
   xpar_layt_free(&layt);

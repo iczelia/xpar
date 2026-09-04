@@ -30,10 +30,7 @@ static wchar_t * xpar_win_wide(const char * s) {
   wchar_t * w;
   if (n <= 0) return NULL;
   w = (wchar_t *) xpar_alloc_raw((sz) n * sizeof(wchar_t));
-  if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) {
-    xpar_free(w);
-    return NULL;
-  }
+  if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) { xpar_free(w);  return NULL; }
   return w;
 }
 
@@ -65,17 +62,11 @@ static wchar_t * xpar_win_path(const char * s) {
     return NULL;
   }
   n = GetFullPathNameW(raw, 0, NULL, NULL);
-  if (!n || n > 32768u) {
-    xpar_free(raw);
-    return NULL;
-  }
+  if (!n || n > 32768u) { xpar_free(raw);  return NULL; }
   full = (wchar_t *) xpar_alloc_raw(((sz) n + 1) * sizeof(*full));
   got = GetFullPathNameW(raw, n + 1, full, NULL);
   xpar_free(raw);
-  if (!got || got > n) {
-    xpar_free(full);
-    return NULL;
-  }
+  if (!got || got > n) { xpar_free(full);  return NULL; }
   if (full[0] == L'\\' && full[1] == L'\\') {
     out = (wchar_t *) xpar_alloc_raw(((sz) got + 7) * sizeof(*out));
     xpar_memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof(*out));
