@@ -269,11 +269,11 @@ XPAR_TEST_BINARY = $(abs_top_builddir)/xpar$(EXEEXT)
 ## Benchmarks are opt-in.
 
 tests_mkdata_SOURCES = tests/mkdata.c
-tests_mkdata_CPPFLAGS =
+tests_mkdata_CPPFLAGS = $(AM_CPPFLAGS)
 tests_mkdata_LDADD =
 
 tests_damage_SOURCES = tests/damage.c
-tests_damage_CPPFLAGS =
+tests_damage_CPPFLAGS = $(AM_CPPFLAGS)
 tests_damage_LDADD =
 
 bench_timeit_SOURCES  = bench/timeit.c

@@ -26,10 +26,10 @@
 typedef struct xpar_chunk_index xpar_chunk_index;
 #endif
 
-#define XPAR_PATH_WIN    (1u << 0)  /*  Also the Windows-target rules.  */
-#define XPAR_PATH_NOCASE (1u << 1)  /*  Target folds case; duplicates.  */
+#define XPAR_PATH_WIN    (1U << 0)  /*  Also the Windows-target rules.  */
+#define XPAR_PATH_NOCASE (1U << 1)  /*  Target folds case; duplicates.  */
 /*  Allow only the final component to be a symbolic link.  */
-#define XPAR_PATH_LEAF_LINK (1u << 2)
+#define XPAR_PATH_LEAF_LINK (1U << 2)
 
 typedef enum {
   XPAR_PATH_OK = 0,

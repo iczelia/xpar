@@ -20,46 +20,46 @@
 /*  Variant selection.  */
 
 #if defined(XPAR_GF_VARIANT_SCALAR)
-  #define GF_SUF    scalar
-  #define GF_NAME   "scalar"
+#define GF_SUF    scalar
+#define GF_NAME   "scalar"
 #elif defined(XPAR_GF_VARIANT_SSSE3)
-  #define GF_SUF    ssse3
-  #define GF_NAME   "ssse3"
-  #define GF_ISA_SSE
-  #define GF_SPLIT
+#define GF_SUF    ssse3
+#define GF_NAME   "ssse3"
+#define GF_ISA_SSE
+#define GF_SPLIT
 #elif defined(XPAR_GF_VARIANT_AVX2)
-  #define GF_SUF    avx2
-  #define GF_NAME   "avx2"
-  #define GF_ISA_AVX2
-  #define GF_SPLIT
+#define GF_SUF    avx2
+#define GF_NAME   "avx2"
+#define GF_ISA_AVX2
+#define GF_SPLIT
 #elif defined(XPAR_GF_VARIANT_GFNI256)
-  #define GF_SUF    gfni256
-  #define GF_NAME   "gfni256"
-  #define GF_ISA_AVX2
-  #define GF_AFFINE
+#define GF_SUF    gfni256
+#define GF_NAME   "gfni256"
+#define GF_ISA_AVX2
+#define GF_AFFINE
 #elif defined(XPAR_GF_VARIANT_GFNI512)
-  #define GF_SUF    gfni512
-  #define GF_NAME   "gfni512"
-  #define GF_ISA_AVX512
-  #define GF_AFFINE
+#define GF_SUF    gfni512
+#define GF_NAME   "gfni512"
+#define GF_ISA_AVX512
+#define GF_AFFINE
 #elif defined(XPAR_GF_VARIANT_NEON)
-  #define GF_SUF    neon
-  #define GF_NAME   "neon"
-  #define GF_ISA_NEON
-  #define GF_SPLIT
+#define GF_SUF    neon
+#define GF_NAME   "neon"
+#define GF_ISA_NEON
+#define GF_SPLIT
 #elif defined(XPAR_GF_VARIANT_VSX)
-  #define GF_SUF    vsx
-  #define GF_NAME   "vsx"
-  #define GF_ISA_VSX
-  #define GF_SPLIT
+#define GF_SUF    vsx
+#define GF_NAME   "vsx"
+#define GF_ISA_VSX
+#define GF_SPLIT
 #elif defined(XPAR_GF_VARIANT_VBMI512)
-  #define GF_SUF    vbmi512
-  #define GF_NAME   "vbmi512"
-  #define GF_ISA_AVX512
-  #define GF_SPLIT
-  #define GF_VBMI
+#define GF_SUF    vbmi512
+#define GF_NAME   "vbmi512"
+#define GF_ISA_AVX512
+#define GF_SPLIT
+#define GF_VBMI
 #else
-  #error "gf-impl.h included without an XPAR_GF_VARIANT_* selection"
+#error "gf-impl.h included without an XPAR_GF_VARIANT_* selection"
 #endif
 
 #define GF_CAT_(a, b) a##_##b
@@ -71,96 +71,96 @@
     GF_DEINT even when lane-local unpacking permutes symbols.  */
 
 #if defined(GF_ISA_SSE)
-  #include <immintrin.h>
-  #define GF_V           __m128i
-  #define GF_VB          16
-  #define GF_LD(p)       _mm_loadu_si128((const __m128i *) (const void *) (p))
-  #define GF_ST(p, v)    _mm_storeu_si128((__m128i *) (void *) (p), (v))
-  #define GF_XOR(a, b)   _mm_xor_si128((a), (b))
-  #define GF_TAB(p)      GF_LD(p)
-  #define GF_SHUF(t, i)  _mm_shuffle_epi8((t), (i))
-  #define GF_SET64(x)    _mm_set1_epi64x((long long) (x))
-  #define GF_UNPKL(a, b) _mm_unpacklo_epi64((a), (b))
-  #define GF_UNPKH(a, b) _mm_unpackhi_epi64((a), (b))
-  #define GF_AN4(v)      _mm_and_si128((v), _mm_set1_epi8(0x0F))
-  #define GF_SR4(v)      GF_AN4(_mm_srli_epi64((v), 4))
+#include <immintrin.h>
+#define GF_V           __m128i
+#define GF_VB          16
+#define GF_LD(p)       _mm_loadu_si128((const __m128i *) (const void *) (p))
+#define GF_ST(p, v)    _mm_storeu_si128((__m128i *) (void *) (p), (v))
+#define GF_XOR(a, b)   _mm_xor_si128((a), (b))
+#define GF_TAB(p)      GF_LD(p)
+#define GF_SHUF(t, i)  _mm_shuffle_epi8((t), (i))
+#define GF_SET64(x)    _mm_set1_epi64x((long long) (x))
+#define GF_UNPKL(a, b) _mm_unpacklo_epi64((a), (b))
+#define GF_UNPKH(a, b) _mm_unpackhi_epi64((a), (b))
+#define GF_AN4(v)      _mm_and_si128((v), _mm_set1_epi8(0x0F))
+#define GF_SR4(v)      GF_AN4(_mm_srli_epi64((v), 4))
 #elif defined(GF_ISA_AVX2)
-  #include <immintrin.h>
-  #define GF_V           __m256i
-  #define GF_VB          32
-  #define GF_LD(p)       _mm256_loadu_si256((const __m256i *) (const void *) \
+#include <immintrin.h>
+#define GF_V           __m256i
+#define GF_VB          32
+#define GF_LD(p)       _mm256_loadu_si256((const __m256i *) (const void *) \
                                             (p))
-  #define GF_ST(p, v)    _mm256_storeu_si256((__m256i *) (void *) (p), (v))
-  #define GF_XOR(a, b)   _mm256_xor_si256((a), (b))
-  #define GF_TAB(p)      _mm256_broadcastsi128_si256(                        \
+#define GF_ST(p, v)    _mm256_storeu_si256((__m256i *) (void *) (p), (v))
+#define GF_XOR(a, b)   _mm256_xor_si256((a), (b))
+#define GF_TAB(p)      _mm256_broadcastsi128_si256(                        \
                            _mm_loadu_si128((const __m128i *) (const void *)  \
                                            (p)))
-  #define GF_SHUF(t, i)  _mm256_shuffle_epi8((t), (i))
-  #define GF_SET64(x)    _mm256_set1_epi64x((long long) (x))
-  #define GF_UNPKL(a, b) _mm256_unpacklo_epi64((a), (b))
-  #define GF_UNPKH(a, b) _mm256_unpackhi_epi64((a), (b))
-  #define GF_AN4(v)      _mm256_and_si256((v), _mm256_set1_epi8(0x0F))
-  #define GF_SR4(v)      GF_AN4(_mm256_srli_epi64((v), 4))
-  #define GF_AFF(v, mx)  _mm256_gf2p8affine_epi64_epi8((v), (mx), 0)
+#define GF_SHUF(t, i)  _mm256_shuffle_epi8((t), (i))
+#define GF_SET64(x)    _mm256_set1_epi64x((long long) (x))
+#define GF_UNPKL(a, b) _mm256_unpacklo_epi64((a), (b))
+#define GF_UNPKH(a, b) _mm256_unpackhi_epi64((a), (b))
+#define GF_AN4(v)      _mm256_and_si256((v), _mm256_set1_epi8(0x0F))
+#define GF_SR4(v)      GF_AN4(_mm256_srli_epi64((v), 4))
+#define GF_AFF(v, mx)  _mm256_gf2p8affine_epi64_epi8((v), (mx), 0)
 #elif defined(GF_ISA_AVX512)
-  #include <immintrin.h>
-  #define GF_V           __m512i
-  #define GF_VB          64
-  #define GF_LD(p)       _mm512_loadu_si512((const void *) (p))
-  #define GF_ST(p, v)    _mm512_storeu_si512((void *) (p), (v))
-  #define GF_XOR(a, b)   _mm512_xor_si512((a), (b))
-  #define GF_TAB(p)      _mm512_broadcast_i32x4(                             \
+#include <immintrin.h>
+#define GF_V           __m512i
+#define GF_VB          64
+#define GF_LD(p)       _mm512_loadu_si512((const void *) (p))
+#define GF_ST(p, v)    _mm512_storeu_si512((void *) (p), (v))
+#define GF_XOR(a, b)   _mm512_xor_si512((a), (b))
+#define GF_TAB(p)      _mm512_broadcast_i32x4(                             \
                            _mm_loadu_si128((const __m128i *) (const void *)  \
                                            (p)))
-  #define GF_SHUF(t, i)  _mm512_shuffle_epi8((t), (i))
-  #define GF_SET64(x)    _mm512_set1_epi64((long long) (x))
-  #define GF_UNPKL(a, b) _mm512_unpacklo_epi64((a), (b))
-  #define GF_UNPKH(a, b) _mm512_unpackhi_epi64((a), (b))
-  #define GF_AN4(v)      _mm512_and_si512((v), _mm512_set1_epi8(0x0F))
-  #define GF_SR4(v)      GF_AN4(_mm512_srli_epi64((v), 4))
-  #define GF_AFF(v, mx)  _mm512_gf2p8affine_epi64_epi8((v), (mx), 0)
+#define GF_SHUF(t, i)  _mm512_shuffle_epi8((t), (i))
+#define GF_SET64(x)    _mm512_set1_epi64((long long) (x))
+#define GF_UNPKL(a, b) _mm512_unpacklo_epi64((a), (b))
+#define GF_UNPKH(a, b) _mm512_unpackhi_epi64((a), (b))
+#define GF_AN4(v)      _mm512_and_si512((v), _mm512_set1_epi8(0x0F))
+#define GF_SR4(v)      GF_AN4(_mm512_srli_epi64((v), 4))
+#define GF_AFF(v, mx)  _mm512_gf2p8affine_epi64_epi8((v), (mx), 0)
 #elif defined(GF_ISA_NEON)
-  #include <arm_neon.h>
-  #define GF_V           uint8x16_t
-  #define GF_VB          16
-  #define GF_LD(p)       vld1q_u8((const u8 *) (const void *) (p))
-  #define GF_ST(p, v)    vst1q_u8((u8 *) (void *) (p), (v))
-  #define GF_XOR(a, b)   veorq_u8((a), (b))
-  #define GF_TAB(p)      GF_LD(p)
-  #define GF_SHUF(t, i)  vqtbl1q_u8((t), (i))
-  #define GF_AN4(v)      vandq_u8((v), vdupq_n_u8(0x0F))
-  #define GF_SR4(v)      vshrq_n_u8((v), 4)
+#include <arm_neon.h>
+#define GF_V           uint8x16_t
+#define GF_VB          16
+#define GF_LD(p)       vld1q_u8((const u8 *) (const void *) (p))
+#define GF_ST(p, v)    vst1q_u8((u8 *) (void *) (p), (v))
+#define GF_XOR(a, b)   veorq_u8((a), (b))
+#define GF_TAB(p)      GF_LD(p)
+#define GF_SHUF(t, i)  vqtbl1q_u8((t), (i))
+#define GF_AN4(v)      vandq_u8((v), vdupq_n_u8(0x0F))
+#define GF_SR4(v)      vshrq_n_u8((v), 4)
 #elif defined(GF_ISA_VSX)
-  #include <altivec.h>
+#include <altivec.h>
   /*  Duplicate the table operand; nibble indices never exceed 15.  */
-  #define GF_V           __vector unsigned char
-  #define GF_VB          16
-  #define GF_LD(p)       vec_vsx_ld(0, (const unsigned char *) (const void *) \
+#define GF_V           __vector unsigned char
+#define GF_VB          16
+#define GF_LD(p)       vec_vsx_ld(0, (const unsigned char *) (const void *) \
                                     (p))
-  #define GF_ST(p, v)    vec_vsx_st((v), 0, (unsigned char *) (void *) (p))
-  #define GF_XOR(a, b)   vec_xor((a), (b))
-  #define GF_TAB(p)      GF_LD(p)
-  #define GF_SHUF(t, i)  vec_perm((t), (t), (i))
-  #define GF_UNPKL(a, b) ((GF_V) vec_mergeh((__vector unsigned long long) (a), \
+#define GF_ST(p, v)    vec_vsx_st((v), 0, (unsigned char *) (void *) (p))
+#define GF_XOR(a, b)   vec_xor((a), (b))
+#define GF_TAB(p)      GF_LD(p)
+#define GF_SHUF(t, i)  vec_perm((t), (t), (i))
+#define GF_UNPKL(a, b) ((GF_V) vec_mergeh((__vector unsigned long long) (a), \
                                             (__vector unsigned long long) (b)))
-  #define GF_UNPKH(a, b) ((GF_V) vec_mergel((__vector unsigned long long) (a), \
+#define GF_UNPKH(a, b) ((GF_V) vec_mergel((__vector unsigned long long) (a), \
                                             (__vector unsigned long long) (b)))
-  #define GF_AN4(v)      vec_and((v), vec_splats((unsigned char) 0x0F))
-  #define GF_SR4(v)      vec_sr((v), vec_splats((unsigned char) 4))
+#define GF_AN4(v)      vec_and((v), vec_splats((unsigned char) 0x0F))
+#define GF_SR4(v)      vec_sr((v), vec_splats((unsigned char) 4))
 #endif
 
 /*  GF_MUL8_VARS hoists coefficients. The macros include semicolons because
     some variants expand to declarations and others to nothing.  */
 
 #ifdef GF_SPLIT
-  #define GF_MUL8_VARS                                                       \
+#define GF_MUL8_VARS                                                       \
     const GF_V gt0 = GF_TAB(m->tab), gt1 = GF_TAB(m->tab + 16);
-  #define GF_MUL8(v)                                                         \
+#define GF_MUL8(v)                                                         \
     GF_XOR(GF_SHUF(gt0, GF_AN4(v)), GF_SHUF(gt1, GF_SR4(v)))
 #else
-  #define GF_MUL8_VARS                                                       \
+#define GF_MUL8_VARS                                                       \
     const GF_V gma = GF_SET64(m->affine);
-  #define GF_MUL8(v)  GF_AFF((v), gma)
+#define GF_MUL8(v)  GF_AFF((v), gma)
 #endif
 
 /*  GF_MUL16_PAIR is the shared GF(2^16) primitive. Most tiers split
@@ -171,13 +171,13 @@
 
 static const u8 gf_dup_even_idx[16] = { 0, 0, 2, 2, 4, 4, 6, 6,
                                         8, 8, 10, 10, 12, 12, 14, 14 };
-  #define GF_EVEN ((__mmask64) 0x5555555555555555ULL)
-  #define GF_MUL16_VARS                                                      \
+#define GF_EVEN ((__mmask64) 0x5555555555555555ULL)
+#define GF_MUL16_VARS                                                      \
     const GF_V gt0 = GF_LD(m->tab6[0]), gt1 = GF_LD(m->tab6[1]),             \
                gt2 = GF_LD(m->tab6[2]), gt3 = GF_LD(m->tab6[3]),             \
                gt4 = GF_LD(m->tab6[4]), gt5 = GF_LD(m->tab6[5]),             \
                gdup = GF_TAB(gf_dup_even_idx);
-  #define GF_MUL16_ONE(s, o) do {                                            \
+#define GF_MUL16_ONE(s, o) do {                                            \
       GF_V gv = (s), gi0, gi1, gi2, gl, gh;                                  \
       gi0 = GF_SHUF(gv, gdup);                                               \
       gi0 = _mm512_and_si512(gi0, _mm512_set1_epi8(0x3F));                   \
@@ -194,7 +194,7 @@ static const u8 gf_dup_even_idx[16] = { 0, 0, 2, 2, 4, 4, 6, 6,
       gh = GF_XOR(gh, _mm512_permutexvar_epi8(gi2, gt5));                     \
       (o) = _mm512_mask_blend_epi8(GF_EVEN, gh, gl);                          \
     } while (0)
-  #define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
+#define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
       GF_MUL16_ONE((s0), (o0));  GF_MUL16_ONE((s1), (o1));                   \
     } while (0)
 
@@ -202,32 +202,32 @@ static const u8 gf_dup_even_idx[16] = { 0, 0, 2, 2, 4, 4, 6, 6,
 
 static const u8 gf_swap_idx[16] = { 1, 0, 3, 2, 5, 4, 7, 6,
                                     9, 8, 11, 10, 13, 12, 15, 14 };
-  #define GF_EVEN ((__mmask64) 0x5555555555555555ULL)
-  #define GF_MUL16_VARS                                                      \
+#define GF_EVEN ((__mmask64) 0x5555555555555555ULL)
+#define GF_MUL16_VARS                                                      \
     const GF_V gma = GF_SET64(m->affine[0]), gmb = GF_SET64(m->affine[1]),   \
                gmc = GF_SET64(m->affine[2]), gmd = GF_SET64(m->affine[3]),   \
                gsw = GF_TAB(gf_swap_idx);
   /*  Even lanes hold low bytes and odd lanes high bytes. gv and its
       byte-swapped copy gw let the four affine blocks produce both halves.  */
-  #define GF_MUL16_ONE(s, o) do {                                            \
+#define GF_MUL16_ONE(s, o) do {                                            \
       GF_V gv = (s), gw = GF_SHUF(gv, gsw);                                  \
       GF_V gx = GF_AFF(gv, gmd), gy = GF_AFF(gw, gmc);                       \
       gx = _mm512_mask_gf2p8affine_epi64_epi8(gx, GF_EVEN, gv, gma, 0);      \
       gy = _mm512_mask_gf2p8affine_epi64_epi8(gy, GF_EVEN, gw, gmb, 0);      \
       (o) = GF_XOR(gx, gy);                                                  \
     } while (0)
-  #define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
+#define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
       GF_MUL16_ONE((s0), (o0));  GF_MUL16_ONE((s1), (o1));                   \
     } while (0)
 
 #else
 
 #ifdef GF_ISA_NEON
-  #define GF_PLANE_VARS
-  #define GF_DEINT(v0, v1, olo, ohi) do {                                    \
+#define GF_PLANE_VARS
+#define GF_DEINT(v0, v1, olo, ohi) do {                                    \
       (olo) = vuzp1q_u8((v0), (v1));  (ohi) = vuzp2q_u8((v0), (v1));         \
     } while (0)
-  #define GF_INT(ilo, ihi, o0, o1) do {                                      \
+#define GF_INT(ilo, ihi, o0, o1) do {                                      \
       (o0) = vzip1q_u8((ilo), (ihi));  (o1) = vzip2q_u8((ilo), (ihi));       \
     } while (0)
 #else
@@ -235,13 +235,13 @@ static const u8 gf_deint_idx[16] = { 0, 2, 4, 6, 8, 10, 12, 14,
                                      1, 3, 5, 7, 9, 11, 13, 15 };
 static const u8 gf_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
                                      4, 12, 5, 13, 6, 14, 7, 15 };
-  #define GF_PLANE_VARS                                                      \
+#define GF_PLANE_VARS                                                      \
     const GF_V gfdi = GF_TAB(gf_deint_idx), gfii = GF_TAB(gf_reint_idx);
-  #define GF_DEINT(v0, v1, olo, ohi) do {                                    \
+#define GF_DEINT(v0, v1, olo, ohi) do {                                    \
       GF_V gfu = GF_SHUF((v0), gfdi), gfv = GF_SHUF((v1), gfdi);             \
       (olo) = GF_UNPKL(gfu, gfv);  (ohi) = GF_UNPKH(gfu, gfv);               \
     } while (0)
-  #define GF_INT(ilo, ihi, o0, o1) do {                                      \
+#define GF_INT(ilo, ihi, o0, o1) do {                                      \
       GF_V gfu = GF_UNPKL((ilo), (ihi)), gfv = GF_UNPKH((ilo), (ihi));       \
       (o0) = GF_SHUF(gfu, gfii);  (o1) = GF_SHUF(gfv, gfii);                 \
     } while (0)
@@ -251,13 +251,13 @@ static const u8 gf_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
   /*  Nine vectors live at once, which is most of the register file on
       SSSE3 and AVX2. That is inherent to eight nibble tables and is the
       other half of why the affine tiers are preferred.  */
-  #define GF_MUL16_VARS                                                      \
+#define GF_MUL16_VARS                                                      \
     const GF_V gt0 = GF_TAB(m->tab[0]), gt1 = GF_TAB(m->tab[1]),             \
                gt2 = GF_TAB(m->tab[2]), gt3 = GF_TAB(m->tab[3]),             \
                gt4 = GF_TAB(m->tab[4]), gt5 = GF_TAB(m->tab[5]),             \
                gt6 = GF_TAB(m->tab[6]), gt7 = GF_TAB(m->tab[7]);             \
     GF_PLANE_VARS
-  #define GF_MUL16(lo, hi, olo, ohi) do {                                    \
+#define GF_MUL16(lo, hi, olo, ohi) do {                                    \
       GF_V gn0 = GF_AN4(lo), gn1 = GF_SR4(lo),                               \
            gn2 = GF_AN4(hi), gn3 = GF_SR4(hi);                               \
       (olo) = GF_XOR(GF_XOR(GF_SHUF(gt0, gn0), GF_SHUF(gt2, gn1)),           \
@@ -266,17 +266,17 @@ static const u8 gf_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
                      GF_XOR(GF_SHUF(gt5, gn2), GF_SHUF(gt7, gn3)));          \
     } while (0)
 #else
-  #define GF_MUL16_VARS                                                      \
+#define GF_MUL16_VARS                                                      \
     const GF_V gma = GF_SET64(m->affine[0]), gmb = GF_SET64(m->affine[1]),   \
                gmc = GF_SET64(m->affine[2]), gmd = GF_SET64(m->affine[3]);   \
     GF_PLANE_VARS
-  #define GF_MUL16(lo, hi, olo, ohi) do {                                    \
+#define GF_MUL16(lo, hi, olo, ohi) do {                                    \
       (olo) = GF_XOR(GF_AFF((lo), gma), GF_AFF((hi), gmb));                  \
       (ohi) = GF_XOR(GF_AFF((lo), gmc), GF_AFF((hi), gmd));                  \
     } while (0)
 #endif
 
-  #define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
+#define GF_MUL16_PAIR(s0, s1, o0, o1) do {                                 \
       GF_V glo, ghi, gol, goh;                                               \
       GF_DEINT((s0), (s1), glo, ghi);                                        \
       GF_MUL16(glo, ghi, gol, goh);                                          \

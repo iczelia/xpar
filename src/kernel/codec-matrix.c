@@ -59,48 +59,50 @@ static u32 addm(u32 a, u32 b, u32 mod) {
 }
 
 static void cauchy_inv8(u32 n, const u8 * x, const u8 * y, u8 * b) {
-  u32 * rk = (u32 *) xpar_alloc_raw((sz) 2 * n * sizeof(u32));
+  u32 * rk = xpar_alloc_raw((sz) 2 * n * sizeof *rk);
   u32 * cl = rk + n;
-  u32 k;
+  u32 i, j, k;
   Fk(n,
     u32 a = 0;
-    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf8_log[x[k] ^ y[t]], 255); }
-    for (u32 t = 0; t < (n); t++) { if (t != k) a = addm(a, 255u - xpar_gf8_log[x[k] ^ x[t]], 255); }
+    Fi(n, a = addm(a, xpar_gf8_log[x[k] ^ y[i]], 255));
+    Fi(n, if (i != k)
+      a = addm(a, 255U - xpar_gf8_log[x[k] ^ x[i]], 255));
     rk[k] = a);
-  for (u32 l = 0; l < n; l++) {
+  Fj(n,
     u32 a = 0;
-    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf8_log[x[t] ^ y[l]], 255); }
-    for (u32 t = 0; t < (n); t++) { if (t != l) a = addm(a, 255u - xpar_gf8_log[y[l] ^ y[t]], 255); }
-    cl[l] = a;
-  }
-  for (u32 l = 0; l < n; l++)
+    Fi(n, a = addm(a, xpar_gf8_log[x[i] ^ y[j]], 255));
+    Fi(n, if (i != j)
+      a = addm(a, 255U - xpar_gf8_log[y[j] ^ y[i]], 255));
+    cl[j] = a);
+  Fj(n,
     Fk(n,
-      u32 t = addm(rk[k], cl[l], 255);
-      t = addm(t, 255u - xpar_gf8_log[x[k] ^ y[l]], 255);
-      b[(sz) l * n + k] = xpar_gf8_exp[t]);
+      u32 t = addm(rk[k], cl[j], 255);
+      t = addm(t, 255U - xpar_gf8_log[x[k] ^ y[j]], 255);
+      b[(sz) j * n + k] = xpar_gf8_exp[t]));
   xpar_free(rk);
 }
 
 static void cauchy_inv16(u32 n, const u16 * x, const u16 * y, u16 * b) {
-  u32 * rk = (u32 *) xpar_alloc_raw((sz) 2 * n * sizeof(u32));
+  u32 * rk = xpar_alloc_raw((sz) 2 * n * sizeof *rk);
   u32 * cl = rk + n;
-  u32 k;
+  u32 i, j, k;
   Fk(n,
     u32 a = 0;
-    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf16_log[x[k] ^ y[t]], 65535); }
-    for (u32 t = 0; t < (n); t++) { if (t != k) a = addm(a, 65535u - xpar_gf16_log[x[k] ^ x[t]], 65535); }
+    Fi(n, a = addm(a, xpar_gf16_log[x[k] ^ y[i]], 65535));
+    Fi(n, if (i != k)
+      a = addm(a, 65535U - xpar_gf16_log[x[k] ^ x[i]], 65535));
     rk[k] = a);
-  for (u32 l = 0; l < n; l++) {
+  Fj(n,
     u32 a = 0;
-    for (u32 t = 0; t < (n); t++) { a = addm(a, xpar_gf16_log[x[t] ^ y[l]], 65535); }
-    for (u32 t = 0; t < (n); t++) { if (t != l) a = addm(a, 65535u - xpar_gf16_log[y[l] ^ y[t]], 65535); }
-    cl[l] = a;
-  }
-  for (u32 l = 0; l < n; l++)
+    Fi(n, a = addm(a, xpar_gf16_log[x[i] ^ y[j]], 65535));
+    Fi(n, if (i != j)
+      a = addm(a, 65535U - xpar_gf16_log[y[j] ^ y[i]], 65535));
+    cl[j] = a);
+  Fj(n,
     Fk(n,
-      u32 t = addm(rk[k], cl[l], 65535);
-      t = addm(t, 65535u - xpar_gf16_log[x[k] ^ y[l]], 65535);
-      b[(sz) l * n + k] = xpar_gf16_exp[t]);
+      u32 t = addm(rk[k], cl[j], 65535);
+      t = addm(t, 65535U - xpar_gf16_log[x[k] ^ y[j]], 65535);
+      b[(sz) j * n + k] = xpar_gf16_exp[t]));
   xpar_free(rk);
 }
 
@@ -120,8 +122,7 @@ static u32 mat_entry(const mat_coefs * cf, u32 i, u32 j) {
   if (cf->mat)
     return cf->f16 ? (u32) ((const u16 *) cf->mat)[(sz) j * cf->stride + i]
                    : (u32) ((const u8  *) cf->mat)[(sz) j * cf->stride + i];
-  {
-    u32 row = cf->rowmap ? cf->rowmap[j] : j;
+  { u32 row = cf->rowmap ? cf->rowmap[j] : j;
     u32 col = cf->colbase + (cf->colmap ? cf->colmap[i] : i);
     /*  Recovery nodes descend from the field top while data nodes ascend;
         rows therefore remain stable when EOF reveals S.  */
@@ -135,23 +136,24 @@ static void mat_run(const mat_coefs * cf, u8 * const * dst, u32 nd,
                     const u8 * const * src, u32 ns, sz bytes,
                     mat_tile * tl) {
   const xpar_gf_kernels * gk = xpar_gf_active();
-  u32 i, j, k;
+  u32 i, j, k, j0, i0;
+  sz off;
   /*  Paired destinations help shuffle tiers but slow affine and VBMI.  */
   bool macx2 = xpar_strcmp(gk->name, "gfni256") &&
                xpar_strcmp(gk->name, "gfni512") &&
                xpar_strcmp(gk->name, "vbmi512") &&
                xpar_strcmp(gk->name, "scalar");
   bool mac16x2 = !xpar_strcmp(gk->name, "gfni256");
-  for (u32 j0 = 0; j0 < nd; j0 += MAT_DST) {
+  for (j0 = 0; j0 < nd; j0 += MAT_DST) {
     u32 jn = MIN((u32) MAT_DST, nd - j0);
-    for (u32 i0 = 0; i0 < ns; i0 += MAT_SRC) {
+    for (i0 = 0; i0 < ns; i0 += MAT_SRC) {
       u32 in = MIN((u32) MAT_SRC, ns - i0);
       Fi(in,
         Fj(jn,
           u32 c = mat_entry(cf, i0 + i, j0 + j);
           if (cf->f16) xpar_gf16_prepare(&tl->c16[i * MAT_DST + j], (u16) c);
           else         xpar_gf8_prepare (&tl->c8 [i * MAT_DST + j], (u8)  c)));
-      for (sz off = 0; off < bytes; off += MAT_BLK) {
+      for (off = 0; off < bytes; off += MAT_BLK) {
         sz len = MIN((sz) MAT_BLK, bytes - off);
         Fi(in,
           const u8 * sp = src[i0 + i] + off;
@@ -185,8 +187,9 @@ static bool mat_supports(u8 field_log2, u64 s, u64 r) {
 }
 
 static void * mat_new(u8 field_log2, u64 s, u64 r) {
+  mat_codec * cd;
   xpar_gf_init();
-  mat_codec * cd = (mat_codec *) xpar_calloc(1, sizeof(mat_codec));
+  cd = xpar_calloc(1, sizeof *cd);
   cd->f16 = field_log2 == 16;
   cd->s = (u32) s;  cd->r = (u32) r;
   return cd;
@@ -196,15 +199,15 @@ static void mat_free(void * self) { xpar_free(self); }
 
 static xpar_codec_status mat_encode(void * self, const u8 * const * data,
                                     u8 * const * rec, sz bytes) {
-  mat_codec * cd = (mat_codec *) self;
+  mat_codec * cd = self;
   mat_coefs cf;  mat_tile * tl;
+  u32 j;
   xpar_assert(!cd->f16 || (bytes & 1) == 0);
   if (!bytes) return XPAR_CODEC_OK;
-  tl = (mat_tile *) xpar_alloc_raw(sizeof(mat_tile));
-  u32 j;
+  tl = xpar_alloc_raw(sizeof *tl);
   Fj(cd->r, xpar_memset(rec[j], 0, bytes));
   xpar_memset(&cf, 0, sizeof cf);
-  cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535u : 255u;
+  cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535U : 255U;
   mat_run(&cf, rec, cd->r, data, cd->s, bytes, tl);
   xpar_free(tl);
   return XPAR_CODEC_OK;
@@ -214,36 +217,36 @@ static xpar_codec_status mat_encode(void * self, const u8 * const * data,
     erasure pattern and remain cacheable.  */
 static void * mat_plan_new(void * self, const u8 * dpres, const u8 * rpres,
                            xpar_codec_status * status) {
-  mat_codec * cd = (mat_codec *) self;
-  u32 s = cd->s, r = cd->r, e = 0, got = 0, i, k, t;
+  mat_codec * cd = self;
+  mat_plan * pl;
+  u32 s = cd->s, r = cd->r, e = 0, got = 0, i, j, k, t;
   Fi(s, if (!dpres[i]) e++);
   Fi(r, if (rpres[i]) got++);
   if (got < e) { *status = XPAR_CODEC_TOO_MANY_LOST;  return NULL; }
   *status = XPAR_CODEC_OK;
-  mat_plan * pl = (mat_plan *) xpar_calloc(1, sizeof(mat_plan));
+  pl = xpar_calloc(1, sizeof *pl);
   pl->cd = cd;  pl->e = e;  pl->nkeep = s - e;
   if (!e) return pl;
-  pl->lost = (u32 *) xpar_alloc_raw((sz) e * sizeof(u32));
-  pl->use  = (u32 *) xpar_alloc_raw((sz) e * sizeof(u32));
-  pl->keep = (u32 *) xpar_alloc_raw((sz) (pl->nkeep ? pl->nkeep : 1) *
-                                    sizeof(u32));
-  for (i = 0, k = 0, t = 0; i < s; i++) {
-    if (dpres[i]) pl->keep[t++] = i;  else pl->lost[k++] = i;
-  }
+  pl->lost = xpar_alloc_raw((sz) e * sizeof *pl->lost);
+  pl->use  = xpar_alloc_raw((sz) e * sizeof *pl->use);
+  pl->keep = xpar_alloc_raw((sz) (pl->nkeep ? pl->nkeep : 1) *
+                            sizeof *pl->keep);
+  k = t = 0;
+  Fi(s, if (dpres[i]) pl->keep[t++] = i;  else pl->lost[k++] = i);
   for (i = 0, k = 0; i < r && k < e; i++) if (rpres[i]) pl->use[k++] = i;
   if (cd->f16) {
-    u16 * x = (u16 *) xpar_alloc_raw((sz) 2 * e * sizeof(u16));
+    u16 * x = xpar_alloc_raw((sz) 2 * e * sizeof *x);
     u16 * y = x + e;
-    Fk(e, x[k] = (u16) (65535u - pl->use[k]));
-    for (u32 l = 0; l < (e); l++) { y[l] = (u16) pl->lost[l]; }
+    Fk(e, x[k] = (u16) (65535U - pl->use[k]));
+    Fj(e, y[j] = (u16) pl->lost[j]);
     pl->inv = xpar_alloc_raw((sz) e * e * sizeof(u16));
     cauchy_inv16(e, x, y, (u16 *) pl->inv);
     xpar_free(x);
   } else {
-    u8 * x = (u8 *) xpar_alloc_raw((sz) 2 * e);
+    u8 * x = xpar_alloc_raw((sz) 2 * e);
     u8 * y = x + e;
-    Fk(e, x[k] = (u8) (255u - pl->use[k]));
-    for (u32 l = 0; l < (e); l++) { y[l] = (u8) pl->lost[l]; }
+    Fk(e, x[k] = (u8) (255U - pl->use[k]));
+    Fj(e, y[j] = (u8) pl->lost[j]);
     pl->inv = xpar_alloc_raw((sz) e * e);
     cauchy_inv8(e, x, y, (u8 *) pl->inv);
     xpar_free(x);
@@ -252,7 +255,7 @@ static void * mat_plan_new(void * self, const u8 * dpres, const u8 * rpres,
 }
 
 static void mat_plan_free(void * self) {
-  mat_plan * pl = (mat_plan *) self;
+  mat_plan * pl = self;
   if (!pl) return;
   xpar_free(pl->lost);  xpar_free(pl->use);
   xpar_free(pl->keep);  xpar_free(pl->inv);
@@ -265,39 +268,43 @@ static void mat_plan_free(void * self) {
 static xpar_codec_status mat_plan_apply(const void * self,
                                         u8 * const * data,
                                         const u8 * const * rec, sz bytes) {
-  const mat_plan * pl = (const mat_plan *) self;
+  const mat_plan * pl = self;
   const mat_codec * cd = pl->cd;
-  u32 e = pl->e;
+  u32 e = pl->e, i, j, k;
+  sz stride;
+  u64 need;
+  u8 * pool, ** syn, ** out;
+  const u8 ** in;
+  mat_tile * tl;
+  mat_coefs cf;
   xpar_assert(!cd->f16 || (bytes & 1) == 0);
   if (!e || !bytes) return XPAR_CODEC_OK;
-  sz stride = mat_stride(bytes);
-  u64 need = (u64) e * (u64) stride;
+  stride = mat_stride(bytes);
+  need = (u64) e * (u64) stride;
   FATAL_UNLESS(need <= (u64) (sz) -1,
                "column chunk too wide for this host's address space");
-  u8 * pool = (u8 *) xpar_alloc_aligned((sz) need, 64);
-  u8 ** syn = (u8 **) xpar_alloc_raw((sz) e * sizeof(u8 *));
-  u8 ** out = (u8 **) xpar_alloc_raw((sz) e * sizeof(u8 *));
-  const u8 ** in = (const u8 **) xpar_alloc_raw(
-                     (sz) (pl->nkeep ? pl->nkeep : 1) * sizeof(u8 *));
-  mat_tile * tl = (mat_tile *) xpar_alloc_raw(sizeof(mat_tile));
-  mat_coefs cf;
-  u32 k;
+  pool = xpar_alloc_aligned((sz) need, 64);
+  syn = xpar_alloc_raw((sz) e * sizeof *syn);
+  out = xpar_alloc_raw((sz) e * sizeof *out);
+  in = xpar_alloc_raw((sz) (pl->nkeep ? pl->nkeep : 1) * sizeof *in);
+  tl = xpar_alloc_raw(sizeof *tl);
   Fk(e,
     syn[k] = pool + (sz) k * stride;
     xpar_memcpy(syn[k], rec[pl->use[k]], bytes));
-  u32 i;
   Fi(pl->nkeep, in[i] = data[pl->keep[i]]);
   xpar_memset(&cf, 0, sizeof cf);
-  cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535u : 255u;
+  cf.f16 = cd->f16;  cf.base = cd->f16 ? 65535U : 255U;
   cf.rowmap = pl->use;
   cf.colmap = pl->keep;
   mat_run(&cf, syn, e, in, pl->nkeep, bytes, tl);
-  for (u32 l = 0; l < e; l++) { out[l] = data[pl->lost[l]];  xpar_memset(out[l], 0, bytes); }
+  Fj(e,
+    out[j] = data[pl->lost[j]];
+    xpar_memset(out[j], 0, bytes));
   cf.rowmap = NULL;  cf.colmap = NULL;
   cf.mat = pl->inv;  cf.stride = e;
   mat_run(&cf, out, e, (const u8 * const *) syn, e, bytes, tl);
   xpar_free(tl);  xpar_free((void *) in);
-  xpar_free(out); xpar_free(syn);  xpar_free_aligned(pool);
+  xpar_free(out);  xpar_free(syn);  xpar_free_aligned(pool);
   return XPAR_CODEC_OK;
 }
 
@@ -330,9 +337,10 @@ xpar_codec * xpar_codec_new(u8 codec, u8 field_log2, u64 s, u64 r) {
 
 xpar_codec * xpar_codec_new_axis(u8 codec, u8 field_log2, u64 s, u64 r,
                                  u8 axis_log2) {
+  xpar_codec * c;
   FATAL_UNLESS(xpar_codec_supports_axis(codec, field_log2, s, r, axis_log2),
                "internal: unsupported codec geometry");
-  xpar_codec * c = (xpar_codec *) xpar_calloc(1, sizeof(xpar_codec));
+  c = xpar_calloc(1, sizeof *c);
   c->kind = codec;
   c->impl = codec_is_fft(codec)
               ? xpar_fft_new_axis(codec, field_log2, s, r, axis_log2)
@@ -363,7 +371,7 @@ xpar_codec_status xpar_codec_matrix_accumulate_many(
   mat_tile * tl;
   u64 j;
   if (c->kind != XPAR_CODEC_MATRIX) return XPAR_CODEC_UNSUPPORTED;
-  cd = (mat_codec *) c->impl;
+  cd = c->impl;
   if (data_first > cd->s || data_count > cd->s - data_first ||
       recovery_first > cd->r ||
       recovery_count > cd->r - recovery_first)
@@ -375,9 +383,9 @@ xpar_codec_status xpar_codec_matrix_accumulate_many(
     Fj(recovery_count, xpar_memset(recovery[j], 0, bytes));
   xpar_memset(&cf, 0, sizeof cf);
   cf.f16 = cd->f16;
-  cf.base = (cd->f16 ? 65535u : 255u) - (u32) recovery_first;
+  cf.base = (cd->f16 ? 65535U : 255U) - (u32) recovery_first;
   cf.colbase = (u32) data_first;
-  tl = (mat_tile *) xpar_alloc_raw(sizeof(mat_tile));
+  tl = xpar_alloc_raw(sizeof *tl);
   mat_run(&cf, recovery, (u32) recovery_count, data, (u32) data_count,
           bytes, tl);
   xpar_free(tl);
@@ -406,9 +414,9 @@ xpar_codec_plan * xpar_codec_plan_new(xpar_codec * c,
                                       recovery_present, status)
                   : mat_plan_new(c->impl, data_present, recovery_present,
                                  status);
+  xpar_codec_plan * p;
   if (!impl) return NULL;
-  xpar_codec_plan * p = (xpar_codec_plan *)
-                          xpar_calloc(1, sizeof(xpar_codec_plan));
+  p = xpar_calloc(1, sizeof *p);
   p->kind = c->kind;  p->impl = impl;
   return p;
 }

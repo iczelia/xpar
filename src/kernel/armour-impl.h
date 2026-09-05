@@ -20,25 +20,25 @@
 /*  Variant selection.  */
 
 #if defined(XPAR_ARM_VARIANT_SCALAR)
-  #define ARM_SUF   scalar
-  #define ARM_NAME  "scalar"
+#define ARM_SUF   scalar
+#define ARM_NAME  "scalar"
 #elif defined(XPAR_ARM_VARIANT_AVX2)
-  #define ARM_SUF   avx2
-  #define ARM_NAME  "avx2"
-  #define ARM_ISA_AVX2
-  #define ARM_SPLIT
+#define ARM_SUF   avx2
+#define ARM_NAME  "avx2"
+#define ARM_ISA_AVX2
+#define ARM_SPLIT
 #elif defined(XPAR_ARM_VARIANT_GFNI256)
-  #define ARM_SUF   gfni256
-  #define ARM_NAME  "gfni256"
-  #define ARM_ISA_AVX2
-  #define ARM_AFFINE
+#define ARM_SUF   gfni256
+#define ARM_NAME  "gfni256"
+#define ARM_ISA_AVX2
+#define ARM_AFFINE
 #elif defined(XPAR_ARM_VARIANT_NEON)
-  #define ARM_SUF   neon
-  #define ARM_NAME  "neon"
-  #define ARM_ISA_NEON
-  #define ARM_SPLIT
+#define ARM_SUF   neon
+#define ARM_NAME  "neon"
+#define ARM_ISA_NEON
+#define ARM_SPLIT
 #else
-  #error "armour-impl.h included without an XPAR_ARM_VARIANT_* selection"
+#error "armour-impl.h included without an XPAR_ARM_VARIANT_* selection"
 #endif
 
 #define ARM_CAT_(a, b) a##_##b
@@ -52,47 +52,47 @@
     own lane at every width.  */
 
 #if defined(ARM_ISA_AVX2)
-  #include <immintrin.h>
-  #define ARM_V           __m256i
-  #define ARM_VB          32
-  #define ARM_LD(p)       _mm256_loadu_si256((const __m256i *)               \
+#include <immintrin.h>
+#define ARM_V           __m256i
+#define ARM_VB          32
+#define ARM_LD(p)       _mm256_loadu_si256((const __m256i *)               \
                                              (const void *) (p))
-  #define ARM_ST(p, v)    _mm256_storeu_si256((__m256i *) (void *) (p), (v))
-  #define ARM_XOR(a, b)   _mm256_xor_si256((a), (b))
-  #define ARM_TAB(p)      _mm256_broadcastsi128_si256(                       \
+#define ARM_ST(p, v)    _mm256_storeu_si256((__m256i *) (void *) (p), (v))
+#define ARM_XOR(a, b)   _mm256_xor_si256((a), (b))
+#define ARM_TAB(p)      _mm256_broadcastsi128_si256(                       \
                             _mm_loadu_si128((const __m128i *)                \
                                             (const void *) (p)))
-  #define ARM_SHUF(t, i)  _mm256_shuffle_epi8((t), (i))
-  #define ARM_SET64(x)    _mm256_set1_epi64x((long long) (x))
-  #define ARM_AN4(v)      _mm256_and_si256((v), _mm256_set1_epi8(0x0F))
-  #define ARM_SR4(v)      ARM_AN4(_mm256_srli_epi64((v), 4))
-  #define ARM_AFF(v, mx)  _mm256_gf2p8affine_epi64_epi8((v), (mx), 0)
+#define ARM_SHUF(t, i)  _mm256_shuffle_epi8((t), (i))
+#define ARM_SET64(x)    _mm256_set1_epi64x((long long) (x))
+#define ARM_AN4(v)      _mm256_and_si256((v), _mm256_set1_epi8(0x0F))
+#define ARM_SR4(v)      ARM_AN4(_mm256_srli_epi64((v), 4))
+#define ARM_AFF(v, mx)  _mm256_gf2p8affine_epi64_epi8((v), (mx), 0)
 #elif defined(ARM_ISA_NEON)
-  #include <arm_neon.h>
-  #define ARM_V           uint8x16_t
-  #define ARM_VB          16
-  #define ARM_LD(p)       vld1q_u8((const u8 *) (const void *) (p))
-  #define ARM_ST(p, v)    vst1q_u8((u8 *) (void *) (p), (v))
-  #define ARM_XOR(a, b)   veorq_u8((a), (b))
-  #define ARM_TAB(p)      ARM_LD(p)
-  #define ARM_SHUF(t, i)  vqtbl1q_u8((t), (i))
-  #define ARM_AN4(v)      vandq_u8((v), vdupq_n_u8(0x0F))
-  #define ARM_SR4(v)      vshrq_n_u8((v), 4)
+#include <arm_neon.h>
+#define ARM_V           uint8x16_t
+#define ARM_VB          16
+#define ARM_LD(p)       vld1q_u8((const u8 *) (const void *) (p))
+#define ARM_ST(p, v)    vst1q_u8((u8 *) (void *) (p), (v))
+#define ARM_XOR(a, b)   veorq_u8((a), (b))
+#define ARM_TAB(p)      ARM_LD(p)
+#define ARM_SHUF(t, i)  vqtbl1q_u8((t), (i))
+#define ARM_AN4(v)      vandq_u8((v), vdupq_n_u8(0x0F))
+#define ARM_SR4(v)      vshrq_n_u8((v), 4)
 #endif
 
 /*  ARM_PRE8 splits shuffle indices once per vector. Affine variants use
     the void cast to keep the same two-argument interface.  */
 
 #ifdef ARM_SPLIT
-  #define ARM_PRE8(v, lo, hi)  do {                                          \
+#define ARM_PRE8(v, lo, hi)  do {                                          \
       (lo) = ARM_AN4(v);  (hi) = ARM_SR4(v);                                 \
     } while (0)
-  #define ARM_MUL8P(lo, hi, m)                                               \
+#define ARM_MUL8P(lo, hi, m)                                               \
     ARM_XOR(ARM_SHUF(ARM_TAB((m)->tab), (lo)),                               \
             ARM_SHUF(ARM_TAB((m)->tab + 16), (hi)))
 #else
-  #define ARM_PRE8(v, lo, hi)  do { (lo) = (v);  (hi) = (v); } while (0)
-  #define ARM_MUL8P(lo, hi, m)                                               \
+#define ARM_PRE8(v, lo, hi)  do { (lo) = (v);  (hi) = (v); } while (0)
+#define ARM_MUL8P(lo, hi, m)                                               \
     ARM_AFF(((void) (hi), (lo)), ARM_SET64((m)->affine))
 #endif
 
@@ -100,22 +100,22 @@
     nothing to hoist. The affine form takes the whole byte, not a nibble,
     so this cannot be written in terms of ARM_MUL8P.  */
 #ifdef ARM_SPLIT
-  #define ARM_MUL8V(v, m)                                                    \
+#define ARM_MUL8V(v, m)                                                    \
     ARM_XOR(ARM_SHUF(ARM_TAB((m)->tab), ARM_AN4(v)),                         \
             ARM_SHUF(ARM_TAB((m)->tab + 16), ARM_SR4(v)))
 #else
-  #define ARM_MUL8V(v, m)  ARM_AFF((v), ARM_SET64((m)->affine))
+#define ARM_MUL8V(v, m)  ARM_AFF((v), ARM_SET64((m)->affine))
 #endif
 
 /*  Split interleaved GF(2^16) symbols into byte planes for multiplication.
     ARM_INT reverses any lane-local permutation from ARM_DEINT.  */
 
 #ifdef ARM_ISA_NEON
-  #define ARM_PLANE_VARS
-  #define ARM_DEINT(v0, v1, olo, ohi) do {                                   \
+#define ARM_PLANE_VARS
+#define ARM_DEINT(v0, v1, olo, ohi) do {                                   \
       (olo) = vuzp1q_u8((v0), (v1));  (ohi) = vuzp2q_u8((v0), (v1));         \
     } while (0)
-  #define ARM_INT(ilo, ihi, o0, o1) do {                                     \
+#define ARM_INT(ilo, ihi, o0, o1) do {                                     \
       (o0) = vzip1q_u8((ilo), (ihi));  (o1) = vzip2q_u8((ilo), (ihi));       \
     } while (0)
 #else
@@ -123,14 +123,14 @@ static const u8 arm_deint_idx[16] = { 0, 2, 4, 6, 8, 10, 12, 14,
                                       1, 3, 5, 7, 9, 11, 13, 15 };
 static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
                                       4, 12, 5, 13, 6, 14, 7, 15 };
-  #define ARM_PLANE_VARS                                                     \
+#define ARM_PLANE_VARS                                                     \
     const ARM_V amdi = ARM_TAB(arm_deint_idx), amii = ARM_TAB(arm_reint_idx);
-  #define ARM_DEINT(v0, v1, olo, ohi) do {                                   \
+#define ARM_DEINT(v0, v1, olo, ohi) do {                                   \
       ARM_V amu = ARM_SHUF((v0), amdi), amv = ARM_SHUF((v1), amdi);          \
       (olo) = _mm256_unpacklo_epi64(amu, amv);                               \
       (ohi) = _mm256_unpackhi_epi64(amu, amv);                               \
     } while (0)
-  #define ARM_INT(ilo, ihi, o0, o1) do {                                     \
+#define ARM_INT(ilo, ihi, o0, o1) do {                                     \
       ARM_V amu = _mm256_unpacklo_epi64((ilo), (ihi));                       \
       ARM_V amv = _mm256_unpackhi_epi64((ilo), (ihi));                       \
       (o0) = ARM_SHUF(amu, amii);  (o1) = ARM_SHUF(amv, amii);               \
@@ -140,7 +140,7 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
 #ifdef ARM_SPLIT
   /*  Eight nibble tables against four affine matrices, which is the
       other half of why the affine tier leads the ladder.  */
-  #define ARM_MUL16P(lo, hi, olo, ohi, m) do {                               \
+#define ARM_MUL16P(lo, hi, olo, ohi, m) do {                               \
       ARM_V an0 = ARM_AN4(lo), an1 = ARM_SR4(lo),                            \
             an2 = ARM_AN4(hi), an3 = ARM_SR4(hi);                            \
       (olo) = ARM_XOR(ARM_XOR(ARM_SHUF(ARM_TAB((m)->tab[0]), an0),           \
@@ -153,7 +153,7 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
                               ARM_SHUF(ARM_TAB((m)->tab[7]), an3)));         \
     } while (0)
 #else
-  #define ARM_MUL16P(lo, hi, olo, ohi, m) do {                               \
+#define ARM_MUL16P(lo, hi, olo, ohi, m) do {                               \
       (olo) = ARM_XOR(ARM_AFF((lo), ARM_SET64((m)->affine[0])),              \
                       ARM_AFF((hi), ARM_SET64((m)->affine[1])));             \
       (ohi) = ARM_XOR(ARM_AFF((lo), ARM_SET64((m)->affine[2])),              \
@@ -170,16 +170,16 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
     Chunk-major sweeps cannot because their inner loop is the tap.  */
 
 #ifdef ARM_SPLIT
-  #define ARM_H8_VARS(m)                                                     \
+#define ARM_H8_VARS(m)                                                     \
     const ARM_V ah0 = ARM_TAB((m)->tab), ah1 = ARM_TAB((m)->tab + 16);
-  #define ARM_H8P(lo, hi)                                                    \
+#define ARM_H8P(lo, hi)                                                    \
     ARM_XOR(ARM_SHUF(ah0, (lo)), ARM_SHUF(ah1, (hi)))
-  #define ARM_H16_VARS(m)                                                    \
+#define ARM_H16_VARS(m)                                                    \
     const ARM_V ah0 = ARM_TAB((m)->tab[0]), ah1 = ARM_TAB((m)->tab[1]),      \
                 ah2 = ARM_TAB((m)->tab[2]), ah3 = ARM_TAB((m)->tab[3]),      \
                 ah4 = ARM_TAB((m)->tab[4]), ah5 = ARM_TAB((m)->tab[5]),      \
                 ah6 = ARM_TAB((m)->tab[6]), ah7 = ARM_TAB((m)->tab[7]);
-  #define ARM_H16P(lo, hi, olo, ohi) do {                                    \
+#define ARM_H16P(lo, hi, olo, ohi) do {                                    \
       ARM_V an0 = ARM_AN4(lo), an1 = ARM_SR4(lo),                            \
             an2 = ARM_AN4(hi), an3 = ARM_SR4(hi);                            \
       (olo) = ARM_XOR(ARM_XOR(ARM_SHUF(ah0, an0), ARM_SHUF(ah2, an1)),       \
@@ -188,14 +188,14 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
                       ARM_XOR(ARM_SHUF(ah5, an2), ARM_SHUF(ah7, an3)));      \
     } while (0)
 #else
-  #define ARM_H8_VARS(m)   const ARM_V ah0 = ARM_SET64((m)->affine);
-  #define ARM_H8P(lo, hi)  ARM_AFF(((void) (hi), (lo)), ah0)
-  #define ARM_H16_VARS(m)                                                    \
+#define ARM_H8_VARS(m)   const ARM_V ah0 = ARM_SET64((m)->affine);
+#define ARM_H8P(lo, hi)  ARM_AFF(((void) (hi), (lo)), ah0)
+#define ARM_H16_VARS(m)                                                    \
     const ARM_V ah0 = ARM_SET64((m)->affine[0]),                             \
                 ah1 = ARM_SET64((m)->affine[1]),                             \
                 ah2 = ARM_SET64((m)->affine[2]),                             \
                 ah3 = ARM_SET64((m)->affine[3]);
-  #define ARM_H16P(lo, hi, olo, ohi) do {                                    \
+#define ARM_H16P(lo, hi, olo, ohi) do {                                    \
       (olo) = ARM_XOR(ARM_AFF((lo), ah0), ARM_AFF((hi), ah1));               \
       (ohi) = ARM_XOR(ARM_AFF((lo), ah2), ARM_AFF((hi), ah3));               \
     } while (0)
@@ -204,9 +204,9 @@ static const u8 arm_reint_idx[16] = { 0, 8, 1, 9, 2, 10, 3, 11,
 /*  The two whole-byte forms, for the sweeps whose multiplicand is the
     accumulator and therefore has nothing pre-split.  */
 #ifdef ARM_SPLIT
-  #define ARM_H8V(v)  ARM_H8P(ARM_AN4(v), ARM_SR4(v))
+#define ARM_H8V(v)  ARM_H8P(ARM_AN4(v), ARM_SR4(v))
 #else
-  #define ARM_H8V(v)  ARM_AFF((v), ah0)
+#define ARM_H8V(v)  ARM_AFF((v), ah0)
 #endif
 
 /*  Chunk-major keeps the source live while the parity register fits in L1.
@@ -320,25 +320,23 @@ static void k_horner8(u8 * restrict syn, sz stride, u32 t2,
                       const xpar_gf8_coef * rt,
                       const u8 * restrict sym, sz n) {
   sz ai = 0, body = ARM_BODY8(n);
-  u32 aj;
+  u32 j;
   if ((u64) t2 * (u64) n <= ARM_TILE) {
     for (; ai < body; ai += ARM_VB) {
       ARM_V asv = ARM_LD(sym + ai);
       u8 * ap = syn + ai;
-      for (aj = 0; aj < t2; aj++) {
-        ARM_ST(ap, ARM_XOR(ARM_MUL8V(ARM_LD(ap), rt + aj), asv));
-        ap += stride;
-      }
+      Fj(t2,
+        ARM_ST(ap, ARM_XOR(ARM_MUL8V(ARM_LD(ap), rt + j), asv));
+        ap += stride);
     }
   } else {
     u8 * ap = syn;
-    for (aj = 0; aj < t2; aj++) {
-      ARM_H8_VARS(rt + aj)
+    Fj(t2,
+      ARM_H8_VARS(rt + j)
       sz aq;
       for (aq = 0; aq < body; aq += ARM_VB)
         ARM_ST(ap + aq, ARM_XOR(ARM_H8V(ARM_LD(ap + aq)), ARM_LD(sym + aq)));
-      ap += stride;
-    }
+      ap += stride);
     ai = body;
   }
   if (ai < n)
@@ -349,26 +347,25 @@ static void k_horner16(u8 * restrict syn, sz stride, u32 t2,
                        const xpar_gf16_coef * rt,
                        const u8 * restrict sym, sz n) {
   sz ai = 0, body = ARM_BODY16(n);
-  u32 aj;
+  u32 j;
   ARM_PLANE_VARS
   if ((u64) t2 * (u64) n <= ARM_TILE) {
     for (; ai < body; ai += 2 * ARM_VB) {
       ARM_V av0 = ARM_LD(sym + ai), av1 = ARM_LD(sym + ai + ARM_VB);
       u8 * ap = syn + ai;
-      for (aj = 0; aj < t2; aj++) {
+      Fj(t2,
         ARM_V alo, ahi, aol, aoh, ar0, ar1;
         ARM_DEINT(ARM_LD(ap), ARM_LD(ap + ARM_VB), alo, ahi);
-        ARM_MUL16P(alo, ahi, aol, aoh, rt + aj);
+        ARM_MUL16P(alo, ahi, aol, aoh, rt + j);
         ARM_INT(aol, aoh, ar0, ar1);
         ARM_ST(ap, ARM_XOR(ar0, av0));
         ARM_ST(ap + ARM_VB, ARM_XOR(ar1, av1));
-        ap += stride;
-      }
+        ap += stride);
     }
   } else {
     u8 * ap = syn;
-    for (aj = 0; aj < t2; aj++) {
-      ARM_H16_VARS(rt + aj)
+    Fj(t2,
+      ARM_H16_VARS(rt + j)
       sz aq;
       for (aq = 0; aq < body; aq += 2 * ARM_VB) {
         ARM_V alo, ahi, aol, aoh, ar0, ar1;
@@ -379,8 +376,7 @@ static void k_horner16(u8 * restrict syn, sz stride, u32 t2,
         ARM_ST(ap + aq + ARM_VB,
                ARM_XOR(ar1, ARM_LD(sym + aq + ARM_VB)));
       }
-      ap += stride;
-    }
+      ap += stride);
     ai = body;
   }
   if (ai < n)

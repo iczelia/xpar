@@ -161,7 +161,7 @@ void xpar_xclose(xpar_file *);
 
 /*  Memory mapping.  */
 
-typedef struct { u8 * map; sz size; bool valid; } xpar_mmap;
+typedef struct { u8 * map;  sz size;  bool valid; } xpar_mmap;
 
 xpar_mmap xpar_map  (const char * path);
 void      xpar_unmap(xpar_mmap *);

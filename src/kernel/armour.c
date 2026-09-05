@@ -91,11 +91,11 @@ void xpar_armour_defaults(xpar_armour_params * p, u32 symbol_bits) {
   p->symbol_bits = symbol_bits;
   p->depth       = 1;
   if (symbol_bits == 8) {
-    p->poly = XPAR_GF8_POLY & 0xFFu;
+    p->poly = XPAR_GF8_POLY & 0xFFU;
     p->n    = 255;    p->k    = 223;
     p->fcr  = 212;    p->prim = 11;
   } else {
-    p->poly = XPAR_GF16_POLY & 0xFFFFu;
+    p->poly = XPAR_GF16_POLY & 0xFFFFU;
     p->n    = 65535;  p->k    = 65407;
     p->fcr  = 1;      p->prim = 1;
   }
@@ -110,10 +110,10 @@ const char * xpar_armour_check(const xpar_armour_params * p) {
   u32 order, t2, pr;  u64 frame;
   if (p->symbol_bits != 8 && p->symbol_bits != 16)
     return "armour symbol width must be 8 or 16";
-  order = p->symbol_bits == 8 ? 255u : 65535u;
-  if (p->poly != (p->symbol_bits == 8 ? (XPAR_GF8_POLY  & 0xFFu)
-                                      : (XPAR_GF16_POLY & 0xFFFFu)))
-    return "armour field polynomial is not the one this build implements";
+  order = p->symbol_bits == 8 ? 255U : 65535U;
+  if (p->poly != (p->symbol_bits == 8 ? (XPAR_GF8_POLY  & 0xFFU)
+                                      : (XPAR_GF16_POLY & 0xFFFFU)))
+    return "unsupported armour field polynomial";
   /*  Format minimum.  */
   if (p->n < 16 || p->n > order)     return "armour n is out of range";
   if (p->k < 1 || p->k >= p->n)      return "armour k is out of range";
@@ -125,14 +125,13 @@ const char * xpar_armour_check(const xpar_armour_params * p) {
   pr = p->prim % order;
   if (pr == 0 || gcd_u32(pr, order) != 1)
     return "armour prim must be invertible modulo 2^w - 1";
-  /* Version 2.0 fixes the generator for each field. */
+  /*  Version 2.0 fixes the generator for each field.  */
   if (p->symbol_bits == 8) {
     if (p->fcr != 212 || p->prim != 11)
       return "invalid GF(2^8) armour fcr/prim";
-  } else if (p->fcr != 1 || p->prim != 1) {
+  } else if (p->fcr != 1 || p->prim != 1)
     return "invalid GF(2^16) armour fcr/prim";
-  }
-  if (p->depth < 1 || p->depth > (1u << 24))
+  if (p->depth < 1 || p->depth > (1U << 24))
     return "armour depth must be in [1, 2^24]";
   frame = p->depth * (u64) p->n * (u64) (p->symbol_bits / 8);
   if (frame > (u64) (sz) -1)
@@ -202,9 +201,8 @@ static void run8(u8 * restrict p, sz stride, const xpar_gf8_coef * g, u32 c,
 static void sweep8(u8 * restrict p, sz stride, const xpar_gf8_coef * g, u32 c,
                    const u8 * restrict fb, sz n) {
   while (c--) {
-    const u8 * tb = g->tab;  sz q;
-    for (q = 0; q < n; q++)
-      p[q] ^= (u8) (tb[fb[q] & 15u] ^ tb[16 + (fb[q] >> 4)]);
+    const u8 * tb = g->tab;  sz i;
+    Fi(n, p[i] ^= (u8) (tb[fb[i] & 15U] ^ tb[16 + (fb[i] >> 4)]));
     p += stride;  g++;
   }
 }
@@ -213,14 +211,14 @@ void xpar_armour_taps8_ref(u8 * restrict par, sz stride, u32 t2, u32 head,
                            const xpar_gf8_coef * gen,
                            const u8 * restrict fb, sz n) {
   u32 first = t2 - head;
+  sz i;
   if ((u64) t2 * (u64) n > ARM_REF_TILE) {
     sweep8(par + (sz) head * stride, stride, gen, first, fb, n);
     sweep8(par, stride, gen + first, head, fb, n);
     return;
   }
-  sz i;
   Fi(n,
-    u32 lo = fb[i] & 15u, hi = 16u + (fb[i] >> 4);
+    u32 lo = fb[i] & 15U, hi = 16U + (fb[i] >> 4);
     run8(par + (sz) head * stride + i, stride, gen, first, lo, hi);
     run8(par + i, stride, gen + first, head, lo, hi));
 }
@@ -230,8 +228,8 @@ void xpar_armour_taps8_ref(u8 * restrict par, sz stride, u32 t2, u32 head,
     (i << 4q) * c. The nibbles are split by the caller because all 2t
     taps share them.  */
 static void nib16(u32 * q, u16 v) {
-  q[0] = v & 15u;         q[1] = (v >> 4) & 15u;
-  q[2] = (v >> 8) & 15u;  q[3] = v >> 12;
+  q[0] = v & 15U;         q[1] = (v >> 4) & 15U;
+  q[2] = (v >> 8) & 15U;  q[3] = v >> 12;
 }
 static u16 mul16_nib(const xpar_gf16_coef * m, const u32 * q) {
   return (u16) ((u32) (u8) (m->tab[0][q[0]] ^ m->tab[2][q[1]] ^
@@ -262,12 +260,13 @@ void xpar_armour_taps16_ref(u8 * restrict par, sz stride, u32 t2, u32 head,
                             const xpar_gf16_coef * gen,
                             const u8 * restrict fb, sz n) {
   u32 first = t2 - head;
+  sz i;
   if ((u64) t2 * (u64) n > ARM_REF_TILE) {
     sweep16(par + (sz) head * stride, stride, gen, first, fb, n);
     sweep16(par, stride, gen + first, head, fb, n);
     return;
   }
-  for (sz i = 0; i + 2 <= n; i += 2) {
+  for (i = 0; i + 2 <= n; i += 2) {
     u32 q[4];
     nib16(q, xpar_rd16(fb + i));
     run16(par + (sz) head * stride + i, stride, gen, first, q);
@@ -283,14 +282,14 @@ void xpar_armour_horner8_ref(u8 * restrict syn, sz stride, u32 t2,
     Fj(t2,
       const u8 * tb = rt[j].tab;
       u8 * p = syn + (sz) j * stride;
-      Fi(n, p[i] = (u8) (tb[p[i] & 15u] ^ tb[16 + (p[i] >> 4)] ^ sym[i])));
+      Fi(n, p[i] = (u8) (tb[p[i] & 15U] ^ tb[16 + (p[i] >> 4)] ^ sym[i])));
     return;
   }
   Fi(n,
     u8 * p = syn + i;  u8 s = sym[i];
     Fj(t2,
       u32 v = *p;
-      *p = (u8) (rt[j].tab[v & 15u] ^ rt[j].tab[16 + (v >> 4)] ^ s);
+      *p = (u8) (rt[j].tab[v & 15U] ^ rt[j].tab[16 + (v >> 4)] ^ s);
       p += stride));
 }
 
@@ -338,16 +337,16 @@ static void build_generator(xpar_armour * a) {
   u32 m = a->t2, r;
   u32 ar = f_alpha(a, a->p.fcr % a->order);
   u32 q = f_alpha(a, a->p.prim % a->order);
-  u32 qi = 1;                         /* q^(r-1) */
-  u32 qj = f_alpha_mul(a, m, a->p.prim); /* q^(m-r+1) */
+  u32 qi = 1;                         /*  q^(r-1)  */
+  u32 qj = f_alpha_mul(a, m, a->p.prim); /*  q^(m-r+1)  */
   u32 qinv = f_inv(a, q);
   u32 c = 1;
 
-  a->gpoly = (u32 *) xpar_calloc(m + 1, sizeof(u32));
+  a->gpoly = xpar_calloc(m + 1, sizeof *a->gpoly);
   a->gpoly[m] = 1;
   for (r = 1; r <= m; r++) {
     u32 qr = f_mul(a, qi, q);
-    u32 ratio = f_div(a, 1u ^ qj, 1u ^ qr);
+    u32 ratio = f_div(a, 1U ^ qj, 1U ^ qr);
     c = f_mul(a, c, ar);
     c = f_mul(a, c, qi);
     c = f_mul(a, c, ratio);
@@ -363,25 +362,23 @@ static void build_generator(xpar_armour * a) {
     frame of the file (gf.h says why the region kernels want it that
     way).  */
 static void prepare_coefs(xpar_armour * a) {
-  u32 t2 = a->t2, u;
+  u32 t2 = a->t2, i;
   if (a->wb == 1) {
-    a->gen8 = (xpar_gf8_coef *) xpar_calloc(t2, sizeof(xpar_gf8_coef));
-    a->rt8  = (xpar_gf8_coef *) xpar_calloc(t2, sizeof(xpar_gf8_coef));
-    for (u = 0; u < t2; u++) {
-      xpar_gf8_prepare(&a->gen8[u], (u8) a->gpoly[t2 - 1 - u]);
-      xpar_gf8_prepare(&a->rt8[u],
+    a->gen8 = xpar_calloc(t2, sizeof *a->gen8);
+    a->rt8  = xpar_calloc(t2, sizeof *a->rt8);
+    Fi(t2,
+      xpar_gf8_prepare(&a->gen8[i], (u8) a->gpoly[t2 - 1 - i]);
+      xpar_gf8_prepare(&a->rt8[i],
                        (u8) f_alpha(a, (u32) (((u64) a->p.fcr +
-                                    (u64) u * a->p.prim) % a->order)));
-    }
+                                    (u64) i * a->p.prim) % a->order))));
   } else {
-    a->gen16 = (xpar_gf16_coef *) xpar_calloc(t2, sizeof(xpar_gf16_coef));
-    a->rt16  = (xpar_gf16_coef *) xpar_calloc(t2, sizeof(xpar_gf16_coef));
-    for (u = 0; u < t2; u++) {
-      xpar_gf16_prepare(&a->gen16[u], (u16) a->gpoly[t2 - 1 - u]);
-      xpar_gf16_prepare(&a->rt16[u],
+    a->gen16 = xpar_calloc(t2, sizeof *a->gen16);
+    a->rt16  = xpar_calloc(t2, sizeof *a->rt16);
+    Fi(t2,
+      xpar_gf16_prepare(&a->gen16[i], (u16) a->gpoly[t2 - 1 - i]);
+      xpar_gf16_prepare(&a->rt16[i],
                         (u16) f_alpha(a, (u32) (((u64) a->p.fcr +
-                                     (u64) u * a->p.prim) % a->order)));
-    }
+                                     (u64) i * a->p.prim) % a->order))));
   }
 }
 
@@ -412,13 +409,13 @@ xpar_armour * xpar_armour_new(const xpar_armour_params * p) {
   xpar_armour * a;
   if (why) FATAL("%s", why);
   if (arm_cur < 0) xpar_armour_use_default_tier();
-  a = (xpar_armour *) xpar_calloc(1, sizeof(xpar_armour));
+  a = xpar_calloc(1, sizeof *a);
   a->p     = *p;
   a->kern  = arm_k;
   a->wb    = p->symbol_bits / 8;
   a->t2    = p->n - p->k;
   a->t     = a->t2 / 2;
-  a->order = p->symbol_bits == 8 ? 255u : 65535u;
+  a->order = p->symbol_bits == 8 ? 255U : 65535U;
   a->lane  = (sz) p->depth * a->wb;
   build_generator(a);
   prepare_coefs(a);
@@ -427,19 +424,19 @@ xpar_armour * xpar_armour_new(const xpar_armour_params * p) {
   a->vb    = batch_frames(a);
   /*  Include the buffer guard.  */
   a->vlane = (sz) xpar_align_up(virt_lane(a, a->vb), ARM_PAD);
-  a->par  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
-  a->fb   = (u8 *) xpar_alloc_aligned(a->vlane, 64);
-  a->syn  = (u8 *) xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
-  a->gsym = (u8 *) xpar_alloc_aligned(a->vlane, 64);
-  a->s    = (u32 *) xpar_calloc(a->t2, sizeof(u32));
-  a->lam  = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->bp   = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->tmp  = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->om   = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->ev   = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->step = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->pos  = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
-  a->val  = (u32 *) xpar_calloc(a->t2 + 2, sizeof(u32));
+  a->par  = xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
+  a->fb   = xpar_alloc_aligned(a->vlane, 64);
+  a->syn  = xpar_alloc_aligned((sz) a->t2 * a->vlane, 64);
+  a->gsym = xpar_alloc_aligned(a->vlane, 64);
+  a->s    = xpar_calloc(a->t2, sizeof *a->s);
+  a->lam  = xpar_calloc(a->t2 + 2, sizeof *a->lam);
+  a->bp   = xpar_calloc(a->t2 + 2, sizeof *a->bp);
+  a->tmp  = xpar_calloc(a->t2 + 2, sizeof *a->tmp);
+  a->om   = xpar_calloc(a->t2 + 2, sizeof *a->om);
+  a->ev   = xpar_calloc(a->t2 + 2, sizeof *a->ev);
+  a->step = xpar_calloc(a->t2 + 2, sizeof *a->step);
+  a->pos  = xpar_calloc(a->t2 + 2, sizeof *a->pos);
+  a->val  = xpar_calloc(a->t2 + 2, sizeof *a->val);
   return a;
 }
 
@@ -451,7 +448,7 @@ void xpar_armour_free(xpar_armour * a) {
   xpar_free_aligned(a->syn);  xpar_free_aligned(a->gsym);
   xpar_free(a->s);    xpar_free(a->lam);   xpar_free(a->bp);
   xpar_free(a->tmp);  xpar_free(a->om);    xpar_free(a->ev);
-  xpar_free(a->step); xpar_free(a->pos);   xpar_free(a->val);
+  xpar_free(a->step);  xpar_free(a->pos);   xpar_free(a->val);
   xpar_free(a);
 }
 
@@ -482,39 +479,41 @@ u64 xpar_armour_lane_frames(const xpar_armour * a) {
 }
 
 void xpar_armour_generator(const xpar_armour * a, u32 * g) {
-  for (u32 i = 0; i <= a->t2; i++) g[i] = a->gpoly[i];
+  u32 i;
+  Fi(a->t2 + 1, g[i] = a->gpoly[i]);
 }
 
 /*  Compute fb = data ^ top and clear the vacated slot. A scalar loop is
     cheaper below one vector.  */
 static void feedback(const xpar_gf_kernels * gk, u8 * fb, const u8 * dat,
                      u8 * top, sz lane) {
+  sz i;
   if (lane > 16) { gk->xor3(fb, dat, top, lane);  xpar_memset(top, 0, lane); }
-  else for (sz q = 0; q < lane; q++) { fb[q] = (u8) (dat[q] ^ top[q]);  top[q] = 0; }
+  else Fi(lane, fb[i] = (u8) (dat[i] ^ top[i]);  top[i] = 0);
 }
 
 /*  Gather or scatter one symbol position across a frame batch.  */
 
 static void gather(sz lane, u8 * dst, const u8 * src, u64 fx, u32 cnt) {
-  u32 f;
-  if (lane == 1) for (f = 0; f < cnt; f++) dst[f] = src[(sz) (f * fx)];
-  else if (lane == 2)
-    for (f = 0; f < cnt; f++)
-      xpar_wr16(dst + 2 * f, xpar_rd16(src + (sz) (f * fx)));
+  u32 i;
+  if (lane == 1) { Fi(cnt, dst[i] = src[(sz) (i * fx)]); }
+  else if (lane == 2) {
+    Fi(cnt, xpar_wr16(dst + 2 * i, xpar_rd16(src + (sz) (i * fx))));
+  }
   else
-    for (f = 0; f < cnt; f++)
-      xpar_memcpy(dst + (sz) f * lane, src + (sz) (f * fx), lane);
+    Fi(cnt, xpar_memcpy(dst + (sz) i * lane,
+                        src + (sz) (i * fx), lane));
 }
 
 static void scatter(sz lane, u8 * dst, u64 fx, u32 cnt, const u8 * src) {
-  u32 f;
-  if (lane == 1) for (f = 0; f < cnt; f++) dst[(sz) (f * fx)] = src[f];
-  else if (lane == 2)
-    for (f = 0; f < cnt; f++)
-      xpar_wr16(dst + (sz) (f * fx), xpar_rd16(src + 2 * f));
+  u32 i;
+  if (lane == 1) { Fi(cnt, dst[(sz) (i * fx)] = src[i]); }
+  else if (lane == 2) {
+    Fi(cnt, xpar_wr16(dst + (sz) (i * fx), xpar_rd16(src + 2 * i)));
+  }
   else
-    for (f = 0; f < cnt; f++)
-      xpar_memcpy(dst + (sz) (f * fx), src + (sz) f * lane, lane);
+    Fi(cnt, xpar_memcpy(dst + (sz) (i * fx),
+                        src + (sz) i * lane, lane));
 }
 
 /*  Encode with a circular parity register. Advancing `head` shifts it
@@ -522,7 +521,7 @@ static void scatter(sz lane, u8 * dst, u64 fx, u32 cnt, const u8 * src) {
 static void encode_batch(const xpar_armour * a, u8 * base, u64 fx, u32 cnt) {
   const xpar_gf_kernels * gk = xpar_gf_active();
   sz lane = a->lane, used = (sz) cnt * lane, vl = virt_lane(a, cnt);
-  u32 t2 = a->t2, head = 0, i, u;
+  u32 t2 = a->t2, head = 0, i, j;
   xpar_memset(a->par, 0, (sz) t2 * vl);
   xpar_memset(a->gsym + used, 0, vl - used);
   Fi(a->p.k,
@@ -533,9 +532,8 @@ static void encode_batch(const xpar_armour * a, u8 * base, u64 fx, u32 cnt) {
       a->kern->taps8(a->par, vl, t2, head, a->gen8, a->fb, vl);
     else
       a->kern->taps16(a->par, vl, t2, head, a->gen16, a->fb, vl));
-  for (u = 0; u < t2; u++)
-    scatter(lane, base + (sz) (a->p.k + u) * lane, fx, cnt,
-            a->par + (sz) ((head + u) % t2) * vl);
+  Fj(t2, scatter(lane, base + (sz) (a->p.k + j) * lane, fx, cnt,
+                  a->par + (sz) ((head + j) % t2) * vl));
 }
 
 static void encode_run(const xpar_armour * a, u8 * frames, u64 count) {
@@ -560,26 +558,24 @@ void xpar_armour_encode_frames(const xpar_armour * a, u8 * frames,
 void xpar_armour_encode(const xpar_armour * a, u8 * out,
                         const u8 * plain, u64 plain_length) {
   u64 fd = xpar_armour_frame_plain(a), fx = xpar_armour_frame_disk(a);
-  u64 frames = xpar_ceil_div(plain_length, fd), f, off = 0;
-  for (f = 0; f < frames; f++) {
-    u8 * fr = out + f * fx;
+  u64 frames = xpar_ceil_div(plain_length, fd), i, off = 0;
+  Fi(frames,
+    u8 * fr = out + i * fx;
     u64 take = plain_length - off < fd ? plain_length - off : fd;
     xpar_memcpy(fr, plain + off, (sz) take);
     if (take < fd) xpar_memset(fr + take, 0, (sz) (fd - take));
-    off += take;
-  }
+    off += take);
   encode_run(a, out, frames);
 }
 
 void xpar_armour_extract(const xpar_armour * a, u8 * plain, u64 plain_length,
                          const u8 * region) {
   u64 fd = xpar_armour_frame_plain(a), fx = xpar_armour_frame_disk(a);
-  u64 frames = xpar_ceil_div(plain_length, fd), f, off = 0;
-  for (f = 0; f < frames; f++) {
+  u64 frames = xpar_ceil_div(plain_length, fd), i, off = 0;
+  Fi(frames,
     u64 take = plain_length - off < fd ? plain_length - off : fd;
-    xpar_memcpy(plain + off, region + f * fx, (sz) take);
-    off += take;
-  }
+    xpar_memcpy(plain + off, region + i * fx, (sz) take);
+    off += take);
 }
 
 /*  Compute the 2t independent syndromes by Horner evaluation.  */
@@ -609,7 +605,7 @@ static bool region_zero(const u8 * p, sz n) {
     anything else is past capacity and the caller rejects it.  */
 static u32 berlekamp(const xpar_armour * a) {
   u32 t2 = a->t2, L = 0, m = 1, bb = 1, r, i;
-  sz words = (sz) (t2 + 2) * sizeof(u32);
+  sz words = (sz) (t2 + 2) * sizeof *a->lam;
   xpar_memset(a->lam, 0, words);  xpar_memset(a->bp, 0, words);
   a->lam[0] = 1;  a->bp[0] = 1;
   for (r = 0; r < t2; r++) {
@@ -618,8 +614,8 @@ static u32 berlekamp(const xpar_armour * a) {
     if (!d) { m++;  continue; }
     c = f_div(a, d, bb);
     xpar_memcpy(a->tmp, a->lam, words);
-    for (i = 0; i + m <= t2 + 1; i++)
-      if (a->bp[i]) a->lam[i + m] ^= f_mul(a, c, a->bp[i]);
+    Fi(t2 + 2 - m,
+      if (a->bp[i]) a->lam[i + m] ^= f_mul(a, c, a->bp[i]));
     if (2 * L <= r) {
       L = r + 1 - L;
       xpar_memcpy(a->bp, a->tmp, words);
@@ -632,31 +628,29 @@ static u32 berlekamp(const xpar_armour * a) {
 /*  Search only positions present in the shortened codeword. Incremental
     evaluation replaces exponentiation at each position with multiplication.  */
 static u32 chien(const xpar_armour * a, u32 L) {
-  u32 cnt = 0, r, i, pinv = a->order - (a->p.prim % a->order);
-  for (i = 0; i <= L; i++) { a->ev[i]   = a->lam[i];  a->step[i] = f_alpha_mul(a, pinv, i); }
-  for (r = 0; r < a->p.n; r++) {
+  u32 cnt = 0, i, j, pinv = a->order - (a->p.prim % a->order);
+  Fi(L + 1, a->ev[i] = a->lam[i];  a->step[i] = f_alpha_mul(a, pinv, i));
+  Fj(a->p.n,
     u32 sum = 0;
-    for (i = 0; i <= L; i++) sum ^= a->ev[i];
+    Fi(L + 1, sum ^= a->ev[i]);
     if (!sum) {
       if (cnt == L) return L + 1;   /*  More roots than degree: reject.  */
-      a->pos[cnt++] = r;
+      a->pos[cnt++] = j;
     }
-    for (i = 1; i <= L; i++) a->ev[i] = f_mul(a, a->ev[i], a->step[i]);
-  }
+    for (i = 1; i <= L; i++) a->ev[i] = f_mul(a, a->ev[i], a->step[i]));
   return cnt;
 }
 
 /*  Compute error magnitudes with Forney's formula. Reject zero denominators
     and magnitudes as invalid locator roots.  */
 static bool forney(const xpar_armour * a, u32 L) {
-  u32 i, j, l;
+  u32 i, j, k;
   Fj(L,
     u32 acc = 0;
-    for (i = 0; i <= j && i <= L; i++)
-      acc ^= f_mul(a, a->lam[i], a->s[j - i]);
+    Fi(j + 1, acc ^= f_mul(a, a->lam[i], a->s[j - i]));
     a->om[j] = acc);
-  for (l = 0; l < L; l++) {
-    u32 r = a->pos[l];
+  Fk(L,
+    u32 r = a->pos[k];
     u32 x = f_alpha_mul(a, a->p.prim % a->order, r);
     u32 y = f_inv(a, x), yp = 1, num = 0, den = 0;
     Fj(L,
@@ -668,25 +662,23 @@ static bool forney(const xpar_armour * a, u32 L) {
       yp   = f_mul(a, yp, f_mul(a, y, y));
     }
     if (!den) return false;
-    a->val[l] = f_div(a, f_mul(a, x, f_div(a, num, den)),
+    a->val[k] = f_div(a, f_mul(a, x, f_div(a, num, den)),
                       f_alpha_mul(a, a->p.fcr % a->order, r));
-    if (!a->val[l]) return false;
-  }
+    if (!a->val[k]) return false);
   return true;
 }
 
 /*  Recompute all syndromes from the proposed errors before writing them.
     The caller's tag catches changes into a different valid codeword.  */
 static bool syndromes_agree(const xpar_armour * a, u32 L) {
-  u32 j, l;
-  for (l = 0; l < L; l++) {
-    u32 r = a->pos[l];
-    a->ev[l]   = f_mul(a, a->val[l], f_alpha_mul(a, a->p.fcr % a->order, r));
-    a->step[l] = f_alpha_mul(a, a->p.prim % a->order, r);
-  }
+  u32 i, j;
+  Fi(L,
+    u32 r = a->pos[i];
+    a->ev[i]   = f_mul(a, a->val[i], f_alpha_mul(a, a->p.fcr % a->order, r));
+    a->step[i] = f_alpha_mul(a, a->p.prim % a->order, r));
   Fj(a->t2,
     u32 acc = 0;
-    for (l = 0; l < L; l++) { acc ^= a->ev[l];  a->ev[l] = f_mul(a, a->ev[l], a->step[l]); }
+    Fi(L, acc ^= a->ev[i];  a->ev[i] = f_mul(a, a->ev[i], a->step[i]));
     if (acc != a->s[j]) return false);
   return true;
 }
@@ -726,9 +718,9 @@ static void stat_add(xpar_armour_stat * st, int e) {
 
 /*  One frame's t2 syndrome lanes inside a batch, which are strided.  */
 static bool frame_clean(const xpar_armour * a, const u8 * syn, sz stride) {
-  u32 j;  sz q;  u8 acc = 0;
+  u32 j;  sz i;  u8 acc = 0;
   for (j = 0; j < a->t2; j++, syn += stride)
-    for (q = 0; q < a->lane; q++) acc |= syn[q];
+    Fi(a->lane, acc |= syn[i]);
   return acc == 0;
 }
 
@@ -749,24 +741,22 @@ static void decode_run(const xpar_armour * a, u8 * frames, u64 count,
     u32 cnt = (u32) (left < (u64) a->vb ? left : (u64) a->vb);
     u8 * base = frames + done * fx;
     sz vl = virt_lane(a, cnt);
-    u32 f, d;
+    u32 i, j;
     batch_syndromes(a, base, fx, cnt);
     if (st) st->frames += cnt;
     if (region_zero(a->syn, (sz) a->t2 * vl)) {
       stat_clean(st, (u64) cnt * a->p.depth);
       done += cnt;  continue;
     }
-    for (f = 0; f < cnt; f++) {
-      const u8 * fs = a->syn + (sz) f * a->lane;
+    Fi(cnt,
+      const u8 * fs = a->syn + (sz) i * a->lane;
       bool bad = false, fixed = false;
       if (frame_clean(a, fs, vl)) { stat_clean(st, a->p.depth);  continue; }
-      for (d = 0; d < a->p.depth; d++) {
-        int e = decode_one(a, base + (u64) f * fx, d, fs, vl);
+      Fj(a->p.depth,
+        int e = decode_one(a, base + (u64) i * fx, j, fs, vl);
         stat_add(st, e);
-        if (e < 0) bad = true;  else if (e > 0) fixed = true;
-      }
-      if (bad) *any_bad = true;  else if (fixed) *any_fixed = true;
-    }
+        if (e < 0) bad = true;  else if (e > 0) fixed = true);
+      if (bad) *any_bad = true;  else if (fixed) *any_fixed = true);
     done += cnt;
   }
 }
@@ -794,7 +784,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
                                       xpar_armour_stat * st) {
   u64 fx = xpar_armour_frame_disk(a);
   u64 frames = xpar_ceil_div(plain_length, xpar_armour_frame_plain(a));
-  bool fixed = false;
+  bool bad, fixed = false;
   xpar_assert(check != NULL);
   xpar_assert(region_length == frames * fx);
   xpar_armour_extract(a, plain, plain_length, region);
@@ -802,7 +792,7 @@ xpar_armour_status xpar_armour_decode(const xpar_armour * a,
   /*  A frame that reports FAILED is not decisive either way. Its damage
       may have been confined to parity, or to a codeword whose plaintext
       another frame's success makes whole; only the tag knows.  */
-  { bool bad;  decode_run(a, region, frames, st, &bad, &fixed); }
+  decode_run(a, region, frames, st, &bad, &fixed);
   xpar_armour_extract(a, plain, plain_length, region);
   if (!check(ctx, plain, plain_length)) return XPAR_ARMOUR_FAILED;
   return fixed ? XPAR_ARMOUR_CORRECTED : XPAR_ARMOUR_CLEAN;

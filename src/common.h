@@ -31,8 +31,7 @@ void xpar_on_fatal(void (* fn)(void));
 
 #define FATAL(fmt, ...)        FATAL_CODE(XPAR_EXIT_USAGE, fmt, ##__VA_ARGS__)
 #define FATAL_IO(fmt, ...)     FATAL_CODE(XPAR_EXIT_IO, fmt, ##__VA_ARGS__)
-#define FATAL_FORMAT(fmt, ...) FATAL_CODE(XPAR_EXIT_NOTFOUND, fmt,            \
-                                          ##__VA_ARGS__)
+#define FATAL_FORMAT(fmt, ...) FATAL_CODE(XPAR_EXIT_NOTFOUND, fmt, ##__VA_ARGS__)
 
 #define FATAL_UNLESS(cond, ...)                                               \
   do { if (!(cond)) FATAL(__VA_ARGS__); } while (0)
@@ -60,7 +59,7 @@ void xpar_on_fatal(void (* fn)(void));
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 /*  Element count of a true array. Never pass a pointer.  */
-#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+#define ARRAY_LEN(a) (sizeof a / sizeof *a)
 
 /*  Message pluralisation: the suffix a regular noun takes for a count.  */
 #define PLURAL(n) ((n) == 1 ? "" : "s")
@@ -121,7 +120,7 @@ static inline void xpar_wr16(u8 * p, u16 v) {
 
 static inline void xpar_wr32(u8 * p, u32 v) {
   p[0] = (u8) v;         p[1] = (u8) (v >> 8);
-  p[2] = (u8) (v >> 16); p[3] = (u8) (v >> 24);
+  p[2] = (u8) (v >> 16);  p[3] = (u8) (v >> 24);
 }
 
 static inline void xpar_wr64(u8 * p, u64 v) {
@@ -141,7 +140,8 @@ static inline void xpar_hex(char * out, const u8 * p, sz n) {
 /*  Case-folded hex prefix match.  */
 static inline bool xpar_hex_prefix(const u8 * id, sz n, const char * pfx) {
   static const char d[] = "0123456789abcdef";
-  for (sz i = 0; pfx[i]; i++) {
+  sz i;
+  for (i = 0; pfx[i]; i++) {
     char c = pfx[i];
     if (i >= 2 * n) return false;
     if (c >= 'A' && c <= 'F') c = (char) (c - 'A' + 'a');
@@ -166,7 +166,7 @@ static inline bool xpar_has_nul(const u8 * p, sz n) {
 
 /*  Constant-time comparison.  */
 static inline bool xpar_ct_equal(const void * a, const void * b, sz n) {
-  const u8 * x = (const u8 *) a, * y = (const u8 *) b;
+  const u8 * x = a, * y = b;
   u8 acc = 0;
   sz i;
   Fi(n, acc |= (u8) (x[i] ^ y[i]));

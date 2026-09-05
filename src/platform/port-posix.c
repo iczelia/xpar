@@ -37,20 +37,20 @@
 #include <signal.h>
 
 #if defined(HAVE_UCONTEXT_H)
-  #include <ucontext.h>
+#include <ucontext.h>
 #endif
 
 #if defined(HAVE_SYS_MMAN_H)
-  #include <sys/mman.h>
+#include <sys/mman.h>
 #endif
 #if defined(HAVE_SYS_TIME_H)
-  #include <sys/time.h>
+#include <sys/time.h>
 #endif
 #if defined(HAVE_GETRANDOM) && defined(HAVE_SYS_RANDOM_H)
-  #include <sys/random.h>
+#include <sys/random.h>
 #endif
 #if defined(HAVE_THREADS)
-  #include <pthread.h>
+#include <pthread.h>
 #endif
 
 const char * xpar_getenv(const char * name) { return getenv(name); }
@@ -64,11 +64,11 @@ const char * xpar_tmpdir(void) {
 #endif
 }
 #if defined(__linux__)
-  #include <sys/sysmacros.h>
+#include <sys/sysmacros.h>
 #endif
 #if defined(HAVE_IO_URING)
-  #include <linux/io_uring.h>
-  #include <sys/syscall.h>
+#include <linux/io_uring.h>
+#include <sys/syscall.h>
 #endif
 
 /*  flock where the host has it and fcntl F_SETLK where it does not.
@@ -76,17 +76,17 @@ const char * xpar_tmpdir(void) {
     itself guarded, because a compiler without it must still reach the
     fcntl path rather than fail to build.  */
 #if defined(HAVE_FLOCK)
-  #define XPAR_TRY_FLOCK 1
+#define XPAR_TRY_FLOCK 1
 #elif defined(__has_include)
-  #if __has_include(<sys/file.h>)
-    #define XPAR_TRY_FLOCK 1
-  #endif
+#if __has_include(<sys/file.h>)
+#define XPAR_TRY_FLOCK 1
+#endif
 #endif
 #if defined(XPAR_TRY_FLOCK)
-  #include <sys/file.h>
-  #if defined(LOCK_EX) && defined(LOCK_SH) && defined(LOCK_NB)
-    #define XPAR_LOCK_FLOCK 1
-  #endif
+#include <sys/file.h>
+#if defined(LOCK_EX) && defined(LOCK_SH) && defined(LOCK_NB)
+#define XPAR_LOCK_FLOCK 1
+#endif
 #endif
 
 struct xpar_file {
@@ -117,11 +117,11 @@ void xpar_host_init(void) {
     large file. Range-check every offset that crosses into libc.  */
 /*  What xpar_open reports for a FIFO, socket or device.  */
 #if defined(ENOTSUP)
-  #define XPAR_ENOTREG ENOTSUP
+#define XPAR_ENOTREG ENOTSUP
 #elif defined(EOPNOTSUPP)
-  #define XPAR_ENOTREG EOPNOTSUPP
+#define XPAR_ENOTREG EOPNOTSUPP
 #else
-  #define XPAR_ENOTREG EINVAL
+#define XPAR_ENOTREG EINVAL
 #endif
 
 static bool off_fits(u64 v) {
@@ -171,6 +171,9 @@ static int open_nofollow(const char * path, int flags, int mode) {
 
 xpar_file * xpar_open(const char * path, int flags) {
   int acc = flags & 3, of;
+  int fd, e;
+  struct stat st;
+  struct xpar_file * f;
   if      (acc == XPAR_O_WRONLY) of = O_WRONLY;
   else if (acc == XPAR_O_RDWR)   of = O_RDWR;
   else                           of = O_RDONLY;
@@ -188,53 +191,50 @@ xpar_file * xpar_open(const char * path, int flags) {
   /*  A FIFO, socket or device must never block this open.  */
   of |= O_NONBLOCK;
 #endif
-  int fd;
   if (flags & XPAR_O_NOFOLLOW) {
 #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-    fd = open_nofollow(path, of, (flags & XPAR_O_PRIVATE) ? 0600 : 0666);
+    fd = open_nofollow(path, of, flags & XPAR_O_PRIVATE ? 0600 : 0666);
 #else
     errno = ENOTSUP;  fd = -1;
 #endif
-  } else {
-    fd = open(path, of, (flags & XPAR_O_PRIVATE) ? 0600 : 0666);
-  }
+  } else fd = open(path, of, flags & XPAR_O_PRIVATE ? 0600 : 0666);
   if (fd < 0) return NULL;
   /*  Only a regular file can be read or written the way xpar needs.  */
-  { struct stat st;
-    int e;
-    if (fstat(fd, &st) != 0) e = errno;
-    else if (S_ISREG(st.st_mode)) e = 0;
-    else if (S_ISDIR(st.st_mode)) e = EISDIR;
-    else e = XPAR_ENOTREG;
-    if (e) { close(fd);  errno = e;  return NULL; }
-  }
+  if (fstat(fd, &st) != 0) e = errno;
+  else if (S_ISREG(st.st_mode)) e = 0;
+  else if (S_ISDIR(st.st_mode)) e = EISDIR;
+  else e = XPAR_ENOTREG;
+  if (e) { close(fd);  errno = e;  return NULL; }
 #if !defined(O_CLOEXEC)
   /*  A descriptor on a half-written volume must not leak into a child.  */
   { int fl = fcntl(fd, F_GETFD);
     if (fl != -1) fcntl(fd, F_SETFD, fl | FD_CLOEXEC); }
 #endif
-  struct xpar_file * f = malloc(sizeof(*f));
+  f = malloc(sizeof *f);
   if (!f) { close(fd);  errno = ENOMEM;  return NULL; }
   f->fd = fd;  f->owned = true;  f->at_eof = false;  f->last_errno = 0;
   return f;
 }
 
 int xpar_close(xpar_file * f) {
+  int r;
   if (!f) return 0;
   if (!f->owned) return 0;
-  int r = close(f->fd) == 0 ? 0 : -1;
+  r = close(f->fd) == 0 ? 0 : -1;
   free(f);
   return r;
 }
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
   sz got = 0;
-  u8 * p = (u8 *) buf;
+  u8 * p = buf;
   f->last_errno = 0;
   while (got < n) {
-    sz want = n - got;
-    if (want > 0x10000000u) want = 0x10000000u;
-    ssize_t r = read(f->fd, p + got, want);
+    sz want;
+    ssize_t r;
+    want = n - got;
+    if (want > 0x10000000U) want = 0x10000000U;
+    r = read(f->fd, p + got, want);
     if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (r == 0) { f->at_eof = true;  break; }
     got += (sz) r;
@@ -244,12 +244,14 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
   sz done = 0;
-  const u8 * p = (const u8 *) buf;
+  const u8 * p = buf;
   f->last_errno = 0;
   while (done < n) {
-    sz want = n - done;
-    if (want > 0x10000000u) want = 0x10000000u;
-    ssize_t r = write(f->fd, p + done, want);
+    sz want;
+    ssize_t r;
+    want = n - done;
+    if (want > 0x10000000U) want = 0x10000000U;
+    r = write(f->fd, p + done, want);
     if (r < 0) { if (errno == EINTR) continue;  f->last_errno = errno;  break; }
     if (r == 0) break;
     done += (sz) r;
@@ -306,7 +308,7 @@ int xpar_lock(xpar_file * f, bool exclusive) {
   while (flock(f->fd, op) != 0) { if (errno == EINTR) continue;  return -1; }
   return 0;
 #else
-  /* Use nonblocking whole-file locks with matching descriptor access. */
+  /*  Use nonblocking whole-file locks with matching descriptor access.  */
   struct flock fl;
   fl.l_type   = exclusive ? F_WRLCK : F_RDLCK;
   fl.l_whence = SEEK_SET;
@@ -330,29 +332,29 @@ int xpar_unlock(xpar_file * f) {
 #endif
 }
 
-/* Every supported POSIX backend provides locking. */
+/*  Every supported POSIX backend provides locking.  */
 bool xpar_lock_supported(void) { return true; }
 
 #if !defined(HAVE_PREAD) || !defined(HAVE_PWRITE)
-  #if defined(HAVE_THREADS)
+#if defined(HAVE_THREADS)
 static pthread_mutex_t g_ofs_lock = PTHREAD_MUTEX_INITIALIZER;
-    #define OFS_LOCK()   pthread_mutex_lock(&g_ofs_lock)
-    #define OFS_UNLOCK() pthread_mutex_unlock(&g_ofs_lock)
-  #else
-    #define OFS_LOCK()   do { } while (0)
-    #define OFS_UNLOCK() do { } while (0)
-  #endif
+#define OFS_LOCK()   pthread_mutex_lock(&g_ofs_lock)
+#define OFS_UNLOCK() pthread_mutex_unlock(&g_ofs_lock)
+#else
+#define OFS_LOCK()   do { } while (0)
+#define OFS_UNLOCK() do { } while (0)
+#endif
 #endif
 
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
-  f->last_errno = 0;
   sz got = 0;
-  u8 * p = (u8 *) buf;
+  u8 * p = buf;
+  f->last_errno = 0;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
   while (got < n) {
     sz want = n - got;
     ssize_t r;
-    if (want > 0x10000000u) want = 0x10000000u;
+    if (want > 0x10000000U) want = 0x10000000U;
 #if defined(HAVE_PREAD)
     r = pread(f->fd, p + got, want, (off_t) (off + got));
 #else
@@ -392,11 +394,11 @@ static xpar_uring g_uring = {
 };
 #if defined(HAVE_THREADS)
 static pthread_mutex_t g_uring_lock = PTHREAD_MUTEX_INITIALIZER;
-  #define URING_LOCK()   pthread_mutex_lock(&g_uring_lock)
-  #define URING_UNLOCK() pthread_mutex_unlock(&g_uring_lock)
+#define URING_LOCK()   pthread_mutex_lock(&g_uring_lock)
+#define URING_UNLOCK() pthread_mutex_unlock(&g_uring_lock)
 #else
-  #define URING_LOCK()   do { } while (0)
-  #define URING_UNLOCK() do { } while (0)
+#define URING_LOCK()   do { } while (0)
+#define URING_UNLOCK() do { } while (0)
 #endif
 
 static void uring_close(xpar_uring * u) {
@@ -418,9 +420,9 @@ static bool uring_open(xpar_uring * u, sz need) {
   xpar_memset(&u->p, 0, sizeof u->p);
   u->fd = (int) syscall(__NR_io_uring_setup, entries, &u->p);
   if (u->fd < 0) { u->state = -1;  return false; }
-  u->sqsz = u->p.sq_off.array + (sz) u->p.sq_entries * sizeof(u32);
+  u->sqsz = u->p.sq_off.array + (sz) u->p.sq_entries * sizeof *u->sq_array;
   u->cqsz = u->p.cq_off.cqes +
-            (sz) u->p.cq_entries * sizeof(struct io_uring_cqe);
+            (sz) u->p.cq_entries * sizeof *u->cqe;
   if (u->p.features & IORING_FEAT_SINGLE_MMAP) {
     u->sqsz = u->cqsz = MAX(u->sqsz, u->cqsz);
     u->sqmap = mmap(NULL, u->sqsz, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -432,7 +434,7 @@ static bool uring_open(xpar_uring * u, sz need) {
     u->cqmap = mmap(NULL, u->cqsz, PROT_READ | PROT_WRITE, MAP_SHARED,
                     u->fd, IORING_OFF_CQ_RING);
   }
-  u->smapsz = (sz) u->p.sq_entries * sizeof(struct io_uring_sqe);
+  u->smapsz = (sz) u->p.sq_entries * sizeof *u->sqe;
   u->smap = mmap(NULL, u->smapsz, PROT_READ | PROT_WRITE, MAP_SHARED,
                  u->fd, IORING_OFF_SQES);
   if (u->sqmap == MAP_FAILED || u->cqmap == MAP_FAILED ||
@@ -477,7 +479,7 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
     if (!r[i].file || !r[i].length) continue;
     tail = *u->sq_tail + (u32) submitted;
     slot = tail & *u->sq_mask;
-    xpar_memset(&u->sqe[slot], 0, sizeof(u->sqe[slot]));
+    xpar_memset(&u->sqe[slot], 0, sizeof u->sqe[slot]);
     u->sqe[slot].opcode = IORING_OP_READ;
     u->sqe[slot].fd = r[i].file->fd;
     u->sqe[slot].off = r[i].offset;
@@ -530,14 +532,14 @@ fallback:
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
-  f->last_errno = 0;
   sz done = 0;
-  const u8 * p = (const u8 *) buf;
+  const u8 * p = buf;
+  f->last_errno = 0;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
   while (done < n) {
     sz want = n - done;
     ssize_t r;
-    if (want > 0x10000000u) want = 0x10000000u;
+    if (want > 0x10000000U) want = 0x10000000U;
 #if defined(HAVE_PWRITE)
     r = pwrite(f->fd, p + done, want, (off_t) (off + done));
 #else
@@ -588,12 +590,12 @@ static void mapreg_drop(const u8 * at) {
 
 /*  Safe to call from the signal handler.  */
 static const char * mapreg_find(const void * addr) {
-  const u8 * a = (const u8 *) addr;
+  const u8 * a = addr;
   u32 i, n = mapreg_count;
-  for (i = 0; i < n && i < MAPREG_MAX; i++)
+  Fi(MIN(n, (u32) MAPREG_MAX),
     if (mapreg_held[i].at && a >= mapreg_held[i].at &&
         (sz) (a - mapreg_held[i].at) < mapreg_held[i].size)
-      return mapreg_held[i].path;
+      return mapreg_held[i].path);
   return NULL;
 }
 
@@ -640,7 +642,7 @@ sz xpar_xread(xpar_file * f, void * p, sz n) {
   sz got = xpar_read(f, p, n);
   if (f->last_errno) {
     errno = f->last_errno;
-    FATAL_IO("reading %" PRIu64 " bytes on descriptor %d failed after %"
+    FATAL_IO("cannot read %" PRIu64 " bytes on descriptor %d; stopped after %"
              PRIu64 ": %s", (u64) n, f->fd, (u64) got,
              xpar_strerror(f->last_errno));
   }
@@ -664,12 +666,12 @@ void xpar_xwritev(xpar_file * f, const xpar_write_part * part, u32 count) {
   }
   for (at = 0; at < count; at++) {
     if (!part[at].length) continue;
-    if (part[at].length > 0x10000000u) {
+    if (part[at].length > 0x10000000U) {
       for (at = 0; at < count; at++)
         xpar_xwrite(f, part[at].data, part[at].length);
       return;
     }
-    /* writev declares iov_base as non-const. */
+    /*  writev declares iov_base as non-const.  */
     vec[used].iov_base = (void *) part[at].data;
     vec[used].iov_len = part[at].length;
     used++;
@@ -701,28 +703,29 @@ void xpar_xclose(xpar_file * f) {
 
 xpar_mmap xpar_map(const char * path) {
   xpar_mmap m;
+#if defined(HAVE_MMAP)
+  struct stat st;
+  void * p;
+  int fd;
+#endif
   m.map = NULL;  m.size = 0;  m.valid = false;
 #if defined(HAVE_MMAP)
-  {
-    struct stat st;
-    void * p;
-    int fd = open(path, O_RDONLY
+  fd = open(path, O_RDONLY
 #if defined(O_NONBLOCK)
-                  | O_NONBLOCK
+                | O_NONBLOCK
 #endif
-                  );
-    if (fd < 0) return m;
-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) { close(fd);  return m; }
-    /*  sz is 32-bit on some hosts and st_size is not: a file larger than
-        the address space cannot be mapped and the caller streams it.  */
-    if ((u64) st.st_size > (u64) (sz) -1) { close(fd);  return m; }
-    m.size = (sz) st.st_size;
-    p = mmap(NULL, m.size, PROT_READ, MAP_SHARED, fd, 0);
-    close(fd);
-    if (p == MAP_FAILED) { m.size = 0;  return m; }
-    m.map = (u8 *) p;  m.valid = true;
-    mapreg_add(m.map, m.size, path);
-  }
+                );
+  if (fd < 0) return m;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) { close(fd);  return m; }
+  /*  sz is 32-bit on some hosts and st_size is not: a file larger than
+      the address space cannot be mapped and the caller streams it.  */
+  if ((u64) st.st_size > (u64) (sz) -1) { close(fd);  return m; }
+  m.size = (sz) st.st_size;
+  p = mmap(NULL, m.size, PROT_READ, MAP_SHARED, fd, 0);
+  close(fd);
+  if (p == MAP_FAILED) { m.size = 0;  return m; }
+  m.map = p;  m.valid = true;
+  mapreg_add(m.map, m.size, path);
 #else
   (void) path;
 #endif
@@ -770,11 +773,12 @@ void * xpar_malloc(sz n) {
 }
 
 void * xpar_calloc(sz n, sz size) {
+  void * p;
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
                               "allocation size overflow");
-  { void * p = calloc(n ? n : 1, size ? size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
-    return p; }
+  p = calloc(n ? n : 1, size ? size : 1);
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
+  return p;
 }
 
 void * xpar_alloc_raw(sz n) {
@@ -806,7 +810,7 @@ void * xpar_alloc_aligned(sz n, sz align) {
     uintptr_t a;
     if (n > (sz) -1 - pad) FATAL_CODE(XPAR_EXIT_NOPLAN,
                               "allocation size overflow");
-    raw = (u8 *) malloc(n + pad);
+    raw = malloc(n + pad);
     if (!raw) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
     a = ((uintptr_t) raw + sizeof(void *) + align - 1) &
         ~(uintptr_t) (align - 1);
@@ -861,7 +865,6 @@ bool xpar_is_rotational(const char * path) {
   return false;
 }
 
-
 int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
   return vsnprintf(buf, cap, fmt, ap);
 }
@@ -869,7 +872,6 @@ int xpar_vsnprintf(char * buf, sz cap, const char * fmt, va_list ap) {
 void xpar_port_write_text(xpar_file * f, const char * s, sz n) {
   xpar_write(f, s, n);
 }
-
 
 void xpar_exit(int code) { exit(code); }
 
@@ -905,7 +907,7 @@ i64 xpar_wall_ns(void) {
 }
 
 void xpar_random_bytes(void * buf, sz n) {
-  u8 * p = (u8 *) buf;
+  u8 * p = buf;
   sz got = 0;
 #if defined(HAVE_GETRANDOM)
   while (got < n) {
@@ -969,7 +971,7 @@ static const char * crash_name(int sig) {
 /*  Extract the faulting instruction address when available.  */
 static const void * crash_pc(void * uc) {
 #if defined(__linux__) && defined(HAVE_UCONTEXT_H)
-  ucontext_t * u = (ucontext_t *) uc;
+  ucontext_t * u = uc;
   if (!u) return NULL;
 #if defined(__x86_64__)
   return (const void *) (uintptr_t) u->uc_mcontext.gregs[REG_RIP];
@@ -990,7 +992,13 @@ static const void * crash_pc(void * uc) {
 
 static void crash_handler(int sig, siginfo_t * si, void * uc) {
   void * frames[XPAR_CRASH_FRAMES];
+  struct sigaction sa;
   unsigned n = 0;
+#if defined(HAVE_BACKTRACE)
+  int got;
+#else
+  unsigned i;
+#endif
   int have_addr = si && si->si_code > 0 &&
                   (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL ||
                    sig == SIGFPE);
@@ -999,7 +1007,7 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
   if (sig == SIGBUS && have_addr) {
     const char * path = mapreg_find(si->si_addr);
     if (path) {
-      static const char pre[] = "xpar: mapped read failed for '";
+      static const char pre[] = "xpar: cannot read mapped '";
       static const char post[] = "': file truncated or media error.\n";
       (void) write(2, pre, sizeof pre - 1);
       (void) write(2, path, xpar_strlen(path));
@@ -1008,7 +1016,7 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
     }
   }
 #if defined(HAVE_BACKTRACE)
-  int got = backtrace(frames, XPAR_CRASH_FRAMES);
+  got = backtrace(frames, XPAR_CRASH_FRAMES);
   if (got > 0) n = (unsigned) got;
 #else
   n = xpar_crash_walk_fp((void * const *) __builtin_frame_address(0),
@@ -1020,12 +1028,10 @@ static void crash_handler(int sig, siginfo_t * si, void * uc) {
   /*  Avoid backtrace_symbols(), which allocates.  */
   if (n) backtrace_symbols_fd(frames, (int) n, 2);
 #else
-  unsigned i;
   Fi(n, xpar_crash_frame(i, frames[i], NULL));
 #endif
   xpar_crash_tail(n != 0);
   /*  Preserve normal core-dump behavior.  */
-  struct sigaction sa;
   xpar_memset(&sa, 0, sizeof sa);
   sa.sa_handler = SIG_DFL;
   sigaction(sig, &sa, NULL);
@@ -1045,7 +1051,7 @@ static void mapped_bus_handler(int sig, siginfo_t * si, void * uc) {
   if (have_addr) {
     const char * path = mapreg_find(si->si_addr);
     if (path) {
-      static const char pre[] = "xpar: mapped read failed for '";
+      static const char pre[] = "xpar: cannot read mapped '";
       static const char post[] = "': file truncated or media error.\n";
       (void) write(2, pre, sizeof pre - 1);
       (void) write(2, path, xpar_strlen(path));
@@ -1061,8 +1067,10 @@ static void mapped_bus_handler(int sig, siginfo_t * si, void * uc) {
 }
 
 void xpar_crash_install(void) {
+  static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
+  struct sigaction sa;
+  sz i;
   if (!xpar_crash_wanted()) {
-    struct sigaction sa;
     xpar_memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = mapped_bus_handler;
     sa.sa_flags = SA_SIGINFO | SA_NODEFER;
@@ -1070,16 +1078,13 @@ void xpar_crash_install(void) {
     (void) sigaction(SIGBUS, &sa, &sanitizer_bus_action);
     return;
   }
-  static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
-  struct sigaction sa;
-  sz i;
   xpar_memset(&sa, 0, sizeof sa);
   sa.sa_sigaction = crash_handler;
-  /* Preserve SA_RESETHAND's sign-bit pattern when narrowing. */
+  /*  Preserve SA_RESETHAND's sign-bit pattern when narrowing.  */
   sa.sa_flags = (int) (unsigned) (SA_SIGINFO | SA_NODEFER |
                                   SA_RESETHAND);
   sigemptyset(&sa.sa_mask);
-  Fi(sizeof sigs / sizeof *sigs, (void) sigaction(sigs[i], &sa, NULL));
+  Fi(ARRAY_LEN(sigs), (void) sigaction(sigs[i], &sa, NULL));
 }
 
 #else

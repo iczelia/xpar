@@ -21,7 +21,7 @@
 #endif
 
 #if !defined(_WIN32_WINNT)
-  #define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0600
 #endif
 
 #define WIN32_LEAN_AND_MEAN
@@ -30,21 +30,20 @@
 #include "port-fs.h"
 #include "port-win-path.h"
 
-
 #if !defined(FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
-  #define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
+#define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
 #endif
 #if !defined(FILE_FLAG_OPEN_REPARSE_POINT)
-  #define FILE_FLAG_OPEN_REPARSE_POINT 0x00200000
+#define FILE_FLAG_OPEN_REPARSE_POINT 0x00200000
 #endif
 #if !defined(IO_REPARSE_TAG_SYMLINK)
-  #define IO_REPARSE_TAG_SYMLINK 0xA000000CUL
+#define IO_REPARSE_TAG_SYMLINK 0xA000000CUL
 #endif
 #if !defined(IO_REPARSE_TAG_MOUNT_POINT)
-  #define IO_REPARSE_TAG_MOUNT_POINT 0xA0000003UL
+#define IO_REPARSE_TAG_MOUNT_POINT 0xA0000003UL
 #endif
 #if !defined(FSCTL_GET_REPARSE_POINT)
-  #define FSCTL_GET_REPARSE_POINT 0x000900A8UL
+#define FSCTL_GET_REPARSE_POINT 0x000900A8UL
 #endif
 
 static void fail_unsupported(void) { SetLastError(ERROR_NOT_SUPPORTED); }
@@ -77,7 +76,7 @@ static i64 ft_ns(FILETIME ft) {
 static FILETIME ns_ft(i64 ns) {
   FILETIME ft;
   u64 t = (u64) (ns / 100 + (i64) WIN_EPOCH_DELTA_100NS);
-  ft.dwLowDateTime  = (DWORD) (t & 0xFFFFFFFFu);
+  ft.dwLowDateTime  = (DWORD) (t & 0xFFFFFFFFU);
   ft.dwHighDateTime = (DWORD) (t >> 32);
   return ft;
 }
@@ -237,12 +236,12 @@ u32 xpar_fs_caps(const char * path) {
     if (fsname[0] == L'N' && fsname[1] == L'T' &&
         fsname[2] == L'F' && fsname[3] == L'S')
       c |= XPAR_FS_LINKID | XPAR_FS_HARDLINK | XPAR_FS_NSEC_TIME;
-  #if _WIN32_WINNT >= 0x0600
+#if _WIN32_WINNT >= 0x0600
     /*  SetFileInformationByHandle is what makes the attribute setter act
         on a reparse point instead of through it. Without it there is no
         symlink-safe attribute call at all, so the bit is withheld.  */
     c |= XPAR_FS_NOFOLLOW;
-  #endif
+#endif
     return c; }
 #endif
 }
@@ -260,7 +259,7 @@ struct xpar_dir {
 };
 
 xpar_dir * xpar_opendir(const char * path) {
-  struct xpar_dir * d = xpar_alloc_raw(sizeof(*d));
+  struct xpar_dir * d = xpar_alloc_raw(sizeof *d);
   char * pattern = NULL;
   sz len = xpar_strlen(path);
   xchar * wp;
@@ -284,13 +283,12 @@ xpar_dir * xpar_opendir(const char * path) {
 
 const xpar_dirent * xpar_readdir(xpar_dir * d) {
   for (;;) {
-    if (!d->pending) {
+    if (!d->pending)
 #if defined(XPAR_WIN_LEGACY)
       if (!FindNextFileA(d->h, &d->fd)) return NULL;
 #else
       if (!FindNextFileW(d->h, &d->fd)) return NULL;
 #endif
-    }
     d->pending = false;
 #if defined(XPAR_WIN_LEGACY)
     if (d->fd.cFileName[0] == '.' &&
@@ -568,15 +566,15 @@ int xpar_set_attrs(const char * path, int nofollow, u16 attrs) {
   if (nofollow) { fail_unsupported();  return -1; }
   wp = path_conv(path);
   if (!wp) return -1;
-  #if defined(XPAR_WIN_LEGACY)
+#if defined(XPAR_WIN_LEGACY)
   cur = GetFileAttributesA(wp);
   ok = cur != INVALID_FILE_ATTRIBUTES &&
        SetFileAttributesA(wp, attrs_to_win(attrs & XPAR_ATTR_SETTABLE, cur));
-  #else
+#else
   cur = GetFileAttributesW(wp);
   ok = cur != INVALID_FILE_ATTRIBUTES &&
        SetFileAttributesW(wp, attrs_to_win(attrs & XPAR_ATTR_SETTABLE, cur));
-  #endif
+#endif
   xpar_free(wp);
   return ok ? 0 : -1;
 #endif
@@ -619,7 +617,7 @@ char * xpar_getcwd(void) {
   DWORD n = GetCurrentDirectoryA(0, NULL), got;
   char * p;
   if (!n) return NULL;
-  p = (char *) xpar_alloc_raw((sz) n + 1);
+  p = xpar_alloc_raw((sz) n + 1);
   got = GetCurrentDirectoryA(n + 1, p);
   if (!got || got > n) { xpar_free(p);  return NULL; }
   p[got] = 0;

@@ -35,17 +35,18 @@ int    xpar_strncmp(const char * a, const char * b, sz n) {
 /*  Format on the stack when possible, then use the backend text sink.  */
 int xpar_vfprintf(xpar_file * f, const char * fmt, va_list ap) {
   char stack[1024];
+  char * big;
   va_list ap2;
   int n;
   va_copy(ap2, ap);
   n = xpar_vsnprintf(stack, sizeof stack, fmt, ap);
   if (n < 0) { va_end(ap2);  return -1; }
   if ((sz) n < sizeof stack) { va_end(ap2);  xpar_port_write_text(f, stack, (sz) n);  return n; }
-  { char * big = (char *) xpar_alloc_raw((sz) n + 1);
-    xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
-    va_end(ap2);
-    xpar_port_write_text(f, big, (sz) n);
-    xpar_free(big); }
+  big = xpar_alloc_raw((sz) n + 1);
+  xpar_vsnprintf(big, (sz) n + 1, fmt, ap2);
+  va_end(ap2);
+  xpar_port_write_text(f, big, (sz) n);
+  xpar_free(big);
   return n;
 }
 
@@ -57,7 +58,7 @@ int xpar_fputs(const char * s, xpar_file * f) {
 
 char * xpar_strdup(const char * s) {
   sz n = xpar_strlen(s) + 1;
-  char * c = (char *) xpar_alloc_raw(n);
+  char * c = xpar_alloc_raw(n);
   xpar_memcpy(c, s, n);
   return c;
 }
@@ -66,7 +67,7 @@ char * xpar_strndup(const char * s, sz n) {
   sz len = 0;
   char * c;
   while (len < n && s[len]) len++;
-  c = (char *) xpar_alloc_raw(len + 1);
+  c = xpar_alloc_raw(len + 1);
   xpar_memcpy(c, s, len);
   c[len] = '\0';
   return c;
@@ -112,7 +113,7 @@ int xpar_asprintf(char ** out, const char * fmt, ...) {
   n = xpar_vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
   if (n < 0) { va_end(ap2);  *out = NULL;  return -1; }
-  *out = (char *) xpar_alloc_raw((sz) n + 1);
+  *out = xpar_alloc_raw((sz) n + 1);
   xpar_vsnprintf(*out, (sz) n + 1, fmt, ap2);
   va_end(ap2);
   return n;

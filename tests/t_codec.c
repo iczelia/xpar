@@ -12,14 +12,14 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Differential codec tests against scalar generation, Cauchy form and SIMD. */
+/*  Differential codec tests against scalar generation, Cauchy form and SIMD.  */
 
 #include "t_harness.h"
 #include "kernel/armour.h"
 #include "kernel/codec.h"
 #include "kernel/gf.h"
 
-/* GF(2^16) symbols are little-endian pairs; GF(2^8) symbols are bytes. */
+/*  GF(2^16) symbols are little-endian pairs; GF(2^8) symbols are bytes.  */
 
 static u32 sym_get(const u8 * p, sz i, bool f16) {
   return f16 ? (u32) xpar_rd16(p + 2 * i) : (u32) p[i];
@@ -51,7 +51,7 @@ typedef struct {
   u32 * gen;          /*  R by S, row major; NULL until extracted.  */
 } cc;
 
-/* Ensure parameter filtering does not skip every case. */
+/*  Ensure parameter filtering does not skip every case.  */
 static u32 cc_ran[3];
 
 static void cc_ran_note(u8 kind) {
@@ -69,15 +69,15 @@ static void cc_init(cc * c, u8 kind, u8 field, u64 s, u64 r, sz bytes) {
   c->s = s;  c->r = r;
   c->bytes = bytes;
   c->symbols = c->f16 ? bytes / 2 : bytes;
-  c->data  = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
-  c->ref   = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
-  c->cdata = (const u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
-  c->rec   = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
+  c->data  = xpar_alloc_raw((sz) s * sizeof *c->data);
+  c->ref   = xpar_alloc_raw((sz) s * sizeof *c->ref);
+  c->cdata = xpar_alloc_raw((sz) s * sizeof *c->cdata);
+  c->rec   = xpar_alloc_raw((sz) r * sizeof *c->rec);
   Fi(s,
-    c->data[i] = (u8 *) xpar_alloc_aligned(bytes, 64);
-    c->ref [i] = (u8 *) xpar_alloc_aligned(bytes, 64);
+    c->data[i] = xpar_alloc_aligned(bytes, 64);
+    c->ref [i] = xpar_alloc_aligned(bytes, 64);
     c->cdata[i] = c->data[i]);
-  Fi(r, c->rec[i] = (u8 *) xpar_alloc_aligned(bytes, 64));
+  Fi(r, c->rec[i] = xpar_alloc_aligned(bytes, 64));
   c->gen = NULL;
 }
 
@@ -105,21 +105,21 @@ static void cc_encode(cc * c) {
   xpar_codec_free(k);
 }
 
-/* Derive each generator column by encoding its unit vector. */
+/*  Derive each generator column by encoding its unit vector.  */
 static void cc_extract(cc * c) {
   xpar_codec * k = xpar_codec_new(c->kind, c->field, c->s, c->r);
   u64 i, j;
   sz unit = 64;   /*  One aligned block, wide enough for either field.  */
-  u8 ** d   = (u8 **) xpar_alloc_raw((sz) c->s * sizeof(u8 *));
-  const u8 ** cd = (const u8 **) xpar_alloc_raw((sz) c->s * sizeof(u8 *));
-  u8 ** rec = (u8 **) xpar_alloc_raw((sz) c->r * sizeof(u8 *));
+  u8 ** d   = xpar_alloc_raw((sz) c->s * sizeof *d);
+  const u8 ** cd = xpar_alloc_raw((sz) c->s * sizeof *cd);
+  u8 ** rec = xpar_alloc_raw((sz) c->r * sizeof *rec);
 
   Fi(c->s,
-    d[i] = (u8 *) xpar_alloc_aligned(unit, 64);
+    d[i] = xpar_alloc_aligned(unit, 64);
     cd[i] = d[i]);
-  Fj(c->r, rec[j] = (u8 *) xpar_alloc_aligned(unit, 64));
+  Fj(c->r, rec[j] = xpar_alloc_aligned(unit, 64));
 
-  c->gen = (u32 *) xpar_alloc_raw((sz) c->r * (sz) c->s * sizeof(u32));
+  c->gen = xpar_alloc_raw((sz) c->r * (sz) c->s * sizeof *c->gen);
   Fi(c->s,
     Fj(c->s, xpar_memset(d[j], 0, unit));
     sym_put(d[i], 0, 1, c->f16);
@@ -132,7 +132,7 @@ static void cc_extract(cc * c) {
   xpar_codec_free(k);
 }
 
-/* Scalar encoding oracle. */
+/*  Scalar encoding oracle.  */
 static void cc_oracle(const cc * c, u8 ** out) {
   u64 i, j;
   sz t;
@@ -158,9 +158,9 @@ static void cc_check_generator(const cc * c) {
               j, i);
         return;
       }));
-  /* Check the Cauchy generator against its closed form. */
+  /*  Check the Cauchy generator against its closed form.  */
   if (c->kind == XPAR_CODEC_MATRIX) {
-    u32 base = c->f16 ? 65535u : 255u;
+    u32 base = c->f16 ? 65535U : 255U;
     Fj(c->r,
       Fi(c->s,
         u32 want = finv((base - (u32) j) ^ (u32) i, c->f16);
@@ -186,8 +186,8 @@ static void test_encode_differential(u8 kind, u8 field, u64 s, u64 r,
   cc_random(&c, rng);
   cc_encode(&c);
 
-  want = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  Fj(r, want[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64));
+  want = xpar_alloc_raw((sz) r * sizeof *want);
+  Fj(r, want[j] = xpar_alloc_aligned(c.bytes, 64));
   cc_oracle(&c, want);
   Fj(r,
     char label[96];
@@ -201,7 +201,7 @@ static void test_encode_differential(u8 kind, u8 field, u64 s, u64 r,
   cc_free(&c);
 }
 
-/* Decoding succeeds exactly when keep >= e. */
+/*  Decoding succeeds exactly when keep >= e.  */
 static void decode_once(cc * c, const u8 * dpres, const u8 * rpres, u64 e,
                         u64 keep) {
   xpar_codec * k = xpar_codec_new(c->kind, c->field, c->s, c->r);
@@ -255,8 +255,8 @@ static void test_decode(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng,
   cc_init(&c, kind, field, s, r, 512);
   cc_random(&c, rng);
   cc_encode(&c);
-  dpres = (u8 *) xpar_alloc_raw((sz) s);
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  dpres = xpar_alloc_raw((sz) s);
+  rpres = xpar_alloc_raw((sz) r);
 
   for (round = 0; round < rounds; round++) {
     u64 cap = MIN(r, s);
@@ -269,7 +269,7 @@ static void test_decode(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng,
       if (!dpres[pick]) continue;
       dpres[pick] = 0;  e++;
     }
-    /* Retain just enough recovery, or one too few. */
+    /*  Retain just enough recovery, or one too few.  */
     if (round % 3 == 2) {
       u64 drop = r - e + (round % 6 == 5 ? 1 : 0);
       u64 done = 0;
@@ -317,13 +317,13 @@ static void test_kernel_edges(xt_rng * rng) {
                              255, 256, 257, 511, 4095, 4096, 4097 };
   static const sz offs[] = { 0, 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 63 };
   int saved = xpar_gf_tier(), n = xpar_gf_tier_count(), t;
-  u8 * src = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * ref = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * got = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * ry  = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * gy  = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * seed = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
-  u8 * seedy = (u8 *) xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * src = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * ref = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * got = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * ry  = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * gy  = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * seed = xpar_alloc_aligned(KE_CAP + 128, 64);
+  u8 * seedy = xpar_alloc_aligned(KE_CAP + 128, 64);
   u32 tiers_run = 0;
 
   ke_fill(rng, src, KE_CAP + 128);
@@ -338,10 +338,10 @@ static void test_kernel_edges(xt_rng * rng) {
     k = xpar_gf_active();
     name = xpar_gf_tier_name(t);
     tiers_run++;
-    for (li = 0; li < sizeof lens / sizeof *lens; li++) {
+    for (li = 0; li < ARRAY_LEN(lens); li++) {
       sz len = lens[li];
       if (len > KE_CAP) continue;
-      for (oi = 0; oi < sizeof offs / sizeof *offs; oi++) {
+      for (oi = 0; oi < ARRAY_LEN(offs); oi++) {
         sz off = offs[oi];
         sz even = len & ~(sz) 1;
         xpar_gf8_coef c8;
@@ -468,10 +468,10 @@ static void test_kernel_edges(xt_rng * rng) {
   CHECK(tiers_run > 0, "at least one GF tier was exercised");
   xpar_free_aligned(src);  xpar_free_aligned(ref);  xpar_free_aligned(got);
   xpar_free_aligned(ry);   xpar_free_aligned(gy);
-  xpar_free_aligned(seed); xpar_free_aligned(seedy);
+  xpar_free_aligned(seed);  xpar_free_aligned(seedy);
 }
 
-/* Compare codec-level output across runtime tiers. */
+/*  Compare codec-level output across runtime tiers.  */
 static void test_tiers(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng) {
   cc c;
   u8 ** base;
@@ -486,17 +486,17 @@ static void test_tiers(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng) {
 
   cc_init(&c, kind, field, s, r, 4096);
   cc_random(&c, rng);
-  dpres = (u8 *) xpar_alloc_raw((sz) s);
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  dpres = xpar_alloc_raw((sz) s);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(dpres, 1, (sz) s);
   xpar_memset(rpres, 1, (sz) r);
-  for (i = 0; i < r && i < s; i++) { dpres[i] = 0; }
+  Fi(MIN(r, s), dpres[i] = 0);
 
   xpar_gf_use_tier(scalar);
   cc_encode(&c);
-  base = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
+  base = xpar_alloc_raw((sz) r * sizeof *base);
   Fj(r,
-    base[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64);
+    base[j] = xpar_alloc_aligned(c.bytes, 64);
     xpar_memcpy(base[j], c.rec[j], c.bytes));
 
   for (t = 0; t < n; t++) {
@@ -519,7 +519,7 @@ static void test_tiers(u8 kind, u8 field, u64 s, u64 r, xt_rng * rng) {
   cc_free(&c);
 }
 
-/* Compare streaming matrix encoding with batch encoding. */
+/*  Compare streaming matrix encoding with batch encoding.  */
 static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
   cc c;
   xpar_codec * k;
@@ -530,9 +530,9 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
   cc_init(&c, XPAR_CODEC_MATRIX, field, s, r, 2048);
   cc_random(&c, rng);
   cc_encode(&c);
-  want = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
+  want = xpar_alloc_raw((sz) r * sizeof *want);
   Fj(r,
-    want[j] = (u8 *) xpar_alloc_aligned(c.bytes, 64);
+    want[j] = xpar_alloc_aligned(c.bytes, 64);
     xpar_memcpy(want[j], c.rec[j], c.bytes));
 
   k = xpar_codec_new(XPAR_CODEC_MATRIX, field, s, r);
@@ -562,7 +562,7 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
                   (u32) field, j);
     if (!xt_bytes_equal(label, c.rec[j], want[j], c.bytes)) break);
 
-  /* Partial recovery ranges must not alter excluded rows. */
+  /*  Partial recovery ranges must not alter excluded rows.  */
   if (r >= 2) {
     Fj(r, xpar_memset(c.rec[j], 0x11, c.bytes));
     Fi(s,
@@ -573,8 +573,7 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
         CHECK(false, "a recovery range starting at 1 wrote row 0");
         break;
       });
-    {
-      char label[96];
+    { char label[96];
       xpar_snprintf(label, sizeof label,
                     "matrix partial range GF(2^%" PRIu32 ")", (u32) field);
       xt_bytes_equal(label, c.rec[1], want[1], c.bytes);
@@ -591,16 +590,15 @@ static void test_matrix_streaming(u8 field, u64 s, u64 r, xt_rng * rng) {
 static void test_matrix_odd_bytes(void) {
   static const sz odd[] = { 1, 3, 65, 4095 };
   const sz cap = 4096;
-  u8 * d0 = (u8 *) xpar_alloc_aligned(cap, 64);
-  u8 * d1 = (u8 *) xpar_alloc_aligned(cap, 64);
-  u8 * rc = (u8 *) xpar_alloc_aligned(cap, 64);
+  u8 * d0 = xpar_alloc_aligned(cap, 64);
+  u8 * d1 = xpar_alloc_aligned(cap, 64);
+  u8 * rc = xpar_alloc_aligned(cap, 64);
   const u8 * dat[2];
   u8 * rec[1];
   xpar_codec * k;
   u32 i;
-  sz b;
 
-  for (b = 0; b < cap; b++) { d0[b] = (u8) (b * 7 + 1);  d1[b] = (u8) (b * 13); }
+  Fi(cap, d0[i] = (u8) (i * 7 + 1);  d1[i] = (u8) (i * 13));
   dat[0] = d0;  dat[1] = d1;  rec[0] = rc;
 
   k = xpar_codec_new(XPAR_CODEC_MATRIX, 16, 2, 1);
@@ -650,9 +648,9 @@ static void arm_open(arm_case * c, u32 field, u64 depth, u32 n, u32 t,
                  xpar_armour_frame_plain(a) / 2;
   c->frames = xpar_ceil_div(c->plain_len, xpar_armour_frame_plain(a));
   c->region_len = xpar_armour_size(a, c->plain_len);
-  c->plain = (u8 *) xpar_alloc_aligned((sz) c->plain_len, 64);
-  c->ref   = (u8 *) xpar_alloc_aligned((sz) c->region_len, 64);
-  c->work  = (u8 *) xpar_alloc_aligned((sz) c->region_len, 64);
+  c->plain = xpar_alloc_aligned((sz) c->plain_len, 64);
+  c->ref   = xpar_alloc_aligned((sz) c->region_len, 64);
+  c->work  = xpar_alloc_aligned((sz) c->region_len, 64);
   xt_fill(rng, c->plain, (sz) c->plain_len);
   xpar_armour_free(a);
 }
@@ -669,16 +667,16 @@ static void arm_damage(const arm_case * c, u8 * region, u32 count) {
   Fi(count,
     u8 * p = region + (sz) i * lane;   /*  Symbol i, codeword 0.  */
     u32 q;
-    for (q = 0; q < c->wb; q++) p[q] = (u8) (p[q] ^ 0xA5u));
+    for (q = 0; q < c->wb; q++) p[q] = (u8) (p[q] ^ 0xA5U));
 }
 
 /*  Independent root-by-root reference for the linear q-binomial builder.  */
 static void arm_generator_ref(const xpar_armour_params * p, u32 * g) {
   bool f16 = p->symbol_bits == 16;
-  u32 order = f16 ? 65535u : 255u;
+  u32 order = f16 ? 65535U : 255U;
   u32 m = p->n - p->k, i, j;
 
-  xpar_memset(g, 0, (sz) (m + 1) * sizeof(u32));
+  xpar_memset(g, 0, (sz) (m + 1) * sizeof *g);
   g[0] = 1;
   Fj(m,
     u32 e = (u32) (((u64) p->fcr + (u64) j * p->prim) % order);
@@ -701,22 +699,22 @@ static void test_armour_generators(void) {
     xpar_armour_params p;
     xpar_armour * a;
     u32 m = 2 * cases[ci].t, i;
-    u32 * got = (u32 *) xpar_alloc_raw((sz) (m + 1) * sizeof(u32));
-    u32 * ref = (u32 *) xpar_alloc_raw((sz) (m + 1) * sizeof(u32));
+    u32 * got = xpar_alloc_raw((sz) (m + 1) * sizeof *got);
+    u32 * ref = xpar_alloc_raw((sz) (m + 1) * sizeof *ref);
 
     xpar_armour_defaults(&p, cases[ci].field);
     p.n = cases[ci].n;  p.k = p.n - m;
     a = xpar_armour_new(&p);
     xpar_armour_generator(a, got);
     arm_generator_ref(&p, ref);
-    for (i = 0; i <= m; i++)
+    Fi(m + 1,
       if (got[i] != ref[i]) {
         CHECK(false, "armour GF(2^%" PRIu32 ") n=%" PRIu32
               " t=%" PRIu32 ": generator coefficient %" PRIu32
               " is %" PRIu32 ", expected %" PRIu32,
               cases[ci].field, p.n, cases[ci].t, i, got[i], ref[i]);
         break;
-      }
+      });
     xpar_armour_free(a);
     xpar_free(got);  xpar_free(ref);
   }
@@ -756,9 +754,8 @@ static void test_armour_tiers(xt_rng * rng) {
                       "armour GF(2^%" PRIu32 ") D=%" PRIu64 " on tier %s: "
                       "encode", fields[fi], depths[di],
                       xpar_armour_tier_name(tier));
-        if (!xt_bytes_equal(label, c.work, c.ref, (sz) c.region_len)) {
-          xpar_armour_free(a);  break;
-        }
+        if (!xt_bytes_equal(label, c.work, c.ref, (sz) c.region_len))
+          { xpar_armour_free(a);  break; }
 
         /*  Clean, then exactly t errors, then t + 1.  */
         xpar_memset(&st, 0, sizeof st);
@@ -857,9 +854,9 @@ static void test_armour_encode_batches(xt_rng * rng) {
       a = xpar_armour_new(&p);
       fp = xpar_armour_frame_plain(a);  fx = xpar_armour_frame_disk(a);
       xpar_armour_free(a);
-      plain = (u8 *) xpar_alloc_aligned((sz) (fp * 33), 64);
-      ref   = (u8 *) xpar_alloc_aligned((sz) (fx * 33), 64);
-      work  = (u8 *) xpar_alloc_aligned((sz) (fx * 33), 64);
+      plain = xpar_alloc_aligned((sz) (fp * 33), 64);
+      ref   = xpar_alloc_aligned((sz) (fx * 33), 64);
+      work  = xpar_alloc_aligned((sz) (fx * 33), 64);
       xt_fill(rng, plain, (sz) (fp * 33));
 
       for (tier = 0; tier < n; tier++) {
@@ -890,7 +887,7 @@ static void test_armour_encode_batches(xt_rng * rng) {
   xpar_armour_use_tier(saved);
 }
 
-/* Recovery remains stable when data grows within one transform axis. */
+/*  Recovery remains stable when data grows within one transform axis.  */
 static void test_prefix_stable(u8 kind, u8 field, u64 s, u64 grown, u64 r,
                                xt_rng * rng) {
   cc a, b;
@@ -947,7 +944,7 @@ static void test_supports(void) {
 
 typedef struct { u8 kind, field;  u64 s, r; } cc_case;
 
-/* Boundary cases small enough to extract the generator. */
+/*  Boundary cases small enough to extract the generator.  */
 static const cc_case small_cases[] = {
   { XPAR_CODEC_MATRIX,  8,   1,   1 },
   { XPAR_CODEC_MATRIX,  8,   2,   1 },
@@ -971,7 +968,7 @@ static const cc_case small_cases[] = {
   { XPAR_CODEC_FFT_LOW,16,   8,  64 }
 };
 
-/* Larger round-trip and tier-agreement cases. */
+/*  Larger round-trip and tier-agreement cases.  */
 static const cc_case big_cases[] = {
   { XPAR_CODEC_MATRIX,  8, 246,  10 },
   { XPAR_CODEC_MATRIX, 16, 600,  40 },
@@ -984,7 +981,7 @@ void xt_run_codec(void) {
   xt_rng rng;
   u32 i;
 
-  xt_seed(&rng, 0xC0DEC0DEC0DEull);
+  xt_seed(&rng, 0xC0DEC0DEC0DEULL);
 
   test_supports();
 

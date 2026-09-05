@@ -20,7 +20,7 @@
 /*  Reflected CRC-32C polynomial: 0x1EDC6F41 read from the other end, the
     x^32 term implicit. Not 0xEDB88320, which is the zip polynomial and
     would produce an archive nothing else can read.  */
-#define XPAR_CRC32C_POLY 0x82F63B78u
+#define XPAR_CRC32C_POLY 0x82F63B78U
 
 u32 xpar_crc32c_tab[8][256];
 
@@ -153,5 +153,5 @@ void xpar_crc32c_roll_init(xpar_crc32c_roll * r, sz window) {
   xpar_crc_op_zeros(op, (u64) window - 1);
   Fi(256, r->enter[i] = xpar_crc32c_tab[0][i];
           r->leave[i] = xpar_crc_apply(op, xpar_crc32c_tab[0][i]));
-  r->fold = 0xFFFFFFFFu ^ xpar_crc32c_shift(0xFFFFFFFFu, (u64) window);
+  r->fold = 0xFFFFFFFFU ^ xpar_crc32c_shift(0xFFFFFFFFU, (u64) window);
 }

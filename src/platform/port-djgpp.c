@@ -34,13 +34,13 @@
 #include <string.h>
 #include <sys/farptr.h>
 #include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
 
 const char * xpar_getenv(const char * name) { return getenv(name); }
 
 /*  DOS has no standard temporary directory beyond the environment.  */
 const char * xpar_tmpdir(void) { return "."; }
-#include <time.h>
-#include <unistd.h>
 
 struct xpar_file {
   int  fd;
@@ -85,7 +85,7 @@ static int dos_seek(int fd, i32 off, unsigned int whence, u32 * position) {
   __dpmi_regs r;
   u32 bits = (u32) off;
   memset(&r, 0, sizeof r);
-  r.x.ax = (u16) (0x4200u | whence);
+  r.x.ax = (u16) (0x4200U | whence);
   r.x.bx = (u16) fd;
   r.x.cx = (u16) (bits >> 16);
   r.x.dx = (u16) bits;
@@ -139,7 +139,7 @@ xpar_file * xpar_open(const char * path, int flags) {
   }
   if (err) { errno = __doserr_to_errno(err);  return NULL; }
   if ((flags & XPAR_O_APPEND) && dos_seek(fd, 0, 2, NULL) != 0) { _dos_close(fd);  return NULL; }
-  f = malloc(sizeof(*f));
+  f = malloc(sizeof *f);
   if (!f) { _dos_close(fd);  errno = ENOMEM;  return NULL; }
   f->fd = fd;  f->is_char = fd_is_char(fd);  f->owned = true;
   f->at_eof = false;  f->last_errno = 0;
@@ -157,13 +157,13 @@ int xpar_close(xpar_file * f) {
 }
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
-  f->last_errno = 0;
   sz total = 0;
-  u8 * p = (u8 *) buf;
+  u8 * p = buf;
+  f->last_errno = 0;
   while (total < n) {
     sz want = n - total;
     unsigned int got = 0, err;
-    if (want > 0xffffu) want = 0xffffu;
+    if (want > 0xffffU) want = 0xffffU;
     err = _dos_read(f->fd, p + total, (unsigned int) want, &got);
     if (err) { f->last_errno = errno = __doserr_to_errno(err);  break; }
     if (got == 0) { f->at_eof = true;       break; }
@@ -173,13 +173,13 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 }
 
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
-  f->last_errno = 0;
   sz total = 0;
-  const u8 * p = (const u8 *) buf;
+  const u8 * p = buf;
+  f->last_errno = 0;
   while (total < n) {
     sz want = n - total;
     unsigned int wrote = 0, err;
-    if (want > 0xffffu) want = 0xffffu;
+    if (want > 0xffffU) want = 0xffffU;
     err = _dos_write(f->fd, p + total, (unsigned int) want, &wrote);
     if (err) { f->last_errno = errno = __doserr_to_errno(err);  break; }
     if (wrote == 0) break;
@@ -242,10 +242,10 @@ bool xpar_lock_supported(void) { return false; }
 
 /*  Emulate positional reads by seeking, then restore cursor and EOF state.  */
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
-  f->last_errno = 0;
   u32 saved;
   bool saved_eof = f->at_eof;
   sz got;
+  f->last_errno = 0;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
   if (dos_seek(f->fd, 0, 1, &saved) != 0) { f->last_errno = errno;  return 0; }
   if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) { f->last_errno = errno;  return 0; }
@@ -261,9 +261,9 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
-  f->last_errno = 0;
   u32 saved;
   sz put;
+  f->last_errno = 0;
   if (!off_fits(off)) { f->last_errno = EOVERFLOW;  return 0; }
   if (dos_seek(f->fd, 0, 1, &saved) != 0) { f->last_errno = errno;  return 0; }
   if (dos_seek(f->fd, (i32) off, 0, NULL) != 0) { f->last_errno = errno;  return 0; }
@@ -318,7 +318,7 @@ xpar_mmap xpar_map(const char * path) {
   if (!f) return m;
   n = xpar_size(f);
   if (n < 0 || (u64) n > (u64) (sz) -1) { xpar_close(f);  return m; }
-  m.map = (u8 *) malloc(n ? (sz) n : 1);
+  m.map = malloc(n ? (sz) n : 1);
   if (!m.map || (n && xpar_read(f, m.map, (sz) n) != (sz) n)) {
     free(m.map);
     m.map = NULL;
@@ -350,11 +350,12 @@ void * xpar_malloc(sz n) {
 }
 
 void * xpar_calloc(sz n, sz size) {
+  void * p;
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
                               "allocation size overflow");
-  { void * p = calloc(n ? n : 1, size ? size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
-    return p; }
+  p = calloc(n ? n : 1, size ? size : 1);
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
+  return p;
 }
 
 void * xpar_alloc_raw(sz n) {
@@ -412,11 +413,9 @@ bool xpar_is_rotational(const char * path) {
   return false;
 }
 
-
 void xpar_port_write_text(xpar_file * f, const char * s, sz n) {
   xpar_write(f, s, n);
 }
-
 
 void xpar_exit(int code) {
   exit(code);
@@ -424,7 +423,7 @@ void xpar_exit(int code) {
 
 /*  The codes DJGPP's int 21h wrappers actually produce. Anything else
     falls through to a number, which is more use than a wrong name.  */
-static const struct { int n; const char * s; } err_tab[] = {
+static const struct { int n;  const char * s; } err_tab[] = {
   { EACCES,       "permission denied"              },
   { EEXIST,       "file exists"                    },
   { ENOENT,       "no such file or directory"      },
@@ -468,8 +467,8 @@ u64 xpar_usec_now(void) {
     out_hi = (status >> 7) & 1;
     bios1  = _farpeekl(_dos_ds, 0x46CUL);
   } while (bios0 != bios1);   /*  retry if IRQ0 landed inside the read  */
-  elapsed = (65536u - count) >> 1;
-  if (!out_hi) elapsed += 32768u;
+  elapsed = (65536U - count) >> 1;
+  if (!out_hi) elapsed += 32768U;
   pit = (u64) bios1 * 65536ULL + (u64) elapsed;
   return (pit * 1000000ULL) / 1193182ULL;
 }
@@ -485,7 +484,7 @@ i64 xpar_wall_ns(void) {
 void xpar_random_bytes(void * buf, sz n) {
   static u64 state;
   static u64 calls;
-  u8 * p = (u8 *) buf;
+  u8 * p = buf;
   sz i;
   state ^= (u64) xpar_usec_now() + ((u64) xpar_wall_ns() << 16) + ++calls;
   if (!state) state = 1;

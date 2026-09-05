@@ -20,18 +20,18 @@
 
 /*  BLAKE3's SHA-2-derived initialisation vector.  */
 const u32 xpar_blake3_iv[8] = {
-  0x6A09E667u, 0xBB67AE85u, 0x3C6EF372u, 0xA54FF53Au,
-  0x510E527Fu, 0x9B05688Cu, 0x1F83D9ABu, 0x5BE0CD19u
+  0x6A09E667U, 0xBB67AE85U, 0x3C6EF372U, 0xA54FF53AU,
+  0x510E527FU, 0x9B05688CU, 0x1F83D9ABU, 0x5BE0CD19U
 };
 
 /*  Compression-position and keying-mode domain flags.  */
-#define XPAR_B3_CHUNK_START  (1u << 0)
-#define XPAR_B3_CHUNK_END    (1u << 1)
-#define XPAR_B3_PARENT       (1u << 2)
-#define XPAR_B3_ROOT         (1u << 3)
-#define XPAR_B3_KEYED_HASH   (1u << 4)
-#define XPAR_B3_DERIVE_CTX   (1u << 5)
-#define XPAR_B3_DERIVE_MAT   (1u << 6)
+#define XPAR_B3_CHUNK_START  (1U << 0)
+#define XPAR_B3_CHUNK_END    (1U << 1)
+#define XPAR_B3_PARENT       (1U << 2)
+#define XPAR_B3_ROOT         (1U << 3)
+#define XPAR_B3_KEYED_HASH   (1U << 4)
+#define XPAR_B3_DERIVE_CTX   (1U << 5)
+#define XPAR_B3_DERIVE_MAT   (1U << 6)
 
 /*  Kernel dispatch.  */
 
@@ -52,25 +52,25 @@ static u32             xpar_b3_seen;   /*  Features the table was built on.  */
     everywhere.  */
 #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) &&               \
     __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  #define XPAR_B3_HOST_BE 1
+#define XPAR_B3_HOST_BE 1
 #endif
 
 static void xpar_b3_dispatch(u32 f) {
   xpar_b3_many = xpar_blake3_hash_many_scalar;
   xpar_b3_name = "scalar";  xpar_b3_deg = 1;
 #if !defined(XPAR_B3_HOST_BE)
-  #ifdef HAVE_AVX2
+#ifdef HAVE_AVX2
   if (f & XPAR_CPU_AVX2) {
     xpar_b3_many = xpar_blake3_hash_many_avx2;
     xpar_b3_name = "avx2";  xpar_b3_deg = 8;
   }
-  #endif
-  #ifdef HAVE_NEON
+#endif
+#ifdef HAVE_NEON
   if (f & XPAR_CPU_NEON) {
     xpar_b3_many = xpar_blake3_hash_many_neon;
     xpar_b3_name = "neon";  xpar_b3_deg = 4;
   }
-  #endif
+#endif
 #endif
   xpar_assert(xpar_b3_deg <= XPAR_BLAKE3_MAX_DEGREE);
   xpar_b3_seen = f;  xpar_b3_ready = true;
@@ -96,7 +96,7 @@ static void xpar_b3_chunk_reset(xpar_blake3_chunk * c, const u32 * key,
   u32 i;
   Fi(8, c->cv[i] = key[i]);
   c->counter = counter;  c->buf_len = 0;  c->blocks = 0;
-  xpar_memset(c->buf, 0, sizeof(c->buf));
+  xpar_memset(c->buf, 0, sizeof c->buf);
 }
 
 static sz xpar_b3_chunk_len(const xpar_blake3_chunk * c) {
@@ -129,7 +129,7 @@ static void xpar_b3_chunk_update(xpar_blake3_chunk * c, const u8 * p, sz n) {
                                   c->counter,
                                   (u8) (c->flags | xpar_b3_start_flag(c)));
       c->blocks++;  c->buf_len = 0;
-      xpar_memset(c->buf, 0, sizeof(c->buf));
+      xpar_memset(c->buf, 0, sizeof c->buf);
     }
   }
   while (n > XPAR_BLAKE3_BLOCK_LEN) {
@@ -190,7 +190,7 @@ static void xpar_b3_root(const xpar_b3_node * o, u64 seek, u8 * out, sz n) {
   u64 blk = seek / XPAR_BLAKE3_BLOCK_LEN;
   sz  off = (sz) (seek % XPAR_BLAKE3_BLOCK_LEN);
   while (n > 0) {
-    sz take = sizeof(wide) - off;
+    sz take = sizeof wide - off;
     if (take > n) take = n;
     xpar_blake3_xof_scalar(o->cv, o->block, o->block_len, blk,
                            (u8) (o->flags | XPAR_B3_ROOT), wide);
@@ -264,8 +264,7 @@ static sz xpar_b3_compress_wide(const u8 * in, sz len, const u32 * key,
       level the two single chaining values are already adjacent, and the
       `ln == 1` return below hands them over as a pair.  */
   if (deg == 1 && left > XPAR_BLAKE3_CHUNK_LEN) deg = 2;
-  {
-    u8 cvs[2 * XPAR_BLAKE3_MAX_DEGREE * XPAR_BLAKE3_OUT_LEN];
+  { u8 cvs[2 * XPAR_BLAKE3_MAX_DEGREE * XPAR_BLAKE3_OUT_LEN];
     u8 * rcvs = cvs + deg * XPAR_BLAKE3_OUT_LEN;
     ln = xpar_b3_compress_wide(in, left, key, counter, flags, deg, cvs);
     rn = xpar_b3_compress_wide(in + left, right, key,
@@ -312,7 +311,7 @@ static void b3_span_cv(const u8 * p, sz span, const u32 * key, u8 flags,
 
 static void subtree_tag(const u8 * key_bytes, const void * buf, sz len,
                         u64 chunk_counter, u8 * out, sz n) {
-  const u8 * p = (const u8 *) buf;
+  const u8 * p = buf;
   u32 key[8];
   u8 flags = key_bytes ? XPAR_B3_KEYED_HASH : 0;
   u8 cv[XPAR_BLAKE3_OUT_LEN];
@@ -383,7 +382,7 @@ typedef struct {
 } xpar_b3_parallel;
 
 static void xpar_b3_parallel_one(sz index, void * opaque) {
-  xpar_b3_parallel * p = (xpar_b3_parallel *) opaque;
+  xpar_b3_parallel * p = opaque;
   const u8 * in = p->in + index * p->span;
   u64 counter = p->counter +
                 (u64) index * p->span / XPAR_BLAKE3_CHUNK_LEN;
@@ -412,7 +411,7 @@ static void xpar_b3_absorb_parallel(xpar_blake3_t * h, const u8 * p, sz sub,
   while (jobs < (sz) threads && jobs * 2 * XPAR_B3_MT_SUBTREE <= sub)
     jobs *= 2;
   span = sub / jobs;
-  cv = (u8 *) xpar_alloc_raw(jobs * XPAR_BLAKE3_OUT_LEN);
+  cv = xpar_alloc_raw(jobs * XPAR_BLAKE3_OUT_LEN);
   task.in = p;  task.span = span;  task.counter = h->chunk.counter;
   task.key = h->key;  task.flags = h->chunk.flags;  task.cv = cv;
   xpar_pool_run(pool, jobs, xpar_b3_parallel_one, &task);
@@ -442,7 +441,7 @@ void xpar_blake3_init_keyed(xpar_blake3_t * h, const u8 * key) {
   u32 k[8], i;
   Fi(8, k[i] = xpar_rd32(key + 4 * i));
   xpar_b3_hasher_init(h, k, XPAR_B3_KEYED_HASH);
-  /* Clear the caller's key copy. */
+  /*  Clear the caller's key copy.  */
   xpar_secure_zero(k, sizeof k);
 }
 
@@ -463,7 +462,7 @@ void xpar_blake3_init_derive_key(xpar_blake3_t * h, const char * context) {
   u32 k[8], i;
   xpar_b3_hasher_init(&ctx, xpar_blake3_iv, XPAR_B3_DERIVE_CTX);
   xpar_blake3_update(&ctx, context, xpar_strlen(context));
-  xpar_blake3_final(&ctx, sub, sizeof(sub));
+  xpar_blake3_final(&ctx, sub, sizeof sub);
   Fi(8, k[i] = xpar_rd32(sub + 4 * i));
   xpar_b3_hasher_init(h, k, XPAR_B3_DERIVE_MAT);
   xpar_secure_zero(&ctx, sizeof ctx);
@@ -474,7 +473,7 @@ void xpar_blake3_init_derive_key(xpar_blake3_t * h, const char * context) {
 /*  Shared serial and parallel update driver.  */
 static void b3_update(xpar_blake3_t * h, const void * buf, sz n,
                       xpar_pool * pool) {
-  const u8 * p = (const u8 *) buf;
+  const u8 * p = buf;
   if (n == 0) return;
   /*  Finish the chunk in progress first, but only compress it once more
       input has proved it is not the last one.  */
@@ -484,8 +483,7 @@ static void b3_update(xpar_blake3_t * h, const void * buf, sz n,
     xpar_b3_chunk_update(&h->chunk, p, take);
     p += take;  n -= take;
     if (n == 0) return;
-    {
-      xpar_b3_node o;
+    { xpar_b3_node o;
       u8 cv[XPAR_BLAKE3_OUT_LEN];
       xpar_b3_chunk_node(&h->chunk, &o);
       xpar_b3_node_cv(&o, cv);
@@ -511,9 +509,8 @@ static void b3_update(xpar_blake3_t * h, const void * buf, sz n,
       xpar_b3_chunk_node(&c, &o);
       xpar_b3_node_cv(&o, cv);
       xpar_b3_push(h, cv, h->chunk.counter);
-    } else if (pool) {
-      xpar_b3_absorb_parallel(h, p, (sz) sub, pool);
-    } else {
+    } else if (pool) xpar_b3_absorb_parallel(h, p, (sz) sub, pool);
+    else {
       u8 pair[2 * XPAR_BLAKE3_OUT_LEN];
       xpar_b3_subtree_node(p, (sz) sub, h->key, h->chunk.counter,
                            h->chunk.flags, pair);

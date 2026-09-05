@@ -37,7 +37,7 @@ xpar_volimg_status xpar_volimg_read(xpar_volimg * v, const char * path,
         has somewhere to live on a 32-bit host.  */
     if (n < 0) { if (err) *err = xpar_error(f);  xpar_close(f);  return XPAR_VOLIMG_IO; }
     if ((u64) n > (u64) (sz) -1 / 2) { xpar_close(f);  return XPAR_VOLIMG_IO; }
-    v->heap = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
+    v->heap = xpar_alloc_raw((sz) n ? (sz) n : 1);
     got = xpar_read(f, v->heap, (sz) n);
     if (got != (sz) n) {
       /*  Accept a short read only if the file shrank.  */
@@ -55,7 +55,6 @@ xpar_volimg_status xpar_volimg_read(xpar_volimg * v, const char * path,
   v->path = xpar_strdup(path);
   return XPAR_VOLIMG_OK;
 }
-
 
 void xpar_volimg_close(xpar_volimg * v) {
   if (v->map.valid) xpar_unmap(&v->map);
@@ -81,14 +80,14 @@ void xpar_armg_unwrap(const u8 * body, u64 length, bool damaged,
   xpar_gf_init();
   a = xpar_armour_new(&p);
   if (!a) return;
-  plain = (u8 *) xpar_alloc_raw((sz) g.plain_length ? (sz) g.plain_length : 1);
+  plain = xpar_alloc_raw((sz) g.plain_length ? (sz) g.plain_length : 1);
   xpar_armour_extract(a, plain, g.plain_length, g.data);
   fn(user, plain, g.plain_length);
   if (damaged) {
-    u8 * region = (u8 *) xpar_alloc_raw((sz) g.armoured_length ?
-                                        (sz) g.armoured_length : 1);
-    u8 * fixed  = (u8 *) xpar_alloc_raw((sz) g.plain_length ?
-                                        (sz) g.plain_length : 1);
+    u8 * region = xpar_alloc_raw((sz) g.armoured_length
+                                 ? (sz) g.armoured_length : 1);
+    u8 * fixed  = xpar_alloc_raw((sz) g.plain_length
+                                 ? (sz) g.plain_length : 1);
     u64 fd = xpar_armour_frame_disk(a);
     xpar_memcpy(region, g.data, (sz) g.armoured_length);
     if (fd)
@@ -119,6 +118,7 @@ static void wrap_solve(const xpar_options * o, u64 object_bytes, u32 sym,
                        xpar_armour_params * p) {
   u32 w, t2, n;
   u64 d = 1;
+  int it;
   xpar_armour_defaults(p, sym);
   w  = sym / 8;
   n  = p->n;
@@ -127,23 +127,22 @@ static void wrap_solve(const xpar_options * o, u64 object_bytes, u32 sym,
   else if (o->armour_pct > 0.0)
     t2 = (u32) (o->armour_pct * (f64) n / (100.0 + o->armour_pct) + 0.5);
   /*  Shorten the codeword to the packet.  */
-  { int it;
-    for (it = 0; it < 8; it++) {
-      u64 need = xpar_ceil_div(object_bytes, w) + t2;
-      u32 n2 = need < (u64) n ? (u32) need : n;
-      u32 t3 = t2;
-      if (!o->armour_t && o->armour_pct > 0.0)
-        t3 = (u32) (o->armour_pct * (f64) n2 / (100.0 + o->armour_pct) + 0.5);
-      if (t3 < 2) t3 = 2;
-      t3 &= ~1u;
-      if (t3 >= n2) t3 = (n2 - 1) & ~1u;
-      if (n2 == n && t3 == t2) break;
-      n = n2;  t2 = t3;
-    } }
+  for (it = 0; it < 8; it++) {
+    u64 need = xpar_ceil_div(object_bytes, w) + t2;
+    u32 n2 = need < (u64) n ? (u32) need : n;
+    u32 t3 = t2;
+    if (!o->armour_t && o->armour_pct > 0.0)
+      t3 = (u32) (o->armour_pct * (f64) n2 / (100.0 + o->armour_pct) + 0.5);
+    if (t3 < 2) t3 = 2;
+    t3 &= ~1U;
+    if (t3 >= n2) t3 = (n2 - 1) & ~1U;
+    if (n2 == n && t3 == t2) break;
+    n = n2;  t2 = t3;
+  }
   if (t2 < 2) t2 = 2;
   if (n < t2 + 1) n = t2 + 1;
   if (n < 16) n = 16;
-  if (t2 >= n) t2 = (n - 1) & ~1u;
+  if (t2 >= n) t2 = (n - 1) & ~1U;
   p->n = n;  p->k = n - t2;
   if (o->depth) d = o->depth;
   else if (o->burst) {
@@ -192,8 +191,8 @@ void xpar_armg_wrap_with(xpar_buf * out, const xpar_armour * a,
   g.depth           = ap->depth;
   g.plain_length    = plain_len;
   g.armoured_length = xpar_armour_size(a, plain_len);
-  enc = (u8 *) xpar_calloc((sz) g.armoured_length ? (sz) g.armoured_length
-                                                  : 1, 1);
+  enc = xpar_calloc((sz) g.armoured_length
+                    ? (sz) g.armoured_length : 1, 1);
   xpar_armour_encode(a, enc, (const u8 *) plain, plain_len);
   xpar_armg_write(out, &g, enc, set_id, key);
   xpar_free(enc);
@@ -238,7 +237,7 @@ static void armsink_alloc(xpar_armsink * s, u64 slots) {
   if (slots == s->slots) return;
   xpar_free(s->frame);
   s->slots = slots;
-  s->frame = (u8 *) xpar_calloc((sz) (slots * s->disk), 1);
+  s->frame = xpar_calloc((sz) (slots * s->disk), 1);
 }
 
 void xpar_armsink_init(xpar_armsink * s, const xpar_armour * a,
@@ -264,7 +263,7 @@ static u64 armsink_per(const xpar_armsink * s, u64 total) {
 typedef struct { xpar_armsink * sink;  u64 total, per; } armsink_job;
 
 static void armsink_run(sz index, void * arg) {
-  armsink_job * j = (armsink_job *) arg;
+  armsink_job * j = arg;
   u64 first = (u64) index * j->per, n;
   if (first >= j->total) return;
   n = MIN(j->per, j->total - first);
@@ -289,8 +288,7 @@ static void armsink_workers(xpar_armsink * s, u64 staged) {
   u64 q = s->quantum ? s->quantum : 1;
   int want = (int) MIN((u64) s->jobs, staged / q), i;
   if (want <= s->workers) return;
-  s->work = (xpar_armour **) xpar_realloc(s->work,
-              (sz) want * sizeof(xpar_armour *));
+  s->work = xpar_realloc(s->work, (sz) want * sizeof *s->work);
   if (s->workers < 1) s->workers = 1;
   s->work[0] = (xpar_armour *) s->armour;
   for (i = s->workers; i < want; i++)
@@ -323,7 +321,7 @@ void xpar_armsink_flush(xpar_armsink * s) {
 }
 
 void xpar_armsink_put(xpar_armsink * s, const void * data, u64 length) {
-  const u8 * p = (const u8 *) data;
+  const u8 * p = data;
   while (length) {
     u8 * fr = s->frame + s->staged * s->disk;
     u64 take = MIN(length, s->cap - s->fill);

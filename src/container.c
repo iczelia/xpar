@@ -38,7 +38,7 @@ static int bytes_cmp(const u8 * a, sz na, const u8 * b, sz nb) {
 
 /*  Callers have already rejected embedded NUL bytes.  */
 static char * dup_str(const u8 * p, sz n) {
-  char * s = (char *) xpar_malloc(n + 1);
+  char * s = xpar_malloc(n + 1);
   if (n) xpar_memcpy(s, p, n);
   s[n] = 0;
   return s;
@@ -155,7 +155,7 @@ xpar_status xpar_pkt_read(const u8 * p, u64 avail, const xpar_key * key,
   }
   if ((out->flags & XPAR_PF_KEYED) && !key)    return XPAR_E_NEEDKEY;
 
-  pkt_tag(p, len, body, (out->flags & XPAR_PF_KEYED) ? key : NULL, want);
+  pkt_tag(p, len, body, out->flags & XPAR_PF_KEYED ? key : NULL, want);
   if (!xpar_ct_equal(want, out->checksum, 8))  return XPAR_E_CHECKSUM;
 
   /*  Validate types after tags to classify noise as checksum damage.  */
@@ -214,7 +214,7 @@ u8 * xpar_buf_grow(xpar_buf * b, sz n) {
   if (need > b->cap) {
     sz cap = b->cap ? b->cap : 256;
     while (cap < need) { xpar_assert(cap <= ((sz) -1) / 2);  cap *= 2; }
-    b->data = (u8 *) xpar_realloc(b->data, cap);
+    b->data = xpar_realloc(b->data, cap);
     b->cap  = cap;
   }
   xpar_memset(b->data + b->len, 0, n);
@@ -332,13 +332,12 @@ static xpar_status setd_body(const u8 * body, sz n, xpar_setd * out) {
   if (out->recovery_axis_log2 > out->field_log2)     return XPAR_E_MALFORMED;
   if (out->dedup_level > XPAR_DEDUP_CHUNK)           return XPAR_E_MALFORMED;
 
-  if (out->required_features & XPAR_FEAT_B3_SUBTREE) {
+  if (out->required_features & XPAR_FEAT_B3_SUBTREE)
     if (out->align != XPAR_ALIGN_1K || !out->slice_tag_len ||
         out->slice_size < XPAR_BLAKE3_CHUNK_LEN ||
         (out->slice_size & (out->slice_size - 1)) != 0 ||
         out->stream_base % XPAR_BLAKE3_CHUNK_LEN)
       return XPAR_E_MALFORMED;
-  }
 
   if (out->slice_size < XPAR_SLICE_MIN ||
       out->slice_size > XPAR_SLICE_REFUSE)           return XPAR_E_MALFORMED;
@@ -469,7 +468,7 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
   out->ctime_ns   = (i64) xpar_rd64(body + 88);
   out->btime_ns   = (i64) xpar_rd64(body + 96);
   out->mode       = xpar_rd32(body + 104);
-  out->posix_index= xpar_rd32(body + 108);
+  out->posix_index = xpar_rd32(body + 108);
   out->extent_count = ec;
   out->entry_type = xpar_rd16(body + 116);
   out->attrs      = xpar_rd16(body + 118);
@@ -484,7 +483,7 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
       out->posix_index >= prc) return XPAR_E_MALFORMED;
 
   if (ec) {
-    out->extents = (xpar_extent *) xpar_calloc(ec, sizeof(xpar_extent));
+    out->extents = xpar_calloc(ec, sizeof *out->extents);
     ep = body + 128;
     Fi(ec,
       u64 off = xpar_rd64(ep), len = xpar_rd64(ep + 8), end;
@@ -502,9 +501,9 @@ static xpar_status entry_body(const u8 * body, sz n, u32 prc,
 
   if (nl) out->name  = dup_str(body + 128 + (sz) ec * 16, nl);
   if (xl) {
-    out->extra = (u8 *) xpar_malloc(xl + 1);
+    out->extra = xpar_malloc(xl + 1);
     xpar_memcpy(out->extra, body + 128 + (sz) ec * 16 + nl, xl);
-    out->extra[xl] = 0;   /* Match dup_str's terminator. */
+    out->extra[xl] = 0;   /*  Match dup_str's terminator.  */
   }
   return XPAR_OK;
 }
@@ -553,7 +552,7 @@ void xpar_entry_write(xpar_buf * out, const xpar_entry * e,
   xpar_wr32(fixed + 124, e->extra_len);
 
   if (e->extent_count) {
-    ex = (u8 *) xpar_calloc(e->extent_count, 16);
+    ex = xpar_calloc(e->extent_count, 16);
     Fi(e->extent_count,
       xpar_wr64(ex + (sz) i * 16,     e->extents[i].stream_offset);
       xpar_wr64(ex + (sz) i * 16 + 8, e->extents[i].length));
@@ -604,7 +603,7 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
     /*  Four bytes of header per xattr, checked before the array is sized
         so that xattr_count cannot drive an allocation on its own.  */
     if ((u64) xc * 4 > (u64) (avail - p)) return XPAR_E_MALFORMED;
-    r->xattrs = (xpar_xattr *) xpar_calloc(xc, sizeof(xpar_xattr));
+    r->xattrs = xpar_calloc(xc, sizeof *r->xattrs);
     r->xattr_count = xc;
     Fj(xc,
       u32 nl, vl;
@@ -621,7 +620,7 @@ static xpar_status posx_rec(const u8 * b, sz avail, xpar_posix_rec * r,
       if (vl > avail - p) return XPAR_E_MALFORMED;
       r->xattrs[j].value_len = vl;
       if (vl) {
-        r->xattrs[j].value = (u8 *) xpar_malloc(vl);
+        r->xattrs[j].value = xpar_malloc(vl);
         xpar_memcpy(r->xattrs[j].value, b + p, vl);
         p += vl;
       });
@@ -641,8 +640,8 @@ static xpar_status posx_body(const u8 * body, sz n, xpar_posx * out) {
   /*  A record is at least 16 bytes, so a count that could not fit even at
       the minimum size is refused before the array is allocated.  */
   if ((u64) cnt * 16 > (u64) n - 8) return XPAR_E_MALFORMED;
-  if ((u64) out->first_record + cnt > 0xFFFFFFFFu) return XPAR_E_MALFORMED;
-  out->rec = (xpar_posix_rec *) xpar_calloc(cnt, sizeof(xpar_posix_rec));
+  if ((u64) out->first_record + cnt > 0xFFFFFFFFU) return XPAR_E_MALFORMED;
+  out->rec = xpar_calloc(cnt, sizeof *out->rec);
   out->count = cnt;
   Fi(cnt,
     sz used = 0;
@@ -737,7 +736,7 @@ void xpar_posx_write_all(xpar_buf * out, const xpar_posix_rec * rec,
 }
 
 static xpar_status slcr_body(const u8 * body, sz n, xpar_slcr * out) {
-  u64 need, last;
+  u64 need, last, i;
   if (n < 16) return XPAR_E_SHORT;
   out->first_slice = xpar_rd64(body);
   out->count       = xpar_rd64(body + 8);
@@ -747,9 +746,8 @@ static xpar_status slcr_body(const u8 * body, sz n, xpar_slcr * out) {
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   need = 16 + out->count * 4;
   if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
-  { u64 i;
-    out->crc = (u32 *) xpar_calloc((sz) out->count, 4);
-    Fi(out->count, out->crc[i] = xpar_rd32(body + 16 + (sz) (i * 4))); }
+  out->crc = xpar_calloc((sz) out->count, 4);
+  Fi(out->count, out->crc[i] = xpar_rd32(body + 16 + (sz) (i * 4)));
   return XPAR_OK;
 }
 
@@ -767,6 +765,7 @@ void xpar_slcr_free(xpar_slcr * t) {
 
 static xpar_status sltg_body(const u8 * body, sz n, xpar_sltg * out) {
   u64 need, last;
+  sz q;
   if (n < 24) return XPAR_E_SHORT;
   out->first_slice = xpar_rd64(body);
   out->count       = xpar_rd64(body + 8);
@@ -775,12 +774,12 @@ static xpar_status sltg_body(const u8 * body, sz n, xpar_sltg * out) {
   if (out->count > XPAR_TABLE_SPLIT) return XPAR_E_MALFORMED;
   if (out->tag_len != 8 && out->tag_len != 16) return XPAR_E_MALFORMED;
   /*  Bytes 17..23 are reserved and shall be zero.  */
-  { sz q;  for (q = 17; q < 24; q++) if (body[q]) return XPAR_E_MALFORMED; }
+  for (q = 17; q < 24; q++) if (body[q]) return XPAR_E_MALFORMED;
   if (out->count > ((u64) n - 24) / out->tag_len) return XPAR_E_MALFORMED;
   if (!add64(out->first_slice, out->count, &last)) return XPAR_E_MALFORMED;
   need = 24 + out->count * out->tag_len;
   if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
-  out->tag = (u8 *) xpar_calloc((sz) out->count, out->tag_len);
+  out->tag = xpar_calloc((sz) out->count, out->tag_len);
   xpar_memcpy(out->tag, body + 24, (sz) (out->count * out->tag_len));
   return XPAR_OK;
 }
@@ -799,7 +798,7 @@ void xpar_sltg_free(xpar_sltg * t) {
 
 static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
                              xpar_slcl * out) {
-  u64 need, cells, k, last;
+  u64 need, cells, k, last, i;
   if (n < 24) return XPAR_E_SHORT;
   if (!slice_size) return XPAR_E_MALFORMED;
   out->first_slice = xpar_rd64(body);
@@ -811,7 +810,7 @@ static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
   if (!out->cell_bytes || (u64) out->cell_bytes > slice_size)
     return XPAR_E_MALFORMED;
   k = xpar_ceil_div(slice_size, out->cell_bytes);
-  if (k > 0xFFFFFFFFu) return XPAR_E_MALFORMED;
+  if (k > 0xFFFFFFFFU) return XPAR_E_MALFORMED;
   out->cells_per_slice = (u32) k;
   if (k > XPAR_TABLE_SPLIT || out->count > XPAR_TABLE_SPLIT / k)
     return XPAR_E_MALFORMED;
@@ -820,9 +819,8 @@ static xpar_status slcl_body(const u8 * body, sz n, u64 slice_size,
   if (!mul64(out->count, k, &cells)) return XPAR_E_MALFORMED;
   need = 24 + cells * 4;
   if (!pad_ok(body, need, n)) return XPAR_E_MALFORMED;
-  { u64 i;
-    out->crc = (u32 *) xpar_calloc((sz) cells, 4);
-    Fi(cells, out->crc[i] = xpar_rd32(body + 24 + (sz) (i * 4))); }
+  out->crc = xpar_calloc((sz) cells, 4);
+  Fi(cells, out->crc[i] = xpar_rd32(body + 24 + (sz) (i * 4)));
   return XPAR_OK;
 }
 
@@ -888,20 +886,18 @@ void xpar_slcl_write(xpar_buf * out, u64 first_slice, u64 count,
 void xpar_slcr_write_all(xpar_buf * out, const u32 * crc, u64 slices,
                          const u8 * set_id, const xpar_key * key) {
   u64 i;
-  for (i = 0; i < slices; i += XPAR_TABLE_SPLIT) {
+  for (i = 0; i < slices; i += XPAR_TABLE_SPLIT)
     xpar_slcr_write(out, i, MIN(slices - i, (u64) XPAR_TABLE_SPLIT),
                     crc + i, set_id, key);
-  }
 }
 
 void xpar_sltg_write_all(xpar_buf * out, const u8 * tag, u64 slices,
                          u8 tag_len, const u8 * set_id,
                          const xpar_key * key) {
   u64 i;
-  for (i = 0; i < slices; i += XPAR_TABLE_SPLIT) {
+  for (i = 0; i < slices; i += XPAR_TABLE_SPLIT)
     xpar_sltg_write(out, i, MIN(slices - i, (u64) XPAR_TABLE_SPLIT),
                     tag_len, tag + i * tag_len, set_id, key);
-  }
 }
 
 void xpar_slcl_write_all(xpar_buf * out, const u32 * crc, u64 slices,
@@ -909,11 +905,10 @@ void xpar_slcl_write_all(xpar_buf * out, const u32 * crc, u64 slices,
                          const u8 * set_id, const xpar_key * key) {
   u64 per = XPAR_TABLE_SPLIT / (cells_per_slice ? cells_per_slice : 1), i;
   if (!per) per = 1;
-  for (i = 0; i < slices; i += per) {
+  for (i = 0; i < slices; i += per)
     xpar_slcl_write(out, i, MIN(slices - i, per), cell_bytes,
                     cells_per_slice, crc + i * cells_per_slice,
                     set_id, key);
-  }
 }
 
 bool xpar_tagset_init(xpar_tagset * s, u64 slices, u8 tag_len, u32 cps,
@@ -924,22 +919,22 @@ bool xpar_tagset_init(xpar_tagset * s, u64 slices, u8 tag_len, u32 cps,
   s->t.tag_len         = tag_len;
   s->t.cells_per_slice = cps;
   if (!slices) return true;
-  if (!add64(have_crc ? 4u + tag_len : tag_len, (u64) cps * 4, &per))
+  if (!add64(have_crc ? 4U + tag_len : tag_len, (u64) cps * 4, &per))
     return false;
   if (!per) return false;
   if (!mul64(slices, per, &total)) return false;
   if (total > input_bytes) return false;
   if (total > (u64) (sz) -1 / 2) return false;
 
-  s->t.slice_crc = (u32 *) xpar_calloc((sz) slices, 4);
-  s->seen_crc    = (u8 *)  xpar_calloc((sz) slices, 1);
+  s->t.slice_crc = xpar_calloc((sz) slices, 4);
+  s->seen_crc    = xpar_calloc((sz) slices, 1);
   if (tag_len) {
-    s->t.slice_tag = (u8 *) xpar_calloc((sz) slices, tag_len);
-    s->seen_tag    = (u8 *) xpar_calloc((sz) slices, 1);
+    s->t.slice_tag = xpar_calloc((sz) slices, tag_len);
+    s->seen_tag    = xpar_calloc((sz) slices, 1);
   }
   if (cps) {
-    s->t.cell_crc = (u32 *) xpar_calloc((sz) (slices * cps), 4);
-    s->seen_cell  = (u8 *)  xpar_calloc((sz) slices, 1);
+    s->t.cell_crc = xpar_calloc((sz) (slices * cps), 4);
+    s->seen_cell  = xpar_calloc((sz) slices, 1);
   }
   return true;
 }
@@ -985,15 +980,15 @@ xpar_status xpar_tagset_sltg(xpar_tagset * s, const xpar_sltg * t) {
 }
 
 xpar_status xpar_tagset_slcl(xpar_tagset * s, const xpar_slcl * t) {
-  u64 i, c;
+  u64 i, j;
   xpar_status st;
   if (t->cells_per_slice != s->t.cells_per_slice) return XPAR_E_MALFORMED;
   st = tagset_range(s, s->seen_cell, t->first_slice, t->count);
   if (st != XPAR_OK) return st;
   Fi(t->count,
-    for (c = 0; c < t->cells_per_slice; c++)
-      s->t.cell_crc[(t->first_slice + i) * t->cells_per_slice + c] =
-        t->crc[i * t->cells_per_slice + c];
+    Fj(t->cells_per_slice,
+      s->t.cell_crc[(t->first_slice + i) * t->cells_per_slice + j] =
+        t->crc[i * t->cells_per_slice + j]);
     s->seen_cell[t->first_slice + i] = 1);
   return XPAR_OK;
 }
@@ -1074,7 +1069,7 @@ static bool layt_names_unique(const xpar_layt * l) {
   while (want < (u64) l->count * 2) want *= 2;
   if (want > (u64) 1 << 31) return false;
   capacity = (u32) want;
-  slot = (u32 *) xpar_calloc(capacity, sizeof *slot);
+  slot = xpar_calloc(capacity, sizeof *slot);
   Fi(l->count,
     const char * name = l->vol[i].name;
     sz len = xpar_strlen(name);
@@ -1106,10 +1101,10 @@ static xpar_status layt_body(const u8 * body, sz n, xpar_layt * out) {
   /*  Every entry is at least 32 bytes, so a count that cannot fit at the
       minimum size is refused before the array exists.  */
   if ((u64) v * 32 > (u64) n - 8) return XPAR_E_MALFORMED;
-  out->vol = (xpar_vol *) xpar_calloc(v, sizeof(xpar_vol));
+  out->vol = xpar_calloc(v, sizeof *out->vol);
   out->count = v;
   Fi(v,
-    const u8 * e = body + p;  u32 nl;  u64 used;
+    const u8 * e = body + p;  u32 nl;  u64 j, used;
     if (n - p < 32) return XPAR_E_MALFORMED;
     out->vol[i].kind           = e[0];
     out->vol[i].vflags         = e[1];
@@ -1119,7 +1114,7 @@ static xpar_status layt_body(const u8 * body, sz n, xpar_layt * out) {
     out->vol[i].byte_length    = xpar_rd64(e + 16);
     out->vol[i].vol_tag        = xpar_rd64(e + 24);
     if (out->vol[i].kind > XPAR_VOL_RECOVERY ||
-        (out->vol[i].vflags & ~1u)) return XPAR_E_MALFORMED;
+        (out->vol[i].vflags & ~1U)) return XPAR_E_MALFORMED;
     if (out->vol[i].kind == XPAR_VOL_INDEX) {
       indices++;
       if (out->vol[i].recovery_first || out->vol[i].stream_offset ||
@@ -1137,13 +1132,13 @@ static xpar_status layt_body(const u8 * body, sz n, xpar_layt * out) {
           XPAR_PATH_OK) return XPAR_E_MALFORMED;
     /*  One path component, so a name cannot steer a volume open into a
         subdirectory. xpar_path_check alone accepts a relative path.  */
-    for (u32 q = 0; q < (nl); q++) { if (e[32 + q] == '/' || e[32 + q] == '\\')
-                      return XPAR_E_MALFORMED; }
+    Fj(nl, if (e[32 + j] == '/' || e[32 + j] == '\\')
+             return XPAR_E_MALFORMED);
     out->vol[i].name = dup_str(e + 32, nl);
     used = xpar_align_up((u64) 32 + nl, XPAR_PKT_ALIGN);
     if (used > (u64) (n - p)) return XPAR_E_MALFORMED;
-    for (u64 j = 32 + nl; j < used; j++)
-      if (body[p + (sz) j]) return XPAR_E_MALFORMED;
+    Fj(used - 32 - nl,
+      if (body[p + 32 + nl + j]) return XPAR_E_MALFORMED);
     p += (sz) used);
   if (indices != 1 || !layt_names_unique(out) ||
       (u64) n - p >= XPAR_PKT_ALIGN)
@@ -1238,9 +1233,9 @@ xpar_status xpar_layt_tiles(const xpar_layt * l, u64 stream_length) {
     return XPAR_OK;
   }
 #if UINTPTR_MAX == UINT32_MAX
-  if (data > (u32) ((sz) -1 / sizeof(*tile))) return XPAR_E_MALFORMED;
+  if (data > (u32) ((sz) -1 / sizeof *tile)) return XPAR_E_MALFORMED;
 #endif
-  tile = (layt_tile *) xpar_alloc_raw((sz) data * sizeof(*tile));
+  tile = xpar_alloc_raw((sz) data * sizeof *tile);
   Fi(l->count,
     if (l->vol[i].kind == XPAR_VOL_DATA) {
         tile[at].off = l->vol[i].stream_offset;
@@ -1348,7 +1343,7 @@ xpar_status xpar_text_read(const u8 * body, sz n, sz * out_len) {
   sz len = n;
   while (len && !body[len - 1]) len--;
   *out_len = len;
-  if (len > 0xFFFFFFFFu) return XPAR_E_MALFORMED;
+  if (len > 0xFFFFFFFFU) return XPAR_E_MALFORMED;
   return text_ok(body, (u32) len) ? XPAR_OK : XPAR_E_MALFORMED;
 }
 
@@ -1384,7 +1379,7 @@ xpar_status xpar_armg_read(const u8 * body, sz n, xpar_armg * out) {
   u64 want, need;
   xpar_memset(out, 0, sizeof *out);
   if (n < 48) return XPAR_E_SHORT;
-  /* Bytes 1-3 are reserved. */
+  /*  Bytes 1-3 are reserved.  */
   if (body[1] || xpar_rd16(body + 2)) return XPAR_E_MALFORMED;
   out->symbol_bits     = body[0];
   out->poly            = xpar_rd32(body + 4);
@@ -1491,8 +1486,8 @@ bool xpar_replicate_here(u64 crit, u64 payload, u32 i, u32 count) {
     spread the identity over the index table; nothing depends on its
     output being stable across builds.  */
 static u64 mix64(u64 x) {
-  x ^= x >> 30;  x *= 0xBF58476D1CE4E5B9ull;
-  x ^= x >> 27;  x *= 0x94D049BB133111EBull;
+  x ^= x >> 30;  x *= 0xBF58476D1CE4E5B9ULL;
+  x ^= x >> 27;  x *= 0x94D049BB133111EBULL;
   return x ^ (x >> 31);
 }
 
@@ -1545,7 +1540,7 @@ void xpar_critset_detach(xpar_critset * s, const void * base, sz size) {
     if (at < lo || at >= hi) continue;
     FATAL_UNLESS(p->body_len <= (u64) (hi - at),
                  "a retained packet body extends past its backing store");
-    copy = (u8 *) xpar_alloc_raw((sz) (p->body_len ? p->body_len : 1));
+    copy = xpar_alloc_raw((sz) (p->body_len ? p->body_len : 1));
     if (p->body_len) xpar_memcpy(copy, p->body, (sz) p->body_len);
     xpar_free(p->owned_body);
     p->body = copy;  p->owned_body = copy);
@@ -1569,15 +1564,15 @@ static void crit_grow(xpar_critset * s) {
       below 2^30 for cap * 4 to be a u32. A volume large enough to reach
       that would need 2^28 packets and twelve gigabytes.  */
   xpar_assert(cap <= (u32) 1 << 28);
-  s->pkt = (xpar_crit_pkt *) xpar_realloc(s->pkt,
-                                          (sz) cap * sizeof(xpar_crit_pkt));
+  s->pkt = xpar_realloc(s->pkt,
+                        (sz) cap * sizeof *s->pkt);
   s->cap = cap;
   /*  The index is rebuilt rather than rehashed incrementally: it holds
       slot numbers only, so a rebuild is a linear pass over packets that
       are already in memory.  */
   xpar_free(s->idx);
   s->mask = cap * 4 - 1;
-  s->idx  = (u32 *) xpar_calloc((sz) s->mask + 1, sizeof(u32));
+  s->idx  = xpar_calloc((sz) s->mask + 1, sizeof *s->idx);
   Fi(s->count,
     u64 h = crit_hash(s->pkt[i].hdr.set_id, s->pkt[i].hdr.type,
                       crit_disc(s->pkt[i].hdr.type, s->pkt[i].body,
@@ -1610,9 +1605,9 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
           xpar_pkt_is(hdr, XPAR_T_CMNT)) return false;
       if (s->pkt[slot].body_len != n ||
           xpar_memcmp(s->pkt[slot].body, body, (sz) n) != 0) {
-        if (s->rank < s->pkt[slot].rank) {
-          s->pkt[slot].stale++;  s->stale++;
-        } else if (s->rank > s->pkt[slot].rank) {
+        if (s->rank < s->pkt[slot].rank)
+          { s->pkt[slot].stale++;  s->stale++; }
+        else if (s->rank > s->pkt[slot].rank) {
           xpar_free(s->pkt[slot].owned_body);
           s->pkt[slot].hdr      = *hdr;
           s->pkt[slot].body     = body;
@@ -1631,7 +1626,7 @@ bool xpar_critset_add(xpar_critset * s, const xpar_pkt * hdr,
   s->idx[j] = s->count + 1;
   s->pkt[s->count].hdr       = *hdr;
   s->pkt[s->count].body      = body;
-  s->pkt[s->count].owned_body= NULL;
+  s->pkt[s->count].owned_body = NULL;
   s->pkt[s->count].body_len  = n;
   s->pkt[s->count].copies    = 1;
   s->pkt[s->count].conflicts = 0;
@@ -1699,8 +1694,8 @@ xpar_status xpar_posx_collect(const xpar_critset * c, const u8 * set_id,
         xpar_memcmp(p->hdr.set_id, set_id, XPAR_SET_ID_LEN)) continue;
     have += p->body_len);
   if ((u64) count * POSX_REC_MIN > have) return XPAR_E_MALFORMED;
-  rec = (xpar_posix_rec *) xpar_calloc(count ? count : 1, sizeof *rec);
-  seen = (u8 *) xpar_calloc(count ? count : 1, 1);
+  rec = xpar_calloc(count ? count : 1, sizeof *rec);
+  seen = xpar_calloc(count ? count : 1, 1);
   Fi(count, rec[i].uid = rec[i].gid = UINT32_MAX);
   Fi(c->count,
     const xpar_crit_pkt * p = &c->pkt[i];

@@ -12,11 +12,11 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Standalone command timer: elapsed_us, status, maxrss_kb, block I/O. */
+/*  Standalone command timer: elapsed_us, status, maxrss_kb, block I/O.  */
 
-/* Expose XSI process and resource APIs under strict C99. Darwin hides the
+/*  Expose XSI process and resource APIs under strict C99. Darwin hides the
    BSD rusage members behind a strict _XOPEN_SOURCE, so ask it for the full
-   set instead. */
+   set instead.  */
 #if !defined(_WIN32) && !defined(__MSDOS__)
 #if defined(__APPLE__)
 #define _DARWIN_C_SOURCE 1
@@ -61,14 +61,13 @@ int main(int argc, char ** argv) {
   out = strcmp(argv[1], "-") ? argv[1] : NULL;
 
 #if defined(TIMEIT_SYSTEM)
-  {
-    /* system() requires one string; benchmark paths contain no spaces. */
+  { /*  system() requires one string; benchmark paths contain no spaces.  */
     size_t len = 1, i;
     char * line;
     clock_t begin, end;
     int status;
     for (i = 2; i < (size_t) argc; i++) len += strlen(argv[i]) + 1;
-    line = (char *) malloc(len);
+    line = malloc(len);
     if (!line) return 2;
     line[0] = 0;
     for (i = 2; i < (size_t) argc; i++) {
@@ -93,8 +92,7 @@ int main(int argc, char ** argv) {
     return status;
   }
 #else
-  {
-    struct timeval a, b;
+  { struct timeval a, b;
     struct rusage ru;
     pid_t pid;
     long long elapsed;
@@ -114,15 +112,15 @@ int main(int argc, char ** argv) {
 
     code = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus)
          : WIFSIGNALED(wstatus) ? 128 + WTERMSIG(wstatus) : 255;
-    /* Keep timestamp subtraction signed. */
-    elapsed = (long long) (b.tv_sec - a.tv_sec) * 1000000ll +
+    /*  Keep timestamp subtraction signed.  */
+    elapsed = (long long) (b.tv_sec - a.tv_sec) * 1000000LL +
               (long long) (b.tv_usec - a.tv_usec);
     if (elapsed < 0) elapsed = 0;
     emit(out, (unsigned long long) elapsed,
          code,
-         /* ru_maxrss units are platform-specific. */
+         /*  ru_maxrss units are platform-specific.  */
          (unsigned long long) ru.ru_maxrss,
-         /* Block-layer traffic in 512-byte units; near zero when warm. */
+         /*  Block-layer traffic in 512-byte units; near zero when warm.  */
          (unsigned long long) ru.ru_inblock,
          (unsigned long long) ru.ru_oublock);
     return code;

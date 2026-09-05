@@ -19,7 +19,7 @@
 #endif
 
 #if !defined(_WIN32_WINNT)
-  #define _WIN32_WINNT 0x0400
+#define _WIN32_WINNT 0x0400
 #endif
 
 #define WIN32_LEAN_AND_MEAN
@@ -46,7 +46,7 @@ int xpar_core_count(void) {
     return xpar_cpu_count();
   p = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION) xpar_alloc_raw(bytes);
   if (!glpi(p, &bytes)) { xpar_free(p);  return xpar_cpu_count(); }
-  n = bytes / sizeof(*p);
+  n = bytes / sizeof *p;
   Fi(n, if (p[i].Relationship == RelationProcessorCore) cores++);
   xpar_free(p);
   return cores > 0 ? cores : xpar_cpu_count();
@@ -102,7 +102,7 @@ static DWORD WINAPI worker(LPVOID arg) {
 }
 
 xpar_pool * xpar_pool_create(int threads) {
-  struct xpar_pool * p = xpar_alloc_raw(sizeof(*p));
+  struct xpar_pool * p = xpar_alloc_raw(sizeof *p);
   int k;
   if (threads <= 0) threads = xpar_cpu_count();
   if (threads < 1)  threads = 1;
@@ -114,14 +114,14 @@ xpar_pool * xpar_pool_create(int threads) {
   if (threads == 1) return p;
 
   p->joined = CreateEvent(NULL, FALSE, FALSE, NULL);
-  p->thread = xpar_alloc_raw((sz) (threads - 1) * sizeof(HANDLE));
-  p->wake   = xpar_alloc_raw((sz) (threads - 1) * sizeof(HANDLE));
+  p->thread = xpar_alloc_raw((sz) (threads - 1) * sizeof *p->thread);
+  p->wake   = xpar_alloc_raw((sz) (threads - 1) * sizeof *p->wake);
   Fk(threads - 1, p->thread[k] = NULL;  p->wake[k] = NULL);
   Fk(threads - 1,
     struct worker_arg * a;
     p->wake[k] = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (!p->wake[k] || !p->joined) { p->nthreads = k + 1;  break; }
-    a = xpar_alloc_raw(sizeof(*a));
+    a = xpar_alloc_raw(sizeof *a);
     a->p = p;  a->k = k;
     p->thread[k] = CreateThread(NULL, 0, worker, a, 0, NULL);
     if (!p->thread[k]) {

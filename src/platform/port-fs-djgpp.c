@@ -115,8 +115,8 @@ static bool dos_time_pack(i64 ns, u16 * date, u16 * time) {
   sec = (u64) ns / 1000000000ULL;
   days = sec / 86400;
   sec %= 86400;
-  while (year <= 2107 && days >= (leap_year(year) ? 366u : 365u)) {
-    days -= leap_year(year) ? 366u : 365u;
+  while (year <= 2107 && days >= (leap_year(year) ? 366U : 365U)) {
+    days -= leap_year(year) ? 366U : 365U;
     year++;
   }
   if (year < 1980 || year > 2107) return false;
@@ -151,14 +151,14 @@ int xpar_lstat(const char * path, xpar_stat_t * out) {
     size = found.size;
     date = found.wr_date;
     time = found.wr_time;
-    while (_dos_findnext(&found) == 0) {}
+    while (_dos_findnext(&found) == 0) { }
   }
   out->size  = is_dir ? 0 : (u64) size;
-  /* FAT stores attributes, not a POSIX mode. */
+  /*  FAT stores attributes, not a POSIX mode.  */
   out->mode  = XPAR_MODE_NONE;
   out->uid   = XPAR_ID_NONE;
   out->gid   = XPAR_ID_NONE;
-  /* DJGPP synthesizes dev and inode, so report no identity. */
+  /*  DJGPP synthesizes dev and inode, so report no identity.  */
   out->dev   = 0;
   out->ino   = 0;
   out->nlink = 1;
@@ -185,7 +185,7 @@ u32 xpar_fs_caps(const char * path) {
 struct xpar_dir {
   struct _find_t found;
   bool           ready;
-  char           name[sizeof(((struct _find_t *) 0)->name)];
+  char           name[sizeof ((struct _find_t *) 0)->name];
   xpar_dirent ent;
 };
 
@@ -197,7 +197,7 @@ xpar_dir * xpar_opendir(const char * path) {
   sz path_len;
   if (xpar_lstat(path, &st) != 0) return NULL;
   if (!st.is_dir) { errno = ENOTDIR;  return NULL; }
-  h = xpar_alloc_raw(sizeof(*h));
+  h = xpar_alloc_raw(sizeof *h);
   path_len = xpar_strlen(path);
   xpar_asprintf(&pattern, "%s%s*.*", path,
                 path_len && (path[path_len - 1] == '/' ||
@@ -359,7 +359,7 @@ int xpar_set_owner(const char * path, int nofollow, u32 uid, u32 gid,
 }
 
 int xpar_set_mode(const char * path, int nofollow, u32 mode) {
-  /* Read-only state is restored through attrs, not mode. */
+  /*  Read-only state is restored through attrs, not mode.  */
   (void) path;  (void) nofollow;  (void) mode;
   errno = ENOTSUP;
   return -1;
@@ -425,7 +425,7 @@ char * xpar_getcwd(void) {
   dosmemget(__tb, sizeof dos_path, dos_path);
   dos_path[sizeof dos_path - 1] = 0;
   n = xpar_strlen(dos_path);
-  out = (char *) xpar_alloc_raw(n + 4);
+  out = xpar_alloc_raw(n + 4);
   out[0] = (char) ('a' + drive - 1);
   out[1] = ':';
   out[2] = '/';

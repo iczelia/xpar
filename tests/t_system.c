@@ -89,10 +89,9 @@ bool xt_context_init(xt_context * c, int argc, char ** argv) {
   xpar_memset(c, 0, sizeof *c);
   c->cwd = xpar_getcwd();
   if (!c->cwd) return false;
-  for (i = 1; i < argc; i++) {
+  for (i = 1; i < argc; i++)
     if (!xpar_strncmp(argv[i], "--xpar=", 7)) xpar = argv[i] + 7;
     else if (!xpar_strcmp(argv[i], "--keep")) c->keep = 1;
-  }
   if (!xpar || !*xpar) {
 #if defined(XPAR_WIN32) || defined(XPAR_DOS)
     xpar = "xpar.exe";
@@ -105,13 +104,13 @@ bool xt_context_init(xt_context * c, int argc, char ** argv) {
 
   for (attempt = 0; attempt < 256; attempt++) {
     xpar_snprintf(leaf, sizeof leaf, "T%07" PRIX32,
-                  (pid + attempt) & 0x0FFFFFFFu);
+                  (pid + attempt) & 0x0FFFFFFFU);
     if (!xt_path(def, sizeof def, c->cwd, leaf)) return false;
-    if (xpar_mkdir(def, 0700) == 0) { made = true; break; }
+    if (xpar_mkdir(def, 0700) == 0) { made = true;  break; }
   }
   if (!made) return false;
   c->root = xpar_strdup(def);
-  if (!c->root) { (void) xpar_rmdir(def); return false; }
+  if (!c->root) { (void) xpar_rmdir(def);  return false; }
 
   if (!xt_path(def, sizeof def, c->root, "SEED")) return false;
   c->seed = xpar_strdup(def);
@@ -166,11 +165,11 @@ bool xt_copy_file(const char * from, const char * to) {
   bool ok = true;
   if (!in) return false;
   out = xpar_open(to, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC);
-  if (!out) { xpar_close(in); return false; }
+  if (!out) { xpar_close(in);  return false; }
   for (;;) {
     sz n = xpar_read(in, buf, sizeof buf);
     if (!n) break;
-    if (xpar_write(out, buf, n) != n) { ok = false; break; }
+    if (xpar_write(out, buf, n) != n) { ok = false;  break; }
   }
   if (xpar_error(in)) ok = false;
   if (xpar_close(in) != 0 || xpar_close(out) != 0) ok = false;
@@ -206,7 +205,7 @@ bool xt_files_equal(const char * a, const char * b) {
   for (;;) {
     sz an = xpar_read(af, ab, sizeof ab);
     sz bn = xpar_read(bf, bb, sizeof bb);
-    if (an != bn || (an && xpar_memcmp(ab, bb, an))) { equal = false; break; }
+    if (an != bn || (an && xpar_memcmp(ab, bb, an))) { equal = false;  break; }
     if (!an) break;
   }
   if (xpar_error(af) || xpar_error(bf)) equal = false;
@@ -298,7 +297,7 @@ static bool file_contains(const char * path, const char * needle, bool fold) {
           if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
         }
         if (a != b) break);
-      if (j == nn) { xpar_close(f); return true; }
+      if (j == nn) { xpar_close(f);  return true; }
     }
     if (!n) break;
     keep = have < nn - 1 ? have : nn - 1;
@@ -441,17 +440,17 @@ static bool cmd_append(char * out, sz cap, sz * used, const char * arg) {
   if (*used) { if (*used + 1 >= cap) return false;  out[(*used)++] = ' '; }
   if (quote) { if (*used + 1 >= cap) return false;  out[(*used)++] = '"'; }
   for (i = 0; arg[i]; i++) {
-    if (arg[i] == '\\') { slashes++; continue; }
+    if (arg[i] == '\\') { slashes++;  continue; }
     if (arg[i] == '"') {
       while (slashes) {
         if (*used + 2 >= cap) return false;
-        out[(*used)++] = '\\'; out[(*used)++] = '\\';
+        out[(*used)++] = '\\';  out[(*used)++] = '\\';
         slashes--;
       }
       if (*used + 2 >= cap) return false;
-      out[(*used)++] = '\\'; out[(*used)++] = '"';
+      out[(*used)++] = '\\';  out[(*used)++] = '"';
     } else {
-      while (slashes && *used + 1 < cap) { out[(*used)++] = '\\'; slashes--; }
+      while (slashes && *used + 1 < cap) { out[(*used)++] = '\\';  slashes--; }
       if (*used + 1 >= cap) return false;
       out[(*used)++] = arg[i];
     }
@@ -459,7 +458,7 @@ static bool cmd_append(char * out, sz cap, sz * used, const char * arg) {
   while (slashes) {
     if (quote) {
       if (*used + 2 >= cap) return false;
-      out[(*used)++] = '\\'; out[(*used)++] = '\\';
+      out[(*used)++] = '\\';  out[(*used)++] = '\\';
     } else {
       if (*used + 1 >= cap) return false;
       out[(*used)++] = '\\';
@@ -527,13 +526,13 @@ static int run_process(const char * exe, const char * cwd,
   out = open(out_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
   err = open(err_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
   if (out < 0 || err < 0) goto done;
-  save_out = dup(1); save_err = dup(2);
+  save_out = dup(1);  save_err = dup(2);
   if (save_out < 0 || save_err < 0 || chdir(cwd) != 0) goto restore;
   if (dup2(out, 1) < 0 || dup2(err, 2) < 0) goto restore;
   rc = spawnv(P_WAIT, exe, (char * const *) argv);
 restore:
-  if (save_out >= 0) { dup2(save_out, 1); close(save_out); }
-  if (save_err >= 0) { dup2(save_err, 2); close(save_err); }
+  if (save_out >= 0) { dup2(save_out, 1);  close(save_out); }
+  if (save_err >= 0) { dup2(save_err, 2);  close(save_err); }
   (void) chdir(old);
 done:
   if (out >= 0) close(out);
@@ -555,11 +554,11 @@ static int run_process(const char * exe, const char * cwd,
   if (pid == 0) {
     if (chdir(cwd) != 0 || dup2(out, 1) < 0 || dup2(err, 2) < 0)
       _exit(127);
-    close(out); close(err);
+    close(out);  close(err);
     execv(exe, (char * const *) argv);
     _exit(127);
   }
-  close(out); close(err);
+  close(out);  close(err);
   if (pid < 0) return 127;
   while (waitpid(pid, &status, 0) < 0)
     if (xpar_errno() != EINTR) return 127;

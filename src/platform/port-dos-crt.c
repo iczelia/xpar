@@ -12,8 +12,8 @@
 #include <string.h>
 
 static void dos_copy_forward(void * dst, const void * src, size_t n) {
-  unsigned char * d = (unsigned char *) dst;
-  const unsigned char * s = (const unsigned char *) src;
+  unsigned char * d = dst;
+  const unsigned char * s = src;
   __asm__ volatile ("cld\n\trep movsb"
                     : "+D" (d), "+S" (s), "+c" (n)
                     :
@@ -26,13 +26,13 @@ void * memcpy(void * dst, const void * src, size_t n) {
 }
 
 void * memmove(void * dst, const void * src, size_t n) {
-  unsigned char * d = (unsigned char *) dst;
-  const unsigned char * s = (const unsigned char *) src;
+  unsigned char * d = dst;
+  const unsigned char * s = src;
   if (!n || d == s) return dst;
   if ((unsigned long) d < (unsigned long) s ||
-      (unsigned long) d >= (unsigned long) s + n) {
+      (unsigned long) d >= (unsigned long) s + n)
     dos_copy_forward(d, s, n);
-  } else {
+  else {
     d += n - 1;
     s += n - 1;
     __asm__ volatile ("std\n\trep movsb\n\tcld"
@@ -44,7 +44,7 @@ void * memmove(void * dst, const void * src, size_t n) {
 }
 
 void * memset(void * dst, int c, size_t n) {
-  unsigned char * d = (unsigned char *) dst;
+  unsigned char * d = dst;
   __asm__ volatile ("cld\n\trep stosb"
                     : "+D" (d), "+c" (n)
                     : "a" ((unsigned char) c)
@@ -53,8 +53,8 @@ void * memset(void * dst, int c, size_t n) {
 }
 
 int memcmp(const void * a, const void * b, size_t n) {
-  const unsigned char * ap = (const unsigned char *) a;
-  const unsigned char * bp = (const unsigned char *) b;
+  const unsigned char * ap = a;
+  const unsigned char * bp = b;
   if (!n) return 0;
   __asm__ volatile ("cld\n\trepe cmpsb"
                     : "+S" (ap), "+D" (bp), "+c" (n)

@@ -20,13 +20,13 @@
 
 #define XPAR_UNDO_MAGIC    "XPARUNDO"
 #define XPAR_UNDO_END      "XPARUNDN"
-#define XPAR_UNDO_VER      1u
-#define XPAR_UNDO_HDR      64u
-#define XPAR_UNDO_REC      40u
-#define XPAR_UNDO_FOOT     24u
-#define XPAR_UNDO_CREATED  1u        /*  Remove a name created by repair.  */
-#define XPAR_UNDO_REPLACED 2u        /*  Recreate an independent file.  */
-#define XPAR_UNDO_DIRECTORY 4u       /*  CREATED names a directory.  */
+#define XPAR_UNDO_VER      1U
+#define XPAR_UNDO_HDR      64U
+#define XPAR_UNDO_REC      40U
+#define XPAR_UNDO_FOOT     24U
+#define XPAR_UNDO_CREATED  1U        /*  Remove a name created by repair.  */
+#define XPAR_UNDO_REPLACED 2U        /*  Recreate an independent file.  */
+#define XPAR_UNDO_DIRECTORY 4U       /*  CREATED names a directory.  */
 #define XPAR_UNDO_FLAGS                                                    \
   (XPAR_UNDO_CREATED | XPAR_UNDO_REPLACED | XPAR_UNDO_DIRECTORY)
 

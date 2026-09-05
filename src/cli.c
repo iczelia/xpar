@@ -26,13 +26,13 @@
 #include "port-fs.h"
 
 #if defined(__GNUC__) && !defined(__clang__)
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wpragmas"
-  #pragma GCC diagnostic ignored "-Wcalloc-transposed-args"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wcalloc-transposed-args"
 #endif
 #include "yarg.h"
 #if defined(__GNUC__) && !defined(__clang__)
-  #pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif
 
 static char * dup_str(const char * s) {
@@ -42,7 +42,7 @@ static char * dup_str(const char * s) {
 }
 
 static void push_str(char *** v, u32 * n, const char * s) {
-  char ** nv = (char **) xpar_realloc(*v, (*n + 1) * sizeof(char *));
+  char ** nv = xpar_realloc(*v, (*n + 1) * sizeof *nv);
   FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
   nv[*n] = dup_str(s);  *v = nv;  (*n)++;
 }
@@ -86,7 +86,7 @@ static int scan_decimal(const char * s, u64 * ip, u64 * fnum, u64 * fden,
     s++;
     while (*s >= '0' && *s <= '9') {
       /*  Later digits cannot change the resulting byte count.  */
-      if (den <= 100000000000000000ull) { num = num * 10 + (u64) (*s - '0');  den *= 10; }
+      if (den <= 100000000000000000ULL) { num = num * 10 + (u64) (*s - '0');  den *= 10; }
       s++;  fd++;
     }
     if (!fd) return -1;
@@ -100,10 +100,10 @@ static int scan_decimal(const char * s, u64 * ip, u64 * fnum, u64 * fden,
 static int size_mult(const char * s, u64 * mult) {
   static const struct { const char * suf;  u64 mult; } tab[] = {
     { "",   1                            },
-    { "k",  1024ull                      }, { "kb", 1000ull          },
-    { "m",  1024ull * 1024               }, { "mb", 1000000ull       },
-    { "g",  1024ull * 1024 * 1024        }, { "gb", 1000000000ull    },
-    { "t",  1024ull * 1024 * 1024 * 1024 }, { "tb", 1000000000000ull }
+    { "k",  1024ULL                      }, { "kb", 1000ULL          },
+    { "m",  1024ULL * 1024               }, { "mb", 1000000ULL       },
+    { "g",  1024ULL * 1024 * 1024        }, { "gb", 1000000000ULL    },
+    { "t",  1024ULL * 1024 * 1024 * 1024 }, { "tb", 1000000000000ULL }
   };
   sz i;
   Fi(ARRAY_LEN(tab), if (ci_equal(s, tab[i].suf)) { *mult = tab[i].mult;  return 0; });
@@ -129,7 +129,7 @@ int xpar_cli_parse_recovery(const char * s, xpar_rspec * out) {
   u64 ip = 0, num = 0, den = 1, mult = 1;
   const char * end = "";
   xpar_rspec r;
-  r.kind = XPAR_R_NONE;  r.count = 0;  r.factor = 0.0;
+  r.count = 0;  r.factor = 0.0;
   if (!s || scan_decimal(s, &ip, &num, &den, &end)) return -1;
   if (end[0] == '%' && !end[1]) {
     r.kind = XPAR_R_PERCENT;  r.factor = (f64) ip + (f64) num / (f64) den;
@@ -143,7 +143,7 @@ int xpar_cli_parse_recovery(const char * s, xpar_rspec * out) {
     if (size_mult(end, &mult) || xpar_cli_parse_size(s, &r.count)) return -1;
     r.kind = XPAR_R_BYTES;
   }
-  /* Zero requests no recovery; positive fractions round up later. */
+  /*  Zero requests no recovery; positive fractions round up later.  */
   if ((r.kind == XPAR_R_PERCENT || r.kind == XPAR_R_TIMES) && r.factor < 0.0)
     return -1;
   if ((r.kind == XPAR_R_PERCENT && r.factor > 6553600.0) ||
@@ -259,12 +259,14 @@ static u32 parse_pres(const char * nm, const char * v, u32 dflt, u32 * lit,
 }
 
 static void parse_genref(const char * nm, const char * v, xpar_genref * g) {
+  const char * p;
+  char * q;
   FATAL_UNLESS(v && *v,
                "option %s expects a generation number or a set id", nm);
   g->by_id = false;  g->number = 0;  g->id_prefix = NULL;
   /*  Reject generation selectors that would narrow to u32.  */
-  if (all_digits(v)) { g->number = need_range(nm, v, 0, 0xFFFFFFFFu);  return; }
-  for (const char * p = v; *p; p++) {
+  if (all_digits(v)) { g->number = need_range(nm, v, 0, 0xFFFFFFFFU);  return; }
+  for (p = v; *p; p++) {
     int c = lower((u8) *p);
     FATAL_UNLESS((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
                  "option %s expects a generation number or hexadecimal "
@@ -274,7 +276,7 @@ static void parse_genref(const char * nm, const char * v, xpar_genref * g) {
                "is 16 bytes", nm);
   g->by_id = true;
   g->id_prefix = dup_str(v);
-  for (char * q = g->id_prefix; *q; q++) *q = (char) lower((u8) *q);
+  for (q = g->id_prefix; *q; q++) *q = (char) lower((u8) *q);
 }
 
 enum {
@@ -531,7 +533,8 @@ static const char * const verb_desc[] = {
 };
 
 const char * xpar_verb_name(xpar_verb v) {
-  for (int i = 0; verbs[i].name; i++)
+  int i;
+  for (i = 0; verbs[i].name; i++)
     if (verbs[i].verb == (int) v) return verbs[i].name;
   return "xpar";
 }
@@ -734,13 +737,14 @@ static const char * const verb_opts[] = {
 };
 
 void xpar_cli_help(xpar_verb v) {
+  int i;
   if (v == XPAR_VERB_NONE) {
     xpar_fputs(
       "usage: xpar <verb> [options] [arguments]\n"
       "       xpar <set>                    same as: xpar verify <set>\n"
       "\n"
       "verbs, of which any unambiguous prefix will do:\n", xpar_stdout);
-    for (int i = 0; verbs[i].name; i++)
+    for (i = 0; verbs[i].name; i++)
       xpar_fprintf(xpar_stdout, "  %-18s%s\n", verbs[i].name,
                    verb_desc[verbs[i].verb]);
     xpar_fprintf(xpar_stdout, "\n%s", help_global);
@@ -777,10 +781,11 @@ static void v1_flag_refuse(int argc, char ** argv) {
   sz i;
   Fi(ARRAY_LEN(tab),
     sz n = xpar_strlen(tab[i].flag);
+    int k;
     if (xpar_strncmp(argv[1], tab[i].flag, n)) continue;
     xpar_fprintf(xpar_stderr, "xpar: '%s' is an xpar 1.x flag; use xpar %s",
                  tab[i].flag, tab[i].v2);
-    for (int k = 2; k < argc; k++)
+    for (k = 2; k < argc; k++)
       xpar_fprintf(xpar_stderr, " %s", argv[k]);
     xpar_fputs("\n", xpar_stderr);
     xpar_exit(XPAR_EXIT_USAGE));
@@ -806,32 +811,32 @@ static bool is_file(const char * p) {
 
 static char * cat_str(const char * a, const char * b) {
   sz na = xpar_strlen(a), nb = xpar_strlen(b);
-  char * p = (char *) xpar_malloc(na + nb + 1);
+  char * p = xpar_malloc(na + nb + 1);
   xpar_memcpy(p, a, na);  xpar_memcpy(p + na, b, nb + 1);
   return p;
 }
 
 static char * join_path(const char * dir, const char * name) {
   sz n = xpar_strlen(dir);
+  char * mid, * out;
   if (!n) return dup_str(name);
   if (xpar_path_sep(dir[n - 1])) return cat_str(dir, name);
-  { char * mid = cat_str(dir, "/");
-    char * out = cat_str(mid, name);
-    xpar_free(mid);
-    return out; }
+  mid = cat_str(dir, "/");
+  out = cat_str(mid, name);
+  xpar_free(mid);
+  return out;
 }
 
 /*  Strip a rollback suffix; return 0 if absent.  */
 static sz rollback_stem(const char * name) {
   static const char * const tag[2] = { ".xpar-old-", ".xpar-prune-old-" };
-  sz n = xpar_strlen(name), at = n, t;
+  sz i, n = xpar_strlen(name), at = n;
   while (at && name[at - 1] >= '0' && name[at - 1] <= '9') at--;
   if (at == n) return 0;
-  for (t = 0; t < 2; t++) {
-    sz tl = xpar_strlen(tag[t]);
-    if (at > tl && !xpar_strncmp(name + at - tl, tag[t], tl))
-      return at - tl;
-  }
+  Fi(2,
+    sz tl = xpar_strlen(tag[i]);
+    if (at > tl && !xpar_strncmp(name + at - tl, tag[i], tl))
+      return at - tl);
   return 0;
 }
 
@@ -841,13 +846,14 @@ static void say_rollback_residue(const char * arg) {
   const char * leaf = xpar_path_base(arg);
   sz leaf_len = xpar_strlen(leaf);
   char ** name = NULL;
+  u32 count = 0, i, j;
+  bool a_set = false;
+  xpar_dir * d;
+  const xpar_dirent * e;
   if (leaf_len > XPAR_EXT_LEN &&
       !xpar_strcmp(leaf + leaf_len - XPAR_EXT_LEN, XPAR_EXT))
     leaf_len -= XPAR_EXT_LEN;
-  u32 count = 0, i, j;
-  bool a_set = false;
-  xpar_dir * d = xpar_opendir(dir && *dir ? dir : ".");
-  const xpar_dirent * e;
+  d = xpar_opendir(dir && *dir ? dir : ".");
   if (d) {
     while ((e = xpar_readdir(d)) != NULL) {
       sz stem = rollback_stem(e->name);
@@ -857,7 +863,7 @@ static void say_rollback_residue(const char * arg) {
       if (stem > XPAR_EXT_LEN &&
           !xpar_strncmp(e->name + stem - XPAR_EXT_LEN, XPAR_EXT,
                         XPAR_EXT_LEN)) a_set = true;
-      name = (char **) xpar_realloc(name, (count + 1) * sizeof(char *));
+      name = xpar_realloc(name, (count + 1) * sizeof *name);
       name[count++] = dup_str(e->name);
     }
     xpar_closedir(d);
@@ -887,7 +893,7 @@ static void say_rollback_residue(const char * arg) {
 }
 
 static void push_vol(xpar_setref * s, char * path) {
-  char ** nv = (char **) xpar_realloc(s->vol, (s->count + 1) * sizeof(char *));
+  char ** nv = xpar_realloc(s->vol, (s->count + 1) * sizeof *nv);
   FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
   nv[s->count] = path;  s->vol = nv;  s->count++;
 }
@@ -895,10 +901,7 @@ static void push_vol(xpar_setref * s, char * path) {
 static void push_vol_once(xpar_setref * s, char * path) {
   u32 i;
   Fi(s->count,
-    if (xpar_path_same(s->vol[i], path)) {
-      xpar_free(path);
-      return;
-    });
+    if (xpar_path_same(s->vol[i], path)) { xpar_free(path);  return; });
   push_vol(s, path);
 }
 
@@ -925,7 +928,8 @@ static int vol_cmp(const xpar_setref * s, const char * a, const char * b) {
 }
 
 static void sort_vols(xpar_setref * s) {
-  for (u32 i = 1; i < s->count; i++) {
+  u32 i;
+  for (i = 1; i < s->count; i++) {
     char * v = s->vol[i];
     u32 j = i;
     while (j && vol_cmp(s, s->vol[j - 1], v) > 0) { s->vol[j] = s->vol[j - 1];  j--; }
@@ -1047,9 +1051,10 @@ static void maint_gate(const char * arg) {
 }
 
 void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
+  u32 i;
   out->vol = NULL;  out->count = 0;  out->base = NULL;  out->dir = NULL;
   out->home = NULL;
-  FATAL_UNLESS(arg && *arg, "a set argument is required");
+  FATAL_UNLESS(arg && *arg, "missing set argument");
   maint_gate(arg);
   /*  --scan supplies volumes, not protected entries.  */
   out->home = is_dir(arg) ? dup_str(arg) : xpar_path_dir(arg);
@@ -1108,7 +1113,6 @@ void xpar_cli_resolve_set(const char * arg, xpar_setref * out) {
   }
   if (out->base) gather_chain_siblings(out);
   sort_vols(out);
-  u32 i;
   Fi(out->count, xpar_v1_refuse_if_v1(out->vol[i]));
 }
 
@@ -1191,7 +1195,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
               break;
     case O_CELL:
       o->cell_bytes = need_size(nm, v);
-      /* Do not round an explicit cell size. */
+      /*  Do not round an explicit cell size.  */
       FATAL_UNLESS(o->cell_bytes >= XPAR_CELL_MIN &&
                           o->cell_bytes % 64 == 0,
                    "--cell must be a multiple of 64 and at least %d bytes", XPAR_CELL_MIN);
@@ -1278,7 +1282,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
     case O_STRONG: o->strong = true;  break;
     case O_RESYNC: o->resync = need_word(nm, v, w_resync);  break;
     case O_RESYNC_STEP:
-      o->resync_step = (u32) need_range(nm, v, 1, 1u << 30);  break;
+      o->resync_step = (u32) need_range(nm, v, 1, 1U << 30);  break;
     case O_RESYNC_WINDOW: o->resync_window = need_size(nm, v);  break;
     case O_RESYNC_EXH:    o->resync_exhaustive = true;  break;
     case O_SCAN: need_dir(nm, v);
@@ -1287,8 +1291,7 @@ static void apply(xpar_options * o, const yarg_option * a, u32 * pres_lit,
       xpar_genref g;
       xpar_genref * nv;
       parse_genref(nm, v, &g);
-      nv = (xpar_genref *) xpar_realloc(o->gens,
-                                        (o->gen_count + 1) * sizeof g);
+      nv = xpar_realloc(o->gens, (o->gen_count + 1) * sizeof *nv);
       FATAL_UNLESS_CODE(XPAR_EXIT_NOPLAN, nv != NULL, "out of memory");
       nv[o->gen_count] = g;  o->gens = nv;  o->gen_count++;
       break;
@@ -1353,7 +1356,7 @@ static bool takes_set(xpar_verb v) {
 }
 
 static void positionals(xpar_options * o, char ** pos, int n) {
-  int first = 0;
+  int first = 0, i;
   if (o->verb == XPAR_VERB_BENCHMARK) {
     FATAL_UNLESS(n == 0, "verb benchmark takes no arguments");
     return;
@@ -1366,7 +1369,7 @@ static void positionals(xpar_options * o, char ** pos, int n) {
     first = 1;
   }
   if (o->verb == XPAR_VERB_CREATE || o->verb == XPAR_VERB_ADD) {
-    for (int i = first; i < n; i++) {
+    for (i = first; i < n; i++) {
       push_str(&o->paths, &o->path_count, pos[i]);
       if (!xpar_strcmp(pos[i], "-")) o->from_stdin = true;
     }
@@ -1442,14 +1445,11 @@ static void validate(xpar_options * o, u32 pres_lit) {
                  o->recovery.kind == XPAR_R_COUNT ||
                  o->recovery.kind == XPAR_R_BYTES,
                  "direct pipe input requires --spool or -r as a count or size");
-  } else {
-    FATAL_UNLESS(!o->stdin_name, "--stdin-name is meaningful only when the create input is "
-                 "'-'");
-  }
+  } else
+    FATAL_UNLESS(!o->stdin_name, "--stdin-name requires input '-'");
 
   if (o->verb == XPAR_VERB_RECOVER)
-    FATAL_UNLESS(o->volume_given, "verb recover needs --volume to say which volume to "
-                 "regenerate");
+    FATAL_UNLESS(o->volume_given, "recover needs --volume");
 
   if (o->verb == XPAR_VERB_EXTRACT) {
     FATAL_UNLESS(!(pres_lit & XPAR_PRES_CTIME),
@@ -1464,8 +1464,7 @@ static void validate(xpar_options * o, u32 pres_lit) {
       o->preserve &= ~(u32) XPAR_PRES_XATTR_ALL;
 
     FATAL_UNLESS(!(o->to_stdout && o->json),
-                 "options --stdout and --json both claim stdout; send "
-                 "the extracted stream to a file, or drop --json");
+                 "--stdout conflicts with --json");
     FATAL_UNLESS(!o->to_stdout || o->force ||
                  !xpar_is_tty(xpar_stdout), "refusing to write binary data to a terminal; -f "
                  "overrides");
@@ -1499,15 +1498,15 @@ static bool names_a_set(const char * arg) {
   return ok;
 }
 
-/* Diagnose verbs placed after options. */
+/*  Diagnose verbs placed after options.  */
 static const char * misplaced_verb(int argc, char ** argv) {
   int i;
-  sz v;
+  sz j;
   for (i = 1; i < argc; i++) {
     if (!xpar_strcmp(argv[i], "--")) break;
-    for (v = 0; v < sizeof verbs / sizeof *verbs; v++)
-      if (verbs[v].name && !xpar_strcmp(argv[i], verbs[v].name))
-        return i > 1 ? verbs[v].name : NULL;
+    Fj(ARRAY_LEN(verbs),
+      if (verbs[j].name && !xpar_strcmp(argv[i], verbs[j].name))
+        return i > 1 ? verbs[j].name : NULL);
   }
   return NULL;
 }
@@ -1517,7 +1516,7 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
   yarg_verb_result * r;
   u32 pres_lit = 0;
   u32 pres_named = 0;
-  int k;
+  int k, argn;
 
   defaults(o);
   st.dash_dash = true;
@@ -1545,24 +1544,22 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
     xpar_fprintf(xpar_stderr, "xpar: %s\n", r->res->error);
     xpar_fputs("xpar: 'xpar <verb> --help' lists what a verb takes\n",
                xpar_stderr);
-    for (int a = 1; a < argc; a++)
-      if (!xpar_strcmp(argv[a], "--json")) xpar_json_fatal_enable(true);
+    for (argn = 1; argn < argc; argn++)
+      if (!xpar_strcmp(argv[argn], "--json")) xpar_json_fatal_enable(true);
     xpar_json_fatal(XPAR_EXIT_USAGE, "%s", r->res->error);
     xpar_exit(XPAR_EXIT_USAGE);
   }
   o->verb = r->verb ? (xpar_verb) r->verb->verb : XPAR_VERB_NONE;
 
   Fk(r->res->argc,
-    if (r->res->args[k].opt == 'h') {
-      xpar_cli_help(o->verb);  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK);
-    }
-    if (r->res->args[k].opt == 'V') {
-      xpar_cli_version();  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK);
-    });
+    if (r->res->args[k].opt == 'h')
+      { xpar_cli_help(o->verb);  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK); }
+    if (r->res->args[k].opt == 'V')
+      { xpar_cli_version();  yarg_verb_destroy(r);  xpar_exit(XPAR_EXIT_OK); });
 
   if (o->verb == XPAR_VERB_NONE) {
     FATAL_UNLESS(r->res->pos_argc > 0,
-                 "a verb is required; 'xpar --help' lists them");
+                 "missing verb; 'xpar --help' lists them");
     if (!names_a_set(r->res->pos_args[0])) {
       /*  A set name that is simply absent is not found, not a typo.  */
       const char * a = r->res->pos_args[0];
@@ -1605,10 +1602,10 @@ void xpar_cli_parse(int argc, char ** argv, xpar_options * o) {
 }
 
 void xpar_cli_free(xpar_options * o) {
+  u32 i;
   free_strv(o->paths, o->path_count);
   free_strv(o->exclude, o->exclude_count);
   free_strv(o->include, o->include_count);
-  u32 i;
   Fi(o->gen_count, xpar_free(o->gens[i].id_prefix));
   xpar_free(o->gens);
   xpar_free(o->before.id_prefix);

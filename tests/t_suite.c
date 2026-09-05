@@ -11,14 +11,13 @@
 int xpar_main(int argc, char ** argv) {
   int i;
 
-  for (i = 1; i < argc; i++) {
+  for (i = 1; i < argc; i++)
     if (!xpar_strncmp(argv[i], "--report=", 9) &&
         !xt_open_report(argv[i] + 9)) {
       xpar_fprintf(xpar_stderr, "t_suite: cannot open report '%s'\n",
                    argv[i] + 9);
       return 1;
     }
-  }
 
   xt_level_from_env(xpar_getenv("XPAR_TEST_LEVEL"));
   xt_trace_from_env(xpar_getenv("XPAR_TEST_TRACE"));

@@ -17,7 +17,7 @@
 
 #include "common.h"
 
-/* Scale iteration counts with XPAR_TEST_LEVEL. */
+/*  Scale iteration counts with XPAR_TEST_LEVEL.  */
 extern int xt_level;
 extern int xt_tracing;
 extern u64 xt_checks, xt_failures;
@@ -36,10 +36,10 @@ static inline void xt_level_from_env(const char * v) {
 
 static inline u32 xt_scale(u32 quick) {
   u64 n = (u64) quick * (u64) xt_level;
-  return n > 0xFFFFFFFFu ? 0xFFFFFFFFu : (u32) n;
+  return n > 0xFFFFFFFFU ? 0xFFFFFFFFU : (u32) n;
 }
 
-/* Optional tracing helps diagnose hangs without cluttering normal logs. */
+/*  Optional tracing helps diagnose hangs without cluttering normal logs.  */
 
 static inline void xt_trace_from_env(const char * v) {
   xt_tracing = v && *v && xpar_strcmp(v, "0");
@@ -113,7 +113,7 @@ static inline void xt_report(bool ok, const char * fmt, ...) {
     } else xt_checks++;                                                       \
   } while (0)
 
-/* Report the first differing byte. */
+/*  Report the first differing byte.  */
 static inline bool xt_bytes_equal(const char * what, const u8 * got,
                                   const u8 * want, sz n) {
   sz i;
@@ -145,12 +145,12 @@ static inline int xt_finish(const char * program) {
   return xt_failures ? 1 : 0;
 }
 
-/* Match the benchmark KAT generator for reproducible inputs. */
+/*  Match the benchmark KAT generator for reproducible inputs.  */
 
 typedef struct { u64 s; } xt_rng;
 
 static inline void xt_seed(xt_rng * r, u64 seed) {
-  r->s = seed ? seed : 0x9E3779B97F4A7C15ull;
+  r->s = seed ? seed : 0x9E3779B97F4A7C15ULL;
 }
 
 static inline u32 xt_next(xt_rng * r) {
@@ -163,7 +163,7 @@ static inline u32 xt_next(xt_rng * r) {
 static inline u32 xt_below(xt_rng * r, u32 n) {
   u32 limit, v;
   if (n <= 1) return 0;
-  limit = 0xFFFFFFFFu - (0xFFFFFFFFu % n) - 1;
+  limit = 0xFFFFFFFFU - (0xFFFFFFFFU % n) - 1;
   do v = xt_next(r); while (v > limit);
   return v % n;
 }

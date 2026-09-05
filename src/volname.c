@@ -29,7 +29,7 @@ static char dos_fold(char c) {
 static char * dos_base4(const char * base) {
   const char * leaf = xpar_path_base(base);
   sz dir = (sz) (leaf - base), n = xpar_strlen(leaf), i;
-  char * out = (char *) xpar_alloc_raw(dir + 5);
+  char * out = xpar_alloc_raw(dir + 5);
   if (dir) xpar_memcpy(out, base, dir);
   Fi(4, out[dir + i] = i < n ? dos_fold(leaf[i]) : '_');
   out[dir + 4] = 0;
@@ -293,7 +293,7 @@ i64 xpar_vname_gen_of(const char * name, const char * stem) {
   if (name[p + 1] != 'g') return 0;   /*  stem.vAA+BB: generation zero.  */
   for (i = p + 2; i < n && name[i] >= '0' && name[i] <= '9'; i++) {
     g = g * 10 + (u64) (name[i] - '0');
-    if (g > 0xFFFFFFFEu) return -1;
+    if (g > 0xFFFFFFFEU) return -1;
   }
   return (i64) g;
 }
@@ -327,7 +327,8 @@ static bool vname_is_data(const char * name, const char * stem) {
 bool xpar_vname_is_output(const char * path, const char * base) {
   char * pdir, * bdir;
   const char * leaf, * stem;
-  sz p;
+  char b[4];
+  sz p, n;
   bool same;
   if (!path || !base || !base[0]) return false;
   pdir = xpar_path_dir(path);  bdir = xpar_path_dir(base);
@@ -335,22 +336,19 @@ bool xpar_vname_is_output(const char * path, const char * base) {
   xpar_free(pdir);  xpar_free(bdir);
   if (!same) return false;
   leaf = xpar_path_base(path);  stem = xpar_path_base(base);
-  {
-    char b[4];
-    sz n = xpar_strlen(leaf);
-    dos_stem4(stem, b);
-    if (xpar_vname_is_member(leaf, stem)) return true;
-    if (n == 8 && dos_equal_n(leaf, b, 4) && leaf[4] == '.' &&
-        (fold(leaf[5]) == 'd' || fold(leaf[5]) == 'l') &&
-        dos_2digits(leaf + 6)) return true;
-    if (n == 8 && dos_equal_n(leaf, b, 4) && leaf[4] == '.' &&
-        fold(leaf[5]) == 'x' && fold(leaf[6]) == 'p' &&
-        fold(leaf[7]) == 'i') return true;
-    if (n == 9 && dos_equal_n(leaf, b, 3) && fold(leaf[3]) == 'g' &&
-        leaf[4] >= '1' && leaf[4] <= '9' && leaf[5] == '.' &&
-        (fold(leaf[6]) == 'd' || fold(leaf[6]) == 'l') &&
-        dos_2digits(leaf + 7)) return true;
-  }
+  n = xpar_strlen(leaf);
+  dos_stem4(stem, b);
+  if (xpar_vname_is_member(leaf, stem)) return true;
+  if (n == 8 && dos_equal_n(leaf, b, 4) && leaf[4] == '.' &&
+      (fold(leaf[5]) == 'd' || fold(leaf[5]) == 'l') &&
+      dos_2digits(leaf + 6)) return true;
+  if (n == 8 && dos_equal_n(leaf, b, 4) && leaf[4] == '.' &&
+      fold(leaf[5]) == 'x' && fold(leaf[6]) == 'p' &&
+      fold(leaf[7]) == 'i') return true;
+  if (n == 9 && dos_equal_n(leaf, b, 3) && fold(leaf[3]) == 'g' &&
+      leaf[4] >= '1' && leaf[4] <= '9' && leaf[5] == '.' &&
+      (fold(leaf[6]) == 'd' || fold(leaf[6]) == 'l') &&
+      dos_2digits(leaf + 7)) return true;
   /*  The output staging directory, but not a staged pipe input.  */
   if (!xpar_strncmp(leaf, ".xpar-create-", 13)) return true;
   if (xpar_vname_is_index(leaf, stem) || xpar_vname_is_member(leaf, stem) ||

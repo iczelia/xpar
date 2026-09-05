@@ -21,7 +21,7 @@
 #include "container.h"
 #include "manifest.h"
 
-#define XPAR_GEN_NONE 0xFFFFFFFFu
+#define XPAR_GEN_NONE 0xFFFFFFFFU
 
 typedef struct {
   char * path;
@@ -106,7 +106,7 @@ bool xpar_gchain_crit_armour(const xpar_chain *, u32, xpar_armour_params *);
 bool xpar_gchain_wrap_armour(const xpar_chain *, u32, bool rcvs,
                              xpar_armour_params *);
 
-/*  Bytes a generation's ARMG packets occupy and the plaintext they hold. */
+/*  Bytes a generation's ARMG packets occupy and the plaintext they hold.  */
 void xpar_gchain_armour_bytes(const xpar_chain *, u32, u64 * disk,
                               u64 * plain);
 

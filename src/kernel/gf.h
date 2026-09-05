@@ -43,17 +43,17 @@ static inline u8 xpar_gf8_mul(u8 a, u8 b) {
   return (a && b) ? xpar_gf8_exp[xpar_gf8_log[a] + xpar_gf8_log[b]] : 0;
 }
 static inline u8 xpar_gf8_inv(u8 a) { return xpar_gf8_inv_tab[a]; }
-static inline u8 xpar_gf8_alpha_pow(u32 e) { return xpar_gf8_exp[e % 255u]; }
+static inline u8 xpar_gf8_alpha_pow(u32 e) { return xpar_gf8_exp[e % 255U]; }
 
 static inline u16 xpar_gf16_mul(u16 a, u16 b) {
   return (a && b) ? xpar_gf16_exp[(u32) xpar_gf16_log[a] +
                                   (u32) xpar_gf16_log[b]] : 0;
 }
 static inline u16 xpar_gf16_inv(u16 a) {
-  return a ? xpar_gf16_exp[65535u - xpar_gf16_log[a]] : 0;
+  return a ? xpar_gf16_exp[65535U - xpar_gf16_log[a]] : 0;
 }
 static inline u16 xpar_gf16_alpha_pow(u32 e) {
-  return xpar_gf16_exp[e % 65535u];
+  return xpar_gf16_exp[e % 65535U];
 }
 
 /*  Cantor basis.  */

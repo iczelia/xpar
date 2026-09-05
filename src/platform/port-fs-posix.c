@@ -30,53 +30,53 @@
 #include <unistd.h>
 
 #if defined(HAVE_SYS_TIME_H)
-  #include <sys/time.h>
+#include <sys/time.h>
 #endif
 #if defined(HAVE_PWD_H)
-  #include <pwd.h>
+#include <pwd.h>
 #endif
 #if defined(HAVE_GRP_H)
-  #include <grp.h>
+#include <grp.h>
 #endif
 #if defined(HAVE_SYS_XATTR_H)
-  #include <sys/xattr.h>
+#include <sys/xattr.h>
 #endif
 #if defined(__linux__)
-  #include <sys/vfs.h>
+#include <sys/vfs.h>
 #endif
 
 /*  Apple and POSIX use different names for nanosecond timestamps.  */
 #if defined(__APPLE__)
-  #define XPAR_MTIM(st) ((st).st_mtimespec)
-  #define XPAR_ATIM(st) ((st).st_atimespec)
-  #define XPAR_CTIM(st) ((st).st_ctimespec)
-  #define XPAR_NSEC_STAT 1
+#define XPAR_MTIM(st) ((st).st_mtimespec)
+#define XPAR_ATIM(st) ((st).st_atimespec)
+#define XPAR_CTIM(st) ((st).st_ctimespec)
+#define XPAR_NSEC_STAT 1
 #elif defined(st_mtime)
-  #define XPAR_MTIM(st) ((st).st_mtim)
-  #define XPAR_ATIM(st) ((st).st_atim)
-  #define XPAR_CTIM(st) ((st).st_ctim)
-  #define XPAR_NSEC_STAT 1
+#define XPAR_MTIM(st) ((st).st_mtim)
+#define XPAR_ATIM(st) ((st).st_atim)
+#define XPAR_CTIM(st) ((st).st_ctim)
+#define XPAR_NSEC_STAT 1
 #endif
 
 /*  Enable no-follow metadata setters only when every primitive is safe.  */
 #if defined(HAVE_UTIMENSAT) && defined(HAVE_AT_SYMLINK_NOFOLLOW) &&          \
     defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-  #define XPAR_NOFOLLOW_TIMES 1
+#define XPAR_NOFOLLOW_TIMES 1
 #endif
 #if defined(HAVE_FCHOWNAT) && defined(HAVE_AT_SYMLINK_NOFOLLOW) &&           \
     defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
-  #define XPAR_NOFOLLOW_OWNER 1
+#define XPAR_NOFOLLOW_OWNER 1
 #endif
 #if defined(XPAR_NOFOLLOW_TIMES) && defined(XPAR_NOFOLLOW_OWNER) &&           \
     defined(HAVE_FCHMOD)
-  #define XPAR_NOFOLLOW_ALL 1
+#define XPAR_NOFOLLOW_ALL 1
 #endif
 
 #if defined(HAVE_LSETXATTR) && defined(HAVE_LGETXATTR) &&                     \
     defined(HAVE_LLISTXATTR)
-  #define XPAR_XATTR_L 1
+#define XPAR_XATTR_L 1
 #elif defined(__APPLE__) && defined(HAVE_SYS_XATTR_H)
-  #define XPAR_XATTR_APPLE 1
+#define XPAR_XATTR_APPLE 1
 #endif
 
 static i64 sec_ns(time_t s, long ns) {
@@ -140,7 +140,7 @@ u32 xpar_fs_caps(const char * path) {
 #if defined(__linux__)
   { struct statfs sfs;
     if (statfs(path, &sfs) == 0) {
-      /* Accommodate signed and unsigned f_type declarations. */
+      /*  Accommodate signed and unsigned f_type declarations.  */
       unsigned long t = (unsigned long) sfs.f_type;
       if (t == XPAR_MSDOS_MAGIC || t == XPAR_EXFAT_MAGIC)
         c &= ~(u32) (XPAR_FS_LINKID | XPAR_FS_HARDLINK | XPAR_FS_OWNER |
@@ -168,7 +168,7 @@ xpar_dir * xpar_opendir(const char * path) {
   DIR * d = opendir(path);
   struct xpar_dir * h;
   if (!d) return NULL;
-  h = xpar_alloc_raw(sizeof(*h));
+  h = xpar_alloc_raw(sizeof *h);
   h->d = d;
   h->path = xpar_strdup(path);
   h->ent.name = NULL;
@@ -422,9 +422,7 @@ int xpar_mkdir_p(const char * path, u32 mode) {
       if (lstat(work, &st) == 0) {
         if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) { errno = ENOTDIR;  rc = -1; }
       } else if (mkdir(work, (mode_t) (mode & XPAR_MODE_PERM)) != 0 &&
-                 errno != EEXIST) {
-        rc = -1;
-      }
+                 errno != EEXIST) rc = -1;
       work[i] = save; }
   }
   xpar_free(work);
@@ -439,38 +437,38 @@ int xpar_set_times(const char * path, int nofollow,
 
 #if defined(HAVE_UTIMENSAT)
   { struct timespec ts[2];
-    if (atime_ns == XPAR_TIME_NONE) {
-      ts[0].tv_sec = 0;  ts[0].tv_nsec = UTIME_OMIT;
-    } else {
+    if (atime_ns == XPAR_TIME_NONE)
+      { ts[0].tv_sec = 0;  ts[0].tv_nsec = UTIME_OMIT; }
+    else {
       ts[0].tv_sec  = (time_t) (atime_ns / 1000000000LL);
       ts[0].tv_nsec = (long)   (atime_ns % 1000000000LL);
-      if (ts[0].tv_nsec < 0) { ts[0].tv_nsec += 1000000000L; ts[0].tv_sec--; }
+      if (ts[0].tv_nsec < 0) { ts[0].tv_nsec += 1000000000L;  ts[0].tv_sec--; }
     }
-    if (mtime_ns == XPAR_TIME_NONE) {
-      ts[1].tv_sec = 0;  ts[1].tv_nsec = UTIME_OMIT;
-    } else {
+    if (mtime_ns == XPAR_TIME_NONE)
+      { ts[1].tv_sec = 0;  ts[1].tv_nsec = UTIME_OMIT; }
+    else {
       ts[1].tv_sec  = (time_t) (mtime_ns / 1000000000LL);
       ts[1].tv_nsec = (long)   (mtime_ns % 1000000000LL);
-      if (ts[1].tv_nsec < 0) { ts[1].tv_nsec += 1000000000L; ts[1].tv_sec--; }
+      if (ts[1].tv_nsec < 0) { ts[1].tv_nsec += 1000000000L;  ts[1].tv_sec--; }
     }
-  #if defined(HAVE_AT_SYMLINK_NOFOLLOW)
+#if defined(HAVE_AT_SYMLINK_NOFOLLOW)
     if (nofollow) {
-  #if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
+#if defined(HAVE_OPENAT) && defined(O_DIRECTORY) && defined(O_NOFOLLOW)
       char * storage;
       const char * leaf;
       int dfd = parent_open(path, &storage, &leaf);
       if (dfd < 0) return -1;
       return at_done(dfd, storage,
                      utimensat(dfd, leaf, ts, AT_SYMLINK_NOFOLLOW));
-  #else
+#else
       errno = ENOTSUP;  return -1;
-  #endif
+#endif
     }
     return utimensat(AT_FDCWD, path, ts, 0);
-  #else
+#else
     if (nofollow) { errno = ENOSYS;  return -1; }
     return utimensat(AT_FDCWD, path, ts, 0);
-  #endif
+#endif
   }
 #elif defined(HAVE_LUTIMES)
   { struct timeval tv[2];
@@ -530,9 +528,9 @@ int xpar_set_mode(const char * path, int nofollow, u32 mode) {
     int dfd = parent_open(path, &storage, &leaf);
     if (dfd < 0) return -1;
     fd = openat(dfd, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK
-  #if defined(O_CLOEXEC)
+#if defined(O_CLOEXEC)
                 | O_CLOEXEC
-  #endif
+#endif
                 );
     if (fd < 0) return at_done(dfd, storage, -1);
     r = fchmod(fd, m);
@@ -611,9 +609,9 @@ int xpar_setxattr(const char * path, int nofollow, const char * name,
     int fd, rc;
     if (dfd < 0) return -1;
     fd = openat(dfd, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK
-  #if defined(O_CLOEXEC)
+#if defined(O_CLOEXEC)
                 | O_CLOEXEC
-  #endif
+#endif
                 );
     if (fd < 0) return at_done(dfd, storage, -1);
     rc = fsetxattr(fd, name, val, n, 0);
@@ -691,7 +689,7 @@ int xpar_group_of(u32 gid, char * buf, sz n) {
 char * xpar_getcwd(void) {
   sz n = 512;
   for (;;) {
-    char * p = (char *) xpar_alloc_raw(n);
+    char * p = xpar_alloc_raw(n);
     if (getcwd(p, n)) return p;
     xpar_free(p);
     if (errno != ERANGE || n > ((sz) 1 << 20)) return NULL;

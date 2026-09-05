@@ -65,8 +65,8 @@ static u64 decode_us(u8 codec, u8 field_log2, u64 work) {
                          ? (field_log2 == 8 ? 250 : 7500) : 0);
 }
 
-#define PLAN_SEEK_US_ROT  10000ull
-#define PLAN_SEEK_US_SSD     50ull
+#define PLAN_SEEK_US_ROT  10000ULL
+#define PLAN_SEEK_US_SSD     50ULL
 
 static u64 pow2_of(u64 v) { return xpar_next_pow2(v); }
 
@@ -192,70 +192,68 @@ static void eval(const cand_in * in, cand_out * out) {
   bool low = in->codec == XPAR_CODEC_FFT_LOW;
   u64 m = pow2_of(low ? in->s : in->r);
   u64 n = pow2_of(m + (low ? in->r : in->s));
+  u64 cache, chunk;
 
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   out->encode_work = xpar_codec_encode_work(in->codec, in->s, in->r, 1) *
                      in->z;
 
   if (in->codec == XPAR_CODEC_MATRIX) {
-    u64 per, chunk = in->z;
+    u64 per, z = in->z;
     /*  One accumulator and one input slice is the floor; below it no
         partition of the recovery axis helps.  */
     if (xpar_codec_encode_footprint(in->codec, in->field, in->s, 1,
-                                    (sz) chunk) > in->budget) {
+                                    (sz) z) > in->budget) {
       out->why = "R * Z does not fit even at one recovery slice per pass";
       return;
     }
     per = in->r;
     while (per > 1 &&
            xpar_codec_encode_footprint(in->codec, in->field, in->s, per,
-                                       (sz) chunk) > in->budget)
+                                       (sz) z) > in->budget)
       per = (per + 1) / 2;
     out->feasible    = true;
-    out->chunk       = (u32) chunk;
+    out->chunk       = (u32) z;
     out->passes      = xpar_ceil_div(in->r, per);
     out->working_set = xpar_codec_encode_footprint(in->codec, in->field,
-                                                   in->s, per, (sz) chunk);
+                                                   in->s, per, (sz) z);
     /*  Matrix work for one recovered slice.  */
     out->repair_work = in->s * in->z;
     out->requests    = out->passes;          /*  One sequential sweep each.  */
     return;
   }
 
-  {
-    u64 cache, chunk;
-    cache = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
-                    in->s, in->r, PLAN_LLC, in->z);
-    if (!cache) cache = 64;
-    chunk = cache;
-    /*  Rule (b). On a rotating device this rule is deliberately not
-        applied: a wider column there buys nothing a seek does not eat, and
-        the drop below usually sends the plan to the matrix codec anyway.  */
-    if (!in->rotational && chunk < PLAN_MIN_REQ) chunk = PLAN_MIN_REQ;
-    if (in->want_chunk) chunk = in->want_chunk;
-    if (chunk > in->z) chunk = in->z;
-    chunk = floor64(chunk);
-    if (!chunk) chunk = MIN((u64) 64, in->z);
-    /*  Rule (b) is a preference and -m is a bound, so the budget wins.  */
-    if (xpar_codec_encode_footprint(in->codec, in->field, in->s, in->r,
-                                    (sz) chunk) > in->budget) {
-      chunk = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
-                      in->s, in->r, in->budget, in->z);
-      if (!chunk) { out->why = "(S + 2m) buffers do not fit, even at a 64-byte column";  return; }
-    }
-    out->feasible    = true;
-    out->chunk       = (u32) chunk;
-    out->passes      = xpar_ceil_div(in->z, chunk);
-    out->working_set = xpar_codec_encode_footprint(in->codec, in->field,
-                                                   in->s, in->r, (sz) chunk);
-    out->repair_work    = n * (u64) xpar_log2_floor(n) * in->z;
-    out->requests       = out->passes * in->s;
-    out->decode_buffers = in->s + in->r + n;
-    out->decode_chunk   = fits_in(xpar_codec_decode_footprint, in->codec,
-                                  in->field, in->s, in->r, PLAN_LLC, in->z);
-    if (!out->decode_chunk) out->decode_chunk = 64;
-    out->decode_passes  = xpar_ceil_div(in->z, out->decode_chunk);
+  cache = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
+                  in->s, in->r, PLAN_LLC, in->z);
+  if (!cache) cache = 64;
+  chunk = cache;
+  /*  Rule (b). On a rotating device this rule is deliberately not
+      applied: a wider column there buys nothing a seek does not eat, and
+      the drop below usually sends the plan to the matrix codec anyway.  */
+  if (!in->rotational && chunk < PLAN_MIN_REQ) chunk = PLAN_MIN_REQ;
+  if (in->want_chunk) chunk = in->want_chunk;
+  if (chunk > in->z) chunk = in->z;
+  chunk = floor64(chunk);
+  if (!chunk) chunk = MIN((u64) 64, in->z);
+  /*  Rule (b) is a preference and -m is a bound, so the budget wins.  */
+  if (xpar_codec_encode_footprint(in->codec, in->field, in->s, in->r,
+                                  (sz) chunk) > in->budget) {
+    chunk = fits_in(xpar_codec_encode_footprint, in->codec, in->field,
+                    in->s, in->r, in->budget, in->z);
+    if (!chunk) { out->why = "(S + 2m) buffers do not fit, even at a 64-byte column";  return; }
   }
+  out->feasible    = true;
+  out->chunk       = (u32) chunk;
+  out->passes      = xpar_ceil_div(in->z, chunk);
+  out->working_set = xpar_codec_encode_footprint(in->codec, in->field,
+                                                 in->s, in->r, (sz) chunk);
+  out->repair_work    = n * (u64) xpar_log2_floor(n) * in->z;
+  out->requests       = out->passes * in->s;
+  out->decode_buffers = in->s + in->r + n;
+  out->decode_chunk   = fits_in(xpar_codec_decode_footprint, in->codec,
+                                in->field, in->s, in->r, PLAN_LLC, in->z);
+  if (!out->decode_chunk) out->decode_chunk = 64;
+  out->decode_passes  = xpar_ceil_div(in->z, out->decode_chunk);
 }
 
 static u64 score_us(const cand_in * in, const cand_out * c) {
@@ -286,7 +284,7 @@ u64 xpar_plan_repair_crossover(u8 fft_codec, u8 field, u64 s, u64 r,
     return 0;
   fft_work = n * (u64) xpar_log2_floor(n);
   if (fft_work > UINT64_MAX / z || s > UINT64_MAX / z) return 0;
-  fft_work *= z; one = s * z;
+  fft_work *= z;  one = s * z;
   fft_time = decode_us(fft_codec, field, fft_work);
   for (e = 1; e <= r; e++) {
     u64 work = one > UINT64_MAX / e ? UINT64_MAX : one * e;
@@ -299,7 +297,7 @@ static u32 dedup_target(u64 stream_length, u64 budget, u64 payload,
                         u64 want) {
   u64 m_dedup = budget / 4;
   u64 floor_mem, floor_meta, thr, t = (u64) 1 << 20;
-  if (want) return (u32) MIN(want, (u64) 0xFFFFFFFFu);
+  if (want) return (u32) MIN(want, (u64) 0xFFFFFFFFU);
   if (!stream_length) return 0;
   floor_mem  = m_dedup ? xpar_ceil_div(32 * stream_length, m_dedup) : 0;
   thr        = payload / 40;
@@ -307,7 +305,7 @@ static u32 dedup_target(u64 stream_length, u64 budget, u64 payload,
   floor_meta = xpar_ceil_div(16 * stream_length, thr);
   if (floor_mem  > t) t = floor_mem;
   if (floor_meta > t) t = floor_meta;
-  return (u32) MIN(t, (u64) 0xFFFFFFFFu);
+  return (u32) MIN(t, (u64) 0xFFFFFFFFU);
 }
 
 /*  Estimate process-lifetime tables and manifest state.  */
@@ -372,18 +370,18 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   xpar_geom_status gs;
   u64 budget = req->memory_budget ? req->memory_budget
                                   : xpar_plan_default_memory();
-  u64 r = req->recovery_slices, stage, best_score = 0;
+  u64 r = req->recovery_slices, stage, best_score = 0, left, q;
   int i, best = -1, threads = req->threads > 0 ? req->threads
                                                : xpar_cpu_count();
-  u8 probe = req->field_log2 ? req->field_log2 : 16;
+  u8 probe = req->field_log2 ? req->field_log2 : 16, fft;
   struct { u8 codec, field; } list[XPAR_PLAN_MAX_CAND];
   cand_out won;
   int n = 0;
 
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   out->threads = threads;
 
-  xpar_memset(&gr, 0, sizeof(gr));
+  xpar_memset(&gr, 0, sizeof gr);
   gr.stream_length = req->stream_length;
   gr.slice_size    = req->slice_size;
   gr.slice_count   = req->slice_count;
@@ -397,7 +395,7 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
   if (gs != XPAR_GEOM_OK) return XPAR_PLAN_BAD_GEOMETRY;
   out->recovery_slices = r;
 
-  /* Empty streams and parity-free sets need no codec. */
+  /*  Empty streams and parity-free sets need no codec.  */
   if (!out->geom.slice_count || !r) {
     out->field_log2 = probe;
     out->codec      = XPAR_CODEC_MATRIX;
@@ -411,21 +409,15 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     return out->mem_total <= budget ? XPAR_PLAN_OK : XPAR_PLAN_NO_FIT;
   }
 
-  if (xpar_codec_supports(XPAR_CODEC_MATRIX, 8, out->geom.slice_count, r)) {
-    list[n].codec = XPAR_CODEC_MATRIX;  list[n++].field = 8;
-  }
-  { u8 fft = r > out->geom.slice_count ? XPAR_CODEC_FFT_LOW
-                                       : XPAR_CODEC_FFT;
-  if (xpar_codec_supports(fft, 8, out->geom.slice_count, r)) {
-    list[n].codec = fft;  list[n++].field = 8;
-  }
-  if (xpar_codec_supports(XPAR_CODEC_MATRIX, 16, out->geom.slice_count, r)) {
-    list[n].codec = XPAR_CODEC_MATRIX;  list[n++].field = 16;
-  }
-  if (xpar_codec_supports(fft, 16, out->geom.slice_count, r)) {
-    list[n].codec = fft;  list[n++].field = 16;
-  }
-  }
+  if (xpar_codec_supports(XPAR_CODEC_MATRIX, 8, out->geom.slice_count, r))
+    { list[n].codec = XPAR_CODEC_MATRIX;  list[n++].field = 8; }
+  fft = r > out->geom.slice_count ? XPAR_CODEC_FFT_LOW : XPAR_CODEC_FFT;
+  if (xpar_codec_supports(fft, 8, out->geom.slice_count, r))
+    { list[n].codec = fft;  list[n++].field = 8; }
+  if (xpar_codec_supports(XPAR_CODEC_MATRIX, 16, out->geom.slice_count, r))
+    { list[n].codec = XPAR_CODEC_MATRIX;  list[n++].field = 16; }
+  if (xpar_codec_supports(fft, 16, out->geom.slice_count, r))
+    { list[n].codec = fft;  list[n++].field = 16; }
 
   stage = stage_bytes(budget, out->geom.slice_size, threads);
   out->mem_stage = stage;
@@ -434,7 +426,7 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     cand_in in;
     cand_out c;
     u64 s;
-    xpar_memset(&c, 0, sizeof(c));
+    xpar_memset(&c, 0, sizeof c);
     if (req->field_log2 && list[i].field != req->field_log2) continue;
     if (req->codec != 0xFF && list[i].codec != req->codec &&
         !(req->codec == XPAR_CODEC_FFT &&
@@ -463,9 +455,8 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
     add_cand(out, in.codec, in.field, &c, c.encode_work);
     if (!c.feasible) continue;
     s = score_us(&in, &c);
-    if (best < 0 || s < best_score) {
-      best_score = s;  best = i;  won = c;
-    });
+    if (best < 0 || s < best_score)
+      { best_score = s;  best = i;  won = c; });
 
   if (best < 0) {
     int k;
@@ -485,17 +476,13 @@ xpar_plan_status xpar_plan_make(const xpar_plan_req * req, xpar_plan * out) {
                       sub_sat(budget, out->mem_codec + out->mem_stage),
                       gr.armour_frame);
 
-  {
-    u64 left = sub_sat(budget, out->mem_codec + out->mem_stage +
-                               out->mem_armour);
-    u64 q;
-    /*  Reading further ahead than the stream is long buys nothing, so the
-        clamp comes before the quantum is chosen or a small set would round
-        its whole read-ahead away.  */
-    if (left > out->geom.stream_length) left = out->geom.stream_length;
-    q = left >= PLAN_RA_QUANTUM ? PLAN_RA_QUANTUM : PLAN_RA_SMALL;
-    out->mem_readahead = left / q * q;
-  }
+  left = sub_sat(budget, out->mem_codec + out->mem_stage + out->mem_armour);
+  /*  Reading further ahead than the stream is long buys nothing, so the
+      clamp comes before the quantum is chosen or a small set would round
+      its whole read-ahead away.  */
+  if (left > out->geom.stream_length) left = out->geom.stream_length;
+  q = left >= PLAN_RA_QUANTUM ? PLAN_RA_QUANTUM : PLAN_RA_SMALL;
+  out->mem_readahead = left / q * q;
 
   out->dedup_target_chunk = dedup_target(out->geom.stream_length, budget,
                                          r * out->geom.slice_size,
@@ -516,7 +503,7 @@ xpar_plan_status xpar_plan_for_repair(const xpar_setd * sd,
   u64 budget = memory_budget ? memory_budget : xpar_plan_default_memory();
   u64 r, stage, chunk;
 
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   if (!xpar_geom_from_setd(sd, &out->geom)) return XPAR_PLAN_BAD_GEOMETRY;
   out->threads    = threads > 0 ? threads : xpar_cpu_count();
   out->codec      = sd->codec;
@@ -607,7 +594,7 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   u64 lo, hi, mid;
   bool mat;
   int i;
-  char a[32], b[32];
+  char a[32], b[32], fit[64];
 
   budget = req->memory_budget ? req->memory_budget
                               : xpar_plan_default_memory();
@@ -637,12 +624,11 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
   q = *req;
   q.memory_budget = budget;
   q.slice_size    = 0;
-  for (i = 0; i <= 16; i++) {
+  Fi(17,
     q.slice_count = (u64) 1 << i;
     if (q.slice_count > ((u64) 1 << 16) - 1) break;
     if (req->stream_length && q.slice_count > req->stream_length) break;
-    if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK) { best_b = q.slice_count; }
-  }
+    if (xpar_plan_make(&q, &p) == XPAR_PLAN_OK) best_b = q.slice_count);
 
   /*  Check whether the matrix codec fits, regardless of speed.  */
   q = *req;
@@ -662,21 +648,18 @@ void xpar_plan_explain_no_fit(const xpar_plan_req * req, char * buf, sz cap) {
                   mat ? "does fit" : "does not fit");
     return;
   }
-  {
-    char fit[64];
-    /*  -s and -b are mutually exclusive.  */
-    if (best_b && req->slice_size)
-      xpar_snprintf(fit, sizeof fit,
-                    "replace -s with -b %" PRIu64, best_b);
-    else if (best_b)
-      xpar_snprintf(fit, sizeof fit, "-b %" PRIu64 " fits this -m",
-                    best_b);
-    else
-      xpar_snprintf(fit, sizeof fit, "no -b fits this -m");
-    xpar_snprintf(buf, cap,
-                  "raise -m to %s; %s; --codec=matrix %s at -m %s",
-                  a, fit, mat ? "does fit" : "does not fit either", b);
-  }
+  /*  -s and -b are mutually exclusive.  */
+  if (best_b && req->slice_size)
+    xpar_snprintf(fit, sizeof fit,
+                  "replace -s with -b %" PRIu64, best_b);
+  else if (best_b)
+    xpar_snprintf(fit, sizeof fit, "-b %" PRIu64 " fits this -m",
+                  best_b);
+  else
+    xpar_snprintf(fit, sizeof fit, "no -b fits this -m");
+  xpar_snprintf(buf, cap,
+                "raise -m to %s; %s; --codec=matrix %s at -m %s",
+                a, fit, mat ? "does fit" : "does not fit either", b);
 }
 
 /*  Return the smallest one-pass budget, or 0.  */
@@ -735,8 +718,8 @@ static void expo(char * buf, sz cap, u64 v) {
   while (t >= 1000) { t /= 10;  e++; }
   if (t < 100) { xpar_snprintf(buf, cap, "%" PRIu64, t);
                  return; }
-  xpar_snprintf(buf, cap, "%" PRIu64 ".%02" PRIu64 "e%d", (t / 100),
-                (t % 100), e + 2);
+  xpar_snprintf(buf, cap, "%" PRIu64 ".%02" PRIu64 "e%d", t / 100,
+                t % 100, e + 2);
 }
 
 void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
@@ -843,7 +826,7 @@ void xpar_plan_print(const xpar_plan * p, xpar_file * out, bool verbose) {
                  "the loss count;\n"
                  "               decode needs %s buffers against the "
                  "encoder's %" PRIu64 "\n",
-                 g1, (p->geom.slice_count + 2 * m));
+                 g1, p->geom.slice_count + 2 * m);
     if (cross)
       xpar_fprintf(out,
                    "               calibrated matrix/FFT crossover is "

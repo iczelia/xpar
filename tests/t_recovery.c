@@ -222,8 +222,7 @@ static void recovery_volumes(xt_context * c, const char * dir,
         xt_copy_file(volume, saved), "save a recovery volume");
   CHECK(xt_damage(volume, 600, 256, 0xC501), "damage recovery data");
   expect(c, dir, 0, verify, "ignore unused damaged recovery");
-  {
-    int got = xt_run_xpar(c, dir, scrub);
+  { int got = xt_run_xpar(c, dir, scrub);
     CHECK(got == 1 || got == 2,
           "deep scrub detects damaged recovery, got %d", got);
   }
@@ -242,8 +241,7 @@ static void recovery_volumes(xt_context * c, const char * dir,
           "spend one column's recovery budget");
   CHECK(xt_damage(volume, 700, 512, 0xC601),
         "damage recovery before decoding");
-  {
-    int got = xt_run_xpar(c, dir, repair);
+  { int got = xt_run_xpar(c, dir, repair);
     CHECK(got != 0 || xt_files_equal(data, keep),
           "repair never succeeds with incorrect bytes");
   }

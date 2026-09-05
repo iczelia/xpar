@@ -44,10 +44,10 @@ bool xpar_chunk_file(const char * path, u64 average,
   u64 gear[256], h = 0, file_at = 0, chunk_at = 0;
   u64 min, max, strong, weak;
   u64 chunk_len = 0;
-  u32 bits = 0, b;
+  u32 bits = 0;
   u8 hash[16];
   u8 * buf;
-  sz got;
+  sz i, got;
   u64 prefix_left = 16384;
 
   if (!average) average = (u64) 1 << 20;
@@ -57,16 +57,16 @@ bool xpar_chunk_file(const char * path, u64 average,
   while (bits < 62 && ((u64) 1 << bits) < average) bits++;
   strong = low_mask(bits < 62 ? bits + 1 : bits);
   weak = low_mask(bits > 1 ? bits - 1 : 1);
-  for (b = 0; b < 256; b++) gear[b] = gear_mix(b);
+  Fi(256, gear[i] = gear_mix((u32) i));
 
   f = xpar_open(path, XPAR_O_RDONLY);
   if (!f) return false;
-  buf = (u8 *) xpar_alloc_raw(CHUNK_IO);
+  buf = xpar_alloc_raw(CHUNK_IO);
   xpar_blake3_init(&ch);
   xpar_blake3_init(&whole);
   xpar_blake3_init(&prefix);
   while ((got = xpar_xread(f, buf, CHUNK_IO)) != 0) {
-    sz i, run = 0;
+    sz run = 0;
     xpar_blake3_update(&whole, buf, got);
     if (prefix_left) {
       sz take = (sz) MIN(prefix_left, got);
@@ -130,8 +130,8 @@ bool xpar_chunk_index_init(xpar_chunk_index * x, u64 max_bytes) {
   xpar_memset(x, 0, sizeof *x);
   x->max_bytes = max_bytes;
   x->capacity = 16;
-  if (max_bytes < (u64) x->capacity * sizeof(xpar_chunk_slot)) return false;
-  x->slot = (xpar_chunk_slot *) xpar_calloc(x->capacity, sizeof *x->slot);
+  if (max_bytes < (u64) x->capacity * sizeof *x->slot) return false;
+  x->slot = xpar_calloc(x->capacity, sizeof *x->slot);
   return true;
 }
 
@@ -151,7 +151,7 @@ static bool chunk_grow(xpar_chunk_index * x) {
   u32 oldn = x->capacity, i;
   if ((u64) oldn * 2 * sizeof *old > x->max_bytes) return false;
   x->capacity *= 2;
-  x->slot = (xpar_chunk_slot *) xpar_calloc(x->capacity, sizeof *x->slot);
+  x->slot = xpar_calloc(x->capacity, sizeof *x->slot);
   Fi(oldn, if (old[i].length) *chunk_probe(x, old[i].hash, old[i].length) = old[i]);
   xpar_free(old);
   return true;
@@ -176,8 +176,8 @@ bool xpar_chunk_index_put(xpar_chunk_index * x, const u8 hash[16], u32 length,
   return true;
 }
 
-#define CACHE_HDR 64u
-#define CACHE_REC 40u
+#define CACHE_HDR 64U
+#define CACHE_REC 40U
 
 bool xpar_chunk_cache_load(const char * path,
                            const u8 set_id[XPAR_SET_ID_LEN], u64 average,

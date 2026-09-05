@@ -48,7 +48,7 @@ void xpar_v1_report(const char * path, const xpar_v1_info * info) {
   const char * what = "archive";
   switch (info->kind) {
     case XPAR_V1_JOINT:     what = "joint-mode archive";           break;
-    case XPAR_V1_SHARD_VAN: what = "Vandermonde-sharded parity file"; break;
+    case XPAR_V1_SHARD_VAN: what = "Vandermonde-sharded parity file";  break;
     case XPAR_V1_SHARD_LEO: what = "Leopard-sharded parity file";  break;
     default:                return;
   }

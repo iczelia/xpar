@@ -135,22 +135,21 @@ static void armour_params(const xpar_options * o, u64 object_bytes,
   xpar_armour_defaults(p, sym);
   w = sym / 8;
 
-  /* Keep the field's full-width code when parity is disabled. */
+  /*  Keep the field's full-width code when parity is disabled.  */
   if (!o->armour_t && pct <= 0.0) { p->depth = 1;  return; }
 
   /*  Solve n' = min(n, ceil(bytes/W) + 2t), with 2t = round(p*k').  */
   n = p->n;
   t2 = o->armour_t ? 2 * o->armour_t : 2;
-  {
-    int it;
+  { int it;
     for (it = 0; it < 8; it++) {
       u64 need = xpar_ceil_div(object_bytes, w) + t2;
       u32 n2 = need < (u64) n ? (u32) need : n;
       u32 t3 = o->armour_t ? 2 * o->armour_t
                            : (u32) (pct * (f64) n2 / (100.0 + pct) + 0.5);
       if (t3 < 2) t3 = 2;
-      t3 &= ~1u;
-      if (t3 >= n2) t3 = (n2 - 1) & ~1u;
+      t3 &= ~1U;
+      if (t3 >= n2) t3 = (n2 - 1) & ~1U;
       if (n2 == n && t3 == t2) break;
       n = n2;  t2 = t3;
     }
@@ -227,7 +226,7 @@ static void armour_growth_or_die(const xpar_options * o, u64 object_bytes,
   u32 most, honoured = (p->n - p->k) / 2;
   if (o->armour_t && honoured < o->armour_t)
     FATAL("--armour-t %" PRIu32 " exceeds the GF(2^%" PRIu32
-          ") maximum of %" PRIu32 ,
+          ") maximum of %" PRIu32,
           o->armour_t, p->symbol_bits, honoured);
   if (!armour_inflates(p, metadata)) return;
   most = armour_t_affordable(o, object_bytes, metadata);
@@ -237,7 +236,7 @@ static void armour_growth_or_die(const xpar_options * o, u64 object_bytes,
           "this wide",
           o->armour_t, (u64) p->n / (p->k ? p->k : 1), object_bytes);
   FATAL("--armour-t %" PRIu32 " expands data %" PRIu64
-        "x; this input affords --armour-t %" PRIu32 ,
+        "x; this input affords --armour-t %" PRIu32,
         o->armour_t, (u64) p->n / (p->k ? p->k : 1), most);
 }
 
@@ -260,10 +259,10 @@ static void armour_depth_or_die(const xpar_options * o, u64 budget,
   most.depth = armour_depth_max(budget, p);
   if (o->depth)
     FATAL("--depth %" PRIu32 " needs -m %" PRIu64
-          "; -m as given affords --depth %" PRIu64 , o->depth, need,
+          "; -m as given affords --depth %" PRIu64, o->depth, need,
           most.depth);
   FATAL("--burst %" PRIu64 " needs -m %" PRIu64
-        "; -m as given affords --burst %" PRIu64 , o->burst, need,
+        "; -m as given affords --burst %" PRIu64, o->burst, need,
         armour_burst(&most));
 }
 
@@ -328,11 +327,11 @@ static void rd_bytes(reader * r, u64 off, u8 * buf, u64 len) {
 static void tag_alloc(ctx * c) {
   u64 s = c->geom.slice_count;
   u32 k = c->geom.cells_per_slice;
-  c->slice_crc = (u32 *) xpar_alloc_raw((sz) s * sizeof(u32));
+  c->slice_crc = xpar_alloc_raw((sz) s * sizeof *c->slice_crc);
   if (c->tag_len)
-    c->slice_tag = (u8 *) xpar_alloc_raw((sz) s * c->tag_len);
+    c->slice_tag = xpar_alloc_raw((sz) s * c->tag_len);
   if (c->geom.cell_bytes)
-    c->cell_crc = (u32 *) xpar_alloc_raw((sz) s * k * sizeof(u32));
+    c->cell_crc = xpar_alloc_raw((sz) s * k * sizeof *c->cell_crc);
 }
 
 static void tag_slice(ctx * c, u64 slice, const u8 * buf) {
@@ -363,7 +362,7 @@ static void tag_pass(ctx * c) {
   u64 z = c->geom.slice_size, i, s = c->geom.slice_count;
   u8 * buf;
   if (!s) return;
-  buf = (u8 *) xpar_alloc_raw((sz) z);
+  buf = xpar_alloc_raw((sz) z);
   tag_alloc(c);
   rd_init(&r, c);
   Fi(s,
@@ -398,12 +397,11 @@ static void rs_open(recstore * rs, u64 count, u64 z, u64 budget,
   rs->spill = NULL;  rs->path = NULL;
   if (!count) return;
   if (count * z <= budget && count * z <= (u64) (sz) -1) {
-    rs->mem = (u8 *) xpar_alloc_raw((sz) (count * z));
+    rs->mem = xpar_alloc_raw((sz) (count * z));
     return;
   }
   /*  Create private spill files without following links.  */
-  {
-    char * stem;
+  { char * stem;
     xpar_asprintf(&stem, "%s.xpar-tmp-", base);
     rs->spill = xpar_stage_open(stem, "XRS",
                                 XPAR_O_RDWR | XPAR_O_NOFOLLOW, 1,
@@ -480,7 +478,7 @@ typedef struct {
 
 /*  Fixed row partitions make worker writes disjoint and deterministic.  */
 static void matrix_accumulate_job(sz index, void * arg) {
-  matrix_batch * b = (matrix_batch *) arg;
+  matrix_batch * b = arg;
   u64 per = xpar_ceil_div(b->recovery_count, b->jobs);
   u64 first = (u64) index * per;
   u64 count = first < b->recovery_count
@@ -520,11 +518,11 @@ static void encode_matrix(ctx * c, recstore * rs, u64 budget) {
     FATAL_CODE(XPAR_EXIT_NOPLAN, "matrix column buffers exceed this host's "
                "address space; lower -m or -b");
   if (!cached || !direct)
-    pool = (u8 *) xpar_alloc_aligned(
+    pool = xpar_alloc_aligned(
              (sz) ((cached ? 0 : input_count) * chunk +
                     (direct ? 0 : rr) * chunk), 64);
-  data = (u8 **) xpar_alloc_raw(
-           (sz) (input_count + rr) * sizeof(u8 *));
+  data = xpar_alloc_raw(
+           (sz) (input_count + rr) * sizeof *data);
   rec = data + input_count;
   Fi(input_count, data[i] = cached ? c->stream_cache + i * z : pool + i * chunk);
   cd = xpar_codec_new_axis(c->plan.codec, c->plan.field_log2, s, rr,
@@ -585,8 +583,8 @@ static void encode(ctx * c, recstore * rs, u64 budget) {
   if ((s + rr) * chunk > (u64) (sz) -1)
     FATAL_CODE(XPAR_EXIT_NOPLAN, "column buffers exceed this host's "
                "address space; lower -m or -b");
-  pool = (u8 *) xpar_alloc_aligned((sz) ((s + rr) * chunk), 64);
-  data = (u8 **) xpar_alloc_raw((sz) (s + rr) * sizeof(u8 *));
+  pool = xpar_alloc_aligned((sz) ((s + rr) * chunk), 64);
+  data = xpar_alloc_raw((sz) (s + rr) * sizeof *data);
   rec  = data + s;
   Fi(s + rr, data[i] = pool + i * chunk);
   cd = xpar_codec_new_axis(c->plan.codec, c->plan.field_log2, s, rr,
@@ -616,11 +614,11 @@ static void compute_set_id(ctx * c) {
   xpar_set_id_ctx h;
   u8 zero[XPAR_SET_ID_LEN];
   sz p = 0;
+  u32 i;
   bool first = true;
   xpar_memset(zero, 0, sizeof zero);
   xpar_buf_init(&b);
   xpar_setd_write(&b, &c->sd, zero, NULL);
-  u32 i;
   Fi(c->m.count,
     xpar_entry_write(&b, &c->m.entry[i], zero, NULL, &c->wr));
   while (p + XPAR_PKT_HDR <= b.len) {
@@ -648,9 +646,9 @@ static void auth_only_hashes(ctx * c) {
     xpar_blake3_t h;
     if (e->entry_type == XPAR_ENTRY_HARDLINK) continue;
     xpar_blake3_init_keyed(&h, c->key.k_file);
-    if (e->entry_type == XPAR_ENTRY_SYMLINK) {
+    if (e->entry_type == XPAR_ENTRY_SYMLINK)
       xpar_blake3_update(&h, e->extra, e->extra_len);
-    } else if (e->entry_type == XPAR_ENTRY_REGULAR) {
+    else if (e->entry_type == XPAR_ENTRY_REGULAR) {
       xpar_file * f = xpar_open(c->m.source[i], XPAR_O_RDONLY);
       u8 buf[16384];
       if (!f) FATAL_PERROR(c->m.source[i]);
@@ -658,7 +656,7 @@ static void auth_only_hashes(ctx * c) {
         sz n = xpar_read(f, buf, sizeof buf);
         if (n) xpar_blake3_update(&h, buf, n);
         if (n < sizeof buf) {
-          if (xpar_error(f)) FATAL_IO("reading '%s' failed", c->m.source[i]);
+          if (xpar_error(f)) FATAL_IO("cannot read '%s'", c->m.source[i]);
           if (xpar_eof(f) || !n) break;
         }
       }
@@ -696,11 +694,10 @@ static void emit_crit(ctx * c, xpar_buf * out, const xpar_crit * cr) {
   }
   xpar_buf_init(&plain);
   xpar_crit_write(&plain, cr, c->set_id, create_key(c), &c->wr);
-  {
-    xpar_armg g;
+  { xpar_armg g;
     const xpar_armour_params * ap = xpar_armour_params_of(c->arm);
     u64 n = xpar_armour_size(c->arm, plain.len);
-    u8 * enc = (u8 *) xpar_alloc_raw((sz) n);
+    u8 * enc = xpar_alloc_raw((sz) n);
     xpar_armour_encode(c->arm, enc, plain.data, plain.len);
     g.symbol_bits     = (u8) ap->symbol_bits;
     g.poly            = ap->poly;
@@ -811,7 +808,7 @@ static void verify_after(ctx * c, char * const * names, u32 count) {
 static u64 create_stream_tag(ctx * c, u64 at, u64 length) {
   reader r;
   xpar_blake3_t h;
-  u8 * buf = (u8 *) xpar_alloc_raw(1u << 16);
+  u8 * buf = xpar_alloc_raw(1U << 16);
   u64 left = length;
   xpar_vol_tag_begin(&h);
   rd_init(&r, c);
@@ -867,7 +864,7 @@ static void build_walk(const xpar_options * o, xpar_walk_opts * w, u64 z) {
   w->dedup_memory    = o->dedup_memory ? o->dedup_memory : budget / 4;
   w->preserve        = o->preserve;
   w->preserve_explicit = o->preserve_explicit;
-  w->caps_mask     = (o->preserve & XPAR_PRES_LINKS) ? 0xFFFFFFFFu
+  w->caps_mask     = (o->preserve & XPAR_PRES_LINKS) ? 0xFFFFFFFFU
                                                      : ~(u32) XPAR_FS_LINKID;
   w->path_flags    = 0;
   w->base_dir      = o->base_dir;
@@ -901,7 +898,7 @@ static void stage_chunk_cache(ctx * c, const xpar_walk_opts * w) {
       !xpar_chunk_cache_write(c->chunk_cache_stage, c->set_id,
                               w->dedup_chunk, &c->chunk_cache)) {
     if (c->o->verbose)
-      xpar_fprintf(xpar_stderr, "xpar: could not stage chunk cache '%s'\n",
+      xpar_fprintf(xpar_stderr, "xpar: cannot stage chunk cache '%s'\n",
                    c->chunk_cache_path);
     xpar_free(c->chunk_cache_stage);  c->chunk_cache_stage = NULL;
   }
@@ -913,7 +910,7 @@ static void publish_chunk_cache(ctx * c) {
   if (xpar_rename(c->chunk_cache_stage, c->chunk_cache_path) != 0 ||
       xpar_fsync_dir(c->chunk_cache_path) != 0) {
     if (c->o->verbose)
-      xpar_fprintf(xpar_stderr, "xpar: could not publish chunk cache '%s'\n",
+      xpar_fprintf(xpar_stderr, "xpar: cannot publish chunk cache '%s'\n",
                    c->chunk_cache_path);
     xpar_remove(c->chunk_cache_stage);
   }
@@ -930,7 +927,7 @@ static u64 resolve_recovery(const xpar_rspec * rs, u64 s, u64 z, u64 floor) {
     case XPAR_R_PERCENT:
       v = (f64) s * rs->factor / 100.0 + 0.5;
       r = v >= (f64) UINT64_MAX ? UINT64_MAX : (u64) v;
-      /* Positive fractions round up; explicit zero stays zero. */
+      /*  Positive fractions round up; explicit zero stays zero.  */
       if (!r && rs->factor > 0.0) r = 1;
       break;
     case XPAR_R_BYTES:   r = xpar_ceil_div(rs->count, z);  break;
@@ -951,7 +948,7 @@ typedef struct {
 } rdemand;
 
 static u64 demand_recovery(void * arg, u64 s, u64 z) {
-  const rdemand * d = (const rdemand *) arg;
+  const rdemand * d = arg;
   return resolve_recovery(d->rs, s, z, d->floor);
 }
 
@@ -1006,7 +1003,7 @@ static void stage_sweep(void) {
   d = xpar_opendir(dir);
   if (d) {
     while ((e = xpar_readdir(d)) != NULL) {
-      name = (char **) xpar_realloc(name, (sz) (count + 1) * sizeof(char *));
+      name = xpar_realloc(name, (sz) (count + 1) * sizeof *name);
       name[count++] = xpar_strdup(e->name);
     }
     xpar_closedir(d);
@@ -1027,8 +1024,7 @@ static char * create_output_stage(const char * base) {
   if (!path)
     FATAL_IO("cannot create an output staging directory beside '%s'", base);
 #if defined(XPAR_DOS) || defined(__MSDOS__)
-  {
-    char * absolute = xpar_path_lex_abs(path);
+  { char * absolute = xpar_path_lex_abs(path);
     if (!absolute) FATAL_IO("cannot resolve DOS staging directory '%s'", path);
     xpar_free(path);
     path = absolute;
@@ -1054,11 +1050,11 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
                             const char * extra_to, const char * stage_dir,
                             const xpar_manifest * m) {
   u32 extra = extra_from && extra_to;
-  u32 total = count + labels + extra, at = 0, i, published = 0;
-  char ** from = (char **) xpar_calloc(total, sizeof(char *));
-  char ** to = (char **) xpar_calloc(total, sizeof(char *));
-  char ** backup = (char **) xpar_calloc(total, sizeof(char *));
-  bool * had = (bool *) xpar_calloc(total, sizeof(bool));
+  u32 total = count + labels + extra, at = 0, i, j, published = 0;
+  char ** from = xpar_calloc(total, sizeof *from);
+  char ** to = xpar_calloc(total, sizeof *to);
+  char ** backup = xpar_calloc(total, sizeof *backup);
+  bool * had = xpar_calloc(total, sizeof *had);
   bool collision = false, irregular = false;
   u32 stranded = 0;
   int saved = 0;
@@ -1075,14 +1071,13 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
   from[at] = xpar_strdup(stage[0]);
   to[at] = xpar_strdup(final[0]);
   /*  Do not overwrite protected inputs.  */
-  for (i = 0; m && i < total; i++) {
-    u32 j;
-    Fj(m->count,
-      if (m->source[j] && xpar_path_same(m->source[j], to[i])) {
-        publish_discard(from, total, extra, stage_dir);
-        FATAL("output '%s' is also an input; nothing was published", to[i]);
-      });
-  }
+  if (m)
+    Fi(total,
+      Fj(m->count,
+        if (m->source[j] && xpar_path_same(m->source[j], to[i])) {
+          publish_discard(from, total, extra, stage_dir);
+          FATAL("output '%s' is also an input; nothing was published", to[i]);
+        }));
   for (i = 0; i < total; i++) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
     { char leaf[13];
@@ -1101,7 +1096,7 @@ static void publish_outputs(const xpar_options * o, char * const * stage,
             to[i], stage_dir);
     }
   }
-  /* Recheck shared outputs and preserve rollback on refusal. */
+  /*  Recheck shared outputs and preserve rollback on refusal.  */
   Fi(total,
     if (xpar_lstat(to[i], &st) != 0) continue;
     if (!st.is_regular) { irregular = true;  goto rollback_old; }
@@ -1136,7 +1131,7 @@ rollback_new:
     }
   }
 rollback_old:
-  for (u32 j = total; j > 0; j--)
+  for (j = total; j > 0; j--)
     if (had[j - 1] && xpar_put_back(to[j - 1], backup[j - 1]) != 0)
       xpar_fprintf(xpar_stderr,
                    "xpar: warning: old output remains at '%s'\n",
@@ -1164,7 +1159,7 @@ static bool create_copy_file(const char * from, const char * to) {
   if (!in) return false;
   out = xpar_open(to, XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_EXCL);
   if (!out) { xpar_close(in);  return false; }
-  buf = (u8 *) xpar_alloc_raw((sz) 1 << 20);
+  buf = xpar_alloc_raw((sz) 1 << 20);
   for (;;) {
     sz n = xpar_read(in, buf, (sz) 1 << 20);
     if (n && xpar_write(out, buf, n) != n) { ok = false;  break; }
@@ -1193,23 +1188,22 @@ static void create_stage_input(pipe_ready * ready, const char * to,
 
 char * xpar_spool_stdin(const xpar_options * o) {
   const char * anchor = o->output && o->output[0] ? o->output : o->set;
-  char * outdir;
+  char * outdir, * dir, * stage = NULL;
+  xpar_file * f;
+  u8 * buf;
   FATAL_UNLESS(anchor && anchor[0],
                "a pipe spool needs an output or set path");
   outdir = xpar_path_dir(anchor);
-  char * dir = o->spool_dir ? xpar_strdup(o->spool_dir) : outdir;
-  char * stage = NULL;
-  xpar_file * f;
-  u8 * buf;
+  dir = o->spool_dir ? xpar_strdup(o->spool_dir) : outdir;
   if (dir != outdir) xpar_free(outdir);
   if (xpar_mkdir_p(dir, 0777) != 0) FATAL_PERROR(dir);
   f = create_stage_open(dir, &stage);
-  buf = (u8 *) xpar_alloc_raw((sz) 1 << 20);
+  buf = xpar_alloc_raw((sz) 1 << 20);
   for (;;) {
     sz got = xpar_read(xpar_stdin, buf, (sz) 1 << 20);
     if (got) xpar_xwrite(f, buf, got);
     if (got < ((sz) 1 << 20)) {
-      if (xpar_error(xpar_stdin)) FATAL_IO("reading standard input failed");
+      if (xpar_error(xpar_stdin)) FATAL_IO("cannot read standard input");
       if (xpar_eof(xpar_stdin) || !got) break;
     }
   }
@@ -1279,7 +1273,7 @@ char * xpar_publish_spooled_stdin(const xpar_options * o,
                  backup);
   if (xpar_lstat(stage, &st) == 0) (void) xpar_remove(stage);
   xpar_free(local);  xpar_free(backup);
-  xpar_free(parent); xpar_free(outdir);
+  xpar_free(parent);  xpar_free(outdir);
   return final;
 }
 
@@ -1309,7 +1303,7 @@ static int create_from_pipe_spooled(const xpar_options * o) {
   ready.final_path = final;
   rc = create_regular(&nested, &ready);
   if (xpar_lstat(stage, &st) == 0 && xpar_remove(stage) != 0 && o->verbose)
-    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'\n",
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot remove spool '%s'\n",
                  stage);
   xpar_free(final);  xpar_free(stage);
   xpar_free(outdir);
@@ -1357,7 +1351,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   u8 * data, ** rec;
   u64 z = o->slice_size ? o->slice_size : ((u64) 1 << 20);
   u64 r = create_pipe_recovery(o, z);
-  u64 q, max_s, budget = create_pipe_budget(o), filled = 0, slices = 0;
+  u64 q, max_s, budget = create_pipe_budget(o), filled = 0, slices = 0, i;
   u8 field = o->field == 8 ? 8 : 16;
   int rc;
 
@@ -1373,7 +1367,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
                "--field=16", field);
   FATAL_UNLESS(r <= ((u64) -1) / z - 1 && (r + 1) * z <= budget,
                "a one-pass matrix pipe needs %" PRIu64 " bytes; -m allows %"
-               PRIu64 ,
+               PRIu64,
                ((r + 1) * z),
                budget);
   FATAL_UNLESS(r * z <= (u64) (sz) -1 && z <= (u64) (sz) -1,
@@ -1390,10 +1384,9 @@ static int create_from_pipe_direct(const xpar_options * o) {
   f = create_stage_open(parent, &stage);
 
   ready.rs.z = z;  ready.rs.count = r;
-  ready.rs.mem = (u8 *) xpar_calloc((sz) r, (sz) z);
-  data = (u8 *) xpar_alloc_aligned((sz) z, 64);
-  rec = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
-  u64 i;
+  ready.rs.mem = xpar_calloc((sz) r, (sz) z);
+  data = xpar_alloc_aligned((sz) z, 64);
+  rec = xpar_alloc_raw((sz) r * sizeof *rec);
   Fi(r, rec[i] = ready.rs.mem + i * z);
   max_s = q - r;
   cd = xpar_codec_new(XPAR_CODEC_MATRIX, field, max_s, r);
@@ -1403,20 +1396,18 @@ static int create_from_pipe_direct(const xpar_options * o) {
     sz got = xpar_read(xpar_stdin, data + filled, (sz) (z - filled));
     if (got) { xpar_xwrite(f, data + filled, got);  filled += got; }
     if (filled == z) {
-      FATAL_UNLESS(slices < max_s, "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
-                   "-slice data limit; "
-                   "raise -s or use --spool", field,
-                   max_s);
+      FATAL_UNLESS(slices < max_s,
+                   "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+                   "-slice data limit; raise -s or use --spool", field, max_s);
       create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
       slices++;  filled = 0;
     }
-    if (got == 0) { if (xpar_error(xpar_stdin)) FATAL_IO("reading standard input failed");  break; }
+    if (got == 0) { if (xpar_error(xpar_stdin)) FATAL_IO("cannot read standard input");  break; }
   }
   if (filled) {
-    FATAL_UNLESS(slices < max_s, "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
-                 "-slice data limit; "
-                 "raise -s or use --spool", field,
-                 max_s);
+    FATAL_UNLESS(slices < max_s,
+                 "the pipe exceeds GF(2^%" PRIu8 ")'s %" PRIu64
+                 "-slice data limit; raise -s or use --spool", field, max_s);
     xpar_memset(data + filled, 0, (sz) (z - filled));
     create_pipe_accumulate(cd, workers, data, rec, r, slices, (sz) z);
     slices++;
@@ -1441,7 +1432,7 @@ static int create_from_pipe_direct(const xpar_options * o) {
   rc = create_regular(&nested, &ready);
 
   if (xpar_lstat(stage, &st) == 0 && xpar_remove(stage) != 0 && o->verbose)
-    xpar_fprintf(xpar_stderr, "xpar: warning: could not remove spool '%s'\n",
+    xpar_fprintf(xpar_stderr, "xpar: warning: cannot remove spool '%s'\n",
                  stage);
   xpar_free(stage);  xpar_free(parent);  xpar_free(final);
   xpar_free(outdir);
@@ -1493,8 +1484,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->json) xpar_progress_sink(&c.prog, xpar_json_progress_sink, &c.js);
 
   c.wr.reproducible = o->reproducible;
-  {
-    u32 lit = o->preserve_explicit;
+  { u32 lit = o->preserve_explicit;
     c.wr.keep_mtime = (lit & XPAR_PRES_MTIME) != 0;
     c.wr.keep_atime = (lit & XPAR_PRES_ATIME) != 0;
     c.wr.keep_ctime = (lit & XPAR_PRES_CTIME) != 0;
@@ -1661,7 +1651,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       c.stream_cache = NULL;
       c.stream_cache_length = 0;
     } else {
-      c.stream_cache = (u8 *) xpar_realloc(
+      c.stream_cache = xpar_realloc(
         c.stream_cache, (sz) (padded ? padded : 1));
       if (padded > c.stream_cache_length)
         xpar_memset(c.stream_cache + c.stream_cache_length, 0,
@@ -1671,8 +1661,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   }
 
   /*  Account for the deduplication index.  */
-  {
-    u64 idx = 32 * (u64) c.m.count;
+  { u64 idx = 32 * (u64) c.m.count;
     if (o->memory && o->dedup != XPAR_DEDUP_NONE &&
         c.plan.mem_total + idx > budget)
       FATAL_CODE(XPAR_EXIT_NOPLAN,
@@ -1684,8 +1673,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (o->verbose && !o->json)
     xpar_plan_print(&c.plan, xpar_stderr, o->verbose > 1);
 
-  {
-    char advice[192];
+  { char advice[192];
     if (!o->quiet && xpar_plan_pass_advice(&pr, &c.plan, advice,
                                            sizeof advice))
       xpar_fprintf(xpar_stderr, "xpar: warning: %s\n", advice);
@@ -1712,8 +1700,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   c.sd.codec            = c.plan.codec;
   /*  FFT recovery is prefix-stable only inside its recorded power-of-two
       axis; --max-recovery may reserve a wider axis at no encode cost.  */
-  {
-    u64 axis = c.recovery;
+  { u64 axis = c.recovery;
     if (o->max_recovery.kind != XPAR_R_NONE) {
       u64 mx = resolve_recovery(&o->max_recovery, c.geom.slice_count,
                                 c.geom.slice_size, 0);
@@ -1727,7 +1714,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     else
       c.sd.recovery_axis_log2 =
         (u8) xpar_log2_floor(xpar_next_pow2(axis));
-    /* No recovery needs no codec axis. */
+    /*  No recovery needs no codec axis.  */
     FATAL_UNLESS(!c.recovery ||
                  xpar_codec_supports_axis(c.plan.codec, c.plan.field_log2,
                                           c.geom.slice_count, c.recovery,
@@ -1782,9 +1769,9 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   if (c.recovery && o->layout != XPAR_LAYOUT_ARMOURED) {
     u64 cap = o->volumes == XPAR_VOLS_FIXED
                 ? MIN(c.recovery, (u64) o->volume_count) : 64;
-    FATAL_UNLESS(cap <= (u64) (sz) -1 / sizeof(*span),
+    FATAL_UNLESS(cap <= (u64) (sz) -1 / sizeof *span,
                  "the recovery-volume count is too large for this host");
-    span = (vol_span *) xpar_alloc_raw((sz) cap * sizeof(*span));
+    span = xpar_alloc_raw((sz) cap * sizeof *span);
     nvol = ladder(o, c.recovery, span, (u32) cap);
     FATAL_UNLESS(nvol && span[nvol - 1].first + span[nvol - 1].count ==
                          c.recovery,
@@ -1799,8 +1786,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   { u64 widest = 0;
     Fi(nvol, widest = MAX(widest, span[i].count));
     xpar_vname_widths(c.recovery ? c.recovery - 1 : 0, widest, &wf, &wc); }
-  names = (char **) xpar_calloc(name_count ? name_count : 1,
-                                 sizeof(char *));
+  names = xpar_calloc(name_count, sizeof *names);
   names[0] = xpar_vname_index(c.base, 0);
   Fi(nvol,
     names[i + 1] = xpar_vname_recovery(c.base, 0, span[i].first,
@@ -1832,18 +1818,17 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   layt.this_volume = XPAR_VOL_STANDALONE;
   layt.count = o->layout == XPAR_LAYOUT_ARMOURED
                  ? 1 : nvol + 1 + data_n;
-  layt.vol = (xpar_vol *) xpar_calloc(layt.count, sizeof(xpar_vol));
+  layt.vol = xpar_calloc(layt.count, sizeof *layt.vol);
   layt.vol[0].kind   = XPAR_VOL_INDEX;
   /*  Bit 0 identifies the armoured index.  */
   layt.vol[0].vflags = o->layout == XPAR_LAYOUT_ARMOURED;
   layt.vol[0].name   = xpar_strdup(xpar_path_base(names[0]));
-  for (i = 0; i < nvol && o->layout != XPAR_LAYOUT_ARMOURED; i++) {
-    layt.vol[i + 1].kind           = XPAR_VOL_RECOVERY;
-    layt.vol[i + 1].recovery_first = (u32) span[i].first;
-    layt.vol[i + 1].byte_length    = span[i].count;
-    layt.vol[i + 1].name           =
-      xpar_strdup(xpar_path_base(names[i + 1]));
-  }
+  if (o->layout != XPAR_LAYOUT_ARMOURED)
+    Fi(nvol,
+      layt.vol[i + 1].kind           = XPAR_VOL_RECOVERY;
+      layt.vol[i + 1].recovery_first = (u32) span[i].first;
+      layt.vol[i + 1].byte_length    = span[i].count;
+      layt.vol[i + 1].name = xpar_strdup(xpar_path_base(names[i + 1])));
   if (o->layout == XPAR_LAYOUT_SPLIT) {
     /*  Spread the remainder across the leading volumes.  */
     u64 base = data_n ? c.geom.slice_count / data_n : 0;
@@ -1874,8 +1859,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   cr.layt        = &layt;
 
   /*  Replication placement depends on the encoded critical-group size.  */
-  {
-    xpar_buf probe;
+  { xpar_buf probe;
     xpar_buf_init(&probe);
     emit_crit(&c, &probe, &cr);
     crit_bytes = probe.len;
@@ -1883,7 +1867,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   }
 
   output_stage = create_output_stage(c.base);
-  write_names = (char **) xpar_calloc(name_count, sizeof(char *));
+  write_names = xpar_calloc(name_count, sizeof *write_names);
   Fi(name_count, write_names[i] = xpar_path_join(output_stage, xpar_path_base(names[i])));
   if (ready && ready->final_path) {
     Fi(name_count,
@@ -1904,7 +1888,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     xpar_armsink sk;
     xpar_file * f;
     reader rd;
-    u64 stream_at, plain_len, i2;
+    u64 stream_at, plain_len, j;
     u8 * slice;
     xpar_buf crtr;
     u64 strm_len = xpar_align_up(XPAR_PKT_HDR + 16 + c.geom.stream_length,
@@ -1946,33 +1930,30 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
     xpar_armsink_init(&sk, ra, f);
     xpar_armsink_tune(&sk, c.plan.mem_armour, o->jobs);
     xpar_armsink_put(&sk, head.data, head.len);
-    slice = (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
+    slice = xpar_alloc_raw((sz) c.geom.slice_size);
     rd_init(&rd, &c);
-    for (i2 = 0; i2 < c.geom.slice_count; i2++) {
-      u64 have = xpar_slice_bytes(&c.geom, i2);
+    Fj(c.geom.slice_count,
+      u64 have = xpar_slice_bytes(&c.geom, j);
       if (!have) break;
-      rd_bytes(&rd, xpar_slice_begin(&c.geom, i2), slice, have);
-      xpar_armsink_put(&sk, slice, have);
-    }
+      rd_bytes(&rd, xpar_slice_begin(&c.geom, j), slice, have);
+      xpar_armsink_put(&sk, slice, have));
     rd_free(&rd);
-    {
-      u64 pad = strm_len - (XPAR_PKT_HDR + 16 + c.geom.stream_length);
+    { u64 pad = strm_len - (XPAR_PKT_HDR + 16 + c.geom.stream_length);
       u8 zero[XPAR_PKT_ALIGN];
       xpar_memset(zero, 0, sizeof zero);
       if (pad) xpar_armsink_put(&sk, zero, pad);
     }
     xpar_armsink_put(&sk, tail.data, tail.len);
-    for (i2 = 0; i2 < c.recovery; i2++) {
+    Fj(c.recovery,
       static const u8 zero[XPAR_PKT_ALIGN] = { 0 };
       u8 rcvs_head[XPAR_PKT_HDR + 16];
-      const u8 * p = rs_data(rsp, i2, slice);
+      const u8 * p = rs_data(rsp, j, slice);
       u32 pad = xpar_rcvs_stream_header(
-                  rcvs_head, i2, p, (sz) c.geom.slice_size, c.set_id,
+                  rcvs_head, j, p, (sz) c.geom.slice_size, c.set_id,
                   create_key(&c));
       xpar_armsink_put(&sk, rcvs_head, sizeof rcvs_head);
       xpar_armsink_put(&sk, p, (sz) c.geom.slice_size);
-      if (pad) xpar_armsink_put(&sk, zero, pad);
-    }
+      if (pad) xpar_armsink_put(&sk, zero, pad));
     xpar_free(slice);
     xpar_armsink_put(&sk, crtr.data, crtr.len);
     xpar_armsink_flush(&sk);
@@ -2004,14 +1985,14 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       xpar_xwrite(f, b.data, b.len);
       xpar_buf_free(&b);
       scratch = rsp->mem ? NULL
-                         : (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
+                         : xpar_alloc_raw((sz) c.geom.slice_size);
       if (c.wrap) {
         /*  Wrap each recovery slice separately for random access.  */
         u64 plen = xpar_align_up(XPAR_PKT_HDR + 16 + c.geom.slice_size,
                                  XPAR_PKT_ALIGN);
         xpar_armour_params rap;
         xpar_armour * ra;
-        u8 * pkt = (u8 *) xpar_calloc((sz) plen, 1);
+        u8 * pkt = xpar_calloc((sz) plen, 1);
         xpar_buf wb;
         xpar_armour_wrap_params(o, plen, &rap);
         ra = xpar_armour_new(&rap);
@@ -2054,7 +2035,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
       /*  Split data volumes concatenate to the exact unpadded stream.  */
       reader rd;
       u8 * p;
-      p = (u8 *) xpar_alloc_raw((sz) c.geom.slice_size);
+      p = xpar_alloc_raw((sz) c.geom.slice_size);
       rd_init(&rd, &c);
       Fi(data_n,
         u32 li = nvol + 1 + i;
@@ -2071,7 +2052,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
           u64 take = MIN(left, c.geom.slice_size);
           rd_bytes(&rd, at, p, take);
           xpar_xwrite(f, p, (sz) take);
-          at += take; left -= take;
+          at += take;  left -= take;
         }
         if (f) xpar_xclose(f);
         if (o->labels) {
@@ -2116,8 +2097,8 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
                     ", burst tolerance %" PRIu64 " bytes",
                     armour_burst(&c.region_ap));
     xpar_fprintf(xpar_stderr, "xpar: %s: %" PRIu32 " %s, %" PRIu64
-                 " slice%s of %" PRIu64 " "
-                 "bytes, %" PRIu64 " recovery slice%s in %" PRIu32 " volume%s%s\n", c.base,
+                 " slice%s of %" PRIu64 " bytes, %" PRIu64
+                 " recovery slice%s in %" PRIu32 " volume%s%s\n", c.base,
                  c.m.count,
                  c.m.count == 1 ? "entry" : "entries",
                  c.geom.slice_count,
@@ -2137,7 +2118,7 @@ static int create_regular(const xpar_options * o, pipe_ready * ready) {
   xpar_free(span);
   Fi(name_count, xpar_free(names[i]));
   xpar_free(names);
-  /* The layout owns its names. */
+  /*  The layout owns its names.  */
   xpar_layt_free(&layt);
   xpar_free(c.sd.file_id);
   xpar_free(c.slice_crc);

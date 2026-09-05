@@ -17,30 +17,30 @@
 #include "crc32c.h"
 
 #if defined(XPAR_CRC32C_VARIANT_SSE42)
-  #include <immintrin.h>
-  #include "platform/port-cpu.h"
-  #define XPAR_CRC_SFX _sse42
-  #if defined(__x86_64__) || defined(_M_X64)
-    #define XPAR_CRC_W 8
-    #define XPAR_CRC_WORD(c, v) ((u32) _mm_crc32_u64((u64) (c), (u64) (v)))
-  #else
-    #define XPAR_CRC_W 4
-    #define XPAR_CRC_WORD(c, v) _mm_crc32_u32((c), (u32) (v))
-  #endif
-  #define XPAR_CRC_BYTE(c, b) _mm_crc32_u8((c), (b))
-#elif defined(XPAR_CRC32C_VARIANT_ARM)
-  #include <arm_acle.h>
-  #define XPAR_CRC_SFX _arm
-  #if defined(__aarch64__)
-    #define XPAR_CRC_W 8
-    #define XPAR_CRC_WORD(c, v) __crc32cd((c), (u64) (v))
-  #else
-    #define XPAR_CRC_W 4
-    #define XPAR_CRC_WORD(c, v) __crc32cw((c), (u32) (v))
-  #endif
-  #define XPAR_CRC_BYTE(c, b) __crc32cb((c), (b))
+#include <immintrin.h>
+#include "platform/port-cpu.h"
+#define XPAR_CRC_SFX _sse42
+#if defined(__x86_64__) || defined(_M_X64)
+#define XPAR_CRC_W 8
+#define XPAR_CRC_WORD(c, v) ((u32) _mm_crc32_u64((u64) (c), (u64) (v)))
 #else
-  #define XPAR_CRC_SFX _scalar
+#define XPAR_CRC_W 4
+#define XPAR_CRC_WORD(c, v) _mm_crc32_u32((c), (u32) (v))
+#endif
+#define XPAR_CRC_BYTE(c, b) _mm_crc32_u8((c), (b))
+#elif defined(XPAR_CRC32C_VARIANT_ARM)
+#include <arm_acle.h>
+#define XPAR_CRC_SFX _arm
+#if defined(__aarch64__)
+#define XPAR_CRC_W 8
+#define XPAR_CRC_WORD(c, v) __crc32cd((c), (u64) (v))
+#else
+#define XPAR_CRC_W 4
+#define XPAR_CRC_WORD(c, v) __crc32cw((c), (u32) (v))
+#endif
+#define XPAR_CRC_BYTE(c, b) __crc32cb((c), (b))
+#else
+#define XPAR_CRC_SFX _scalar
 #endif
 
 #define XPAR_CRC_CAT2(a, b) a##b

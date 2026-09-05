@@ -22,10 +22,10 @@
 #endif
 
 #if !defined(_WIN32_WINNT)
-  #define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0600
 #endif
 #if !defined(WINVER)
-  #define WINVER _WIN32_WINNT
+#define WINVER _WIN32_WINNT
 #endif
 
 #define WIN32_LEAN_AND_MEAN
@@ -87,7 +87,7 @@ struct xpar_file {
 #endif
 };
 
-/* Handles are assigned during host initialization. */
+/*  Handles are assigned during host initialization.  */
 static struct xpar_file g_stdin;
 static struct xpar_file g_stdout;
 static struct xpar_file g_stderr;
@@ -116,7 +116,7 @@ static wchar_t * win_final_name(HANDLE h) {
                                       FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
   wchar_t * out;
   if (!n) return NULL;
-  out = HeapAlloc(GetProcessHeap(), 0, ((sz) n + 1) * sizeof(*out));
+  out = HeapAlloc(GetProcessHeap(), 0, ((sz) n + 1) * sizeof *out);
   if (!out) return NULL;
   if (!GetFinalPathNameByHandleW(h, out, n + 1,
                                  FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)) {
@@ -191,9 +191,9 @@ static HANDLE win_open_nofollow(const wchar_t * path, DWORD access,
   HANDLE ph, h;
   BY_HANDLE_FILE_INFORMATION info;
   FILE_DISPOSITION_INFO dispose;
-  full = HeapAlloc(GetProcessHeap(), 0, ((sz) n + 1) * sizeof(*full));
+  full = HeapAlloc(GetProcessHeap(), 0, ((sz) n + 1) * sizeof *full);
   if (!full) { SetLastError(ERROR_OUTOFMEMORY);  return INVALID_HANDLE_VALUE; }
-  xpar_memcpy(full, path, (n + 1) * sizeof(*full));
+  xpar_memcpy(full, path, (n + 1) * sizeof *full);
   if (!win_safe_prefixes(full)) {
     HeapFree(GetProcessHeap(), 0, full);
     return INVALID_HANDLE_VALUE;
@@ -289,7 +289,7 @@ xpar_file * xpar_open(const char * path, int flags) {
     HeapFree(GetProcessHeap(), 0, wp); }
 #endif
   if (h == INVALID_HANDLE_VALUE) return NULL;
-  f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
+  f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *f);
   if (!f) { CloseHandle(h);  SetLastError(ERROR_OUTOFMEMORY);  return NULL; }
   f->h = h;  f->kind = GetFileType(h);  f->owned = true;
   f->writable = (access & (GENERIC_WRITE | FILE_APPEND_DATA)) != 0;
@@ -315,12 +315,12 @@ int xpar_close(xpar_file * f) {
   return r;
 }
 
-#define WIN_CHUNK 0x40000000u
+#define WIN_CHUNK 0x40000000U
 
 sz xpar_read(xpar_file * f, void * buf, sz n) {
-  f->last_err = 0;
   sz total = 0;
-  char * p = (char *) buf;
+  char * p = buf;
+  f->last_err = 0;
   while (total < n) {
     DWORD want = (n - total > WIN_CHUNK) ? WIN_CHUNK : (DWORD) (n - total);
     DWORD got;
@@ -338,9 +338,9 @@ sz xpar_read(xpar_file * f, void * buf, sz n) {
 }
 
 sz xpar_write(xpar_file * f, const void * buf, sz n) {
-  f->last_err = 0;
   sz total = 0;
-  const char * p = (const char *) buf;
+  const char * p = buf;
+  f->last_err = 0;
   while (total < n) {
     DWORD want = (n - total > WIN_CHUNK) ? WIN_CHUNK : (DWORD) (n - total);
     DWORD wrote;
@@ -355,21 +355,26 @@ sz xpar_write(xpar_file * f, const void * buf, sz n) {
 }
 
 int xpar_seek(xpar_file * f, i64 off, int whence) {
-  f->last_err = 0;
-  DWORD method = whence == XPAR_SEEK_SET ? FILE_BEGIN
-               : whence == XPAR_SEEK_CUR ? FILE_CURRENT : FILE_END;
+  DWORD method;
 #if _WIN32_WINNT >= 0x0500
   LARGE_INTEGER li;
+#else
+  LONG hi;
+  DWORD got;
+#endif
+  f->last_err = 0;
+  method = whence == XPAR_SEEK_SET ? FILE_BEGIN
+         : whence == XPAR_SEEK_CUR ? FILE_CURRENT : FILE_END;
+#if _WIN32_WINNT >= 0x0500
   li.QuadPart = off;
   if (!SetFilePointerEx(f->h, li, NULL, method)) { f->last_err = GetLastError();  return -1; }
 #else
   /*  Pre-Win2K has no SetFilePointerEx, and SetFilePointer signals failure
       with a value that is also a legal position, so the error case is
       disambiguated through GetLastError.  */
-  LONG hi = (LONG) ((u64) off >> 32);
-  DWORD got;
+  hi = (LONG) ((u64) off >> 32);
   SetLastError(NO_ERROR);
-  got = SetFilePointer(f->h, (LONG) ((u64) off & 0xFFFFFFFFu), &hi, method);
+  got = SetFilePointer(f->h, (LONG) ((u64) off & 0xFFFFFFFFU), &hi, method);
   if (got == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
     f->last_err = GetLastError();
     return -1;
@@ -433,10 +438,10 @@ int  xpar_error(xpar_file * f) { return (int) f->last_err; }
     signed file offset as the cooperating-writer marker, so ordinary reads,
     writes, and truncation do not overlap it. Windows permits locking a range
     beyond end of file.  */
-#define WIN_LOCK_OFF_LO  0xFFFFFFFEu
-#define WIN_LOCK_OFF_HI  0x7FFFFFFFu
-#define WIN_LOCK_LEN_LO  1u
-#define WIN_LOCK_LEN_HI  0u
+#define WIN_LOCK_OFF_LO  0xFFFFFFFEU
+#define WIN_LOCK_OFF_HI  0x7FFFFFFFU
+#define WIN_LOCK_LEN_LO  1U
+#define WIN_LOCK_LEN_HI  0U
 
 int xpar_lock(xpar_file * f, bool exclusive) {
 #if defined(XPAR_WIN_LEGACY)
@@ -481,9 +486,9 @@ int xpar_unlock(xpar_file * f) {
 bool xpar_lock_supported(void) { return true; }
 
 sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
-  f->last_err = 0;
   sz total = 0;
-  char * p = (char *) buf;
+  char * p = buf;
+  f->last_err = 0;
   while (total < n) {
     DWORD want = (n - total > WIN_CHUNK) ? WIN_CHUNK : (DWORD) (n - total);
     DWORD got = 0;
@@ -493,7 +498,7 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
     { LONG hi = (LONG) ((off + total) >> 32);
       DWORD pos;
       SetLastError(NO_ERROR);
-      pos = SetFilePointer(f->h, (LONG) ((off + total) & 0xFFFFFFFFu), &hi,
+      pos = SetFilePointer(f->h, (LONG) ((off + total) & 0xFFFFFFFFU), &hi,
                            FILE_BEGIN);
       ok = !(pos == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR);
       if (ok) ok = ReadFile(f->h, p + total, want, &got, NULL); }
@@ -501,7 +506,7 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
 #else
     OVERLAPPED ov;
     xpar_memset(&ov, 0, sizeof ov);
-    ov.Offset     = (DWORD) ((off + total) & 0xFFFFFFFFu);
+    ov.Offset     = (DWORD) ((off + total) & 0xFFFFFFFFU);
     ov.OffsetHigh = (DWORD) ((off + total) >> 32);
     ok = ReadFile(f->h, p + total, want, &got, &ov);
     /*  On a handle opened without FILE_FLAG_OVERLAPPED the call still
@@ -509,7 +514,7 @@ sz xpar_pread(xpar_file * f, void * buf, sz n, u64 off) {
         how a read past the end reports itself in this form.  */
     if (!ok && GetLastError() == ERROR_HANDLE_EOF) break;
 #endif
-    /* Positional reads do not update the sequential EOF state. */
+    /*  Positional reads do not update the sequential EOF state.  */
     if (!ok) { f->last_err = GetLastError();  break; }
     if (got == 0) break;
     total += got;
@@ -522,9 +527,9 @@ bool xpar_pread_batch(xpar_read_req * r, sz count) {
 }
 
 sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
-  f->last_err = 0;
   sz total = 0;
-  const char * p = (const char *) buf;
+  const char * p = buf;
+  f->last_err = 0;
   while (total < n) {
     DWORD want = (n - total > WIN_CHUNK) ? WIN_CHUNK : (DWORD) (n - total);
     DWORD wrote = 0;
@@ -534,7 +539,7 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
     { LONG hi = (LONG) ((off + total) >> 32);
       DWORD pos;
       SetLastError(NO_ERROR);
-      pos = SetFilePointer(f->h, (LONG) ((off + total) & 0xFFFFFFFFu), &hi,
+      pos = SetFilePointer(f->h, (LONG) ((off + total) & 0xFFFFFFFFU), &hi,
                            FILE_BEGIN);
       ok = !(pos == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR);
       if (ok) ok = WriteFile(f->h, p + total, want, &wrote, NULL); }
@@ -542,7 +547,7 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
 #else
     OVERLAPPED ov;
     xpar_memset(&ov, 0, sizeof ov);
-    ov.Offset     = (DWORD) ((off + total) & 0xFFFFFFFFu);
+    ov.Offset     = (DWORD) ((off + total) & 0xFFFFFFFFU);
     ov.OffsetHigh = (DWORD) ((off + total) >> 32);
     ok = WriteFile(f->h, p + total, want, &wrote, &ov);
 #endif
@@ -554,9 +559,10 @@ sz xpar_pwrite(xpar_file * f, const void * buf, sz n, u64 off) {
 }
 
 int xpar_ftruncate(xpar_file * f, u64 length) {
-  f->last_err = 0;
-  i64 keep = xpar_tell(f);
+  i64 keep;
   int r = 0;
+  f->last_err = 0;
+  keep = xpar_tell(f);
   if (xpar_seek(f, (i64) length, XPAR_SEEK_SET) != 0) return -1;
   if (!SetEndOfFile(f->h)) { f->last_err = GetLastError();  r = -1; }
   /*  SetEndOfFile truncates at the file pointer, so the pointer the caller
@@ -632,7 +638,7 @@ xpar_mmap xpar_map(const char * path) {
   fm = CreateFileMappingW(fh, NULL, PAGE_READONLY, size_hi, size_lo, NULL);
 #endif
   if (!fm) { CloseHandle(fh);  return m; }
-  m.map = (u8 *) MapViewOfFile(fm, FILE_MAP_READ, 0, 0, 0);
+  m.map = MapViewOfFile(fm, FILE_MAP_READ, 0, 0, 0);
   CloseHandle(fm);
   CloseHandle(fh);
   if (!m.map) return m;
@@ -666,12 +672,13 @@ void * xpar_malloc(sz n) {
 }
 
 void * xpar_calloc(sz n, sz size) {
+  void * p;
   if (n && size && n > (sz) -1 / size) FATAL_CODE(XPAR_EXIT_NOPLAN,
                               "allocation size overflow");
-  { void * p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                         n && size ? n * size : 1);
-    if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
-    return p; }
+  p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                n && size ? n * size : 1);
+  if (!p) FATAL_CODE(XPAR_EXIT_NOPLAN, "out of memory");
+  return p;
 }
 
 void * xpar_alloc_raw(sz n) {
@@ -740,7 +747,6 @@ u64 xpar_physical_memory(void) {
     never correctness.  */
 bool xpar_is_rotational(const char * path) { (void) path;  return false; }
 
-
 static void write_raw(xpar_file * f, const char * s, sz n) {
 #if defined(XPAR_WIN_LEGACY)
   if (f == xpar_stdout || f == xpar_stderr) {
@@ -762,8 +768,8 @@ static void write_raw(xpar_file * f, const char * s, sz n) {
     int wn = MultiByteToWideChar(CP_UTF8, 0, s, (int) n, NULL, 0);
     if (wn > 0) {
       wchar_t stack[512], * w = stack;
-      if ((sz) wn > sizeof stack / sizeof stack[0])
-        w = HeapAlloc(GetProcessHeap(), 0, (sz) wn * sizeof(wchar_t));
+      if ((sz) wn > ARRAY_LEN(stack))
+        w = HeapAlloc(GetProcessHeap(), 0, (sz) wn * sizeof *w);
       if (w) {
         DWORD written;
         MultiByteToWideChar(CP_UTF8, 0, s, (int) n, w, wn);
@@ -780,7 +786,6 @@ static void write_raw(xpar_file * f, const char * s, sz n) {
 void xpar_port_write_text(xpar_file * f, const char * s, sz n) {
   write_raw(f, s, n);
 }
-
 
 void xpar_exit(int code) { ExitProcess((UINT) code); }
 
@@ -803,7 +808,7 @@ const char * xpar_strerror(int err) {
   wchar_t wbuf[160];
   DWORD n = FormatMessageW(
     FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
-    (DWORD) err, 0, wbuf, sizeof wbuf / sizeof wbuf[0] - 1, NULL);
+    (DWORD) err, 0, wbuf, ARRAY_LEN(wbuf) - 1, NULL);
   if (n == 0) {
     xpar_snprintf(g_errbuf, sizeof g_errbuf, "Windows error %d", err);
     return g_errbuf;
@@ -857,40 +862,44 @@ typedef BOOL (WINAPI * crypt_gen_fn)(HCRYPTPROV, DWORD, BYTE *);
 typedef BOOL (WINAPI * crypt_release_fn)(HCRYPTPROV, DWORD);
 
 void xpar_random_bytes(void * buf, sz n) {
-  HMODULE adv = LoadLibraryA("advapi32.dll");
+  HMODULE adv;
+  rtl_gen_random_fn gen;
+  crypt_acquire_fn acq;
+  crypt_gen_fn cgen;
+  crypt_release_fn rel;
+  HCRYPTPROV prov = 0;
+  adv = LoadLibraryA("advapi32.dll");
   if (adv) {
-    rtl_gen_random_fn gen =
-      (rtl_gen_random_fn) (void *) GetProcAddress(adv, "SystemFunction036");
+    gen = (rtl_gen_random_fn) (void *)
+      GetProcAddress(adv, "SystemFunction036");
     if (gen) {
       sz done = 0;
       while (done < n) {
-        ULONG want = n - done > 0x10000000u ? 0x10000000u
+        ULONG want = n - done > 0x10000000U ? 0x10000000U
                                             : (ULONG) (n - done);
         if (!gen((u8 *) buf + done, want)) break;
         done += want;
       }
       if (done == n) { FreeLibrary(adv);  return; }
     }
-    { crypt_acquire_fn acq = (crypt_acquire_fn) (void *)
-        GetProcAddress(adv, "CryptAcquireContextA");
-      crypt_gen_fn cgen = (crypt_gen_fn) (void *)
-        GetProcAddress(adv, "CryptGenRandom");
-      crypt_release_fn rel = (crypt_release_fn) (void *)
-        GetProcAddress(adv, "CryptReleaseContext");
-      HCRYPTPROV prov = 0;
-      if (acq && cgen && rel &&
-          acq(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
-        BOOL ok = cgen(prov, (DWORD) n, (BYTE *) buf);
-        rel(prov, 0);
-        if (ok) { FreeLibrary(adv);  return; }
-      } }
+    acq = (crypt_acquire_fn) (void *)
+      GetProcAddress(adv, "CryptAcquireContextA");
+    cgen = (crypt_gen_fn) (void *)
+      GetProcAddress(adv, "CryptGenRandom");
+    rel = (crypt_release_fn) (void *)
+      GetProcAddress(adv, "CryptReleaseContext");
+    if (acq && cgen && rel &&
+        acq(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+      BOOL ok = cgen(prov, (DWORD) n, (BYTE *) buf);
+      rel(prov, 0);
+      if (ok) { FreeLibrary(adv);  return; }
+    }
     FreeLibrary(adv);
   }
   FATAL("no source of cryptographically strong random bytes");
 }
 
 #if !defined(XPAR_WIN_LEGACY)
-
 
 #define XPAR_ARGV_CH wchar_t
 #define XPAR_ARGV_L(c) L##c
@@ -906,7 +915,7 @@ static int utf8_argv(int * argc_out, char *** argv_out) {
   int wargc = split_cmdline(GetCommandLineW(), &wargv), i;
   if (wargc < 0) return -1;
   argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                   (sz) (wargc + 1) * sizeof(char *));
+                   (sz) (wargc + 1) * sizeof *argv);
   if (!argv) return -1;
   Fi(wargc,
     argv[i] = to_utf8(wargv[i]);
@@ -974,7 +983,7 @@ static unsigned crash_frames(EXCEPTION_POINTERS * ep, void ** out,
 
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS * ep) {
   void * frames[XPAR_CRASH_FRAMES];
-  const void * base = (const void *) GetModuleHandleA(NULL);
+  const void * base = GetModuleHandleA(NULL);
   const void * pc = NULL, * addr = NULL;
   int have_addr = 0;
   DWORD code = 0;

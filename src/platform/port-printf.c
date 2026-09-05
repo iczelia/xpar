@@ -64,7 +64,7 @@ static void emit_int(fmt_ctx * c, i64 v, int width, int prec, int flags) {
   if (v < 0)                { sign = '-';  uv = (u64) (-(v + 1)) + 1; }
   else if (flags & F_PLUS)  { sign = '+';  uv = (u64) v; }
   else if (flags & F_SPACE) { sign = ' ';  uv = (u64) v; }
-  else                      { uv = (u64) v; }
+  else uv = (u64) v;
   if (sign) {
     if (width > 0 && !(flags & F_MINUS) && !(flags & F_ZERO)) {
       char tmp[32];
@@ -101,9 +101,9 @@ static void emit_double(fmt_ctx * c, double v, int width, int prec,
   int in = 0, total, pad, keep, i;
   if (prec < 0) prec = 6;
   keep = prec > FMT_PREC_MAX ? FMT_PREC_MAX : prec;
-  if (v < 0)                { sign = '-';  v = -v; }
-  else if (flags & F_PLUS)  { sign = '+'; }
-  else if (flags & F_SPACE) { sign = ' '; }
+  if (v < 0) { sign = '-';  v = -v; }
+  else if (flags & F_PLUS) sign = '+';
+  else if (flags & F_SPACE) sign = ' ';
   ip   = (u64) v;
   frac = v - (double) ip;
   Fi(keep, mult *= 10);

@@ -67,10 +67,10 @@ static inline u32 xpar_crc32c_roll_step(const xpar_crc32c_roll * r, u32 crc,
 #define XPAR_CRC32C_SHORT   256
 
 /*  Bit-reversed x^(8n-32) mod G constants for three-way recombination.  */
-#define XPAR_CRC_K_LONG2  0x0EE201E6u   /*  n = 2 * 8192  */
-#define XPAR_CRC_K_LONG   0x2A543193u   /*  n = 8192      */
-#define XPAR_CRC_K_SHORT2 0x6EBF1D86u   /*  n = 2 * 256   */
-#define XPAR_CRC_K_SHORT  0x5CF015C3u   /*  n = 256       */
+#define XPAR_CRC_K_LONG2  0x0EE201E6U   /*  n = 2 * 8192  */
+#define XPAR_CRC_K_LONG   0x2A543193U   /*  n = 8192      */
+#define XPAR_CRC_K_SHORT2 0x6EBF1D86U   /*  n = 2 * 256   */
+#define XPAR_CRC_K_SHORT  0x5CF015C3U   /*  n = 256       */
 
 /*  Slice-by-eight tables, filled by xpar_crc32c_init.  */
 extern u32 xpar_crc32c_tab[8][256];

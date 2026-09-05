@@ -21,14 +21,14 @@
 
 /*  Capabilities.  */
 
-#define XPAR_FS_LINKID     (1u << 0)  /*  (dev, ino) is a real identity  */
-#define XPAR_FS_HARDLINK   (1u << 1)  /*  links can be created here  */
-#define XPAR_FS_OWNER      (1u << 2)  /*  uid, gid and names exist  */
-#define XPAR_FS_XATTR      (1u << 3)
-#define XPAR_FS_BTIME      (1u << 4)  /*  creation time reads AND sets  */
-#define XPAR_FS_NSEC_TIME  (1u << 5)  /*  sub-second timestamps  */
-#define XPAR_FS_FATATTR    (1u << 6)  /*  the attrs bit field is meaningful  */
-#define XPAR_FS_NOFOLLOW   (1u << 7)  /*  every setter can skip a symlink  */
+#define XPAR_FS_LINKID     (1U << 0)  /*  (dev, ino) is a real identity  */
+#define XPAR_FS_HARDLINK   (1U << 1)  /*  links can be created here  */
+#define XPAR_FS_OWNER      (1U << 2)  /*  uid, gid and names exist  */
+#define XPAR_FS_XATTR      (1U << 3)
+#define XPAR_FS_BTIME      (1U << 4)  /*  creation time reads AND sets  */
+#define XPAR_FS_NSEC_TIME  (1U << 5)  /*  sub-second timestamps  */
+#define XPAR_FS_FATATTR    (1U << 6)  /*  the attrs bit field is meaningful  */
+#define XPAR_FS_NOFOLLOW   (1U << 7)  /*  every setter can skip a symlink  */
 
 /*  Filesystem capabilities at `path`, or 0; query parents before creation.  */
 u32 xpar_fs_caps(const char * path);
@@ -37,25 +37,25 @@ u32 xpar_fs_caps(const char * path);
 #define XPAR_TIME_NONE  INT64_MIN
 
 /*  POSIX permission bits only; entry type is separate.  */
-#define XPAR_MODE_SETUID  04000u
-#define XPAR_MODE_SETGID  02000u
-#define XPAR_MODE_STICKY  01000u
-#define XPAR_MODE_PERM    07777u
-#define XPAR_MODE_NONE    0xffffffffu   /*  host has no mode bits  */
+#define XPAR_MODE_SETUID  04000U
+#define XPAR_MODE_SETGID  02000U
+#define XPAR_MODE_STICKY  01000U
+#define XPAR_MODE_PERM    07777U
+#define XPAR_MODE_NONE    0xffffffffU   /*  host has no mode bits  */
 
-#define XPAR_ID_NONE      0xffffffffu   /*  no uid/gid  */
+#define XPAR_ID_NONE      0xffffffffU   /*  no uid/gid  */
 
-#define XPAR_ATTR_READONLY    (1u << 0)
-#define XPAR_ATTR_HIDDEN      (1u << 1)
-#define XPAR_ATTR_SYSTEM      (1u << 2)
-#define XPAR_ATTR_EXEC        (1u << 3)
-#define XPAR_ATTR_RAWNAME     (1u << 4)
-#define XPAR_ATTR_ARCHIVE     (1u << 5)
-#define XPAR_ATTR_NOINDEX     (1u << 6)
-#define XPAR_ATTR_SPARSE      (1u << 7)
-#define XPAR_ATTR_COMPRESSED  (1u << 8)
-#define XPAR_ATTR_ENCRYPTED   (1u << 9)
-#define XPAR_ATTR_SETID       (1u << 10)
+#define XPAR_ATTR_READONLY    (1U << 0)
+#define XPAR_ATTR_HIDDEN      (1U << 1)
+#define XPAR_ATTR_SYSTEM      (1U << 2)
+#define XPAR_ATTR_EXEC        (1U << 3)
+#define XPAR_ATTR_RAWNAME     (1U << 4)
+#define XPAR_ATTR_ARCHIVE     (1U << 5)
+#define XPAR_ATTR_NOINDEX     (1U << 6)
+#define XPAR_ATTR_SPARSE      (1U << 7)
+#define XPAR_ATTR_COMPRESSED  (1U << 8)
+#define XPAR_ATTR_ENCRYPTED   (1U << 9)
+#define XPAR_ATTR_SETID       (1U << 10)
 
 /*  Settable attributes; setters drop advisory bits.  */
 #define XPAR_ATTR_SETTABLE                                                    \

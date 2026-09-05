@@ -24,7 +24,7 @@
 #include "volname.h"
 
 static void * dup_bytes(const void * p, u32 n) {
-  u8 * q = (u8 *) xpar_alloc_raw((sz) n + 1);
+  u8 * q = xpar_alloc_raw((sz) n + 1);
   if (n) xpar_memcpy(q, p, n);
   q[n] = 0;
   return q;
@@ -35,7 +35,7 @@ static void * grow_to(void * p, u32 * cap, u32 need, sz elem) {
   u64 c = *cap ? *cap : 16;
   if (need <= *cap) return p;
   while (c < need) c *= 2;
-  if (c > 0x7FFFFFFFu) FATAL("too many manifest entries");
+  if (c > 0x7FFFFFFFU) FATAL("too many manifest entries");
   *cap = (u32) c;
   return xpar_realloc(p, (sz) c * elem);
 }
@@ -45,7 +45,7 @@ static void * grow_to(void * p, u32 * cap, u32 need, sz elem) {
 static u32 table_mask(u32 n) {
   u64 size = 16;
   while (size < (u64) n * 2 + 2) size *= 2;
-  if (size > 0x80000000u) FATAL("too many manifest entries");
+  if (size > 0x80000000U) FATAL("too many manifest entries");
   return (u32) (size - 1);
 }
 
@@ -77,9 +77,9 @@ bool xpar_utf8_valid(const u8 * p, u32 n) {
   while (i < n) {
     u32 c = p[i], need, lo, v, j;
     if (c < 0x80) { i++;  continue; }
-    if (c >= 0xC2 && c <= 0xDF)      { need = 1; lo = 0x80;    v = c & 0x1F; }
-    else if (c >= 0xE0 && c <= 0xEF) { need = 2; lo = 0x800;   v = c & 0x0F; }
-    else if (c >= 0xF0 && c <= 0xF4) { need = 3; lo = 0x10000; v = c & 0x07; }
+    if (c >= 0xC2 && c <= 0xDF)      { need = 1;  lo = 0x80;    v = c & 0x1F; }
+    else if (c >= 0xE0 && c <= 0xEF) { need = 2;  lo = 0x800;   v = c & 0x0F; }
+    else if (c >= 0xF0 && c <= 0xF4) { need = 3;  lo = 0x10000;  v = c & 0x07; }
     else return false;
     if (need > n - i - 1) return false;
     Fj(need,
@@ -120,10 +120,9 @@ static xpar_path_status check_component(const char * c, u32 n, u32 flags) {
   Fi(n,
     u8 b = (u8) c[i];
     if (b <= 0x1F) return XPAR_PATH_CONTROL;
-    if (flags & XPAR_PATH_WIN) {
-      if (b == '\\' || b == ':' || b == '*' || b == '?' || b == '"' ||
-          b == '<' || b == '>' || b == '|') return XPAR_PATH_WINCHAR;
-    });
+    if ((flags & XPAR_PATH_WIN) &&
+        (b == '\\' || b == ':' || b == '*' || b == '?' || b == '"' ||
+         b == '<' || b == '>' || b == '|')) return XPAR_PATH_WINCHAR);
   if (flags & XPAR_PATH_WIN) {
     if (c[n - 1] == '.' || c[n - 1] == ' ') return XPAR_PATH_WINTRAIL;
     if (is_win_device(c, n)) return XPAR_PATH_DEVICE;
@@ -138,11 +137,13 @@ const xpar_entry * xpar_manifest_unreachable(const xpar_manifest * m,
   u32 i;
   Fi(m->count,
     const xpar_entry * e = &m->entry[i];
+    char * at;
     xpar_stat_t st;
+    bool here;
     if (exempt && e->name_len == xpar_strlen(exempt) &&
         !xpar_memcmp(e->name, exempt, e->name_len)) continue;
-    char * at = xpar_path_join_n(dir, e->name, e->name_len);
-    bool here = xpar_lstat(at, &st) == 0;
+    at = xpar_path_join_n(dir, e->name, e->name_len);
+    here = xpar_lstat(at, &st) == 0;
     xpar_free(at);
     if (!here) return e);
   return NULL;
@@ -156,20 +157,19 @@ xpar_path_status xpar_path_check(const char * name, u32 len, u32 flags) {
   if (len >= 2 && name[1] == ':') return XPAR_PATH_DRIVE;
   if (len >= 2 && name[0] == '\\' && name[1] == '\\') return XPAR_PATH_UNC;
   if (name[len - 1] == '/') return XPAR_PATH_TRAILING_SLASH;
-  for (i = 0; i <= len; i++) {
+  Fi((sz) len + 1,
     if (i == len || name[i] == '/') {
       xpar_path_status s = check_component(name + start, i - start, flags);
       if (s != XPAR_PATH_OK) return s;
       start = i + 1;
-    }
-  }
+    });
   return XPAR_PATH_OK;
 }
 
 xpar_path_status xpar_symlink_target_check(const u8 * target, u32 len) {
+  u32 i;
   if (len == 0) return XPAR_PATH_EMPTY;
   if (len > XPAR_EXTRA_MAX) return XPAR_PATH_TOO_LONG;
-  u32 i;
   Fi(len, if (target[i] == 0) return XPAR_PATH_CONTROL);
   return XPAR_PATH_OK;
 }
@@ -213,11 +213,11 @@ char * xpar_path_resolve(const char * dir, const char * name, u32 len,
   xpar_path_status s =
       xpar_path_check(name, len, flags | xpar_host_path_flags());
   if (s != XPAR_PATH_OK) { *why = s;  return NULL; }
-  out = (char *) xpar_alloc_raw(off + len + 1);
+  out = xpar_alloc_raw(off + len + 1);
   if (dlen) { xpar_memcpy(out, dir, dlen);  out[dlen] = '/'; }
   xpar_memcpy(out + off, name, len);
   out[off + len] = 0;
-  for (i = 0; i <= len; i++) {
+  Fi((sz) len + 1,
     if (i == len && (flags & XPAR_PATH_LEAF_LINK)) break;
     if (i == len || name[i] == '/') {
       xpar_stat_t st;
@@ -230,8 +230,7 @@ char * xpar_path_resolve(const char * dir, const char * name, u32 len,
         return NULL;
       }
       out[cut] = keep;
-    }
-  }
+    });
   *why = XPAR_PATH_OK;
   return out;
 }
@@ -242,16 +241,14 @@ xpar_entry * xpar_manifest_append(xpar_manifest * m) {
   xpar_entry * e;
   if (m->count + 1 > m->cap) {
     u32 c1 = m->cap, c2 = m->cap;
-    m->entry  = (xpar_entry *) grow_to(m->entry, &c1, m->count + 1,
-                                       sizeof(xpar_entry));
-    m->source = (char **) grow_to(m->source, &c2, m->count + 1,
-                                  sizeof(char *));
+    m->entry  = grow_to(m->entry, &c1, m->count + 1, sizeof *m->entry);
+    m->source = grow_to(m->source, &c2, m->count + 1, sizeof *m->source);
     m->cap = c1;
   }
   e = &m->entry[m->count];
   m->source[m->count] = NULL;
   m->count++;
-  xpar_memset(e, 0, sizeof(*e));
+  xpar_memset(e, 0, sizeof *e);
   e->mode        = XPAR_ABSENT_U32;
   e->posix_index = XPAR_ABSENT_U32;
   e->mtime_ns = e->atime_ns = XPAR_ABSENT_TIME;
@@ -274,7 +271,7 @@ void xpar_manifest_free(xpar_manifest * m) {
     if (m->source) xpar_free(m->source[i]));
   Fi(m->posix_count, xpar_posix_rec_free(&m->posix[i]));
   xpar_free(m->entry);  xpar_free(m->source);  xpar_free(m->posix);
-  xpar_memset(m, 0, sizeof(*m));
+  xpar_memset(m, 0, sizeof *m);
 }
 
 /*  Heap-sort an index permutation without recursion or host qsort.  */
@@ -306,10 +303,9 @@ static void sort_names(const xpar_manifest * m, u32 * a, u32 n, bool fold) {
 }
 
 void xpar_nameidx_build(const xpar_manifest * m, xpar_nameidx * ix) {
-  ix->count = m->count;
-  ix->order = (u32 *) xpar_alloc_raw((m->count ? m->count : 1) *
-                                     sizeof(u32));
   u32 i;
+  ix->count = m->count;
+  ix->order = xpar_alloc_raw((m->count ? m->count : 1) * sizeof *ix->order);
   Fi(m->count, ix->order[i] = i);
   sort_names(m, ix->order, m->count, false);
 }
@@ -326,7 +322,7 @@ i64 xpar_nameidx_find(const xpar_manifest * m, const xpar_nameidx * ix,
     u32 mid = lo + (hi - lo) / 2, e = ix->order[mid];
     int c = xpar_name_cmp(m->entry[e].name, m->entry[e].name_len, name, len);
     if (c == 0) return (i64) e;
-    if (c < 0) lo = mid + 1; else hi = mid;
+    if (c < 0) lo = mid + 1;  else hi = mid;
   }
   return -1;
 }
@@ -337,7 +333,7 @@ void xpar_file_id(const xpar_entry * e, const u8 * key,
                   u8 out[XPAR_SET_ID_LEN]) {
   xpar_blake3_t h;
   u8 le[8];
-  if (key) xpar_blake3_init_keyed(&h, key); else xpar_blake3_init(&h);
+  if (key) xpar_blake3_init_keyed(&h, key);  else xpar_blake3_init(&h);
   xpar_blake3_update(&h, "xpar2 file id v1", 16);
   xpar_wr64(le, e->length);
   xpar_blake3_update(&h, le, 8);
@@ -348,7 +344,7 @@ void xpar_file_id(const xpar_entry * e, const u8 * key,
 
 void xpar_set_id_begin(xpar_set_id_ctx * c, const u8 * key,
                        const u8 * setd_body, sz n) {
-  if (key) xpar_blake3_init_keyed(&c->h, key); else xpar_blake3_init(&c->h);
+  if (key) xpar_blake3_init_keyed(&c->h, key);  else xpar_blake3_init(&c->h);
   xpar_blake3_update(&c->h, "xpar2 set id v1", 15);
   xpar_blake3_update(&c->h, setd_body, n);
 }
@@ -372,8 +368,7 @@ void xpar_extents_append(xpar_extent ** list, u32 * count, u32 * capacity,
   }
   if (*count == *capacity) {
     *capacity = *capacity ? *capacity * 2 : 8;
-    *list = (xpar_extent *) xpar_realloc(
-      *list, (sz) *capacity * sizeof(xpar_extent));
+    *list = xpar_realloc(*list, (sz) *capacity * sizeof **list);
   }
   e = &(*list)[(*count)++];
   e->stream_offset = stream_offset;
@@ -402,23 +397,21 @@ u32 xpar_posix_intern(xpar_manifest * m, const xpar_posix_rec * r) {
   xpar_posix_rec * d;
   u32 i, cap = m->posix_cap;
   Fi(m->posix_count, if (xpar_posix_equal(&m->posix[i], r)) return i);
-  m->posix = (xpar_posix_rec *) grow_to(m->posix, &cap, m->posix_count + 1,
-                                        sizeof(xpar_posix_rec));
+  m->posix = grow_to(m->posix, &cap, m->posix_count + 1, sizeof *m->posix);
   m->posix_cap = cap;
   d = &m->posix[m->posix_count];
-  xpar_memset(d, 0, sizeof(*d));
+  xpar_memset(d, 0, sizeof *d);
   d->uid = r->uid;  d->gid = r->gid;
   d->owner = r->owner ? xpar_strdup(r->owner) : NULL;
   d->group = r->group ? xpar_strdup(r->group) : NULL;
   d->xattr_count = r->xattr_count;
   if (r->xattr_count) {
-    d->xattrs = (xpar_xattr *) xpar_alloc_raw(r->xattr_count *
-                                              sizeof(xpar_xattr));
+    d->xattrs = xpar_alloc_raw(r->xattr_count * sizeof *d->xattrs);
     Fi(r->xattr_count,
       d->xattrs[i].name      = xpar_strdup(r->xattrs[i].name);
       d->xattrs[i].value_len = r->xattrs[i].value_len;
-      d->xattrs[i].value     = (u8 *) dup_bytes(r->xattrs[i].value,
-                                                r->xattrs[i].value_len));
+      d->xattrs[i].value     = dup_bytes(r->xattrs[i].value,
+                                        r->xattrs[i].value_len));
   }
   return m->posix_count++;
 }
@@ -426,13 +419,13 @@ u32 xpar_posix_intern(xpar_manifest * m, const xpar_posix_rec * r) {
 /*  Walking a tree (writer side).  */
 
 void xpar_walk_opts_default(xpar_walk_opts * o) {
-  xpar_memset(o, 0, sizeof(*o));
+  xpar_memset(o, 0, sizeof *o);
   o->dedup     = XPAR_DEDUP_FILE;   /*  Free: content_hash exists.  */
   o->align     = XPAR_ALIGN_PACKED;
   o->dedup_chunk  = (u64) 1 << 20;
   o->dedup_memory = (u64) 64 << 20;
   o->preserve  = XPAR_PRES_DEFAULT;
-  o->caps_mask = 0xFFFFFFFFu;
+  o->caps_mask = 0xFFFFFFFFU;
 }
 
 static u32 keep_mask(const xpar_walk_opts * o) {
@@ -443,7 +436,7 @@ static u32 keep_mask(const xpar_walk_opts * o) {
 
 typedef struct { u64 dev, ino; } wstat;
 
-typedef struct { char * p; sz len, cap; } pathbuf;
+typedef struct { char * p;  sz len, cap; } pathbuf;
 
 typedef struct {
   xpar_manifest * m;
@@ -457,7 +450,7 @@ typedef struct {
 static void pb_reserve(pathbuf * b, sz n) {
   if (n + 1 <= b->cap) return;
   while (b->cap < n + 1) b->cap = b->cap ? b->cap * 2 : 256;
-  b->p = (char *) xpar_realloc(b->p, b->cap);
+  b->p = xpar_realloc(b->p, b->cap);
 }
 
 static void pb_set(pathbuf * b, const char * s, sz n) {
@@ -557,7 +550,7 @@ static u16 derive_attrs(const xpar_entry * e, const xpar_stat_t * st,
                         u32 caps) {
   u16 a = (u16) ((caps & XPAR_FS_FATATTR) ? st->attrs : 0);
   if (st->mode != XPAR_MODE_NONE) {
-    if (st->mode & 0111u) a |= XPAR_ATTR_EXEC;
+    if (st->mode & 0111U) a |= XPAR_ATTR_EXEC;
     if (st->mode & (XPAR_MODE_SETUID | XPAR_MODE_SETGID | XPAR_MODE_STICKY))
       a |= XPAR_ATTR_SETID;
   }
@@ -568,7 +561,7 @@ static u16 derive_attrs(const xpar_entry * e, const xpar_stat_t * st,
 
 /*  One POSX record, or none at all. Ownership and xattrs are two
     --preserve tokens and one record, so a tree preserving only ownership
-    still interns a record with no xattrs. */
+    still interns a record with no xattrs.  */
 static void record_posix(walker * w, xpar_entry * e, const char * path,
                          const xpar_stat_t * st) {
   xpar_posix_rec r;
@@ -579,23 +572,23 @@ static void record_posix(walker * w, xpar_entry * e, const char * path,
   char * names = NULL;
   if (!want_owner && !want_xattr) return;
 
-  xpar_memset(&r, 0, sizeof(r));
+  xpar_memset(&r, 0, sizeof r);
   r.uid = r.gid = XPAR_ID_NONE;
   if (want_owner) {
     char buf[256];
     r.uid = st->uid;  r.gid = st->gid;
     if (st->uid != XPAR_ID_NONE &&
-        xpar_name_of(st->uid, buf, sizeof(buf)) == 0)
+        xpar_name_of(st->uid, buf, sizeof buf) == 0)
       r.owner = xpar_strdup(buf);
     if (st->gid != XPAR_ID_NONE &&
-        xpar_group_of(st->gid, buf, sizeof(buf)) == 0)
+        xpar_group_of(st->gid, buf, sizeof buf) == 0)
       r.group = xpar_strdup(buf);
   }
   if (want_xattr) {
     sz n = xpar_listxattr(path, 1, NULL, 0);
     if (n != XPAR_FS_NOSIZE && n > 0) {
       sz i = 0, got;
-      names = (char *) xpar_alloc_raw(n + 1);
+      names = xpar_alloc_raw(n + 1);
       got = xpar_listxattr(path, 1, names, n);
       if (got == XPAR_FS_NOSIZE || got > n) got = 0;
       names[got] = 0;
@@ -604,13 +597,12 @@ static void record_posix(walker * w, xpar_entry * e, const char * path,
         sz vl = nl ? xpar_getxattr(path, 1, names + i, NULL, 0) : 0;
         if (nl && vl != XPAR_FS_NOSIZE && vl <= XPAR_EXTRA_MAX) {
           xpar_xattr * x;
-          r.xattrs = (xpar_xattr *) xpar_realloc(r.xattrs,
-                                                 (r.xattr_count + 1) *
-                                                 sizeof(xpar_xattr));
+          r.xattrs = xpar_realloc(
+            r.xattrs, (r.xattr_count + 1) * sizeof *r.xattrs);
           x = &r.xattrs[r.xattr_count++];
           x->name      = xpar_strdup(names + i);
           x->value_len = (u32) vl;
-          x->value     = (u8 *) xpar_alloc_raw(vl + 1);
+          x->value     = xpar_alloc_raw(vl + 1);
           if (vl) xpar_getxattr(path, 1, x->name, x->value, vl);
           x->value[vl] = 0;
         }
@@ -655,7 +647,7 @@ static bool follow_link(pathbuf * b, xpar_stat_t * st) {
 char * xpar_read_symlink(const char * path, u32 * length) {
   sz cap = 256;
   for (;;) {
-    char * buf = (char *) xpar_malloc(cap);
+    char * buf = xpar_malloc(cap);
     i64 n = xpar_readlink(path, buf, cap);
     if (n >= 0) { *length = (u32) n;  return buf; }
     xpar_free(buf);
@@ -675,7 +667,7 @@ static void walk_dir(walker * w, pathbuf * disk, const char * name,
   u32 nk = 0, cap = 0, i;
   if (!d) FATAL_PERROR(disk->p);
   while ((de = xpar_readdir(d)) != NULL) {
-    kids = (char **) grow_to(kids, &cap, nk + 1, sizeof(char *));
+    kids = grow_to(kids, &cap, nk + 1, sizeof *kids);
     kids[nk++] = xpar_strdup(de->name);
   }
   xpar_closedir(d);
@@ -685,7 +677,7 @@ static void walk_dir(walker * w, pathbuf * disk, const char * name,
     u32 sub_len;
     if (name_len) {
       sub_len = (u32) (name_len + 1 + kl);
-      sub = (char *) xpar_alloc_raw((sz) sub_len + 1);
+      sub = xpar_alloc_raw((sz) sub_len + 1);
       xpar_memcpy(sub, name, name_len);
       sub[name_len] = '/';
       xpar_memcpy(sub + name_len + 1, kids[i], kl + 1);
@@ -715,7 +707,7 @@ static bool check_emit_name(const walker * w, const char * name, u32 len,
 }
 
 static void note_stat(walker * w, u32 idx, const xpar_stat_t * st) {
-  w->st = (wstat *) grow_to(w->st, &w->st_cap, idx + 1, sizeof(wstat));
+  w->st = grow_to(w->st, &w->st_cap, idx + 1, sizeof *w->st);
   w->st[idx].dev   = st->dev;
   w->st[idx].ino   = st->ino;
 }
@@ -727,7 +719,7 @@ static xpar_entry * emit_entry(walker * w, const char * name, u32 name_len,
   if (!check_emit_name(w, name, name_len, path)) return NULL;
   e = xpar_manifest_append(w->m);
   idx = w->m->count - 1;
-  e->name     = (char *) dup_bytes(name, name_len);
+  e->name     = dup_bytes(name, name_len);
   e->name_len = name_len;
   w->m->source[idx] = xpar_strdup(path);
   if (st->mode != XPAR_MODE_NONE && (keep_mask(w->o) & XPAR_PRES_MODE))
@@ -763,7 +755,7 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
     FATAL("directory nesting past 256 levels at '%s'",
           xpar_name_escape(disk->p));
   if (xpar_lstat(disk->p, &st) != 0) FATAL_PERROR(disk->p);
-  xpar_memset(&real, 0, sizeof(real));
+  xpar_memset(&real, 0, sizeof real);
   if (st.is_symlink && w->o->follow_symlinks) {
     pb_set(&real, disk->p, disk->len);
     if (!follow_link(&real, &st)) {
@@ -803,15 +795,13 @@ static void walk_path(walker * w, pathbuf * disk, const char * name,
     /*  Excludes prune directories; includes may match descendants.  */
     if (w->o->recurse && !excluded)
       walk_dir(w, path, name, name_len, depth);
-  } else if (!name_len) {
+  } else if (!name_len)
     FATAL("input '%s' resolves to no storable name",
           xpar_name_escape(path->p));
-  } else if (!keep) {
-    /*  A filtered special file is silent just like a filtered regular one.  */
-  } else if (!st.is_regular && !st.is_symlink) {
+  else if (keep && !st.is_regular && !st.is_symlink)
     xpar_fprintf(xpar_stderr, "xpar: skipped unsupported file type '%s'\n",
                  xpar_name_escape(path->p));
-  } else {
+  else if (keep) {
     xpar_entry * e = emit_entry(w, name, name_len, path->p, &st);
     if (st.is_symlink) emit_symlink(e, path->p);
     else { e->entry_type = XPAR_ENTRY_REGULAR;  e->length = st.size; }
@@ -824,22 +814,22 @@ static void detect_links(walker * w) {
   u32 i, mask, * table;
   if (!(w->caps_all & XPAR_FS_LINKID) || !m->count) return;
   mask  = table_mask(m->count);
-  table = (u32 *) xpar_alloc_raw(((sz) mask + 1) * sizeof(u32));
-  for (i = 0; i <= mask; i++) table[i] = 0xFFFFFFFFu;
+  table = xpar_alloc_raw(((sz) mask + 1) * sizeof *table);
+  Fi(mask + 1, table[i] = 0xFFFFFFFFU);
   Fi(m->count,
     xpar_entry * e = &m->entry[i];
     u64 h;
     u32 slot;
     if (e->entry_type != XPAR_ENTRY_REGULAR) continue;
     /*  Identity alone determines whether two entries are hard links.  */
-    h = w->st[i].dev * 0x9E3779B97F4A7C15ull + w->st[i].ino;
+    h = w->st[i].dev * 0x9E3779B97F4A7C15ULL + w->st[i].ino;
     slot = (u32) ((h ^ (h >> 32)) & mask);
-    while (table[slot] != 0xFFFFFFFFu) {
+    while (table[slot] != 0xFFFFFFFFU) {
       u32 c = table[slot];
       if (w->st[c].dev == w->st[i].dev && w->st[c].ino == w->st[i].ino) {
         e->entry_type   = XPAR_ENTRY_HARDLINK;
-        e->extra        = (u8 *) dup_bytes(m->entry[c].name,
-                                           m->entry[c].name_len);
+        e->extra        = dup_bytes(m->entry[c].name,
+                                    m->entry[c].name_len);
         e->extra_len    = m->entry[c].name_len;
         e->length       = 0;   /*  The canonical's, copied in pack.  */
         e->extent_count = 0;
@@ -860,8 +850,8 @@ static char * path_lex_norm(const char * p) {
   u32 * len, count = 0;
   char * out;
   Fi(n, if (xpar_path_sep(p[i])) cap++);
-  off = (sz *)  xpar_alloc_raw((cap + 1) * sizeof(sz));
-  len = (u32 *) xpar_alloc_raw((cap + 1) * sizeof(u32));
+  off = xpar_alloc_raw((cap + 1) * sizeof *off);
+  len = xpar_alloc_raw((cap + 1) * sizeof *len);
   i = 0;
   while (i < n) {
     while (i < n && xpar_path_sep(p[i])) i++;
@@ -878,7 +868,7 @@ static char * path_lex_norm(const char * p) {
     }
     off[count] = start;  len[count] = (u32) (i - start);  count++;
   }
-  out = (char *) xpar_alloc_raw(n + 3);
+  out = xpar_alloc_raw(n + 3);
   if (abs) out[at++] = '/';
   Fi(count,
     if (i) out[at++] = '/';
@@ -935,9 +925,9 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
   char ** src;
   wstat * ws;
 
-  xpar_memset(&w, 0, sizeof(w));
-  xpar_memset(&disk, 0, sizeof(disk));
-  w.m = m;  w.o = o;  w.caps_all = 0xFFFFFFFFu;
+  xpar_memset(&w, 0, sizeof w);
+  xpar_memset(&disk, 0, sizeof disk);
+  w.m = m;  w.o = o;  w.caps_all = 0xFFFFFFFFU;
   m->align       = o->align;
   m->slice_size  = o->align == XPAR_ALIGN_SLICE ? o->slice_size : 0;
   m->stream_base = o->stream_base;
@@ -982,12 +972,10 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
               xpar_name_escape(root));
       }
       xpar_free(ba);
-    } else {
+    } else if (nl && nl <= XPAR_NAME_MAX &&
+               xpar_path_check(norm, (u32) nl, 0) == XPAR_PATH_OK) {
       /*  Preserve legal relative roots so sidecar paths remain resolvable.  */
-      if (nl && nl <= XPAR_NAME_MAX &&
-          xpar_path_check(norm, (u32) nl, 0) == XPAR_PATH_OK) {
-        base = norm;  blen = (u32) nl;
-      }
+      base = norm;  blen = (u32) nl;
     }
     w.caps = xpar_fs_caps(root) & o->caps_mask;
     w.caps_all &= w.caps;
@@ -998,12 +986,12 @@ void xpar_manifest_walk(xpar_manifest * m, char * const * roots,
   xpar_free(disk.p);
   if (!m->count) { xpar_free(w.st);  return; }
 
-  order = (u32 *) xpar_alloc_raw(m->count * sizeof(u32));
+  order = xpar_alloc_raw(m->count * sizeof *order);
   Fi(m->count, order[i] = i);
   sort_names(m, order, m->count, false);
-  sorted = (xpar_entry *) xpar_alloc_raw(m->count * sizeof(xpar_entry));
-  src    = (char **) xpar_alloc_raw(m->count * sizeof(char *));
-  ws     = (wstat *) xpar_alloc_raw(m->count * sizeof(wstat));
+  sorted = xpar_alloc_raw(m->count * sizeof *sorted);
+  src    = xpar_alloc_raw(m->count * sizeof *src);
+  ws     = xpar_alloc_raw(m->count * sizeof *ws);
   Fi(m->count,
     sorted[i] = m->entry[order[i]];
     src[i]    = m->source[order[i]];
@@ -1027,9 +1015,9 @@ typedef struct {
 static void dedup_init(dedup_tab * t, u32 n) {
   u32 i;
   t->mask = table_mask(n);
-  t->slot = (u32 *) xpar_alloc_raw(((sz) t->mask + 1) * sizeof(u32));
-  t->refs = (u64 *) xpar_calloc((sz) t->mask + 1, sizeof(u64));
-  for (i = 0; i <= t->mask; i++) t->slot[i] = 0xFFFFFFFFu;
+  t->slot = xpar_alloc_raw(((sz) t->mask + 1) * sizeof *t->slot);
+  t->refs = xpar_calloc((sz) t->mask + 1, sizeof *t->refs);
+  Fi(t->mask + 1, t->slot[i] = 0xFFFFFFFFU);
 }
 
 static void dedup_free(dedup_tab * t) {
@@ -1039,7 +1027,7 @@ static void dedup_free(dedup_tab * t) {
 static u32 dedup_probe(const dedup_tab * t, const xpar_manifest * m,
                        const xpar_entry * e, u32 * slot_out) {
   u32 slot = (u32) (xpar_rd64(e->content_hash) & t->mask);
-  while (t->slot[slot] != 0xFFFFFFFFu) {
+  while (t->slot[slot] != 0xFFFFFFFFU) {
     const xpar_entry * c = &m->entry[t->slot[slot]];
     if (c->length == e->length &&
         !xpar_memcmp(c->content_hash, e->content_hash, 32)) {
@@ -1049,7 +1037,7 @@ static u32 dedup_probe(const dedup_tab * t, const xpar_manifest * m,
     slot = (slot + 1) & t->mask;
   }
   *slot_out = slot;
-  return 0xFFFFFFFFu;
+  return 0xFFFFFFFFU;
 }
 
 static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
@@ -1060,11 +1048,11 @@ static void hash_entry_file(xpar_manifest * m, u32 idx, u8 * cache,
   u8 * buf;
   u64 total;
   sz got;
-  const sz chunk = 1u << 16;
+  const sz chunk = 1U << 16;
   xpar_assert(m->source[idx] != NULL);
   f = xpar_open(m->source[idx], XPAR_O_RDONLY);
   if (!f) FATAL_PERROR(m->source[idx]);
-  buf = (u8 *) xpar_alloc_raw(chunk);
+  buf = xpar_alloc_raw(chunk);
   xpar_blake3_init(&h);
   got = xpar_xread(f, buf, 16384);
   if (cache && (u64) got > expected)
@@ -1106,9 +1094,9 @@ static void hash_bytes(const u8 * p, u32 n, u8 out32[32], u8 out16[16]) {
 static void set_extents(xpar_entry * e, const xpar_extent * src, u32 n) {
   xpar_free(e->extents);
   e->extent_count = n;
-  e->extents = n ? (xpar_extent *) xpar_alloc_raw(n * sizeof(xpar_extent))
+  e->extents = n ? xpar_alloc_raw(n * sizeof *e->extents)
                  : NULL;
-  if (n) xpar_memcpy(e->extents, src, n * sizeof(xpar_extent));
+  if (n) xpar_memcpy(e->extents, src, n * sizeof *e->extents);
 }
 
 typedef struct {
@@ -1151,10 +1139,9 @@ static bool cache_layout(const xpar_manifest * m,
   return true;
 }
 
-
 static bool pack_chunk(void * user, u64 file_offset, u32 len,
                        const u8 hash[16]) {
-  chunk_pack * c = (chunk_pack *) user;
+  chunk_pack * c = user;
   xpar_chunk_slot * hit = xpar_chunk_index_find(c->ix, hash, len);
   u64 off;
   (void) file_offset;
@@ -1216,7 +1203,9 @@ static void pack_regular(xpar_manifest * m, const xpar_walk_opts * o,
                          u32 i, u64 * H, u8 * cache, u64 cache_offset,
                          xpar_progress_t * prog) {
   xpar_entry * e = &m->entry[i];
-  u32 slot = 0, hit = 0xFFFFFFFFu;
+  xpar_extent x;
+  u64 q;
+  u32 slot = 0, hit = 0xFFFFFFFFU;
   if (o->dedup == XPAR_DEDUP_CHUNK) {
     pack_regular_chunks(m, o, chunks, i, H, prog);
     m->entry_bytes += e->length;
@@ -1227,9 +1216,9 @@ static void pack_regular(xpar_manifest * m, const xpar_walk_opts * o,
   m->entry_bytes += e->length;
   if (e->length == 0) { set_extents(e, NULL, 0);  return; }
   if (o->dedup != XPAR_DEDUP_NONE) hit = dedup_probe(tab, m, e, &slot);
-  if (hit != 0xFFFFFFFFu && o->dedup_max_refs &&
-      tab->refs[slot] + 1 > o->dedup_max_refs) hit = 0xFFFFFFFFu;
-  if (hit != 0xFFFFFFFFu) {
+  if (hit != 0xFFFFFFFFU && o->dedup_max_refs &&
+      tab->refs[slot] + 1 > o->dedup_max_refs) hit = 0xFFFFFFFFU;
+  if (hit != 0xFFFFFFFFU) {
     const xpar_entry * c = &m->entry[hit];
     set_extents(e, c->extents, c->extent_count);
     m->shared_bytes  += e->length;
@@ -1237,17 +1226,14 @@ static void pack_regular(xpar_manifest * m, const xpar_walk_opts * o,
     tab->refs[slot]++;
     return;
   }
-  {
-    xpar_extent x;
-    u64 q = pack_alignment(o);
-    if (q) { u64 pad = (*H - o->stream_base) % q;  if (pad) *H += q - pad; }
-    x.stream_offset = *H;  x.length = e->length;
-    if (cache && e->length && x.stream_offset - o->stream_base != cache_offset)
-      xpar_memmove(cache + x.stream_offset - o->stream_base,
-                   cache + cache_offset, (sz) e->length);
-    set_extents(e, &x, 1);
-    *H += e->length;
-  }
+  q = pack_alignment(o);
+  if (q) { u64 pad = (*H - o->stream_base) % q;  if (pad) *H += q - pad; }
+  x.stream_offset = *H;  x.length = e->length;
+  if (cache && e->length && x.stream_offset - o->stream_base != cache_offset)
+    xpar_memmove(cache + x.stream_offset - o->stream_base,
+                 cache + cache_offset, (sz) e->length);
+  set_extents(e, &x, 1);
+  *H += e->length;
   if (o->dedup != XPAR_DEDUP_NONE) {
     u32 s2;
     dedup_probe(tab, m, e, &s2);
@@ -1300,15 +1286,13 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
   if (o->stream_cache_length_out) *o->stream_cache_length_out = 0;
   if (o->dedup != XPAR_DEDUP_CHUNK && o->stream_cache_out &&
       o->stream_cache_length_out && o->stream_cache_limit) {
-    cache_offset = (u64 *) xpar_calloc(m->count ? m->count : 1,
-                                       sizeof(u64));
+    cache_offset = xpar_calloc(m->count ? m->count : 1,
+                               sizeof *cache_offset);
     if (!cache_layout(m, o, cache_offset, &cache_size) ||
         cache_size > o->stream_cache_limit ||
         cache_size > (u64) (sz) -1) {
       xpar_free(cache_offset);  cache_offset = NULL;
-    } else if (cache_size) {
-      cache = (u8 *) xpar_calloc((sz) cache_size, 1);
-    }
+    } else if (cache_size) cache = xpar_calloc((sz) cache_size, 1);
   }
   if (o->dedup == XPAR_DEDUP_CHUNK &&
       !xpar_chunk_index_init(&chunks, o->dedup_memory))
@@ -1356,7 +1340,7 @@ void xpar_manifest_pack(xpar_manifest * m, const xpar_walk_opts * o,
   }
   if (cache) {
     u64 used = packed_end - o->stream_base;
-    cache = (u8 *) xpar_realloc(cache, (sz) (used ? used : 1));
+    cache = xpar_realloc(cache, (sz) (used ? used : 1));
     *o->stream_cache_out = cache;
     *o->stream_cache_length_out = used;
   }
@@ -1473,8 +1457,8 @@ static void cover_add(cover * c, u64 lo, u64 hi) {
   if (c->count && c->hi[c->count - 1] == lo) { c->hi[c->count - 1] = hi;  return; }
   if (c->count == c->cap) {
     c->cap = c->cap ? c->cap * 2 : 8;
-    c->lo = (u64 *) xpar_realloc(c->lo, (sz) c->cap * sizeof(u64));
-    c->hi = (u64 *) xpar_realloc(c->hi, (sz) c->cap * sizeof(u64));
+    c->lo = xpar_realloc(c->lo, (sz) c->cap * sizeof *c->lo);
+    c->hi = xpar_realloc(c->hi, (sz) c->cap * sizeof *c->hi);
   }
   c->lo[c->count] = lo;  c->hi[c->count] = hi;  c->count++;
 }
@@ -1515,7 +1499,7 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
   u64 H = lim->stream_base, own_end;
   cover cov;
   u32 i, k;
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   xpar_memset(&cov, 0, sizeof cov);
   if (lim->stream_length > UINT64_MAX - lim->stream_base) {
     out->status = XPAR_MF_EXTENT_OVF;
@@ -1540,7 +1524,7 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
   /*  Case-folded collisions require their own sort order.  */
   if (s == XPAR_MF_OK && (lim->path_flags & XPAR_PATH_NOCASE) &&
       m->count > 1) {
-    u32 * fo = (u32 *) xpar_alloc_raw(m->count * sizeof(u32));
+    u32 * fo = xpar_alloc_raw(m->count * sizeof *fo);
     Fi(m->count, fo[i] = i);
     sort_names(m, fo, m->count, true);
     for (i = 1; i < m->count && s == XPAR_MF_OK; i++) {
@@ -1577,8 +1561,7 @@ xpar_mf_status xpar_manifest_validate(const xpar_manifest * m,
         if (!cover_holds(&cov, off, off + len)) { s = XPAR_MF_EXTENT_SHARE;  goto done; }
         continue;
       }
-      {
-        u64 q = lim->align == XPAR_ALIGN_SLICE ? lim->slice_size
+      { u64 q = lim->align == XPAR_ALIGN_SLICE ? lim->slice_size
               : lim->align == XPAR_ALIGN_1K ? XPAR_BLAKE3_CHUNK_LEN : 0;
         u64 pad = q ? (H - lim->stream_base) % q : 0;
         if (pad && q - pad <= UINT64_MAX - H && off == H + (q - pad)) {
@@ -1629,12 +1612,11 @@ void xpar_occindex_build(const xpar_manifest * m, xpar_occindex * ix) {
   u64 total = 0, run = 0;
   u32 i, k, n = 0;
   Fi(m->count, total += m->entry[i].extent_count);
-  if (total > 0x7FFFFFFFu) FATAL("too many extents to index");
+  if (total > 0x7FFFFFFFU) FATAL("too many extents to index");
   ix->count   = (u32) total;
-  ix->occ     = (xpar_occurrence *) xpar_alloc_raw(
-                  (total ? (sz) total : 1) * sizeof(xpar_occurrence));
-  ix->max_end = (u64 *) xpar_alloc_raw((total ? (sz) total : 1) *
-                                       sizeof(u64));
+  ix->occ = xpar_alloc_raw((total ? (sz) total : 1) * sizeof *ix->occ);
+  ix->max_end = xpar_alloc_raw(
+    (total ? (sz) total : 1) * sizeof *ix->max_end);
   Fi(m->count,
     u64 fo = 0;
     Fk(m->entry[i].extent_count,
@@ -1672,7 +1654,7 @@ static u32 occ_lower(const xpar_occindex * ix, u64 off) {
   u32 lo = 0, hi = ix->count;
   while (lo < hi) {
     u32 mid = lo + (hi - lo) / 2;
-    if (ix->max_end[mid] > off) hi = mid; else lo = mid + 1;
+    if (ix->max_end[mid] > off) hi = mid;  else lo = mid + 1;
   }
   return lo;
 }
@@ -1681,7 +1663,7 @@ static u32 occ_upper(const xpar_occindex * ix, u64 end) {
   u32 lo = 0, hi = ix->count;
   while (lo < hi) {
     u32 mid = lo + (hi - lo) / 2;
-    if (ix->occ[mid].stream_offset < end) lo = mid + 1; else hi = mid;
+    if (ix->occ[mid].stream_offset < end) lo = mid + 1;  else hi = mid;
   }
   return lo;
 }

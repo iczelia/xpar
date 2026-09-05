@@ -12,11 +12,11 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Deterministic fault injector with exact-cell and CRC-preserving damage.
-   Its CRC implementation is independent of libxpar_core. */
+/*  Deterministic fault injector with exact-cell and CRC-preserving damage.
+   Its CRC implementation is independent of libxpar_core.  */
 
-/* Use large-file POSIX offsets when available. Darwin needs the full BSD
-   set rather than a strict _XOPEN_SOURCE. */
+/*  Use large-file POSIX offsets when available. Darwin needs the full BSD
+   set rather than a strict _XOPEN_SOURCE.  */
 #if !defined(_WIN32) && !defined(__MSDOS__)
 #if defined(__APPLE__)
 #define _DARWIN_C_SOURCE 1
@@ -24,6 +24,8 @@
 #define _XOPEN_SOURCE 700
 #endif
 #endif
+
+#include "common.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -40,7 +42,7 @@
 #include <sys/types.h>
 #endif
 
-#define CRC32C_POLY 0x82F63B78u   /*  0x1EDC6F41 reflected.  */
+#define CRC32C_POLY 0x82F63B78U   /*  0x1EDC6F41 reflected.  */
 
 static unsigned int crc_tab[256];
 static unsigned int crc_rev[256];   /*  Top byte of an entry to its index.  */
@@ -70,7 +72,7 @@ static unsigned int crc_raw(unsigned int c, const unsigned char * p,
   return c;
 }
 
-/* Backpatch four bytes to advance CRC state s to f. */
+/*  Backpatch four bytes to advance CRC state s to f.  */
 
 static void crc_backpatch(unsigned int s, unsigned int f,
                           unsigned char out[4]) {
@@ -93,7 +95,7 @@ static void crc_backpatch(unsigned int s, unsigned int f,
   }
 }
 
-static unsigned long long rng_state = 0x9E3779B97F4A7C15ull;
+static unsigned long long rng_state = 0x9E3779B97F4A7C15ULL;
 
 static unsigned int rng_next(void) {
   rng_state ^= rng_state << 13;
@@ -102,7 +104,7 @@ static unsigned int rng_next(void) {
   return (unsigned int) (rng_state >> 32);
 }
 
-/* Edit in place to support multi-gigabyte benchmark corpora. */
+/*  Edit in place to support multi-gigabyte benchmark corpora.  */
 
 static const char * img_path;
 static FILE * img_f;
@@ -110,8 +112,8 @@ static unsigned long long img_len;
 
 #define IO_CHUNK 65536
 
-/* Limit the only operation that buffers its entire range. */
-#define FORGE_MAX (256ull * 1024ull * 1024ull)
+/*  Limit the only operation that buffers its entire range.  */
+#define FORGE_MAX (256ULL * 1024ULL * 1024ULL)
 
 static void io_seek(unsigned long long off) {
 #if defined(_WIN32)
@@ -193,7 +195,7 @@ static void op_rand(unsigned long long off, unsigned long long len) {
     io_read(off, buf, take);
     Fi(take,
       unsigned char v = (unsigned char) rng_next();
-      if (v == buf[i]) v ^= 0x5Au;
+      if (v == buf[i]) v ^= 0x5AU;
       buf[i] = v);
     io_write(off, buf, take);
     off += take;  len -= take;
@@ -213,7 +215,7 @@ static void op_zero(unsigned long long off, unsigned long long len) {
 static unsigned int range_crc(unsigned long long off,
                               unsigned long long len) {
   unsigned char buf[IO_CHUNK];
-  unsigned int c = 0xFFFFFFFFu;
+  unsigned int c = 0xFFFFFFFFU;
   crc_init();
   while (len) {
     size_t take = len > sizeof buf ? sizeof buf : (size_t) len;
@@ -241,14 +243,14 @@ static void op_forge(unsigned long long off, unsigned long long len) {
   crc_init();
   want = range_crc(off, len);
   n = len - 4;
-  body = (unsigned char *) malloc((size_t) len);
+  body = malloc((size_t) len);
   if (!body) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
   io_read(off, body, (size_t) len);
   Fi(n,
     unsigned char v = (unsigned char) rng_next();
-    if (v == body[i]) v ^= 0x5Au;
+    if (v == body[i]) v ^= 0x5AU;
     body[i] = v);
-  state = crc_raw(0xFFFFFFFFu, body, (size_t) n);
+  state = crc_raw(0xFFFFFFFFU, body, (size_t) n);
   crc_backpatch(state, ~want, body + n);
   io_write(off, body, (size_t) len);
   free(body);
@@ -263,7 +265,7 @@ static void op_crc(unsigned long long off, unsigned long long len) {
   printf("%08X\n", range_crc(off, len));
 }
 
-/* Portable truncate via copy and rename. */
+/*  Portable truncate via copy and rename.  */
 static void op_truncate(unsigned long long len) {
   unsigned char buf[IO_CHUNK];
   unsigned long long off = 0, left;
@@ -271,17 +273,16 @@ static void op_truncate(unsigned long long len) {
   FILE * out;
   if (len > img_len) { fprintf(stderr, "damage: truncate: %llu is past the end\n", len);  exit(2); }
 #if defined(__MSDOS__)
-  {
-    const char * p, * leaf = img_path;
+  { const char * p, * leaf = img_path;
     size_t dir;
     for (p = img_path; *p; p++)
       if (*p == '/' || *p == '\\') leaf = p + 1;
     dir = (size_t) (leaf - img_path);
-    tmp = (char *) malloc(dir + sizeof "XPDAM.TMP");
+    tmp = malloc(dir + sizeof "XPDAM.TMP");
     if (tmp) { memcpy(tmp, img_path, dir);  memcpy(tmp + dir, "XPDAM.TMP", sizeof "XPDAM.TMP"); }
   }
 #else
-  tmp = (char *) malloc(strlen(img_path) + 8);
+  tmp = malloc(strlen(img_path) + 8);
 #endif
   if (!tmp) { fprintf(stderr, "damage: out of memory\n");  exit(2); }
 #if defined(__MSDOS__)
@@ -299,8 +300,8 @@ static void op_truncate(unsigned long long len) {
   }
   if (fclose(out)) { perror(tmp);  exit(2); }
   img_close();
-  /* rename() refuses an existing destination on Windows, so clear it
-     first. The file is closed by now, which Windows also insists on. */
+  /*  rename() refuses an existing destination on Windows, so clear it
+     first. The file is closed by now, which Windows also insists on.  */
   remove(img_path);
   if (rename(tmp, img_path)) {
     fprintf(stderr, "damage: truncate: cannot move %s over %s: %s\n",
@@ -323,10 +324,9 @@ static void op_extend(unsigned long long len) {
   img_len = at;
 }
 
-
 static void usage(void);
 
-/* Print matching packet body offsets. */
+/*  Print matching packet body offsets.  */
 static void op_find(const char * type) {
   static const char magic[8] = { 'X','P','A','R','2','P','K','T' };
   unsigned char hdr[48];
@@ -344,7 +344,7 @@ static void op_find(const char * type) {
   }
 }
 
-/* Clear every matching packet's magic. */
+/*  Clear every matching packet's magic.  */
 static void op_unpacket(const char * type) {
   static const char magic[8] = { 'X','P','A','R','2','P','K','T' };
   unsigned char hdr[48];
@@ -428,7 +428,7 @@ int main(int argc, char ** argv) {
     }
     if (!strncmp(s, "seed=", 5)) {
       unsigned long long v = strtoull(s + 5, NULL, 0);
-      rng_state = v ? v : 0x9E3779B97F4A7C15ull;
+      rng_state = v ? v : 0x9E3779B97F4A7C15ULL;
       continue;
     }
     if (!strncmp(s, "truncate=", 9)) { op_truncate(strtoull(s + 9, NULL, 0));

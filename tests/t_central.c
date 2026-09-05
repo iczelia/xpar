@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Central recovery tests: each column has an independent erasure budget. */
+/*  Central recovery tests: each column has an independent erasure budget.  */
 
 #include "t_harness.h"
 #include "slice.h"
@@ -50,12 +50,12 @@ static void ct_init(ct * c, u8 kind, u8 field, u64 z, u32 y, u64 s, u64 r,
   c->g.stream_base   = 0;
   c->g.cell_bytes    = y;
   c->g.cells_per_slice = y ? (u32) xpar_ceil_div(z, y) : 1;
-  c->stream   = (u8 *) xpar_alloc_aligned((sz) (s * z), 64);
-  c->pristine = (u8 *) xpar_alloc_aligned((sz) (s * z), 64);
-  c->recovery = (u8 *) xpar_alloc_aligned((sz) (r * z), 64);
-  c->data  = (u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
-  c->cdata = (const u8 **) xpar_alloc_raw((sz) s * sizeof(u8 *));
-  c->rec   = (u8 **) xpar_alloc_raw((sz) r * sizeof(u8 *));
+  c->stream   = xpar_alloc_aligned((sz) (s * z), 64);
+  c->pristine = xpar_alloc_aligned((sz) (s * z), 64);
+  c->recovery = xpar_alloc_aligned((sz) (r * z), 64);
+  c->data  = xpar_alloc_raw((sz) s * sizeof *c->data);
+  c->cdata = xpar_alloc_raw((sz) s * sizeof *c->cdata);
+  c->rec   = xpar_alloc_raw((sz) r * sizeof *c->rec);
   xt_fill(rng, c->stream, (sz) (s * z));
   xpar_memcpy(c->pristine, c->stream, (sz) (s * z));
 }
@@ -112,7 +112,7 @@ static void ct_repair(ct * c, const xpar_erasures * e, const u8 * rpres,
       u32 j = cg.group[gi].column[n];
       sz bytes = (sz) xpar_cell_size(&c->g, j);
       ct_columns(c, j);
-      /* Do not let decoding depend on erased bytes. */
+      /*  Do not let decoding depend on erased bytes.  */
       Fi(c->g.slice_count, if (xpar_cell_bad(e, i, j)) xpar_memset(c->data[i], 0, bytes));
       if (xpar_codec_plan_apply(pl, c->data, (const u8 * const *) c->rec,
                                 bytes) !=
@@ -133,7 +133,7 @@ static void ct_repair(ct * c, const xpar_erasures * e, const u8 * rpres,
   xpar_codec_free(k);
 }
 
-/* Erase depth[j] random cells in column j. */
+/*  Erase depth[j] random cells in column j.  */
 static void mark_profile(xpar_erasures * e, const u64 * depth, xt_rng * rng) {
   u32 j;
   u64 i;
@@ -149,7 +149,7 @@ static void mark_profile(xpar_erasures * e, const u64 * depth, xt_rng * rng) {
     });
 }
 
-/* Each column has its own R-erasure budget. */
+/*  Each column has its own R-erasure budget.  */
 static void test_full_budget_every_column(u8 kind, u8 field, u64 z, u32 y,
                                           u64 s, u64 r, xt_rng * rng) {
   ct c;
@@ -163,7 +163,7 @@ static void test_full_budget_every_column(u8 kind, u8 field, u64 z, u32 y,
   ct_init(&c, kind, field, z, y, s, r, rng);
   ct_encode(&c);
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
-  depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
+  depth = xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof *depth);
   Fj(c.g.cells_per_slice, depth[j] = r);
   mark_profile(&e, depth, rng);
 
@@ -171,7 +171,7 @@ static void test_full_budget_every_column(u8 kind, u8 field, u64 z, u32 y,
             "K times R cells were erased");
   CHECK_U64(xpar_erasures_max_depth(&e), r, "and the deepest column holds R");
 
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
   ct_repair(&c, &e, rpres, &res);
 
@@ -188,7 +188,7 @@ static void test_full_budget_every_column(u8 kind, u8 field, u64 z, u32 y,
   ct_free(&c);
 }
 
-/* Exceeding one column's budget must not lose other columns. */
+/*  Exceeding one column's budget must not lose other columns.  */
 static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
                                  u64 r, xt_rng * rng) {
   ct c;
@@ -202,7 +202,7 @@ static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
   ct_init(&c, kind, field, z, y, s, r, rng);
   ct_encode(&c);
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
-  depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
+  depth = xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof *depth);
   victim = xt_below(rng, c.g.cells_per_slice);
   Fj(c.g.cells_per_slice, depth[j] = j == victim ? r + 1 : r);
   if (depth[victim] > s) { xpar_free(depth);  xpar_erasures_free(&e);
@@ -212,7 +212,7 @@ static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
   CHECK_U64(xpar_erasures_max_depth(&e), r + 1,
             "the deepest column is one past the budget");
 
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
   ct_repair(&c, &e, rpres, &res);
 
@@ -221,9 +221,8 @@ static void test_one_column_over(u8 kind, u8 field, u64 z, u32 y, u64 s,
             "and every other column decoded");
   CHECK_U64(res.wrong, 0, "none of those decoded to the wrong bytes");
 
-  /* Validate decoded columns where the refused column remains damaged. */
-  {
-    u64 i, bad = 0;
+  /*  Validate decoded columns where the refused column remains damaged.  */
+  { u64 i, bad = 0;
     Fi(s,
       Fj(c.g.cells_per_slice,
         u64 at = i * z + col_off(&c, j);
@@ -251,10 +250,10 @@ static void test_missing_recovery(u8 kind, u8 field, u64 z, u32 y, u64 s,
   ct_init(&c, kind, field, z, y, s, r, rng);
   ct_encode(&c);
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
-  depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  depth = xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof *depth);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
-  for (j = 0; j < gone && j < r; j++) { rpres[j] = 0; }
+  Fj(MIN(gone, r), rpres[j] = 0);
 
   Fj(c.g.cells_per_slice, depth[j] = r - gone);
   mark_profile(&e, depth, rng);
@@ -277,7 +276,7 @@ static void test_missing_recovery(u8 kind, u8 field, u64 z, u32 y, u64 s,
   ct_free(&c);
 }
 
-/* A lost slice consumes one erasure in every column. */
+/*  A lost slice consumes one erasure in every column.  */
 static void test_whole_slices(u8 kind, u8 field, u64 z, u32 y, u64 s, u64 r,
                               xt_rng * rng) {
   ct c;
@@ -300,7 +299,7 @@ static void test_whole_slices(u8 kind, u8 field, u64 z, u32 y, u64 s, u64 r,
             "R whole slices are R times K cells");
   CHECK_U64(xpar_erasures_max_depth(&e), r, "at depth R");
 
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
   ct_repair(&c, &e, rpres, &res);
   CHECK_U64(res.groups, 1, "every column shares one erasure pattern");
@@ -326,8 +325,8 @@ static void test_random_profiles(u8 kind, u8 field, u64 z, u32 y, u64 s,
   ct_init(&c, kind, field, z, y, s, r, rng);
   ct_encode(&c);
   xpar_erasures_init(&e, s, c.g.cells_per_slice);
-  depth = (u64 *) xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof(u64));
-  rpres = (u8 *) xpar_alloc_raw((sz) r);
+  depth = xpar_alloc_raw((sz) c.g.cells_per_slice * sizeof *depth);
+  rpres = xpar_alloc_raw((sz) r);
   xpar_memset(rpres, 1, (sz) r);
 
   for (round = 0; round < rounds; round++) {
@@ -364,13 +363,13 @@ void xt_run_central(void) {
   xt_rng rng;
   u32 i;
 
-  /* Z, Y, S, R; the third case has a short final column. */
+  /*  Z, Y, S, R; the third case has a short final column.  */
   static const struct { u64 z;  u32 y;  u64 s, r; } shapes[] = {
     { 65536, 8192,  32,  6 },
     { 65536, 16384, 24,  4 },
     { 65536, 24576, 20,  5 },
     { 16384, 4096,  40,  8 },
-    { 65536, 0,     32,  6 }    /* K = 1. */
+    { 65536, 0,     32,  6 }    /*  K = 1.  */
   };
   static const struct { u8 kind, field; } codecs[] = {
     { XPAR_CODEC_MATRIX,  8 },
@@ -379,7 +378,7 @@ void xt_run_central(void) {
     { XPAR_CODEC_FFT,    16 }
   };
 
-  xt_seed(&rng, 0xCE27A1ull);
+  xt_seed(&rng, 0xCE27A1ULL);
 
   Fi(ARRAY_LEN(shapes),
     u32 k;

@@ -28,9 +28,9 @@
 #define XPAR_EXT         ".xpa"
 #define XPAR_EXT_LEN     4
 
-#define XPAR_PF_CRITICAL       (1u << 0)
-#define XPAR_PF_KEYED          (1u << 1)
-#define XPAR_PF_BODY_UNCHECKED (1u << 2)  /*  Legal only on STRM.  */
+#define XPAR_PF_CRITICAL       (1U << 0)
+#define XPAR_PF_KEYED          (1U << 1)
+#define XPAR_PF_BODY_UNCHECKED (1U << 2)  /*  Legal only on STRM.  */
 /*  Bits 3..31 are reserved and shall be zero; a reader rejects them.  */
 #define XPAR_PF_KNOWN          (XPAR_PF_CRITICAL | XPAR_PF_KEYED |            \
                                 XPAR_PF_BODY_UNCHECKED)
@@ -85,9 +85,9 @@ enum {
 };
 enum { XPAR_DEDUP_NONE = 0, XPAR_DEDUP_FILE = 1, XPAR_DEDUP_CHUNK = 2 };
 
-#define XPAR_FEAT_B3_SUBTREE (1u << 0)
+#define XPAR_FEAT_B3_SUBTREE (1U << 0)
 #define XPAR_REQUIRED_KNOWN  XPAR_FEAT_B3_SUBTREE
-#define XPAR_OPTIONAL_KNOWN  0u
+#define XPAR_OPTIONAL_KNOWN  0U
 
 #define XPAR_CELL_MIN      4096
 /*  Format limit for cells per slice.  */
@@ -96,7 +96,7 @@ enum { XPAR_DEDUP_NONE = 0, XPAR_DEDUP_FILE = 1, XPAR_DEDUP_CHUNK = 2 };
 #define XPAR_SLICE_MAX     ((u64) 1 << 40)
 #define XPAR_NAME_MAX      65535
 #define XPAR_EXTRA_MAX     65535
-#define XPAR_ABSENT_U32    0xFFFFFFFFu   /*  mode, posix_index.  */
+#define XPAR_ABSENT_U32    0xFFFFFFFFU   /*  mode, posix_index.  */
 #define XPAR_ABSENT_TIME   INT64_MIN     /*  Any of the four timestamps.  */
 
 typedef struct {
@@ -143,20 +143,20 @@ enum {
 /*  attrs bits. Bits 7, 8 and 9 are advisory and are never applied on
     extract; bit 10 exists so setid can be reported before extraction starts
     rather than discovered during it.  */
-#define XPAR_ATTR_READONLY   (1u << 0)
-#define XPAR_ATTR_HIDDEN     (1u << 1)
-#define XPAR_ATTR_SYSTEM     (1u << 2)
-#define XPAR_ATTR_EXEC       (1u << 3)
-#define XPAR_ATTR_RAWNAME    (1u << 4)   /*  name is not valid UTF-8.  */
-#define XPAR_ATTR_ARCHIVE    (1u << 5)
-#define XPAR_ATTR_NOINDEX    (1u << 6)
-#define XPAR_ATTR_SPARSE     (1u << 7)   /*  Advisory.  */
-#define XPAR_ATTR_FSCOMPRESS (1u << 8)   /*  Advisory.  */
-#define XPAR_ATTR_FSENCRYPT  (1u << 9)   /*  Advisory.  */
-#define XPAR_ATTR_SETID      (1u << 10)
+#define XPAR_ATTR_READONLY   (1U << 0)
+#define XPAR_ATTR_HIDDEN     (1U << 1)
+#define XPAR_ATTR_SYSTEM     (1U << 2)
+#define XPAR_ATTR_EXEC       (1U << 3)
+#define XPAR_ATTR_RAWNAME    (1U << 4)   /*  name is not valid UTF-8.  */
+#define XPAR_ATTR_ARCHIVE    (1U << 5)
+#define XPAR_ATTR_NOINDEX    (1U << 6)
+#define XPAR_ATTR_SPARSE     (1U << 7)   /*  Advisory.  */
+#define XPAR_ATTR_FSCOMPRESS (1U << 8)   /*  Advisory.  */
+#define XPAR_ATTR_FSENCRYPT  (1U << 9)   /*  Advisory.  */
+#define XPAR_ATTR_SETID      (1U << 10)
 
-/* Bits 11-15 are reserved. */
-#define XPAR_ATTR_KNOWN      0x07FFu
+/*  Bits 11-15 are reserved.  */
+#define XPAR_ATTR_KNOWN      0x07FFU
 
 typedef struct {
   u64 stream_offset;

@@ -64,9 +64,8 @@ static void test_basic_repair(xt_context * c) {
   static const char * const info[] = { "info", "set.xpa", NULL };
   char dir[XT_PATH_MAX], data[XT_PATH_MAX], keep[XT_PATH_MAX];
 
-  if (!xt_case_begin(c, dir, sizeof dir, "create, verify and repair")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "create, verify and repair"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
         xt_path(keep, sizeof keep, dir, "KEEP.BIN") &&
@@ -96,9 +95,8 @@ static void test_extract(xt_context * c) {
   char dir[XT_PATH_MAX], data[XT_PATH_MAX], keep[XT_PATH_MAX];
   char outdir[XT_PATH_MAX], restored[XT_PATH_MAX];
 
-  if (!xt_case_begin(c, dir, sizeof dir, "extract missing data")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "extract missing data"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
         xt_path(keep, sizeof keep, dir, "KEEP.BIN") &&
@@ -139,9 +137,8 @@ static void test_layouts(xt_context * c) {
     char dir[XT_PATH_MAX], data[XT_PATH_MAX], keep[XT_PATH_MAX];
     char target[XT_PATH_MAX], clean[XT_PATH_MAX];
     char outdir[XT_PATH_MAX], restored[XT_PATH_MAX];
-    if (!xt_case_begin(c, dir, sizeof dir, cases[i].name)) {
-      CHECK(false, "create the case directory"); continue;
-    }
+    if (!xt_case_begin(c, dir, sizeof dir, cases[i].name))
+      { CHECK(false, "create the case directory");  continue; }
     CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
     CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
           xt_path(keep, sizeof keep, dir, "KEEP.BIN") &&
@@ -188,9 +185,8 @@ static void test_reproducible(xt_context * c) {
   char adata[XT_PATH_MAX], bdata[XT_PATH_MAX];
   char aa[XT_PATH_MAX], ba[XT_PATH_MAX];
 
-  if (!xt_case_begin(c, dir, sizeof dir, "reproducible writer")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "reproducible writer"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(xt_path(a, sizeof a, dir, "A") && xt_mkdir(a) &&
         xt_path(b, sizeof b, dir, "B") && xt_mkdir(b),
         "create matching workspaces");
@@ -198,7 +194,7 @@ static void test_reproducible(xt_context * c) {
         xt_path(bdata, sizeof bdata, b, "DATA.BIN") &&
         copy_seed(c, a, "DATA.BIN") && copy_seed(c, b, "DATA.BIN"),
         "copy matching inputs");
-  (void) adata; (void) bdata;
+  (void) adata;  (void) bdata;
   if (run(c, a, 0, create, "first reproducible create") != 0) return;
   if (run(c, b, 0, create, "second reproducible create") != 0) return;
   CHECK(xt_path(aa, sizeof aa, a, "same.xpa") &&
@@ -211,9 +207,8 @@ static void test_statuses(xt_context * c) {
   static const char * const bad_option[] = { "--definitely-not-an-option", NULL };
   static const char * const absent[] = { "verify", "ABSENT.XPA", NULL };
   char dir[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "documented command statuses")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "documented command statuses"))
+    { CHECK(false, "create the case directory");  return; }
   run(c, dir, 4, no_verb, "an absent verb");
   run(c, dir, 4, bad_option, "an unknown option");
   run(c, dir, 3, absent, "an absent set");
@@ -255,9 +250,8 @@ static void test_tree_workflow(xt_context * c) {
   char volume[XT_PATH_MAX], volume_arg[64], late[XT_PATH_MAX];
   const char * recover[4];
 
-  if (!xt_case_begin(c, dir, sizeof dir, "recursive sidecar workflow")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "recursive sidecar workflow"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed_tree(c, dir, "TREE") && copy_seed_tree(c, dir, "KEEP"),
         "copy the shared tree seed");
   CHECK(xt_path(tree, sizeof tree, dir, "TREE") &&
@@ -297,8 +291,8 @@ static void test_tree_workflow(xt_context * c) {
                 path_leaf(volume));
   CHECK(xpar_remove(volume) == 0, "remove one recovery volume");
   run(c, dir, 0, verify, "verify with one missing recovery volume");
-  recover[0] = "recover"; recover[1] = volume_arg;
-  recover[2] = "side.xpa"; recover[3] = NULL;
+  recover[0] = "recover";  recover[1] = volume_arg;
+  recover[2] = "side.xpa";  recover[3] = NULL;
   run(c, dir, 0, recover, "recover the missing volume");
   CHECK(xpar_lstat(volume, &(xpar_stat_t) { 0 }) == 0,
         "the recovery volume exists again");
@@ -331,9 +325,8 @@ static void test_geometry_and_limits(xt_context * c) {
   };
   static const char * const verify_doom[] = { "verify", "doom.xpa", NULL };
   char dir[XT_PATH_MAX], data[XT_PATH_MAX], empty[XT_PATH_MAX], one[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "geometry and recovery limits")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "geometry and recovery limits"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN") &&
         xt_path(empty, sizeof empty, dir, "EMPTY.BIN") &&
         xt_write_pattern(empty, 0, 1) &&
@@ -369,9 +362,8 @@ static void test_authentication(xt_context * c) {
   };
   char dir[XT_PATH_MAX], key[XT_PATH_MAX], bad[XT_PATH_MAX];
   char data[XT_PATH_MAX], keep[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "authenticated repair")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "authenticated repair"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN") &&
         xt_path(key, sizeof key, dir, "KEY.BIN") &&
         xt_write_pattern(key, 32, 0xA071) &&
@@ -403,9 +395,8 @@ static void test_stdout_safety(xt_context * c) {
   u64 size = 1;
   u32 i;
   int status;
-  if (!xt_case_begin(c, dir, sizeof dir, "verified standard output")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "verified standard output"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
         xt_path(keep, sizeof keep, dir, "KEEP.BIN") &&
@@ -447,9 +438,8 @@ static void test_journal_spellings(xt_context * c) {
   const char * undo_absolute[] = { "undo", NULL, NULL };
   char dir[XT_PATH_MAX], data[XT_PATH_MAX], damaged[XT_PATH_MAX];
   char archive[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "journal path spellings")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "journal path spellings"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
         xt_path(damaged, sizeof damaged, dir, "DAMAGED.BIN") &&
@@ -490,9 +480,8 @@ static void test_hardlink_journal(xt_context * c) {
   };
   static const char * const undo[] = { "undo", "safe.xpa", NULL };
   char dir[XT_PATH_MAX], tree[XT_PATH_MAX], a[XT_PATH_MAX], b[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "hard-link repair and undo")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "hard-link repair and undo"))
+    { CHECK(false, "create the case directory");  return; }
   if (!(xpar_fs_caps(dir) & XPAR_FS_HARDLINK)) return;
   CHECK(xt_path(tree, sizeof tree, dir, "TREE") && xt_mkdir(tree) &&
         xt_path(a, sizeof a, tree, "A.BIN") &&
@@ -539,9 +528,8 @@ static void test_nonconforming_volume(xt_context * c) {
   };
   char dir[XT_PATH_MAX], archive[XT_PATH_MAX], keepdir[XT_PATH_MAX];
   char clean[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "trim a nonconforming volume")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "trim a nonconforming volume"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   if (run(c, dir, 0, create, "create the volume") != 0) return;
   CHECK(xt_path(archive, sizeof archive, dir, "back.xpa") &&
@@ -569,9 +557,8 @@ static void test_renamed_volume(xt_context * c) {
   };
   char dir[XT_PATH_MAX], volume[XT_PATH_MAX], renamed[XT_PATH_MAX];
   char keepdir[XT_PATH_MAX], clean[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "put back a renamed volume")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "put back a renamed volume"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   if (run(c, dir, 0, create, "create the volume set") != 0) return;
   CHECK(xt_find_file(dir, "back.v", "", volume, sizeof volume),
@@ -600,9 +587,8 @@ static void test_prologue_recovery(xt_context * c) {
     "recover-prologue", "arch.xpa", NULL
   };
   char dir[XT_PATH_MAX], archive[XT_PATH_MAX], clean[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, "recover an armoured prologue")) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, "recover an armoured prologue"))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_seed(c, dir, "DATA.BIN"), "copy the seeded input");
   if (run(c, dir, 0, create, "create the armoured archive") != 0) return;
   CHECK(xt_path(archive, sizeof archive, dir, "arch.xpa") &&
@@ -634,9 +620,7 @@ static bool fixture_path(xt_context * c, char * out, sz cap,
   if (src[0] == '/' || src[0] == '\\' || (src[0] && src[1] == ':')) {
     if (xpar_strlen(src) + 1 > sizeof base) return false;
     xpar_memcpy(base, src, xpar_strlen(src) + 1);
-  } else if (!xt_path(base, sizeof base, c->cwd, src)) {
-    return false;
-  }
+  } else if (!xt_path(base, sizeof base, c->cwd, src)) return false;
   return xt_path(format, sizeof format, base, "format") &&
          xt_path(out, cap, format, name);
 }
@@ -655,9 +639,8 @@ static void test_format_archive(xt_context * c, const char * file,
   const char * extract[] = { "extract", "--to=OUT", file, NULL };
   char dir[XT_PATH_MAX], archive[XT_PATH_MAX], keep[XT_PATH_MAX];
   char outdir[XT_PATH_MAX], restored[XT_PATH_MAX];
-  if (!xt_case_begin(c, dir, sizeof dir, title)) {
-    CHECK(false, "create the case directory"); return;
-  }
+  if (!xt_case_begin(c, dir, sizeof dir, title))
+    { CHECK(false, "create the case directory");  return; }
   CHECK(copy_fixture(c, dir, file, NULL), "copy %s", file);
   CHECK(copy_fixture(c, dir, "DATA.BIN", "KEEP.BIN"),
         "copy expected output");

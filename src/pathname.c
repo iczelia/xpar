@@ -32,7 +32,8 @@ bool xpar_path_sep(char c) {
 
 const char * xpar_path_base(const char * path) {
   const char * last = path;
-  for (const char * p = path; *p; p++)
+  const char * p;
+  for (p = path; *p; p++)
     if (xpar_path_sep(*p)) last = p + 1;
   return last;
 }
@@ -47,7 +48,7 @@ char * xpar_path_dir(const char * path) {
 char * xpar_path_join_n(const char * dir, const char * name, u32 n) {
   sz d = dir ? xpar_strlen(dir) : 0;
   sz sep = d && !xpar_path_sep(dir[d - 1]);
-  char * p = (char *) xpar_alloc_raw(d + sep + n + 1);
+  char * p = xpar_alloc_raw(d + sep + n + 1);
   if (d) xpar_memcpy(p, dir, d);
   if (sep) p[d] = '/';
   if (n) xpar_memcpy(p + d + sep, name, n);
@@ -66,7 +67,7 @@ bool xpar_path_ends_with(const char * s, const char * suffix) {
 
 char * xpar_path_norm(const char * path) {
   sz n = xpar_strlen(path), i = 0, j = 0;
-  char * out = (char *) xpar_alloc_raw(n + 2);
+  char * out = xpar_alloc_raw(n + 2);
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   /*  DJGPP and its shells use both C:/dir and /dev/c/dir.  */
   if (n >= 6 && path[0] == '/' &&
@@ -125,7 +126,7 @@ char * xpar_name_escape(const char * s) {
   static char * ring[XPAR_ESCAPE_RING];
   static u32 at = 0;
   sz n = s ? xpar_strlen(s) : 0, i, j = 0;
-  char * out = (char *) xpar_alloc_raw(4 * n + 1);
+  char * out = xpar_alloc_raw(4 * n + 1);
   static const char d[] = "0123456789ABCDEF";
   Fi(n,
     u8 b = (u8) s[i];
@@ -181,7 +182,7 @@ char * xpar_stage_stem(const char * stem, sz suffix) {
   sz room = suffix < XPAR_COMPONENT_MAX ? XPAR_COMPONENT_MAX - suffix : 1;
   char * out;
   if (blen <= room) return xpar_strdup(stem);
-  out = (char *) xpar_alloc_raw(dirlen + room + 1);
+  out = xpar_alloc_raw(dirlen + room + 1);
   if (dirlen) xpar_memcpy(out, stem, dirlen);
   xpar_memcpy(out + dirlen, base, room);
   out[dirlen + room] = 0;
@@ -193,12 +194,15 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   char * dir = xpar_path_dir(stem);
   sz tl = xpar_strlen(dos_tag);
+  u32 i;
   FATAL_UNLESS(tl <= 4, "internal DOS staging tag '%s' exceeds four bytes",
                dos_tag);
-  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+  Fi(STAGE_TRIES,
     u8 rnd[4];  char hex[9], leaf[13];
     char * path;
     xpar_file * f;
+    xpar_stat_t st;
+    bool collided;
     xpar_random_bytes(rnd, sizeof rnd);  dos_stage_hex(hex, rnd);
     xpar_memcpy(leaf, dos_tag, tl);
     xpar_memcpy(leaf + tl, hex, 8 - tl);
@@ -207,21 +211,22 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
     f = xpar_open(path, flags | XPAR_O_CREAT | XPAR_O_EXCL |
                         XPAR_O_PRIVATE);
     if (f) { (void) xpar_set_mode(path, nofollow, 0600);  *out = path;  xpar_free(dir);  return f; }
-    { xpar_stat_t st;
-      bool collided = xpar_lstat(path, &st) == 0;
-      xpar_free(path);
-      if (!collided) break; }
-  }
+    collided = xpar_lstat(path, &st) == 0;
+    xpar_free(path);
+    if (!collided) break);
   xpar_free(dir);
   return NULL;
 #else
   char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM + 4);
+  u32 i;
   (void) dos_tag;
-  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+  Fi(STAGE_TRIES,
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
     char * path = NULL;
     xpar_file * f;
+    xpar_stat_t st;
+    bool collided;
     xpar_random_bytes(rnd, sizeof rnd);
     xpar_hex(hex, rnd, sizeof rnd);
     xpar_asprintf(&path, "%s%s.tmp", trimmed, hex);
@@ -234,11 +239,9 @@ xpar_file * xpar_stage_open(const char * stem, const char * dos_tag,
       return f;
     }
     /*  Only a name collision is worth another random name.  */
-    { xpar_stat_t st;
-      bool collided = xpar_lstat(path, &st) == 0;
-      xpar_free(path);
-      if (!collided) break; }
-  }
+    collided = xpar_lstat(path, &st) == 0;
+    xpar_free(path);
+    if (!collided) break);
   xpar_free(trimmed);
   return NULL;
 #endif
@@ -248,40 +251,42 @@ char * xpar_stage_dir(const char * stem, const char * dos_tag) {
 #if defined(XPAR_DOS) || defined(__MSDOS__)
   char * dir = xpar_path_dir(stem);
   sz tl = xpar_strlen(dos_tag);
+  u32 i;
   FATAL_UNLESS(tl <= 4, "internal DOS directory tag '%s' exceeds four bytes",
                dos_tag);
-  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+  Fi(STAGE_TRIES,
     u8 rnd[4];  char hex[9], leaf[9];
     char * path;
+    xpar_stat_t st;
+    bool collided;
     xpar_random_bytes(rnd, sizeof rnd);  dos_stage_hex(hex, rnd);
     xpar_memcpy(leaf, dos_tag, tl);
     xpar_memcpy(leaf + tl, hex, 8 - tl);  leaf[8] = 0;
     path = xpar_path_join(dir, leaf);
     if (xpar_mkdir(path, 0700) == 0) { xpar_free(dir);  return path; }
-    { xpar_stat_t st;
-      bool collided = xpar_lstat(path, &st) == 0;
-      xpar_free(path);
-      if (!collided) break; }
-  }
+    collided = xpar_lstat(path, &st) == 0;
+    xpar_free(path);
+    if (!collided) break);
   xpar_free(dir);
   return NULL;
 #else
   char * trimmed = xpar_stage_stem(stem, 2 * STAGE_RANDOM);
+  u32 i;
   (void) dos_tag;
-  for (u32 attempt = 0; attempt < STAGE_TRIES; attempt++) {
+  Fi(STAGE_TRIES,
     u8 rnd[STAGE_RANDOM];
     char hex[2 * STAGE_RANDOM + 1];
     char * path = NULL;
+    xpar_stat_t st;
+    bool collided;
     xpar_random_bytes(rnd, sizeof rnd);
     xpar_hex(hex, rnd, sizeof rnd);
     xpar_asprintf(&path, "%s%s", trimmed, hex);
     if (xpar_mkdir(path, 0700) == 0) { xpar_free(trimmed);  return path; }
     /*  Only a name collision is worth another random name.  */
-    { xpar_stat_t st;
-      bool collided = xpar_lstat(path, &st) == 0;
-      xpar_free(path);
-      if (!collided) break; }
-  }
+    collided = xpar_lstat(path, &st) == 0;
+    xpar_free(path);
+    if (!collided) break);
   xpar_free(trimmed);
   return NULL;
 #endif

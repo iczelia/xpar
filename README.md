@@ -46,7 +46,7 @@ follow.
 
 ## Sets
 
-xpar has three layouts.
+xpar supports three parity file layouts.
 
 | Layout | Storage |
 | --- | --- |
@@ -54,7 +54,7 @@ xpar has three layouts.
 | `split` | Store consecutive raw stream ranges in `base.dNN` files |
 | `armoured` | Store manifest, data, and recovery in one `base.xpa` |
 
-Protect a tree with 15 percent redundancy and file deduplication as follows.
+Protect a tree with 15 percent redundancy and file deduplication:
 
 ```sh
 xpar create -r 15% --dedup=file -o photos -R 448CANON

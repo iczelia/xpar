@@ -12,13 +12,15 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Standalone deterministic corpus generator for tests and benchmarks. */
+/*  Standalone deterministic corpus generator for tests and benchmarks.  */
+
+#include "common.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static unsigned long long rng_state = 0x9E3779B97F4A7C15ull;
+static unsigned long long rng_state = 0x9E3779B97F4A7C15ULL;
 
 static unsigned int rng_next(void) {
   rng_state ^= rng_state << 13;
@@ -33,7 +35,7 @@ static const char * const words[] = {
   "generation", "armour", "codec", "matrix", "additive", "transform"
 };
 
-/* Random data resists compression; text exercises deduplication and chunking. */
+/*  Random data resists compression; text exercises deduplication and chunking.  */
 
 static void emit_random(FILE * f, unsigned long long n) {
   unsigned char buf[65536];
@@ -50,7 +52,7 @@ static void emit_text(FILE * f, unsigned long long n) {
   size_t fill = 0;
   unsigned column = 0;
   while (n) {
-    const char * w = words[rng_next() % (sizeof words / sizeof words[0])];
+    const char * w = words[rng_next() % ARRAY_LEN(words)];
     size_t len = strlen(w);
     if (fill + len + 2 > sizeof buf) {
       size_t take = fill > n ? (size_t) n : fill;
@@ -92,20 +94,17 @@ int main(int argc, char ** argv) {
   if (argc < 3) usage();
   seed  = strtoull(argv[1], NULL, 0);
   bytes = strtoull(argv[2], NULL, 0);
-  for (i = 3; i < argc; i++) {
+  for (i = 3; i < argc; i++)
     if (!strncmp(argv[i], "--pattern=", 10)) pattern = argv[i] + 10;
     else if (argv[i][0] == '-')              usage();
     else                                     path = argv[i];
-  }
 
-  rng_state = seed ? seed : 0x9E3779B97F4A7C15ull;
+  rng_state = seed ? seed : 0x9E3779B97F4A7C15ULL;
 
   if (path) {
     f = fopen(path, "wb");
     if (!f) { perror(path);  return 2; }
-  } else {
-    f = stdout;
-  }
+  } else f = stdout;
 
   if      (!strcmp(pattern, "random")) emit_random(f, bytes);
   else if (!strcmp(pattern, "text"))   emit_text(f, bytes);

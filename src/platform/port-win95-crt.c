@@ -24,9 +24,9 @@
 #include <string.h>
 
 #if defined(__GNUC__) || defined(__clang__)
-  #define XPAR_KEEP __attribute__((used))
+#define XPAR_KEEP __attribute__((used))
 #else
-  #define XPAR_KEEP
+#define XPAR_KEEP
 #endif
 
 int __cdecl __mingw_vsnprintf(char *, size_t, const char *, va_list);
@@ -66,12 +66,12 @@ XPAR_KEEP void * memmove(void * d, const void * s, size_t n) {
   void * out = d;
   if (!n) return out;
   if ((const unsigned char *) d < (const unsigned char *) s ||
-      (const unsigned char *) d >= (const unsigned char *) s + n) {
+      (const unsigned char *) d >= (const unsigned char *) s + n)
     __asm__ volatile ("cld\n\trep movsb"
                       : "+D" (d), "+S" (s), "+c" (n)
                       :
                       : "memory");
-  } else {
+  else {
     d = (unsigned char *) d + n - 1;
     s = (const unsigned char *) s + n - 1;
     __asm__ volatile ("std\n\trep movsb\n\tcld"
@@ -124,12 +124,9 @@ XPAR_KEEP void * memcpy(void * d, const void * s, size_t n) {
 XPAR_KEEP void * memmove(void * d, const void * s, size_t n) {
   unsigned char * dp = d;
   const unsigned char * sp = s;
-  if (dp < sp || dp >= sp + n) {
+  if (dp < sp || dp >= sp + n)
     while (n--) *dp++ = *sp++;
-  } else {
-    dp += n;  sp += n;
-    while (n--) *--dp = *--sp;
-  }
+  else { dp += n;  sp += n;  while (n--) *--dp = *--sp; }
   return d;
 }
 
@@ -194,7 +191,6 @@ XPAR_KEEP int __cdecl __mingw_vsnprintf(char * s, size_t n,
                                         const char * fmt, va_list ap) {
   return xpar_vsnprintf(s, n, fmt, ap);
 }
-
 
 #define XPAR_ARGV_CH char
 #define XPAR_ARGV_L(c) c

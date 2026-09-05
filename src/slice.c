@@ -61,7 +61,7 @@ xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,
   u64 z, s, cap = max_slices(req->field_log2, req->recovery);
   bool explicit_z = req->slice_size != 0;
 
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   out->stream_length = req->stream_length;
   out->stream_base   = req->stream_base;
   if (req->slice_size && req->slice_count) return XPAR_GEOM_EXCLUSIVE;
@@ -77,9 +77,8 @@ xpar_geom_status xpar_geom_choose(const xpar_geom_req * req,
     else z = round_up_64(xpar_ceil_div(req->stream_length,
                                        req->slice_count));
     if (z < XPAR_SLICE_MIN) z = XPAR_SLICE_MIN;
-  } else if (!req->stream_length) {
-    z = XPAR_SLICE_FLOOR;
-  } else {
+  } else if (!req->stream_length) z = XPAR_SLICE_FLOOR;
+  else {
     z = round_up_64(req->stream_length / XPAR_SLICE_TARGET);
     if (z < XPAR_SLICE_FLOOR) z = XPAR_SLICE_FLOOR;
     if (z > XPAR_SLICE_CEIL)  z = XPAR_SLICE_CEIL;
@@ -183,7 +182,7 @@ u32 xpar_cell_choose(u64 slice_size, u32 want, u32 armour_frame) {
 }
 
 bool xpar_geom_from_setd(const xpar_setd * sd, xpar_geom * out) {
-  xpar_memset(out, 0, sizeof(*out));
+  xpar_memset(out, 0, sizeof *out);
   if (sd->slice_size % 64 || sd->slice_size < XPAR_SLICE_MIN ||
       sd->slice_size > XPAR_SLICE_MAX) return false;
   /*  Reject slice sizes beyond the host address space.  */
@@ -235,9 +234,7 @@ void xpar_slice_tag(const xpar_setd * sd, u64 slice, const u8 * bytes,
     u64 begin = sd->stream_base + slice * sd->slice_size;
     xpar_blake3_subtree_tag(bytes, (sz) sd->slice_size,
                             begin / XPAR_BLAKE3_CHUNK_LEN, out, n);
-  } else {
-    xpar_blake3_hash(bytes, (sz) sd->slice_size, out, n);
-  }
+  } else xpar_blake3_hash(bytes, (sz) sd->slice_size, out, n);
 }
 
 void xpar_slice_tag_keyed(const xpar_setd * sd, u64 slice, const u8 * bytes,
@@ -246,9 +243,7 @@ void xpar_slice_tag_keyed(const xpar_setd * sd, u64 slice, const u8 * bytes,
     u64 begin = sd->stream_base + slice * sd->slice_size;
     xpar_blake3_subtree_tag_keyed(key, bytes, (sz) sd->slice_size,
                                   begin / XPAR_BLAKE3_CHUNK_LEN, out, n);
-  } else {
-    xpar_blake3_hash_keyed(key, bytes, (sz) sd->slice_size, out, n);
-  }
+  } else xpar_blake3_hash_keyed(key, bytes, (sz) sd->slice_size, out, n);
 }
 
 u32 xpar_cell_of(const xpar_geom * g, u64 stream_off) {
@@ -281,11 +276,11 @@ u64 xpar_cell_bytes(const xpar_geom * g, u64 slice, u32 col) {
 
 void xpar_erasures_init(xpar_erasures * e, u64 slices, u32 cells) {
   u64 n = slices * (cells ? cells : 1);
-  if (n > 0x7FFFFFFFu) FATAL("erasure table too large for this host");
+  if (n > 0x7FFFFFFFU) FATAL("erasure table too large for this host");
   e->slice_count     = slices;
   e->cells_per_slice = cells ? cells : 1;
   e->bad_count       = 0;
-  e->bad             = (u8 *) xpar_calloc(n ? (sz) n : 1, 1);
+  e->bad             = xpar_calloc(n ? (sz) n : 1, 1);
 }
 
 void xpar_erasures_free(xpar_erasures * e) {
@@ -299,8 +294,8 @@ void xpar_erasures_clear(xpar_erasures * e) {
 }
 
 void xpar_erasures_mark_slice(xpar_erasures * e, u64 slice) {
-  u32 c;
-  for (c = 0; c < e->cells_per_slice; c++) xpar_cell_mark(e, slice, c);
+  u32 i;
+  Fi(e->cells_per_slice, xpar_cell_mark(e, slice, i));
 }
 
 void xpar_erasures_mark_range(xpar_erasures * e, const xpar_geom * g,
@@ -321,20 +316,19 @@ void xpar_erasures_mark_range(xpar_erasures * e, const xpar_geom * g,
 
 u64 xpar_erasures_max_depth(const xpar_erasures * e) {
   u64 worst = 0, i;
-  u32 c;
-  for (c = 0; c < e->cells_per_slice; c++) {
+  u32 j;
+  Fj(e->cells_per_slice,
     u64 depth = 0;
-    Fi(e->slice_count, if (e->bad[i * e->cells_per_slice + c]) depth++);
-    if (depth > worst) worst = depth;
-  }
+    Fi(e->slice_count, if (e->bad[i * e->cells_per_slice + j]) depth++);
+    if (depth > worst) worst = depth);
   return worst;
 }
 
 static u64 pattern_hash(const xpar_erasures * e, u32 col) {
-  u64 h = 0xCBF29CE484222325ull, i;
+  u64 h = 0xCBF29CE484222325ULL, i;
   Fi(e->slice_count,
     h ^= e->bad[i * e->cells_per_slice + col];
-    h *= 0x100000001B3ull);
+    h *= 0x100000001B3ULL);
   return h;
 }
 
@@ -353,28 +347,26 @@ void xpar_col_groups_build(const xpar_erasures * e, xpar_col_groups * g) {
   g->slice_count     = e->slice_count;
   g->cells_per_slice = k;
   g->group_count     = 0;
-  g->group = (xpar_col_group *) xpar_alloc_raw((sz) k *
-                                               sizeof(xpar_col_group));
+  g->group = xpar_alloc_raw((sz) k * sizeof *g->group);
   while (size < (u64) k * 2 + 2) size *= 2;
   mask   = (u32) (size - 1);
-  bucket = (u32 *) xpar_alloc_raw(((sz) mask + 1) * sizeof(u32));
-  hash   = (u64 *) xpar_alloc_raw((sz) k * sizeof(u64));
-  for (b = 0; b <= mask; b++) bucket[b] = 0xFFFFFFFFu;
+  bucket = xpar_alloc_raw(((sz) mask + 1) * sizeof *bucket);
+  hash   = xpar_alloc_raw((sz) k * sizeof *hash);
+  for (b = 0; b <= mask; b++) bucket[b] = 0xFFFFFFFFU;
 
   for (col = 0; col < k; col++) {
     u64 h = pattern_hash(e, col);
-    u32 slot = (u32) ((h ^ (h >> 32)) & mask), gi = 0xFFFFFFFFu;
-    while (bucket[slot] != 0xFFFFFFFFu) {
+    u32 slot = (u32) ((h ^ (h >> 32)) & mask), gi = 0xFFFFFFFFU;
+    while (bucket[slot] != 0xFFFFFFFFU) {
       u32 cand = bucket[slot];
       if (hash[cand] == h && pattern_eq(e, col, g->group[cand].present)) { gi = cand;  break; }
       slot = (slot + 1) & mask;
     }
-    if (gi == 0xFFFFFFFFu) {
+    if (gi == 0xFFFFFFFFU) {
       u64 i;
       xpar_col_group * ng = &g->group[g->group_count];
-      ng->present = (u8 *) xpar_alloc_raw(e->slice_count
-                                            ? (sz) e->slice_count : 1);
-      ng->column  = (u32 *) xpar_alloc_raw((sz) k * sizeof(u32));
+      ng->present = xpar_alloc_raw(e->slice_count ? (sz) e->slice_count : 1);
+      ng->column  = xpar_alloc_raw((sz) k * sizeof *ng->column);
       ng->column_count = 0;
       ng->erased  = 0;
       Fi(e->slice_count,

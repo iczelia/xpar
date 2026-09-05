@@ -17,16 +17,16 @@
 #include "blake3.h"
 
 #if defined(XPAR_BLAKE3_VARIANT_AVX2)
-  #define XPAR_B3_SFX  _avx2
-  #define XPAR_B3_DEG  8
-  #include <immintrin.h>
+#define XPAR_B3_SFX  _avx2
+#define XPAR_B3_DEG  8
+#include <immintrin.h>
 #elif defined(XPAR_BLAKE3_VARIANT_NEON)
-  #define XPAR_B3_SFX  _neon
-  #define XPAR_B3_DEG  4
-  #include <arm_neon.h>
+#define XPAR_B3_SFX  _neon
+#define XPAR_B3_DEG  4
+#include <arm_neon.h>
 #else
-  #define XPAR_B3_SFX  _scalar
-  #define XPAR_B3_DEG  1
+#define XPAR_B3_SFX  _scalar
+#define XPAR_B3_DEG  1
 #endif
 
 #define XPAR_B3_CAT2(a, b) a##b
@@ -37,9 +37,9 @@
     is the one the driver calls, and internal everywhere else, where it
     only serves the lanes left over past a multiple of the degree.  */
 #if defined(XPAR_BLAKE3_VARIANT_SCALAR)
-  #define XPAR_B3_LINK
+#define XPAR_B3_LINK
 #else
-  #define XPAR_B3_LINK static
+#define XPAR_B3_LINK static
 #endif
 
 /*  Message permutation. Row 0 is the identity and row r+1 is row r
@@ -129,13 +129,13 @@ void xpar_blake3_xof_scalar(const u32 * cv, const u8 * block, u8 block_len,
 static void xpar_b3_one(const u8 * in, sz blocks, const u32 * key,
                         u64 counter, u8 flags, u8 first, u8 last, u8 * out) {
   u32 cv[8], i;
+  sz j;
   Fi(8, cv[i] = key[i]);
-  for (sz b = 0; b < blocks; b++) {
-    u8 bf = (u8) (flags | (b == 0 ? first : 0) |
-                  (b + 1 == blocks ? last : 0));
-    XPAR_B3_FN(xpar_blake3_compress)(cv, in + b * XPAR_BLAKE3_BLOCK_LEN,
-                                     XPAR_BLAKE3_BLOCK_LEN, counter, bf);
-  }
+  Fj(blocks,
+    u8 bf = (u8) (flags | (j == 0 ? first : 0) |
+                  (j + 1 == blocks ? last : 0));
+    XPAR_B3_FN(xpar_blake3_compress)(cv, in + j * XPAR_BLAKE3_BLOCK_LEN,
+                                     XPAR_BLAKE3_BLOCK_LEN, counter, bf));
   Fi(8, xpar_wr32(out + 4 * i, cv[i]));
 }
 
@@ -146,9 +146,9 @@ static void xpar_b3_one(const u8 * in, sz blocks, const u32 * key,
 /*  Prefetch each strided lane; out-of-range hints are safe no-ops.  */
 #define XPAR_B3_AHEAD (4 * XPAR_BLAKE3_BLOCK_LEN)
 #if defined(__GNUC__) || defined(__clang__)
-  #define XPAR_B3_PREFETCH(p) __builtin_prefetch((const void *) (p))
+#define XPAR_B3_PREFETCH(p) __builtin_prefetch((const void *) (p))
 #else
-  #define XPAR_B3_PREFETCH(p) ((void) 0)
+#define XPAR_B3_PREFETCH(p) ((void) 0)
 #endif
 
 #if defined(XPAR_BLAKE3_VARIANT_AVX2)
@@ -312,14 +312,15 @@ static void xpar_b3_batch(const u8 * const * in, sz blocks, const u32 * key,
                           u8 * out) {
   xpar_b3_vec h[8], v[16], m[16], ctr_lo, ctr_hi;
   u32 lo[XPAR_B3_DEG], hi[XPAR_B3_DEG], i;
+  sz j;
   Fi(XPAR_B3_DEG, u64 c = counter + (inc ? (u64) i : 0);
                   lo[i] = (u32) c;  hi[i] = (u32) (c >> 32));
   ctr_lo = xpar_b3_ldw(lo);  ctr_hi = xpar_b3_ldw(hi);
   Fi(8, h[i] = XPAR_B3_SET1(key[i]));
-  for (sz b = 0; b < blocks; b++) {
-    u8 bf = (u8) (flags | (b == 0 ? first : 0) |
-                  (b + 1 == blocks ? last : 0));
-    xpar_b3_load_msg(in, b * XPAR_BLAKE3_BLOCK_LEN, m);
+  Fj(blocks,
+    u8 bf = (u8) (flags | (j == 0 ? first : 0) |
+                  (j + 1 == blocks ? last : 0));
+    xpar_b3_load_msg(in, j * XPAR_BLAKE3_BLOCK_LEN, m);
     Fi(8, v[i] = h[i]);
     v[ 8] = XPAR_B3_SET1(xpar_blake3_iv[0]);
     v[ 9] = XPAR_B3_SET1(xpar_blake3_iv[1]);
@@ -332,8 +333,7 @@ static void xpar_b3_batch(const u8 * const * in, sz blocks, const u32 * key,
     xpar_b3_vround(v, m, 2);  xpar_b3_vround(v, m, 3);
     xpar_b3_vround(v, m, 4);  xpar_b3_vround(v, m, 5);
     xpar_b3_vround(v, m, 6);
-    Fi(8, h[i] = XPAR_B3_XOR(v[i], v[i + 8]));
-  }
+    Fi(8, h[i] = XPAR_B3_XOR(v[i], v[i + 8])));
   xpar_b3_store_cv(h, out);
 }
 

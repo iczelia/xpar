@@ -38,25 +38,25 @@ static void sv_store16(svbool_t pg, u16 * p, svuint16_t v) {
 
 static svuint8_t sv_mul8(svbool_t pg, svuint8_t v, u8 c) {
   svuint8_t a = v, out = svdup_n_u8(0);
-  for (u32 bit = 0; bit < 8; bit++) {
+  u32 i;
+  Fi(8,
     svuint8_t carry;
-    if ((c >> bit) & 1) out = sveor_u8_x(pg, out, a);
+    if ((c >> i) & 1) out = sveor_u8_x(pg, out, a);
     carry = svlsr_n_u8_x(pg, a, 7);
     a = svlsl_n_u8_x(pg, a, 1);
-    a = sveor_u8_x(pg, a, svmul_n_u8_x(pg, carry, 0x1D));
-  }
+    a = sveor_u8_x(pg, a, svmul_n_u8_x(pg, carry, 0x1D)));
   return out;
 }
 
 static svuint16_t sv_mul16(svbool_t pg, svuint16_t v, u16 c) {
   svuint16_t a = v, out = svdup_n_u16(0);
-  for (u32 bit = 0; bit < 16; bit++) {
+  u32 i;
+  Fi(16,
     svuint16_t carry;
-    if ((c >> bit) & 1) out = sveor_u16_x(pg, out, a);
+    if ((c >> i) & 1) out = sveor_u16_x(pg, out, a);
     carry = svlsr_n_u16_x(pg, a, 15);
     a = svlsl_n_u16_x(pg, a, 1);
-    a = sveor_u16_x(pg, a, svmul_n_u16_x(pg, carry, 0x2D));
-  }
+    a = sveor_u16_x(pg, a, svmul_n_u16_x(pg, carry, 0x2D)));
   return out;
 }
 

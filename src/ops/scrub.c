@@ -34,7 +34,7 @@
 /*  Scrub state.  */
 
 /*  Counts above this limit remain in totals but not the distribution.  */
-#define SCRUB_HIST_MAX  4096u
+#define SCRUB_HIST_MAX  4096U
 
 typedef struct {
   const u8 * data;              /*  Points into a volume image.  */
@@ -124,10 +124,9 @@ static void load_recovery(scrub * c) {
   u32 i;
 
   c->rcvs_count = xpar_vset_recovery_total(c->s);
-  c->rcvs = (scrub_rcvs *) xpar_calloc(c->rcvs_count ? (sz) c->rcvs_count
-                                                     : 1,
-                                       sizeof(scrub_rcvs));
-  /* Scan decoded plaintext, not armoured codewords, for RCVS packets. */
+  c->rcvs = xpar_calloc(c->rcvs_count ? (sz) c->rcvs_count
+                                      : 1, sizeof *c->rcvs);
+  /*  Scan decoded plaintext, not armoured codewords, for RCVS packets.  */
   if (sd->layout == XPAR_LAYOUT_ARMOURED) { take_rcvs_decoded(c);  return; }
   /*  The index volumes may carry recovery slices themselves on a small
       set, so they are scanned before anything is opened.  */
@@ -137,8 +136,7 @@ static void load_recovery(scrub * c) {
     if (p) scan_image(c, p, n));
   if (!l) return;
 
-  c->rvol = (xpar_volimg *) xpar_calloc(l->count ? l->count : 1,
-                                        sizeof(xpar_volimg));
+  c->rvol = xpar_calloc(l->count ? l->count : 1, sizeof *c->rvol);
   Fi(l->count,
     const xpar_vol * v = &l->vol[i];
     xpar_volimg_status vs;
@@ -165,11 +163,11 @@ static void load_recovery(scrub * c) {
 /*  The inner code, over everything.  */
 
 static void hist_add(scrub * c, const xpar_armour_stat * st) {
+  u32 i;
   c->frames    += st->frames;     c->codewords += st->codewords;
   c->clean     += st->clean;      c->corrected += st->corrected;
   c->failed    += st->failed;     c->symbols   += st->symbols;
   if (st->worst > c->worst) c->worst = st->worst;
-  u32 i;
   Fi(MIN(st->hist_len, c->hist_len), c->hist[i] += st->hist[i]);
 }
 
@@ -194,7 +192,7 @@ typedef struct {
 } scrub_frames_job;
 
 static void scrub_frames_run(sz index, void * ctx) {
-  scrub_frames_job * j = (scrub_frames_job *) ctx;
+  scrub_frames_job * j = ctx;
   u64 lo = j->frames * (u64) index / (u64) j->chunks;
   u64 hi = j->frames * (u64) (index + 1) / (u64) j->chunks;
   xpar_armour * a;
@@ -214,7 +212,7 @@ static void scrub_frames(scrub * c, const xpar_armour * ar, u8 * region,
   fit = frames / (batch ? batch : 1);
   pool = xpar_pool_create(c->o->jobs);
   j.chunks = (sz) xpar_pool_threads(pool);
-  /*  Give each worker at least one full batch. */
+  /*  Give each worker at least one full batch.  */
   if ((u64) j.chunks > fit) j.chunks = (sz) fit;
   if (j.chunks <= 1) {
     xpar_pool_destroy(pool);
@@ -224,12 +222,11 @@ static void scrub_frames(scrub * c, const xpar_armour * ar, u8 * region,
   j.p = xpar_armour_params_of(ar);
   j.region = region;  j.frames = frames;
   j.fx = xpar_armour_frame_disk(ar);
-  j.st = (xpar_armour_stat *) xpar_calloc(j.chunks,
-                                          sizeof(xpar_armour_stat));
+  j.st = xpar_calloc(j.chunks, sizeof *j.st);
   Fi(j.chunks,
     j.st[i].hist_len = st->hist_len;
     j.st[i].hist = st->hist_len
-                     ? (u64 *) xpar_calloc(st->hist_len, sizeof(u64)) : NULL);
+                     ? xpar_calloc(st->hist_len, sizeof *j.st[i].hist) : NULL);
   xpar_pool_run(pool, j.chunks, scrub_frames_run, &j);
   Fi(j.chunks,
     stat_merge(st, &j.st[i]);
@@ -298,7 +295,7 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
   ar = xpar_armour_new(&p);
   c->regions++;
 
-  region = (u8 *) xpar_alloc_raw((sz) a.armoured_length);
+  region = xpar_alloc_raw((sz) a.armoured_length);
   xpar_memcpy(region, a.data, (sz) a.armoured_length);
   fdisk   = xpar_armour_frame_disk(ar);
   nframes = fdisk ? a.armoured_length / fdisk : 0;
@@ -307,14 +304,14 @@ static void scrub_armg(scrub * c, const u8 * body, sz n, const u8 * base,
       whose parameters give a different `t` cannot overrun a shared one.  */
   { u32 t   = (a.n - a.k) / 2;
     u32 len = t + 1 < SCRUB_HIST_MAX ? t + 1 : SCRUB_HIST_MAX;
-    u64 * h = (u64 *) xpar_calloc(len, sizeof(u64));
+    u64 * h = xpar_calloc(len, sizeof *h);
     xpar_memset(&st, 0, sizeof st);
     st.hist = h;  st.hist_len = len;
     scrub_frames(c, ar, region, nframes, &st);
     hist_add(c, &st);
     xpar_free(h); }
 
-  plain = (u8 *) xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
+  plain = xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
   xpar_armour_extract(ar, plain, a.plain_length, region);
   ok = xpar_verify_packets_ok(plain, a.plain_length, xpar_vset_key(c->s));
   /*  Track wrapped RCVS damage separately from metadata.  */
@@ -369,26 +366,25 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
       !xpar_garm_prologue(buf, (sz) size, &pr, NULL)) return;
   avail = size > 384 ? size - 384 : 0;
   if (avail > pr.armoured_length) avail = pr.armoured_length;
-  p.symbol_bits = pr.symbol_bits; p.poly = pr.poly;
-  p.n = pr.n; p.k = pr.k; p.fcr = pr.fcr; p.prim = pr.prim;
+  p.symbol_bits = pr.symbol_bits;  p.poly = pr.poly;
+  p.n = pr.n;  p.k = pr.k;  p.fcr = pr.fcr;  p.prim = pr.prim;
   p.depth = pr.depth;
-  if (xpar_armour_check(&p)) { c->failed++; return; }
+  if (xpar_armour_check(&p)) { c->failed++;  return; }
   ar = xpar_armour_new(&p);
   fd = xpar_armour_frame_disk(ar);
   frames = fd ? pr.armoured_length / fd : 0;
-  region = (u8 *) xpar_alloc_raw((sz) pr.armoured_length);
-  plain = (u8 *) xpar_alloc_raw(pr.plain_length ? (sz) pr.plain_length : 1);
+  region = xpar_alloc_raw((sz) pr.armoured_length);
+  plain = xpar_alloc_raw(pr.plain_length ? (sz) pr.plain_length : 1);
   /*  A short file is read as erasures of its missing tail.  */
   xpar_memcpy(region, buf + 384, (sz) avail);
   if (avail < pr.armoured_length)
     xpar_memset(region + avail, 0, (sz) (pr.armoured_length - avail));
   c->regions++;
-  {
-    u32 t = (p.n - p.k) / 2;
+  { u32 t = (p.n - p.k) / 2;
     u32 len = t + 1 < SCRUB_HIST_MAX ? t + 1 : SCRUB_HIST_MAX;
-    u64 * h = (u64 *) xpar_calloc(len, sizeof(u64));
+    u64 * h = xpar_calloc(len, sizeof *h);
     xpar_memset(&st, 0, sizeof st);
-    st.hist = h; st.hist_len = len;
+    st.hist = h;  st.hist_len = len;
     scrub_frames(c, ar, region, frames, &st);
     hist_add(c, &st);
     xpar_free(h);
@@ -402,13 +398,13 @@ static void scrub_archive(scrub * c, const u8 * buf, u64 size,
     sink_write(c, &k, region, pr.armoured_length, 384);
     sink_close(c, &k);
   }
-  xpar_free(plain); xpar_free(region); xpar_armour_free(ar);
+  xpar_free(plain);  xpar_free(region);  xpar_armour_free(ar);
 }
 
 static void scrub_armour(scrub * c) {
   u32 i;
   c->hist_len = SCRUB_HIST_MAX;
-  c->hist = (u64 *) xpar_calloc(c->hist_len, sizeof(u64));
+  c->hist = xpar_calloc(c->hist_len, sizeof *c->hist);
   Fi(xpar_vset_volumes(c->s),
     u64 n = 0;
     const u8 * p = xpar_vset_volume(c->s, i, &n);
@@ -461,7 +457,7 @@ static void check_links(scrub * c) {
   u32 i, n = 0;
 
   if (!m->count) return;
-  id = (linkid *) xpar_calloc(m->count, sizeof(linkid));
+  id = xpar_calloc(m->count, sizeof *id);
   xpar_nameidx_build(m, &nix);
   Fi(m->count,
     const xpar_entry * e = &m->entry[i];
@@ -538,7 +534,7 @@ static void deep(scrub * c) {
                                 sd->recovery_axis_log2))
     FATAL_CODE(XPAR_EXIT_NOPLAN,
                "--deep: this build's codec cannot express S = %" PRIu64 " with "
-               "R = %" PRIu64 , s_count,
+               "R = %" PRIu64, s_count,
                r_count);
 
   chunk = budget / (s_count + r_count);
@@ -550,22 +546,22 @@ static void deep(scrub * c) {
                (s_count + r_count) * 64);
   if (chunk > g->slice_size) chunk = g->slice_size;
 
-  data = (u8 **) xpar_calloc((sz) s_count, sizeof(u8 *));
-  rec  = (u8 **) xpar_calloc((sz) r_count, sizeof(u8 *));
-  din  = (const u8 **) xpar_calloc((sz) s_count, sizeof(u8 *));
-  Fi(s_count, data[i] = (u8 *) xpar_alloc_raw((sz) chunk);  din[i] = data[i]);
-  Fi(r_count, rec[i] = (u8 *) xpar_alloc_raw((sz) chunk));
+  data = xpar_calloc((sz) s_count, sizeof *data);
+  rec  = xpar_calloc((sz) r_count, sizeof *rec);
+  din  = xpar_calloc((sz) s_count, sizeof *din);
+  Fi(s_count, data[i] = xpar_alloc_raw((sz) chunk);  din[i] = data[i]);
+  Fi(r_count, rec[i] = xpar_alloc_raw((sz) chunk));
   codec = xpar_codec_new_axis(sd->codec, sd->field_log2, s_count, r_count,
                               sd->recovery_axis_log2);
 
-  { u8 * wrong = (u8 *) xpar_calloc((sz) r_count, 1);
+  { u8 * wrong = xpar_calloc((sz) r_count, 1);
     bool data_lost = false;
     for (off = 0; off < g->slice_size; off += chunk) {
       u64 take = MIN(chunk, g->slice_size - off);
       Fi(s_count,
         if (!xpar_vset_read(c->s, g->stream_base + i * g->slice_size + off,
                             data[i], take)) {
-          /* Missing data invalidates every parity comparison. */
+          /*  Missing data invalidates every parity comparison.  */
           xpar_memset(data[i], 0, (sz) take);
           data_lost = true;
         });
@@ -594,7 +590,7 @@ static void deep(scrub * c) {
   xpar_free(data);  xpar_free(rec);  xpar_free((void *) din);
 }
 
-/* Buffer one SLCL packet's cell checksums. */
+/*  Buffer one SLCL packet's cell checksums.  */
 
 typedef struct {
   xpar_buf out;
@@ -635,11 +631,11 @@ static void rebuild_cells(scrub * c) {
   cr.cap   = k ? XPAR_TABLE_SPLIT / k : XPAR_TABLE_SPLIT;
   if (!cr.cap) cr.cap = 1;
   cr.first = cr.run = 0;
-  cr.crc   = (u32 *) xpar_calloc((sz) (cr.cap * k), 4);
+  cr.crc   = xpar_calloc((sz) (cr.cap * k), 4);
   xpar_buf_init(&cr.out);
-  slice = (u8 *) xpar_alloc_raw((sz) g->slice_size);
+  slice = xpar_alloc_raw((sz) g->slice_size);
 
-  /* Flush at coverage gaps, unverified slices and packet limits. */
+  /*  Flush at coverage gaps, unverified slices and packet limits.  */
   Fi(g->slice_count,
     bool ok;
     u32 col;
@@ -658,9 +654,7 @@ static void rebuild_cells(scrub * c) {
         xpar_slice_tag(sd, i, slice, got, t->tag_len);
       ok = xpar_blake3_tag_equal(got, t->slice_tag + i * t->tag_len,
                                  t->tag_len);
-    } else {
-      ok = xpar_crc32c(0, slice, (sz) g->slice_size) == t->slice_crc[i];
-    }
+    } else ok = xpar_crc32c(0, slice, (sz) g->slice_size) == t->slice_crc[i];
     if (!ok) {
       c->cells_unseeded++;
       if (!c->o->quiet)
@@ -679,83 +673,82 @@ static void rebuild_cells(scrub * c) {
     c->cells_rebuilt += k);
   cellrun_flush(&cr, c);
 
-  if (c->cells_unseeded) {
+  if (c->cells_unseeded)
     xpar_fprintf(xpar_stderr,
-                 "xpar: --rebuild-cells: %" PRIu64 " slices could not be seeded\n",
+                 "xpar: --rebuild-cells: %" PRIu64 " slices not seeded\n",
                  c->cells_unseeded);
-  } else {
-    { u32 v, wrote = 0;
-      if (sd->layout == XPAR_LAYOUT_ARMOURED) {
-        const u8 * plain;
-        u64 plain_len, stream_at, insert;
-        xpar_armour_params ap;
-        const char * path;
-        xpar_scan sc;
-        xpar_pkt h;
-        const u8 * body;
-        u64 off;
-        if (!xpar_vset_armoured(c->s, &plain, &plain_len, &stream_at,
-                                &ap, &path) ||
-            cr.out.len > UINT64_MAX - plain_len) {
-          c->write_failed = true;
-        } else {
-          insert = plain_len;
-          xpar_scan_init(&sc, plain, plain_len, xpar_vset_key(c->s), false);
-          sc.accept_unverified_keyed = false;
-          while (xpar_scan_next(&sc, &h, &body, &off))
-            if (xpar_pkt_is(&h, XPAR_T_RCVS) ||
-                xpar_pkt_is(&h, XPAR_T_CRTR)) { insert = off; break; }
-          xpar_garm_write_inserted(path, &ap, plain, plain_len, insert,
-                                   cr.out.data, cr.out.len, stream_at,
-                                   g->stream_length);
-          wrote = 1;
-          xpar_fprintf(xpar_stderr,
-                       "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums "
-                       "inside '%s'\n",
-                       c->cells_rebuilt, path);
-        }
-      } else for (v = 0; v < xpar_vset_volumes(c->s) && wrote < 2; v++) {
-        const char * path = xpar_vset_volume_path(c->s, v);
-        const xpar_layt * layt = xpar_vset_layt(c->s);
-        const char * base;
-        xpar_file * f;
-        bool is_data = false;
-        u32 q;
-        if (!path) continue;
-        for (base = path + xpar_strlen(path); base > path &&
-             base[-1] != '/' && base[-1] != '\\'; base--) {;}
-        if (layt) for (q = 0; q < layt->count; q++)
-          if (layt->vol[q].kind == XPAR_VOL_DATA && layt->vol[q].name &&
-              xpar_path_same(base, layt->vol[q].name)) {
-            is_data = true;
-            break;
-          }
-        if (is_data) continue;
-        f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
-        if (!f) {
-          c->append_skipped++;
-          xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: cannot append "
-                       "to '%s': %s\n", path,
-                       xpar_strerror(xpar_errno()));
-          continue;
-        }
-        if (xpar_write(f, cr.out.data, cr.out.len) != cr.out.len ||
-            xpar_fsync(f) != 0) {
-          c->write_failed = true;
-          xpar_close(f);
-          continue;
-        }
-        xpar_xclose(f);
-        wrote++;
+  else {
+    u32 v, wrote = 0;
+    if (sd->layout == XPAR_LAYOUT_ARMOURED) {
+      const u8 * plain;
+      u64 plain_len, stream_at, insert;
+      xpar_armour_params ap;
+      const char * path;
+      xpar_scan sc;
+      xpar_pkt h;
+      const u8 * body;
+      u64 off;
+      if (!xpar_vset_armoured(c->s, &plain, &plain_len, &stream_at,
+                              &ap, &path) ||
+          cr.out.len > UINT64_MAX - plain_len) c->write_failed = true;
+      else {
+        insert = plain_len;
+        xpar_scan_init(&sc, plain, plain_len, xpar_vset_key(c->s), false);
+        sc.accept_unverified_keyed = false;
+        while (xpar_scan_next(&sc, &h, &body, &off))
+          if (xpar_pkt_is(&h, XPAR_T_RCVS) ||
+              xpar_pkt_is(&h, XPAR_T_CRTR)) { insert = off;  break; }
+        xpar_garm_write_inserted(path, &ap, plain, plain_len, insert,
+                                 cr.out.data, cr.out.len, stream_at,
+                                 g->stream_length);
+        wrote = 1;
         xpar_fprintf(xpar_stderr,
-                     "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums to "
-                     "'%s'\n", c->cells_rebuilt, path);
+                     "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums "
+                     "inside '%s'\n",
+                     c->cells_rebuilt, path);
       }
-      if (!wrote) {
+    } else for (v = 0; v < xpar_vset_volumes(c->s) && wrote < 2; v++) {
+      const char * path = xpar_vset_volume_path(c->s, v);
+      const xpar_layt * layt = xpar_vset_layt(c->s);
+      const char * base;
+      xpar_file * f;
+      bool is_data = false;
+      u32 q;
+      if (!path) continue;
+      for (base = path + xpar_strlen(path); base > path &&
+           base[-1] != '/' && base[-1] != '\\'; base--);
+      if (layt) for (q = 0; q < layt->count; q++)
+        if (layt->vol[q].kind == XPAR_VOL_DATA && layt->vol[q].name &&
+            xpar_path_same(base, layt->vol[q].name)) {
+          is_data = true;
+          break;
+        }
+      if (is_data) continue;
+      f = xpar_open(path, XPAR_O_WRONLY | XPAR_O_APPEND);
+      if (!f) {
+        c->append_skipped++;
+        xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: cannot append "
+                     "to '%s': %s\n", path,
+                     xpar_strerror(xpar_errno()));
+        continue;
+      }
+      if (xpar_write(f, cr.out.data, cr.out.len) != cr.out.len ||
+          xpar_fsync(f) != 0) {
         c->write_failed = true;
-        xpar_fputs("xpar: --rebuild-cells: no index volume could be "
-                   "opened for writing\n", xpar_stderr);
-      } }
+        xpar_close(f);
+        continue;
+      }
+      xpar_xclose(f);
+      wrote++;
+      xpar_fprintf(xpar_stderr,
+                   "xpar: --rebuild-cells: wrote %" PRIu64 " cell checksums to "
+                   "'%s'\n", c->cells_rebuilt, path);
+    }
+    if (!wrote) {
+      c->write_failed = true;
+      xpar_fputs("xpar: --rebuild-cells: no index volume could be "
+                 "opened for writing\n", xpar_stderr);
+    }
   }
   xpar_buf_free(&cr.out);
   xpar_free(slice);  xpar_free(cr.crc);
@@ -813,23 +806,22 @@ static void report(const scrub * c, int rc) {
   if (c->o->rewrite && (c->pkt_bad || c->rcvs_present < c->rcvs_count))
     xpar_fprintf(xpar_stderr,
                  "xpar: --rewrite does not rebuild recovery slices; run "
-                 "`xpar repair` to regenerate them from the data\n");
+                 "'xpar repair' to regenerate them from the data\n");
   if (c->rcvs_wrong)
     xpar_fprintf(xpar_stderr,
                  "xpar: --deep: %" PRIu64 " recovery slices do not recompute "
                  "from the data\n", c->rcvs_wrong);
   if (c->rcvs_unchecked)
-    xpar_fprintf(xpar_stderr,
-                 "xpar: --deep: %" PRIu64 " recovery slices were not present and "
-                 "could not be compared\n",
+    xpar_fprintf(xpar_stderr, "xpar: --deep: %" PRIu64
+                 " recovery slices absent and unchecked\n",
                  c->rcvs_unchecked);
   if (c->link_drift)
     xpar_fprintf(xpar_stderr, "xpar: %" PRIu64
-                 " link-structure-drift reports\n",
+                 " hard-link structure mismatches\n",
                  c->link_drift);
   if (c->append_skipped)
-    xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: %" PRIu64 " index "
-                 "volume%s could not be opened for writing\n",
+    xpar_fprintf(xpar_stderr, "xpar: --rebuild-cells: cannot open %" PRIu64
+                 " index volume%s for writing\n",
                  c->append_skipped, PLURAL(c->append_skipped));
   xpar_fprintf(xpar_stderr, "xpar: scrub: exit %d\n", rc);
 }
@@ -839,6 +831,7 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
   scrub c;
   xpar_json local;
   xpar_json * js = shared ? shared : &local;
+  u32 i;
   int rc;
 
   FATAL_UNLESS(!o->from_stdin, "scrub cannot read a pipe; use --spool");
@@ -909,7 +902,6 @@ static int scrub_one(const xpar_options * o, xpar_vset * opened,
     }
   }
 
-  u32 i;
   Fi(c.rcount, xpar_volimg_close(&c.rvol[i]));
   xpar_free(c.rvol);
   xpar_free(c.rcvs);  xpar_free(c.hist);
@@ -930,8 +922,7 @@ int xpar_op_scrub(const xpar_options * o) {
   }
   if (!walk) { rc = scrub_one(o, only, NULL, true);  if (only) xpar_vset_close(only);  return rc; }
 
-  {
-    /*  The public reader does not expose the generation table, so use the
+  { /*  The public reader does not expose the generation table, so use the
         chain reader for the ordered generation numbers and the set reader
         for each actual scrub.  */
     xpar_chain c;
@@ -949,7 +940,7 @@ int xpar_op_scrub(const xpar_options * o) {
     xpar_gchain_load(&metadata, &c);
     selected = xpar_gchain_select(&c,
                                   o->gen_count ? &o->gens[0] : NULL);
-    member = (u8 *) xpar_calloc(c.gen_count, 1);
+    member = xpar_calloc(c.gen_count, 1);
     for (at = selected; at != XPAR_GEN_NONE && walked++ < c.gen_count;
          at = c.gen[at].parent) member[at] = 1;
     FATAL_UNLESS(at == XPAR_GEN_NONE,

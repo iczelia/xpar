@@ -63,15 +63,15 @@ static sz utf8_len_at(const char * s, sz n, sz i) {
   sz len, k;
   u32 cp;
   if (c < 0x80) return 1;
-  if      ((c & 0xE0) == 0xC0) { len = 2;  cp = c & 0x1Fu; }
-  else if ((c & 0xF0) == 0xE0) { len = 3;  cp = c & 0x0Fu; }
-  else if ((c & 0xF8) == 0xF0) { len = 4;  cp = c & 0x07u; }
+  if      ((c & 0xE0) == 0xC0) { len = 2;  cp = c & 0x1FU; }
+  else if ((c & 0xF0) == 0xE0) { len = 3;  cp = c & 0x0FU; }
+  else if ((c & 0xF8) == 0xF0) { len = 4;  cp = c & 0x07U; }
   else return 0;
   if (i + len > n) return 0;
   for (k = 1; k < len; k++) {
     u8 cc = (u8) s[i + k];
     if ((cc & 0xC0) != 0x80) return 0;
-    cp = (cp << 6) | (cc & 0x3Fu);
+    cp = (cp << 6) | (cc & 0x3FU);
   }
   if (len == 2 && cp < 0x80)    return 0;
   if (len == 3 && cp < 0x800)   return 0;
@@ -95,7 +95,9 @@ static void emit_string(xpar_json * j, const char * s, sz n) {
 
   put(j, "\"");
   while (i < n) {
-    u8 c = (u8) s[i];
+    u8 c;
+    sz len, k;
+    c = (u8) s[i];
 
     if (c == '"' || c == '\\') {
       esc[0] = '\\';  esc[1] = (char) c;  esc[2] = 0;
@@ -114,14 +116,12 @@ static void emit_string(xpar_json * j, const char * s, sz n) {
     }
     if (c < 0x80) { esc[0] = (char) c;  esc[1] = 0;  put(j, esc);  i++;  continue; }
 
-    {
-      sz len = utf8_len_at(s, n, i), k;
-      if (!len) { put(j, "\\ufffd");  i++;  continue; }
-      Fk(len,
-        esc[0] = s[i + k];  esc[1] = 0;
-        put(j, esc));
-      i += len;
-    }
+    len = utf8_len_at(s, n, i);
+    if (!len) { put(j, "\\ufffd");  i++;  continue; }
+    Fk(len,
+      esc[0] = s[i + k];  esc[1] = 0;
+      put(j, esc));
+    i += len;
   }
   put(j, "\"");
 }

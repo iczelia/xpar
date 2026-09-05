@@ -23,7 +23,7 @@ int xpar_core_count(void) { return 1; }
 struct xpar_pool { int nthreads; };
 
 xpar_pool * xpar_pool_create(int threads) {
-  struct xpar_pool * p = xpar_alloc_raw(sizeof(*p));
+  struct xpar_pool * p = xpar_alloc_raw(sizeof *p);
   (void) threads;
   p->nthreads = 1;
   return p;
@@ -32,8 +32,8 @@ xpar_pool * xpar_pool_create(int threads) {
 int xpar_pool_threads(const xpar_pool * p) { return p ? p->nthreads : 1; }
 
 void xpar_pool_run(xpar_pool * p, sz n, xpar_work_fn fn, void * ctx) {
-  (void) p;
   sz i;
+  (void) p;
   Fi(n, fn(i, ctx));
 }
 

@@ -91,7 +91,7 @@ bool xpar_vset_cell_covered(const xpar_vset *, u64);
 u32 xpar_vset_have_tables(const xpar_vset *);
 u32 xpar_vset_volumes(const xpar_vset *);
 u64 xpar_vset_recovery(const xpar_vset *);
-/*  Present recovery slices lost to checksum damage. */
+/*  Present recovery slices lost to checksum damage.  */
 u64 xpar_vset_recovery_bad(const xpar_vset *);
 u64 xpar_vset_recovery_total(const xpar_vset *);
 u64 xpar_vset_volumes_to_rewrite(const xpar_vset *);

@@ -103,7 +103,7 @@ typedef struct {
 
 #define XPAR_FORMAT_MAJOR 2
 #define XPAR_FORMAT_MINOR 0
-#define XPAR_VOL_STANDALONE 0xFFFFFFFFu   /*  VOLH.volume_index, LAYT.this.  */
+#define XPAR_VOL_STANDALONE 0xFFFFFFFFU   /*  VOLH.volume_index, LAYT.this.  */
 
 typedef struct {
   u32 volume_index;     /*  XPAR_VOL_STANDALONE for a lone index volume.  */
@@ -166,7 +166,7 @@ void        xpar_slcr_free (xpar_slcr *);
 void        xpar_sltg_free (xpar_sltg *);
 void        xpar_slcl_free (xpar_slcl *);
 
-/* Writers accept const table data without reader-struct casts. */
+/*  Writers accept const table data without reader-struct casts.  */
 void xpar_slcr_write(xpar_buf *, u64 first_slice, u64 count,
                      const u32 * crc, const u8 * set_id,
                      const xpar_key *);
@@ -186,9 +186,9 @@ void xpar_slcl_write_all(xpar_buf *, const u32 * crc, u64 slices,
                          u32 cell_bytes, u32 cells_per_slice,
                          const u8 * set_id, const xpar_key *);
 
-#define XPAR_TAGS_CRC   1u
-#define XPAR_TAGS_TAG   2u
-#define XPAR_TAGS_CELL  4u
+#define XPAR_TAGS_CRC   1U
+#define XPAR_TAGS_TAG   2U
+#define XPAR_TAGS_CELL  4U
 
 typedef struct {
   xpar_tags t;

@@ -66,7 +66,7 @@ warn() { echo "$prog: $*" >&2; }
 say "creating source archive"
 ( cd "$top" && make dist-gzip > /dev/null )
 tarball=`cd "$top" && ls -t xpar-*.tar.gz | head -1`
-test -n "$tarball" || { echo "$prog: source archive was not created" >&2; exit 1; }
+test -n "$tarball" || { echo "$prog: source archive missing" >&2; exit 1; }
 
 say "uploading $tarball to $host:$dir"
 ssh "$host" "mkdir -p '$dir'"

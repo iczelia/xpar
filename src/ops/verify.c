@@ -38,7 +38,7 @@ static u64 syndromes;
 u64 xpar_verify_syndromes(void) { return syndromes; }
 
 #define VERIFY_IOBUF  ((sz) 1 << 20)
-#define VERIFY_BATCH  8u
+#define VERIFY_BATCH  8U
 
 /*  Feed padding and alignment gaps through the ordinary accumulator.  */
 static const u8 zeros[4096];
@@ -91,7 +91,7 @@ static void vimg_load(xpar_vimg * v, const char * path) {
   v->size = (u64) n;
   FATAL_UNLESS(v->size <= (u64) (sz) -1,
                "'%s' is too large to read without a mapping on this host", path);
-  v->data = (u8 *) xpar_alloc_raw(v->size ? (sz) v->size : 1);
+  v->data = xpar_alloc_raw(v->size ? (sz) v->size : 1);
   if (v->size) {
     sz got = xpar_xread(f, v->data, (sz) v->size);
     if (got != (sz) v->size) {
@@ -146,7 +146,7 @@ static void vimg_remap(xpar_vimg * v) {
   n = xpar_size(f);
   if (n < 0) FATAL_IO("cannot size '%s'", v->path);
   if ((u64) n > (u64) (sz) -1) { xpar_xclose(f);  return; }
-  v->data = (u8 *) xpar_alloc_raw((sz) n ? (sz) n : 1);
+  v->data = xpar_alloc_raw((sz) n ? (sz) n : 1);
   got = n ? xpar_xread(f, v->data, (sz) n) : 0;
   if (got != (sz) n) {
     /*  Accept a short read only if the file shrank.  */
@@ -236,7 +236,7 @@ struct xpar_vset {
   u64 gone_cells, gone_slices;/*  Superseded; erased for the decoder.  */
   u32 lost_gens, lost_gen_first;  /*  Named on disk, no descriptor left.  */
   u32 inherited_gen;          /*  Oldest generation owning that damage.  */
-  u64 column_groups;          /* Distinct erasure patterns. */
+  u64 column_groups;          /*  Distinct erasure patterns.  */
   bool hash_sampled, hash_parallel;
   u8 * superseded;
   u8 * ignored_cell;
@@ -268,12 +268,12 @@ u64 xpar_vset_io_errors(const xpar_vset * s) { return s->io_errors; }
 static void keep_plain(xpar_vset * s, u8 * p, u64 len, bool owned) {
   if (s->plain_count == s->plain_cap) {
     s->plain_cap = s->plain_cap ? s->plain_cap * 2 : 8;
-    s->plain = (u8 **) xpar_realloc(s->plain,
-                                    (sz) s->plain_cap * sizeof(u8 *));
-    s->plain_len = (u64 *) xpar_realloc(s->plain_len,
-                                    (sz) s->plain_cap * sizeof(u64));
-    s->plain_owned = (bool *) xpar_realloc(s->plain_owned,
-                                    (sz) s->plain_cap * sizeof(bool));
+    s->plain = xpar_realloc(s->plain,
+                            (sz) s->plain_cap * sizeof *s->plain);
+    s->plain_len = xpar_realloc(s->plain_len,
+                                (sz) s->plain_cap * sizeof *s->plain_len);
+    s->plain_owned = xpar_realloc(
+      s->plain_owned, (sz) s->plain_cap * sizeof *s->plain_owned);
   }
   s->plain[s->plain_count] = p;
   s->plain_len[s->plain_count] = len;
@@ -318,7 +318,7 @@ static bool plain_put(xpar_vimg * v, const u8 * src, u64 len, u64 off) {
 static u8 * plain_base(xpar_vimg * v) {
   if (v->plain_mem) return v->plain_mem;
   if (xpar_flush(v->plain_file) != 0 || xpar_fsync(v->plain_file) != 0)
-    FATAL_IO("flushing the plaintext stage for '%s' failed", v->path);
+    FATAL_IO("cannot flush the plaintext stage for '%s'", v->path);
   if (!v->plain_map.valid) {
     v->plain_map = xpar_map(v->plain_stage);
     FATAL_UNLESS(v->plain_map.valid, "the plaintext stage for '%s' cannot be mapped on this "
@@ -333,7 +333,7 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
                                 const xpar_arm_prologue * pr,
                                 xpar_armour_status * result) {
   u64 fp = xpar_armour_frame_plain(a), fd = xpar_armour_frame_disk(a);
-  u64 frames = xpar_ceil_div(pr->plain_length, fp), f, at = 0;
+  u64 i, frames = xpar_ceil_div(pr->plain_length, fp), at = 0;
   /*  Available bytes after the prologue.  */
   u64 avail = v->size > 384 ? (u64) v->size - 384 : 0;
   u8 * frame = NULL, * base;
@@ -351,17 +351,16 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
   /*  Prefer memory so read-only media can still be verified.  */
   if (pr->plain_length <= s->memory_budget &&
       pr->plain_length <= (u64) (sz) -1)
-    v->plain_mem = (u8 *) xpar_calloc((sz) pr->plain_length, 1);
+    v->plain_mem = xpar_calloc((sz) pr->plain_length, 1);
   else
     v->plain_file = plain_stage_open(v->path, &v->plain_stage);
   /*  Decode short files immediately.  */
   if (avail >= pr->armoured_length) {
-    for (f = 0; f < frames; f++) {
+    Fi(frames,
       u64 take = MIN(fp, pr->plain_length - at);
-      FATAL_UNLESS(plain_put(v, v->data + 384 + f * fd, take, at),
-                   "writing the plaintext of '%s' failed", v->path);
-      at += take;
-    }
+      FATAL_UNLESS(plain_put(v, v->data + 384 + i * fd, take, at),
+                   "cannot write the plaintext of '%s'", v->path);
+      at += take);
     base = plain_base(v);
     if (xpar_verify_packets_ok(base, pr->plain_length, NULL)) {
       *result = XPAR_ARMOUR_CLEAN;
@@ -369,7 +368,7 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
     }
   }
   /*  Decode the region in one batch, zero-filling a short tail.  */
-  frame = (u8 *) xpar_alloc_raw((sz) pr->armoured_length ?
+  frame = xpar_alloc_raw((sz) pr->armoured_length ?
                                 (sz) pr->armoured_length : 1);
   at = 0;  *result = XPAR_ARMOUR_FAILED;  syndromes++;
   { u64 keep = MIN(avail, pr->armoured_length);
@@ -380,12 +379,11 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
     st = xpar_armour_decode_frames(a, frame, frames, NULL);
     if (st == XPAR_ARMOUR_CORRECTED) *result = XPAR_ARMOUR_CORRECTED;
   }
-  for (f = 0; f < frames; f++) {
+  Fi(frames,
     u64 take = MIN(fp, pr->plain_length - at);
-    FATAL_UNLESS(plain_put(v, frame + f * fd, take, at),
-                 "writing the corrected plaintext of '%s' failed", v->path);
-    at += take;
-  }
+    FATAL_UNLESS(plain_put(v, frame + i * fd, take, at),
+                 "cannot write the corrected plaintext of '%s'", v->path);
+    at += take);
   xpar_free(frame);
   base = plain_base(v);
   /*  Pad after the last complete packet when the tail is truncated.  */
@@ -397,7 +395,7 @@ static u8 * open_armoured_plain(xpar_vset * s, xpar_vimg * v,
       while (done < pr->plain_length) {
         u64 take = MIN(sizeof zeros, pr->plain_length - done);
         FATAL_UNLESS(plain_put(v, zeros, take, done),
-                     "padding the truncated plaintext of '%s' failed", v->path);
+                     "cannot pad the truncated plaintext of '%s'", v->path);
         done += take;
       }
       base = plain_base(v);
@@ -418,7 +416,7 @@ static void open_armoured_image(xpar_vset * s, xpar_vimg * v) {
   xpar_armour_status ast;
   FATAL_UNLESS(xpar_garm_prologue(v->data, (sz) v->size, &pr, NULL),
                "the armoured prologue of '%s' cannot be recovered; run "
-               "`xpar recover-prologue`",
+               "'xpar recover-prologue'",
                v->path);
   ap.symbol_bits = pr.symbol_bits;  ap.poly = pr.poly;
   ap.n = pr.n;  ap.k = pr.k;  ap.fcr = pr.fcr;  ap.prim = pr.prim;
@@ -469,24 +467,24 @@ static bool correct_armoured_slice(xpar_vset * s, u64 slice) {
   u8 * enc, * plain;
   if (!a || !s->have_archive_img || !s->strm) return false;
   image = &s->img[s->archive_img];
-  if (!image) { xpar_armour_free(a); return false; }
+  if (!image) { xpar_armour_free(a);  return false; }
   fp = xpar_armour_frame_plain(a);
   fd = xpar_armour_frame_disk(a);
   lo = (u64) (s->strm - image->plain) + slice * s->geom.slice_size;
   hi = MIN(lo + s->geom.slice_size, s->archive_plain_len);
   first = lo / fp;  last = hi ? (hi - 1) / fp : first;
-  enc = (u8 *) xpar_alloc_raw((sz) fd);
-  plain = (u8 *) xpar_alloc_raw((sz) fp);
+  enc = xpar_alloc_raw((sz) fd);
+  plain = xpar_alloc_raw((sz) fp);
   for (f = first; f <= last; f++) {
     u64 po = f * fp, have = MIN(fp, s->archive_plain_len - po);
     xpar_armour_status st;
-    if (384 + f * fd > image->size || fd > image->size - (384 + f * fd)) { ok = false; break; }
+    if (384 + f * fd > image->size || fd > image->size - (384 + f * fd)) { ok = false;  break; }
     xpar_memcpy(enc, image->data + 384 + f * fd, (sz) fd);
     syndromes++;
     st = xpar_armour_decode_frame(a, enc, NULL);
-    if (st == XPAR_ARMOUR_FAILED) { ok = false; break; }
+    if (st == XPAR_ARMOUR_FAILED) { ok = false;  break; }
     xpar_armour_extract(a, plain, have, enc);
-    if (!plain_put(image, plain, have, po)) { ok = false; break; }
+    if (!plain_put(image, plain, have, po)) { ok = false;  break; }
     if (st == XPAR_ARMOUR_CORRECTED) s->armg_corrected++;
   }
   xpar_free(enc);  xpar_free(plain);  xpar_armour_free(a);
@@ -512,13 +510,13 @@ bool xpar_vset_armour_correct(xpar_vset * s, u64 lo, u64 hi) {
   frames = fp ? xpar_ceil_div(s->archive_plain_len, fp) : 0;
   if (!frames) { xpar_armour_free(a);  return false; }
   if (!s->armour_done)
-    s->armour_done = (u8 *) xpar_calloc((sz) frames, 1);
+    s->armour_done = xpar_calloc((sz) frames, 1);
   base  = (u64) (s->strm - image->plain);
   first = (base + (lo - s->geom.stream_base)) / fp;
   last  = (base + (hi - s->geom.stream_base) - (hi > lo ? 1 : 0)) / fp;
   if (last >= frames) last = frames - 1;
-  enc   = (u8 *) xpar_alloc_raw((sz) fd ? (sz) fd : 1);
-  plain = (u8 *) xpar_alloc_raw((sz) fp ? (sz) fp : 1);
+  enc   = xpar_alloc_raw((sz) fd ? (sz) fd : 1);
+  plain = xpar_alloc_raw((sz) fp ? (sz) fp : 1);
   for (f = first; f <= last; f++) {
     u64 po = f * fp, have = MIN(fp, s->archive_plain_len - po);
     if (s->armour_done[f]) continue;
@@ -608,7 +606,7 @@ bool xpar_verify_volume_tiles(const char * path, const xpar_key * key) {
     if (!f) return false;
     n = xpar_size(f);
     if (n <= 0 || (u64) n > (u64) (sz) -1) { xpar_close(f);  return false; }
-    buf = (u8 *) xpar_alloc_raw((sz) n);
+    buf = xpar_alloc_raw((sz) n);
     ok = xpar_xread(f, buf, (sz) n) == (sz) n &&
          tail_is_padding(buf, volume_packets_end(buf, (u64) n, key),
                          (u64) n);
@@ -653,14 +651,14 @@ u8 * xpar_verify_armg_plain(const u8 * body, sz n, const xpar_key * key,
   p.depth = a.depth;
   if (xpar_armour_check(&p)) return NULL;
   ar    = xpar_armour_new(&p);
-  plain = (u8 *) xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
+  plain = xpar_alloc_raw(a.plain_length ? (sz) a.plain_length : 1);
   ctx.key = key;
 
   xpar_armour_extract(ar, plain, a.plain_length, a.data);
   rc = (exact || xpar_verify_packets_ok(plain, a.plain_length, ctx.key))
          ? XPAR_ARMOUR_CLEAN : XPAR_ARMOUR_FAILED;
   if (rc != XPAR_ARMOUR_CLEAN) {
-    u8 * region = (u8 *) xpar_alloc_raw((sz) a.armoured_length);
+    u8 * region = xpar_alloc_raw((sz) a.armoured_length);
     xpar_memcpy(region, a.data, (sz) a.armoured_length);
     if (decoded) *decoded = true;
     rc = xpar_armour_decode(ar, region, a.armoured_length, plain,
@@ -720,7 +718,7 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
   xpar_scan sc;
   xpar_pkt hdr;
   const u8 * body;
-  u64 off;
+  u64 off, pos = 0, blen = 0;
   scan_armg * seen = NULL;
   u32 seen_count = 0, seen_cap = 0, i;
   xpar_scan_init(&sc, buf, size, key, resync);
@@ -740,8 +738,7 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
       if (!nested) {
         if (seen_count == seen_cap) {
           seen_cap = seen_cap ? seen_cap * 2 : 16;
-          seen = (scan_armg *) xpar_realloc(seen,
-                                            (sz) seen_cap * sizeof *seen);
+          seen = xpar_realloc(seen, (sz) seen_cap * sizeof *seen);
         }
         seen[seen_count].body = body;
         seen[seen_count++].len = hdr.length - XPAR_PKT_HDR;
@@ -767,12 +764,11 @@ static void scan_into(xpar_vset * s, const u8 * buf, u64 size,
     return;
   }
   xpar_free(seen);
-  { u64 pos = 0, blen = 0;
-    while (xpar_verify_next_armg(buf, size, key, &pos, &body, &blen)) {
-      u64 plen = 0;
-      const u8 * pl = armg_plain(s, body, (sz) blen, false, &plen);
-      if (pl) scan_into(s, pl, plen, false, true);
-    } }
+  while (xpar_verify_next_armg(buf, size, key, &pos, &body, &blen)) {
+    u64 plen = 0;
+    const u8 * pl = armg_plain(s, body, (sz) blen, false, &plen);
+    if (pl) scan_into(s, pl, plen, false, true);
+  }
 }
 
 static bool vimg_is_index(const xpar_vimg * v, const xpar_key * key) {
@@ -790,19 +786,19 @@ static bool vimg_is_index(const xpar_vimg * v, const xpar_key * key) {
 
 static void collect_gens(xpar_vset * s) {
   u32 i, j, n = 0;
-  s->gen = (xpar_genid *) xpar_calloc(s->crit.count ? s->crit.count : 1,
-                                      sizeof(xpar_genid));
+  s->gen = xpar_calloc(s->crit.count ? s->crit.count : 1, sizeof *s->gen);
   Fi(s->crit.count,
     const xpar_crit_pkt * p = &s->crit.pkt[i];
     xpar_setd sd;
+    xpar_status st;
     if (!xpar_pkt_is(&p->hdr, XPAR_T_SETD)) continue;
-    xpar_status st = xpar_setd_read(p->body, (sz) p->body_len, &sd);
+    st = xpar_setd_read(p->body, (sz) p->body_len, &sd);
     if (st != XPAR_OK && st != XPAR_E_UNSUPPORTED) continue;
     xpar_memcpy(s->gen[n].id, p->hdr.set_id, XPAR_SET_ID_LEN);
     xpar_memcpy(s->gen[n].parent_id, sd.parent_set_id, XPAR_SET_ID_LEN);
     s->gen[n].generation = sd.generation;
     s->gen[n].parent     = XPAR_GEN_NONE;
-    s->gen[n].posix_count= sd.posix_record_count;
+    s->gen[n].posix_count = sd.posix_record_count;
     s->gen[n].base       = sd.stream_base;
     s->gen[n].len        = sd.stream_length;
     n++;
@@ -876,16 +872,16 @@ static u32 pick_gen(const xpar_vset * s, const xpar_options * o) {
   /*  Match chain-reader diagnostics and exit codes.  */
   if (matches > 1) {
     if (o->gens[0].by_id)
-      FATAL("set-id prefix '%s' is ambiguous; provide more hexadecimal "
-            "digits", o->gens[0].id_prefix);
+      FATAL("set-id prefix '%s' is ambiguous; add digits",
+            o->gens[0].id_prefix);
     FATAL("generation %" PRIu64 " is ambiguous across fork branches; select "
           "it by set-id prefix", o->gens[0].number);
   }
   if (matches == 1) return found;
   if (o->gens[0].by_id)
-    FATAL("no generation of this set has a set_id beginning '%s'",
+    FATAL("no generation has set-id prefix '%s'",
           o->gens[0].id_prefix);
-  FATAL("this set has no generation %" PRIu64 , o->gens[0].number);
+  FATAL("this set has no generation %" PRIu64, o->gens[0].number);
   return 0;
 }
 
@@ -906,32 +902,29 @@ static void build_manifest(xpar_vset * s) {
   xpar_mf_result res;
   xpar_gen_range * anc;
   u32 * lineage;
-  u32 f, na = 0;
+  u32 i, f, na = 0;
 
-  for (f = 0; f < s->setd.file_count; f++) {
+  Fi(s->setd.file_count,
     u32 owner = XPAR_GEN_NONE;
-    const xpar_crit_pkt * p = find_file(s, s->setd.file_id[f], &owner);
+    const xpar_crit_pkt * p = find_file(s, s->setd.file_id[i], &owner);
     xpar_entry * e;
     if (!p)
       FATAL_FORMAT("manifest entry %" PRIu32 " of %" PRIu32
                    " is missing from the supplied "
-                   "volumes", (f + 1),
+                   "volumes", i + 1,
                    s->setd.file_count);
     e = xpar_manifest_append(&s->mf);
     if (xpar_entry_read(p->body, (sz) p->body_len,
                         s->gen[owner].posix_count, e) != XPAR_OK)
       FATAL_FORMAT("manifest entry %" PRIu32 " is malformed",
-                   (f + 1));
-  }
+                   i + 1));
   s->mf.stream_base   = s->setd.stream_base;
   s->mf.stream_length = s->setd.stream_length;
   s->mf.align         = s->setd.align;
   s->mf.slice_size    = s->setd.slice_size;
 
-  anc = (xpar_gen_range *) xpar_calloc(s->gen_count ? s->gen_count : 1,
-                                       sizeof(xpar_gen_range));
-  lineage = (u32 *) xpar_calloc(s->gen_count ? s->gen_count : 1,
-                                sizeof(u32));
+  anc = xpar_calloc(s->gen_count ? s->gen_count : 1, sizeof *anc);
+  lineage = xpar_calloc(s->gen_count ? s->gen_count : 1, sizeof *lineage);
   f = s->gen[s->gen_target].parent;
   while (f != XPAR_GEN_NONE && na < s->gen_count) {
     lineage[na++] = f;
@@ -944,11 +937,10 @@ static void build_manifest(xpar_vset * s) {
     FATAL_FORMAT("the selected generation's parent is missing or malformed");
   FATAL_UNLESS(f == XPAR_GEN_NONE,
                "the selected generation's ancestry is cyclic");
-  for (f = 0; f < na; f++) {
-    u32 g = lineage[na - f - 1];
-    anc[f].base = s->gen[g].base;
-    anc[f].length = s->gen[g].len;
-  }
+  Fi(na,
+    u32 g = lineage[na - i - 1];
+    anc[i].base = s->gen[g].base;
+    anc[i].length = s->gen[g].len);
   xpar_free(lineage);
   xpar_memset(&lim, 0, sizeof lim);
   lim.stream_base        = s->setd.stream_base;
@@ -1002,8 +994,7 @@ static void load_tables(xpar_vset * s) {
           ? (u32) xpar_ceil_div(s->setd.slice_size, s->setd.cell_bytes) : 0;
   if (!xpar_tagset_init(&s->tagset, s->geom.slice_count,
                         s->setd.slice_tag_len, cps, !s->auth_only, input))
-    FATAL_FORMAT("the slice tables this set claims are larger than the "
-                 "volumes that carry them");
+    FATAL_FORMAT("slice tables exceed their volumes");
   Fi(s->crit.count,
     const xpar_crit_pkt * p = &s->crit.pkt[i];
     if (xpar_memcmp(p->hdr.set_id, s->set_id, XPAR_SET_ID_LEN) != 0)
@@ -1023,11 +1014,10 @@ static void load_tables(xpar_vset * s) {
     } else if (xpar_pkt_is(&p->hdr, XPAR_T_SLCL)) {
       xpar_slcl t;
       if (xpar_slcl_read(p->body, (sz) p->body_len, s->setd.slice_size,
-                         &t) == XPAR_OK) {
-        if (t.cell_bytes != s->setd.cell_bytes ||
-            xpar_tagset_slcl(&s->tagset, &t) != XPAR_OK)
-          FATAL_FORMAT("cell table geometry or coverage is malformed");
-      }
+                         &t) == XPAR_OK &&
+          (t.cell_bytes != s->setd.cell_bytes ||
+           xpar_tagset_slcl(&s->tagset, &t) != XPAR_OK))
+        FATAL_FORMAT("cell table geometry or coverage is malformed");
       xpar_slcl_free(&t);
     });
   s->have = xpar_tagset_complete(&s->tagset);
@@ -1058,7 +1048,7 @@ static bool volh_names(const char * path, const u8 * set_id,
     len = xpar_rd64(head + 8);
     if (len > XPAR_PKT_HDR && len <= 4096 && !(len % XPAR_PKT_ALIGN)) {
       sz body = (sz) (len - XPAR_PKT_HDR);
-      u8 * pkt = (u8 *) xpar_alloc_raw((sz) len);
+      u8 * pkt = xpar_alloc_raw((sz) len);
       xpar_pkt h;
       xpar_volh vh;
       xpar_memcpy(pkt, head, sizeof head);
@@ -1129,7 +1119,7 @@ static void load_layt(xpar_vset * s) {
     break);
   if (s->have_layt) {
     u64 axis = xpar_setd_recovery_limit(&s->setd);
-    u8 * used = (u8 *) xpar_calloc((sz) axis, 1);
+    u8 * used = xpar_calloc((sz) axis, 1);
     Fi(s->layt.count,
       const xpar_vol * v = &s->layt.vol[i];
       u64 e;
@@ -1273,8 +1263,7 @@ static void split_image_add(xpar_vset * s, const char * path) {
   if (split_image_seen(s, path)) return;
   if (s->img_count == s->img_cap) {
     s->img_cap = s->img_cap ? s->img_cap * 2 : 8;
-    s->img = (xpar_vimg *) xpar_realloc(
-      s->img, (sz) s->img_cap * sizeof(xpar_vimg));
+    s->img = xpar_realloc(s->img, (sz) s->img_cap * sizeof *s->img);
   }
   vimg_load(&s->img[s->img_count++], path);
 }
@@ -1300,13 +1289,11 @@ static void vset_release_path(xpar_vset * s, const char * path) {
 }
 
 static void vset_remap_path(xpar_vset * s, const char * path) {
-  (void) path;
   u32 i;
+  (void) path;
   Fi(s->img_count,
-    if (s->img[i].released) {
-      vimg_remap(&s->img[i]);
-      s->img[i].released = false;
-    });
+    if (s->img[i].released)
+      { vimg_remap(&s->img[i]);  s->img[i].released = false; });
 }
 
 /*  Match a damaged renamed volume by its wholly contained slice
@@ -1320,7 +1307,7 @@ static u64 split_volume_score(xpar_vset * s, const xpar_vol * lv,
   if (!(s->have & (XPAR_TAGS_CRC | XPAR_TAGS_TAG))) return 0;
   f = xpar_open(path, XPAR_O_RDONLY);
   if (!f) return 0;
-  buf = (u8 *) xpar_alloc_raw((sz) z);
+  buf = xpar_alloc_raw((sz) z);
   for (slice = 0; slice < s->geom.slice_count; slice++) {
     u64 begin = slice * z;
     u64 have = MIN(z, s->geom.stream_length - begin);
@@ -1341,10 +1328,9 @@ static u64 split_volume_score(xpar_vset * s, const xpar_vol * lv,
       match = xpar_blake3_tag_equal(
         got, s->tagset.t.slice_tag + slice * s->tagset.t.tag_len,
         s->tagset.t.tag_len);
-    } else if (s->have & XPAR_TAGS_CRC) {
+    } else if (s->have & XPAR_TAGS_CRC)
       match = xpar_crc32c(0, buf, (sz) z) ==
               s->tagset.t.slice_crc[slice];
-    }
     (*tested)++;
     if (match) score++;
   }
@@ -1353,7 +1339,7 @@ static u64 split_volume_score(xpar_vset * s, const xpar_vol * lv,
   return score;
 }
 
-/*  A file another layout entry names belongs to that volume, not this one. */
+/*  A file another layout entry names belongs to that volume, not this one.  */
 static bool split_claimed(const xpar_vset * s, const xpar_vol * lv,
                           const char * name) {
   u32 i;
@@ -1382,9 +1368,7 @@ static void split_score_candidate(xpar_vset * s, const xpar_vol * lv,
     xpar_free(*best_path);  xpar_free(*best_name);
     *best_path = xpar_strdup(path);  *best_name = xpar_strdup(name);
     *best = score;  *tied = 1;
-  } else if (score == *best) {
-    (*tied)++;
-  }
+  } else if (score == *best) (*tied)++;
 }
 
 /*  Find a renamed split volume by tag; return its owned path and basename.  */
@@ -1428,8 +1412,7 @@ static char * find_split_volume(xpar_vset * s, const xpar_vol * lv,
   split_score_candidate(s, lv, expected, lv->name, &best_path, &best_name,
                         &best, &tied, &candidates);
   xpar_free(expected);
-  {
-    xpar_dir * d = xpar_opendir(s->dir);
+  { xpar_dir * d = xpar_opendir(s->dir);
     const xpar_dirent * de;
     if (d) {
       while ((de = xpar_readdir(d)) != NULL) {
@@ -1467,7 +1450,7 @@ static void subst_add(xpar_vset * s, const char * want, const char * got,
   xpar_stat_t st;
   if (s->subst_count == s->subst_cap) {
     s->subst_cap = s->subst_cap ? s->subst_cap * 2 : 4;
-    s->subst = (xpar_subst *) xpar_realloc(
+    s->subst = xpar_realloc(
                  s->subst, (sz) s->subst_cap * sizeof *s->subst);
   }
   e = &s->subst[s->subst_count++];
@@ -1486,7 +1469,7 @@ static void load_owned_data(xpar_vset * s) {
     FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
                       s->strm && s->strm_len == s->setd.stream_length,
                       "the armoured archive has no usable STRM body; if its "
-                      "frames are intact, `xpar recover-prologue` rebuilds "
+                      "frames are intact, 'xpar recover-prologue' rebuilds "
                       "the header this needs");
     return;
   }
@@ -1552,7 +1535,7 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     first_reason(reason, "the volume is too short to hold a packet");
     return false;
   }
-  copy = (u8 *) xpar_alloc_raw((sz) v->size);
+  copy = xpar_alloc_raw((sz) v->size);
   xpar_memcpy(copy, v->data, (sz) v->size);
   while (pos <= v->size - XPAR_PKT_HDR) {
     xpar_pkt h;
@@ -1585,13 +1568,11 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
     f = xpar_stage_open(v->path, "VFY",
                         XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
-    if (!f) {
-      first_reason(reason, "staging failed");
-      ok = false;
-    } else {
+    if (!f) { first_reason(reason, "cannot stage");  ok = false; }
+    else {
       xpar_xwrite(f, copy, (sz) v->size);
       if (xpar_fsync(f) != 0) {
-        first_reason(reason, "flush failed");
+        first_reason(reason, "cannot flush");
         ok = false;
         xpar_close(f);
       } else xpar_xclose(f);
@@ -1601,7 +1582,7 @@ static bool rewrite_dropped_image(xpar_vset * s, u32 idx,
       if (ok) vset_release_path(s, v->path);
       if (ok && (xpar_rename(stage, v->path) != 0 ||
                  xpar_fsync_dir(v->path) != 0)) {
-        first_reason(reason, "publish failed");
+        first_reason(reason, "cannot publish");
         ok = false;
       }
       vset_remap_path(s, v->path);
@@ -1638,17 +1619,15 @@ bool xpar_vset_trim_ragged(xpar_vset * s, u64 * volumes, u64 * failures,
     /*  Nothing may hold a mapping over a file about to be resized.  */
     vset_release_path(s, path);
     f = xpar_open(path, XPAR_O_RDWR);
-    if (!f) {
-      first_reason(reason, "the volume could not be opened for writing");
-      vok = false;
-    } else {
+    if (!f) { first_reason(reason, "cannot open volume for writing");  vok = false; }
+    else {
       if (xpar_ftruncate(f, v->pkt_end) != 0) {
-        first_reason(reason, "the volume could not be truncated");
+        first_reason(reason, "cannot truncate volume");
         vok = false;
       }
       /*  An unflushed truncation is not a trimmed volume.  */
       if (xpar_fsync(f) != 0) {
-        first_reason(reason, "the trimmed volume could not be flushed");
+        first_reason(reason, "cannot flush trimmed volume");
         vok = false;
       }
       xpar_close(f);
@@ -1720,7 +1699,7 @@ bool xpar_vset_rewrite_dropped(xpar_vset * s, u64 * volumes, u64 * failures,
     where it is.  */
 bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
                              const char ** reason) {
-  u32 i;
+  u32 i, j;
   u64 done = 0, failed = 0;
   u8 * buf = NULL;
   if (reason) *reason = NULL;
@@ -1728,7 +1707,7 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
   if (failures) *failures = 0;
   if (!s->subst_count || !s->have_layt) return true;
   Fi(s->subst_count,
-    char * want, * stage = NULL;
+    char * want, * got, * stage = NULL;
     xpar_file * in, * out;
     const xpar_vimg * src = NULL;
     i64 found;
@@ -1737,13 +1716,14 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
     if (s->layt.vol[s->subst[i].vol].kind == XPAR_VOL_DATA) continue;
     if (!xpar_strcmp(s->subst[i].want, s->subst[i].got)) continue;
     want = xpar_path_join(s->dir, s->subst[i].want);
-    { char * got = xpar_path_join(s->dir, s->subst[i].got);
-      for (u32 q = 0; q < (s->img_count); q++) { if (s->img[q].path && xpar_path_same(s->img[q].path, got))
-            src = &s->img[q]; }
-      in = xpar_open(got, XPAR_O_RDONLY);
-      xpar_free(got); }
+    got = xpar_path_join(s->dir, s->subst[i].got);
+    Fj(s->img_count,
+      if (s->img[j].path && xpar_path_same(s->img[j].path, got))
+        src = &s->img[j]);
+    in = xpar_open(got, XPAR_O_RDONLY);
+    xpar_free(got);
     if (!in) {
-      first_reason(reason, "the volume found could not be read");
+      first_reason(reason, "cannot read found volume");
       failed++;  xpar_free(want);  continue;
     }
     /*  Refuse unknown or empty source lengths.  */
@@ -1756,14 +1736,14 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
                           XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                           1, &stage);
     if (!out) {
-      first_reason(reason, "staging failed");
+      first_reason(reason, "cannot stage");
       failed++;  xpar_close(in);  xpar_free(want);  continue;
     }
-    if (!buf) buf = (u8 *) xpar_alloc_raw(1u << 16);
+    if (!buf) buf = xpar_alloc_raw(1U << 16);
     { u64 left = (u64) found;
       bool good = true;
       while (left) {
-        sz take = (sz) MIN(left, (u64) (1u << 16));
+        sz take = (sz) MIN(left, (u64) (1U << 16));
         if (xpar_pread(in, buf, take, at) != take) { good = false;  break; }
         xpar_xwrite(out, buf, take);
         at += take;  left -= take;
@@ -1773,16 +1753,16 @@ bool xpar_vset_restore_names(xpar_vset * s, u64 * volumes, u64 * failures,
         xpar_close(in);  in = NULL;
         vset_release_path(s, want);
         if (xpar_rename(stage, want) != 0) {
-          first_reason(reason, "publishing failed");
+          first_reason(reason, "cannot publish");
           xpar_remove(stage);
           failed++;
         } else if (xpar_fsync_dir(want) != 0) {
-          first_reason(reason, "publishing failed");
+          first_reason(reason, "cannot publish");
           failed++;
         } else done++;
         vset_remap_path(s, want);
       } else {
-        first_reason(reason, "copying failed");
+        first_reason(reason, "cannot copy");
         failed++;
         xpar_close(out);
         xpar_remove(stage);
@@ -1808,7 +1788,7 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, u64 * rewritten,
   if (relengthed) *relengthed = 0;
   if (failures) *failures = 0;
   if (!s->subst_damaged || !s->have_layt) return true;
-  buf = (u8 *) xpar_alloc_raw(1u << 16);
+  buf = xpar_alloc_raw(1U << 16);
   Fi(s->subst_count,
     const xpar_vol * v;
     char * path, * stage = NULL;
@@ -1829,49 +1809,50 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, u64 * rewritten,
       t = xpar_open(path, XPAR_O_RDWR | XPAR_O_NOFOLLOW);
       if (!t || xpar_ftruncate(t, v->byte_length) != 0 ||
           xpar_fsync(t) != 0) {
-        first_reason(reason, "resizing failed");
+        first_reason(reason, "cannot resize");
         vok = false;
       }
-      if (t) { if (vok) xpar_xclose(t); else xpar_close(t); }
+      if (t) { if (vok) xpar_xclose(t);  else xpar_close(t); }
       vset_remap_path(s, path);
       xpar_free(path);
-      if (vok) sized++; else failed++;
+      if (vok) sized++;  else failed++;
       continue;
     }
     f = xpar_stage_open(path, "VFY",
                         XPAR_O_WRONLY | XPAR_O_CREAT | XPAR_O_TRUNC,
                         1, &stage);
-    if (!f) { first_reason(reason, "staging failed");  vok = false; }
+    if (!f) { first_reason(reason, "cannot stage");  vok = false; }
     left = vok ? v->byte_length : 0;
     while (left) {
-      sz take = (sz) MIN(left, (u64) (1u << 16));
+      sz take = (sz) MIN(left, (u64) (1U << 16));
       /*  LAYT offsets are relative to the generation; xpar_vset_read takes
           a chain-space offset, as every other caller supplies.  */
       if (!xpar_vset_read(s, s->geom.stream_base + v->stream_offset + at,
                           buf, take)) {
-        first_reason(reason, "stream read failed");
+        first_reason(reason, "cannot read stream");
         vok = false;  break;
       }
       xpar_xwrite(f, buf, take);
       at += take;  left -= take;
     }
     if (f) {
-      if (vok && xpar_fsync(f) != 0) { first_reason(reason, "flush failed");  vok = false; }
-      if (vok) xpar_xclose(f); else xpar_close(f);
+      if (vok && xpar_fsync(f) != 0)
+        { first_reason(reason, "cannot flush");  vok = false; }
+      if (vok) xpar_xclose(f);  else xpar_close(f);
       /*  The recorded name is normally absent or unopened here, but it is
           a set volume when the caller named it, and renaming over an open
           one is refused on Windows.  */
       if (vok) vset_release_path(s, path);
       if (vok && (xpar_rename(stage, path) != 0 ||
                   xpar_fsync_dir(path) != 0)) {
-        first_reason(reason, "publish failed");
+        first_reason(reason, "cannot publish");
         vok = false;
       }
       vset_remap_path(s, path);
       if (!vok) xpar_remove(stage);
     }
     xpar_free(stage);  xpar_free(path);
-    if (vok) wrote++; else failed++);
+    if (vok) wrote++;  else failed++);
   xpar_free(buf);
   if (rewritten) *rewritten = wrote;
   if (relengthed) *relengthed = sized;
@@ -1883,13 +1864,13 @@ bool xpar_vset_rewrite_substituted(xpar_vset * s, u64 * rewritten,
 
 static void classify(xpar_vset * s) {
   u32 i, total = 0;
-  s->ext_first = (u32 *) xpar_calloc((sz) s->mf.count + 1, sizeof(u32));
+  s->ext_first = xpar_calloc((sz) s->mf.count + 1, sizeof *s->ext_first);
   Fi(s->mf.count,
     s->ext_first[i] = total;
     total += s->mf.entry[i].extent_count);
   s->ext_first[s->mf.count] = total;
   s->ext_total = total;
-  s->ext_alias = (u8 *) xpar_calloc(total ? total : 1, 1);
+  s->ext_alias = xpar_calloc(total ? total : 1, 1);
   Fi(s->occ.count,
     const xpar_occurrence * o = &s->occ.occ[i];
     xpar_occurrence c;
@@ -1914,7 +1895,7 @@ typedef struct {
 } v_confirm;
 
 static bool v_confirm_at(void * user, u32 at, u64 physical) {
-  v_confirm * c = (v_confirm *) user;
+  v_confirm * c = user;
   const xpar_resync_probe * p = &c->probe[at];
   u8 got[XPAR_BLAKE3_OUT_LEN];
   u64 z = c->s->geom.slice_size;
@@ -1959,11 +1940,9 @@ static xpar_resync_probe * v_entry_probes(xpar_vset * s, u32 entry,
             u64 run, slice = (at - gen_begin) / z;
             if (!xpar_occindex_canonical(&s->occ, at, &o, &run) ||
                 o.entry != entry || o.extent != k || run < z) continue;
-            if (n == cap) {
-              cap = cap ? cap * 2 : 16;
-              p = (xpar_resync_probe *)
-                    xpar_realloc(p, cap * sizeof(xpar_resync_probe));
-            }
+            if (n == cap)
+              { cap = cap ? cap * 2 : 16;
+                p = xpar_realloc(p, cap * sizeof *p); }
             p[n].crc = s->tagset.t.slice_crc[slice];
             p[n].expected = file_off + at - x->stream_offset;
             p[n].slice = slice;
@@ -1995,8 +1974,8 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
   if (!n) { xpar_free(p);  return; }
   confirm.s = s;  confirm.f = f;  confirm.probe = p;
   confirm.path = path;  confirm.io_seen = false;
-  confirm.buf = (u8 *) xpar_alloc_raw((sz) z);
-  located = (u64 *) xpar_alloc_raw((sz) n * sizeof(u64));
+  confirm.buf = xpar_alloc_raw((sz) z);
+  located = xpar_alloc_raw((sz) n * sizeof *located);
 
   opt.mode       = (u32) o->resync;
   opt.step       = o->resync_step;
@@ -2035,7 +2014,6 @@ static void v_resync_entry(xpar_vset * s, u32 entry,
   xpar_free(confirm.buf);  xpar_free(p);
 }
 
-
 static void load_key(xpar_vset * s, const char * path) {
   xpar_keyfile_load_or_die(path, &s->key, s->master);
   s->key_loaded = true;
@@ -2049,10 +2027,9 @@ static void authenticate_armoured_images(xpar_vset * s) {
   Fi(s->img_count,
     xpar_vimg * v = &s->img[i];
     xpar_armour * a;
-    u64 fp, fd, frames, f, at;
+    u64 fp, fd, frames, at, j;
     u8 * frame;
     bool failed = false, corrected = false;
-    u32 j;
     if (!v->armoured ||
         xpar_verify_packets_ok(v->plain, v->plain_len, &s->key)) continue;
 
@@ -2068,7 +2045,7 @@ static void authenticate_armoured_images(xpar_vset * s) {
       u64 keep = MIN(avail, region_len);
       xpar_armour_status st;
       xpar_armour_stat sc;
-      frame = (u8 *) xpar_alloc_raw((sz) region_len ? (sz) region_len : 1);
+      frame = xpar_alloc_raw((sz) region_len ? (sz) region_len : 1);
       xpar_memcpy(frame, v->data + 384, (sz) keep);
       if (keep < region_len)
         xpar_memset(frame + keep, 0, (sz) (region_len - keep));
@@ -2079,12 +2056,11 @@ static void authenticate_armoured_images(xpar_vset * s) {
       if (st == XPAR_ARMOUR_CORRECTED || sc.symbols) corrected = true;
     }
     at = 0;
-    for (f = 0; f < frames; f++) {
+    Fj(frames,
       u64 take = MIN(fp, v->plain_len - at);
-      FATAL_UNLESS(plain_put(v, frame + f * fd, take, at),
-                   "writing the authenticated plaintext of '%s' failed", v->path);
-      at += take;
-    }
+      FATAL_UNLESS(plain_put(v, frame + j * fd, take, at),
+                   "cannot write the authenticated plaintext of '%s'", v->path);
+      at += take);
     xpar_free(frame);
     xpar_armour_free(a);
     FATAL_UNLESS_CODE(XPAR_EXIT_UNREPAIRABLE,
@@ -2126,9 +2102,8 @@ static void auth_preflight(xpar_vset * s) {
       if (xpar_auth_read(body, (sz) (h.length - XPAR_PKT_HDR), &a) != XPAR_OK)
         continue;
       saw_auth = true;
-      if (s->key_loaded && xpar_auth_key_ok(&a, s->master)) {
-        s->auth = a;  s->have_auth = true;  break;
-      }
+      if (s->key_loaded && xpar_auth_key_ok(&a, s->master))
+        { s->auth = a;  s->have_auth = true;  break; }
     }
   }
   for (i = 0; i < s->img_count && !s->have_auth; i++) {
@@ -2145,9 +2120,8 @@ static void auth_preflight(xpar_vset * s) {
       if (xpar_auth_read(body, (sz) (h.length - XPAR_PKT_HDR), &a) != XPAR_OK)
         continue;
       saw_auth = true;
-      if (s->key_loaded && xpar_auth_key_ok(&a, s->master)) {
-        s->auth = a;  s->have_auth = true;  break;
-      }
+      if (s->key_loaded && xpar_auth_key_ok(&a, s->master))
+        { s->auth = a;  s->have_auth = true;  break; }
     }
     if (!s->have_auth) {
       u64 pos = 0, blen;
@@ -2170,9 +2144,8 @@ static void auth_preflight(xpar_vset * s) {
           if (xpar_auth_read(body, (sz) (h.length - XPAR_PKT_HDR), &a) !=
               XPAR_OK) continue;
           saw_auth = true;
-          if (s->key_loaded && xpar_auth_key_ok(&a, s->master)) {
-            s->auth = a;  s->have_auth = true;  break;
-          }
+          if (s->key_loaded && xpar_auth_key_ok(&a, s->master))
+            { s->auth = a;  s->have_auth = true;  break; }
         }
         if (s->have_auth) break;
       }
@@ -2192,10 +2165,9 @@ static void auth_preflight(xpar_vset * s) {
     s->keyed = false;
     return;
   }
-  if (!s->key_loaded) {
+  if (!s->key_loaded)
     FATAL_CODE(XPAR_EXIT_AUTH,
                "this set is authenticated; supply --auth-key=FILE");
-  }
   if (!s->have_auth)
     FATAL_CODE(XPAR_EXIT_AUTH, "the authentication key is wrong for this set");
   s->keyed = true;
@@ -2204,7 +2176,7 @@ static void auth_preflight(xpar_vset * s) {
 }
 
 xpar_vset * xpar_vset_open(const xpar_options * o) {
-  xpar_vset * s = (xpar_vset *) xpar_calloc(1, sizeof *s);
+  xpar_vset * s = xpar_calloc(1, sizeof *s);
   const xpar_crit_pkt * p;
   xpar_status st;
   u32 i;
@@ -2216,7 +2188,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
 
   FATAL_UNLESS(o->set_ref.count > 0, "no set volumes to read");
   s->img_cap = o->set_ref.count + 8;
-  s->img = (xpar_vimg *) xpar_calloc(s->img_cap, sizeof(xpar_vimg));
+  s->img = xpar_calloc(s->img_cap, sizeof *s->img);
   Fi(o->set_ref.count,
     xpar_vimg * v;
     if (split_image_seen(s, o->set_ref.vol[i])) continue;
@@ -2274,12 +2246,9 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
                  PLURAL(s->pkt_dropped));
 
   collect_gens(s);
-  {
-    u32 * have = (u32 *) xpar_calloc(s->gen_count ? s->gen_count : 1,
-                                     sizeof(u32));
+  { u32 * have = xpar_calloc(s->gen_count ? s->gen_count : 1, sizeof *have);
     u32 j;
-    char ** read = (char **) xpar_calloc(s->img_count ? s->img_count : 1,
-                                        sizeof(char *));
+    char ** read = xpar_calloc(s->img_count ? s->img_count : 1, sizeof *read);
     u32 nread = 0;
     Fj(s->gen_count, have[j] = s->gen[j].generation);
     /*  A volume whose header names a generation that materialised is
@@ -2313,8 +2282,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
   if (!xpar_geom_from_setd(&s->setd, &s->geom))
     FATAL_FORMAT("the set descriptor's geometry is inconsistent");
 
-  {
-    u32 g = s->gen_target, walked = 0;
+  { u32 g = s->gen_target, walked = 0;
     while (g != XPAR_GEN_NONE && walked++ < s->gen_count) {
       xpar_posix_rec * tab = NULL;
       if (xpar_posx_collect(&s->crit, s->gen[g].id,
@@ -2329,9 +2297,7 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
 
   build_manifest(s);
   validate_identities(s);
-  s->resync = (xpar_resync_map *)
-                xpar_calloc(s->mf.count ? s->mf.count : 1,
-                            sizeof(xpar_resync_map));
+  s->resync = xpar_calloc(s->mf.count ? s->mf.count : 1, sizeof *s->resync);
   xpar_occindex_build(&s->mf, &s->occ);
   classify(s);
   load_tables(s);
@@ -2347,13 +2313,13 @@ xpar_vset * xpar_vset_open(const xpar_options * o) {
 }
 
 void xpar_vset_close(xpar_vset * s) {
+  u32 i;
   if (!s) return;
   if (s->fh_open) xpar_close(s->fh);
   xpar_erasures_free(&s->er);
   if (s->have_layt) xpar_layt_free(&s->layt);
   xpar_tagset_free(&s->tagset);
   xpar_occindex_free(&s->occ);
-  u32 i;
   Fi(s->mf.count, xpar_resync_map_free(&s->resync[i]));
   xpar_manifest_free(&s->mf);
   xpar_setd_free(&s->setd);
@@ -2365,8 +2331,8 @@ void xpar_vset_close(xpar_vset * s) {
   xpar_free(s->armour_done);
   Fi(s->img_count, vimg_free(&s->img[i]));
   xpar_free(s->img);       xpar_free(s->ext_first);
-  xpar_free(s->ext_alias); xpar_free(s->gen);
-  xpar_free(s->superseded); xpar_free(s->ignored_cell);
+  xpar_free(s->ext_alias);  xpar_free(s->gen);
+  xpar_free(s->superseded);  xpar_free(s->ignored_cell);
   xpar_free(s->resync);
   Fi(s->subst_count,
     xpar_free(s->subst[i].want);  xpar_free(s->subst[i].got));
@@ -2477,25 +2443,25 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
     if (size - pos < XPAR_PKT_HDR ||
         xpar_xread(f, head, sizeof head) != sizeof head ||
         xpar_memcmp(head, XPAR_PKT_MAGIC, 8) != 0) {
-      ok = false; break;
+      ok = false;  break;
     }
     len = xpar_rd64(head + 8);
     if (len < XPAR_PKT_HDR || len % XPAR_PKT_ALIGN ||
         len > XPAR_PKT_LEN_MAX || len > size - pos ||
         len > (u64) (sz) -1) {
-      ok = false; break;
+      ok = false;  break;
     }
-    packet = (u8 *) xpar_alloc_raw((sz) len);
+    packet = xpar_alloc_raw((sz) len);
     xpar_memcpy(packet, head, sizeof head);
     body_len = len - XPAR_PKT_HDR;
     if (body_len && xpar_xread(f, packet + XPAR_PKT_HDR,
                                (sz) body_len) != (sz) body_len) {
-      xpar_free(packet); ok = false; break;
+      xpar_free(packet);  ok = false;  break;
     }
     st = xpar_pkt_read(packet, len, key, &h);
     if (st != XPAR_OK ||
         xpar_memcmp(h.set_id, set_id, XPAR_SET_ID_LEN) != 0) {
-      xpar_free(packet); ok = false; break;
+      xpar_free(packet);  ok = false;  break;
     }
     if (xpar_pkt_is(&h, XPAR_T_VOLH)) {
       xpar_volh vh;
@@ -2503,7 +2469,7 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
           xpar_volh_read(packet + XPAR_PKT_HDR, (sz) body_len, &vh) !=
             XPAR_OK ||
           vh.volume_index != volume_index || vh.volume_kind != volume_kind) {
-        xpar_free(packet); ok = false; break;
+        xpar_free(packet);  ok = false;  break;
       }
       have_volh = true;
     } else if (xpar_pkt_is(&h, XPAR_T_RCVS)) {
@@ -2513,7 +2479,7 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
                          &r) != XPAR_OK ||
           found >= count || r.exponent < first ||
           r.exponent - first != found) {
-        xpar_free(packet); ok = false; break;
+        xpar_free(packet);  ok = false;  break;
       }
       found++;
     } else if (xpar_pkt_is(&h, XPAR_T_ARMG)) {
@@ -2524,7 +2490,7 @@ bool xpar_verify_written_volume(const char * path, const xpar_key * key,
         if (!written_wrapped_rcvs(packet + XPAR_PKT_HDR, body_len, key,
                                   set_id, volume_kind, slice_size, first,
                                   count, &found)) {
-          xpar_free(packet); ok = false; break;
+          xpar_free(packet);  ok = false;  break;
         }
       }
     }
@@ -2549,7 +2515,8 @@ typedef struct {
 } writer_check;
 
 static void writer_check_job(sz index, void * arg) {
-  writer_check * c = (writer_check *) arg + index;
+  writer_check * c = arg;
+  c += index;
   if (index == 0) { c->result = xpar_vset_check(c->s, c->options, c->json);  return; }
   c->result = xpar_verify_written_volume(
                 c->path, c->key, c->set_id, c->volume_index,
@@ -2570,12 +2537,12 @@ static void verify_written_set_at(const xpar_options * o,
   const xpar_layt * layt;
   const xpar_setd * setd;
   writer_check * check = NULL;
-  u32 check_count = 1;
+  u32 i, check_count = 1;
   int rc;
   bool wrote_ok;
   xpar_memset(&ro.set_ref, 0, sizeof ro.set_ref);
   ro.verb = XPAR_VERB_VERIFY;
-  /* The synthetic options object owns its set path. */
+  /*  The synthetic options object owns its set path.  */
   ro.set = xpar_strdup(index_path);
   ro.chain = false;
   if (generation) { gref = *generation;  ro.gens = &gref; }
@@ -2584,12 +2551,10 @@ static void verify_written_set_at(const xpar_options * o,
   ro.json = false;  ro.quiet = true;
   ro.fast = false;
   if (exact_file) {
-    ro.set_ref.vol = (char **) xpar_calloc(1, sizeof(char *));
+    ro.set_ref.vol = xpar_calloc(1, sizeof *ro.set_ref.vol);
     ro.set_ref.vol[0] = xpar_strdup(index_path);
     ro.set_ref.count = 1;
-  } else {
-    xpar_cli_resolve_set(index_path, &ro.set_ref);
-  }
+  } else xpar_cli_resolve_set(index_path, &ro.set_ref);
   s = xpar_vset_open(&ro);
   if (sources && !xpar_vset_bind_sources(s, sources))
     FATAL_CODE(XPAR_EXIT_INTERNAL,
@@ -2599,15 +2564,15 @@ static void verify_written_set_at(const xpar_options * o,
   layt = xpar_vset_layt(s);
   setd = xpar_vset_setd(s);
   if (setd->layout != XPAR_LAYOUT_ARMOURED) {
-    u32 i;
     check_count++;
-    for (i = 0; layt && i < layt->count; i++)
-      if (layt->vol[i].kind == XPAR_VOL_RECOVERY) check_count++;
+    if (layt)
+      Fi(layt->count,
+        if (layt->vol[i].kind == XPAR_VOL_RECOVERY) check_count++);
   }
-  check = (writer_check *) xpar_calloc(check_count, sizeof(*check));
+  check = xpar_calloc(check_count, sizeof *check);
   check[0].s = s;  check[0].options = &ro;  check[0].json = &js;
   if (check_count > 1) {
-    u32 at = 1, i;
+    u32 at = 1;
     int total = o->jobs > 0 ? o->jobs : xpar_cpu_count();
     int outer = MIN(total, (int) check_count);
     xpar_pool * pool;
@@ -2618,32 +2583,31 @@ static void verify_written_set_at(const xpar_options * o,
     check[at].volume_kind = XPAR_VOL_INDEX;
     check[at].slice_size = setd->slice_size;
     at++;
-    for (i = 0; layt && i < layt->count; i++) {
-      const xpar_vol * v = &layt->vol[i];
-      if (v->kind != XPAR_VOL_RECOVERY) continue;
-      check[at].path = xpar_path_join(xpar_vset_dir(s), v->name);
-      check[at].key = xpar_vset_key(s);
-      check[at].set_id = xpar_vset_id(s);
-      check[at].volume_index = i;
-      check[at].volume_kind = XPAR_VOL_RECOVERY;
-      check[at].first = v->recovery_first;
-      check[at].count = v->byte_length;
-      check[at].slice_size = setd->slice_size;
-      at++;
-    }
+    if (layt)
+      Fi(layt->count,
+        const xpar_vol * v = &layt->vol[i];
+        if (v->kind != XPAR_VOL_RECOVERY) continue;
+        check[at].path = xpar_path_join(xpar_vset_dir(s), v->name);
+        check[at].key = xpar_vset_key(s);
+        check[at].set_id = xpar_vset_id(s);
+        check[at].volume_index = i;
+        check[at].volume_kind = XPAR_VOL_RECOVERY;
+        check[at].first = v->recovery_first;
+        check[at].count = v->byte_length;
+        check[at].slice_size = setd->slice_size;
+        at++);
     ro.jobs = MAX(1, total - outer + 1);
     pool = xpar_pool_create(outer);
     xpar_pool_run(pool, check_count, writer_check_job, check);
     xpar_pool_destroy(pool);
-  } else {
-    writer_check_job(0, check);
-  }
+  } else writer_check_job(0, check);
   rc = check[0].result;
   /*  A data volume that only wants rewriting is damage this set already
       carried; it is not a failure of the write being checked here.  */
   wrote_ok = xpar_vset_stream_intact(s, rc);
-  for (u32 i = 1; i < check_count; i++)
-    if (check[i].result != XPAR_EXIT_OK) { rc = check[i].result;  wrote_ok = false; }
+  Fi(check_count - 1,
+    if (check[i + 1].result != XPAR_EXIT_OK)
+      { rc = check[i + 1].result;  wrote_ok = false; });
   if (xpar_vset_recovery(s) != xpar_vset_recovery_total(s)) {
     xpar_fprintf(xpar_stderr,
                  "xpar: internal read-back found only %" PRIu64 " of %" PRIu64 " "
@@ -2653,14 +2617,12 @@ static void verify_written_set_at(const xpar_options * o,
                  index_path);
     rc = XPAR_EXIT_REPAIRABLE;  wrote_ok = false;
   }
-  u32 i;
   Fi(check_count, xpar_free(check[i].path));
   xpar_free(check);
   xpar_free(ro.set);
   xpar_vset_close(s);
   xpar_setref_free(&ro.set_ref);
-  if (rc == XPAR_EXIT_IO)
-    FATAL_IO("cannot verify written set '%s': read-back failed", index_path);
+  if (rc == XPAR_EXIT_IO) FATAL_IO("cannot read written set '%s' back", index_path);
   if (!wrote_ok)
     FATAL_CODE(XPAR_EXIT_INTERNAL,
                "internal: the set just written does not verify through "
@@ -2797,8 +2759,7 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
     if (off < s->geom.stream_base) return false;
     rel = off - s->geom.stream_base;
     if (rel >= s->strm_len) return off >= end;
-    {
-      u64 take = MIN(len, s->strm_len - rel);
+    { u64 take = MIN(len, s->strm_len - rel);
       xpar_memcpy(buf, s->strm + rel, (sz) take);
       return take == len || off + take >= end;
     }
@@ -2815,20 +2776,18 @@ bool xpar_vset_read(xpar_vset * s, u64 off, u8 * buf, u64 len) {
       Fi(s->layt.count,
         const xpar_vol * q = &s->layt.vol[i];
         if (q->kind == XPAR_VOL_DATA && rel >= q->stream_offset &&
-            rel - q->stream_offset < q->byte_length) { lv = q; break; });
-      if (!lv) { ok = false; break; }
+            rel - q->stream_offset < q->byte_length) { lv = q;  break; });
+      if (!lv) { ok = false;  break; }
       take = MIN(len, lv->byte_length - (rel - lv->stream_offset));
       Fj(s->img_count,
         const char * base = xpar_path_base(s->img[j].path);
         if (lv->name && xpar_path_same(base, lv->name)) break);
       if (j == s->img_count || !s->img[j].data ||
           rel - lv->stream_offset > s->img[j].size ||
-          take > s->img[j].size - (rel - lv->stream_offset)) {
-        ok = false;
-      } else {
+          take > s->img[j].size - (rel - lv->stream_offset)) ok = false;
+      else
         xpar_memcpy(buf, s->img[j].data + rel - lv->stream_offset,
                     (sz) take);
-      }
       rel += take;  buf += take;  len -= take;
     }
     if (len) xpar_memset(buf, 0, (sz) len);
@@ -2901,9 +2860,9 @@ static void acc_init(stream_acc * a, xpar_vset * s, bool strong,
   a->subtree = a->want_tag &&
                (s->setd.required_features & XPAR_FEAT_B3_SUBTREE) != 0;
   if (a->subtree)
-    a->tag_buf = (u8 *) xpar_calloc((sz) s->geom.slice_size, 1);
+    a->tag_buf = xpar_calloc((sz) s->geom.slice_size, 1);
   if (s->keyed)
-    a->cell_susp = (u8 *) xpar_calloc(s->eg.cells_per_slice, 1);
+    a->cell_susp = xpar_calloc(s->eg.cells_per_slice, 1);
   if (s->keyed) xpar_blake3_init_keyed(&a->tag, s->key.k_slice);
   else          xpar_blake3_init(&a->tag);
 }
@@ -2920,16 +2879,11 @@ static void note_slice(stream_acc * a, u64 slice, const char * why) {
 static void flush_cell(stream_acc * a, u64 slice, u32 col) {
   xpar_vset * s = a->s;
   const xpar_tags * t = &s->tagset.t;
-  bool bad = false;
-  if (s->ignored_cell &&
-      s->ignored_cell[slice * s->eg.cells_per_slice + col]) {
-    /*  Superseded bytes are outside this generation's verdict.  */
-  } else if (a->cell_bad) {
-    bad = true;
-  } else if (s->eg.cell_bytes && (s->have & XPAR_TAGS_CELL) &&
-             t->cell_crc[slice * t->cells_per_slice + col] != a->cell_crc) {
-    bad = true;
-  }
+  bool bad = !(s->ignored_cell &&
+               s->ignored_cell[slice * s->eg.cells_per_slice + col]) &&
+             (a->cell_bad ||
+              (s->eg.cell_bytes && (s->have & XPAR_TAGS_CELL) &&
+               t->cell_crc[slice * t->cells_per_slice + col] != a->cell_crc));
   if (bad && s->keyed) a->cell_susp[col] = 1;
   else if (bad) xpar_cell_mark(&s->er, slice, col);
   if (bad) a->slice_bad = true;
@@ -2942,13 +2896,13 @@ static void flush_slice(stream_acc * a, u64 slice) {
   const xpar_tags * t = &s->tagset.t;
   bool whole_bad = false;
   bool ignored = false;
+  bool crc_bad, tag_bad = false;
   u32 col;
   if (s->ignored_cell)
     for (col = 0; col < s->eg.cells_per_slice; col++)
       if (s->ignored_cell[slice * s->eg.cells_per_slice + col]) { ignored = true;  break; }
-  bool crc_bad = !ignored && (s->have & XPAR_TAGS_CRC) &&
-                 a->slice_crc != t->slice_crc[slice];
-  bool tag_bad = false;
+  crc_bad = !ignored && (s->have & XPAR_TAGS_CRC) &&
+            a->slice_crc != t->slice_crc[slice];
   if (!s->keyed && !a->slice_bad && crc_bad) { whole_bad = true;  note_slice(a, slice, "crc"); }
   if (!ignored && (s->keyed || (!a->slice_bad && !whole_bad)) && a->want_tag) {
     u8 got[XPAR_BLAKE3_OUT_LEN];
@@ -3013,9 +2967,7 @@ static void acc_feed(stream_acc * a, const u8 * p, u64 n) {
         else            xpar_blake3_update(&a->tag, p, (sz) take);
       }
       p += take;
-    } else {
-      a->cell_bad = a->slice_bad = true;
-    }
+    } else a->cell_bad = a->slice_bad = true;
     a->pos += take;  n -= take;
     if (in + take == base + size) {
       flush_cell(a, slice, col);
@@ -3204,7 +3156,7 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
       xpar_read_req req[VERIFY_BATCH];
       u64 logical[VERIFY_BATCH] = { 0 }, queued = done;
       u64 io_start = 0, io_usec = 0;
-      sz b, count = 0;
+      sz j, count = 0;
       bool sample = hashing && !s->hash_sampled && pool &&
                     xpar_pool_threads(pool) > 1;
       while (queued < len && count < s->io_batch) {
@@ -3226,27 +3178,24 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
       xpar_pread_batch(req, count);
       if (sample) io_usec = xpar_usec_now() - io_start;
       /*  Retry short batched reads to distinguish I/O errors from EOF.  */
-      for (b = 0; b < count; b++) {
-        if (!req[b].file || req[b].result == req[b].length) continue;
-        req[b].result += xpar_pread(req[b].file,
-                                    (u8 *) req[b].buf + req[b].result,
-                                    req[b].length - req[b].result,
-                                    req[b].offset + req[b].result);
-        if (req[b].result != req[b].length && xpar_error(req[b].file)) {
+      Fj(count,
+        if (!req[j].file || req[j].result == req[j].length) continue;
+        req[j].result += xpar_pread(req[j].file,
+                                    (u8 *) req[j].buf + req[j].result,
+                                    req[j].length - req[j].result,
+                                    req[j].offset + req[j].result);
+        if (req[j].result != req[j].length && xpar_error(req[j].file)) {
           r->unreadable = true;
-          vset_io_error(s, path, xpar_error(req[b].file));
+          vset_io_error(s, path, xpar_error(req[j].file));
           goto io_stop;
-        }
-      }
-      {
-        bool packed = true, all_got = true;
+        });
+      { bool packed = true, all_got = true;
         sz packed_len = 0;
         u64 hash_usec = 0, scan_start;
-        for (b = 0; b < count; b++) {
-          if (req[b].result != req[b].length) all_got = false;
-          if (req[b].buf != buf + packed_len) packed = false;
-          packed_len += req[b].length;
-        }
+        Fj(count,
+          if (req[j].result != req[j].length) all_got = false;
+          if (req[j].buf != buf + packed_len) packed = false;
+          packed_len += req[j].length);
         if (hashing && all_got && packed) {
           u64 at = fo + logical[0];
           u64 hash_start = sample ? xpar_usec_now() : 0;
@@ -3257,33 +3206,32 @@ static void check_entry(xpar_vset * s, u32 i, stream_acc * acc,
               (sz) MIN((u64) packed_len, 16384 - at));
           if (sample) hash_usec = xpar_usec_now() - hash_start;
         }
-      scan_start = sample ? xpar_usec_now() : 0;
-      for (b = 0; b < count; b++) {
-        sz take = req[b].length;
-        u8 * piece = buf + b * s->io_buf;
-        bool got = req[b].result == take;
-        if (got) {
-          s->bytes_read += take;
-          xpar_progress_tick(pg, take);
-          if (hashing && (!all_got || !packed)) {
-            u64 at = fo + logical[b];
-            xpar_blake3_update_parallel(&h, piece, take,
-                                        s->hash_parallel ? pool : NULL);
-            if (at < 16384)
-              xpar_blake3_update(&ph, piece,
-                (sz) MIN((u64) take, 16384 - at));
+        scan_start = sample ? xpar_usec_now() : 0;
+        Fj(count,
+          sz take = req[j].length;
+          u8 * piece = buf + j * s->io_buf;
+          bool got = req[j].result == take;
+          if (got) {
+            s->bytes_read += take;
+            xpar_progress_tick(pg, take);
+            if (hashing && (!all_got || !packed)) {
+              u64 at = fo + logical[j];
+              xpar_blake3_update_parallel(&h, piece, take,
+                                          s->hash_parallel ? pool : NULL);
+              if (at < 16384)
+                xpar_blake3_update(&ph, piece,
+                  (sz) MIN((u64) take, 16384 - at));
+            }
           }
+          if (canon)
+            acc_at(acc, off + logical[j], got ? piece : NULL, take));
+        /*  Enable hash workers only when measured hashing exceeds read and
+            slice-scan time. CV reduction remains deterministic.  */
+        if (sample && all_got && packed && packed_len >= s->io_buf) {
+          u64 scan_usec = xpar_usec_now() - scan_start;
+          s->hash_parallel = hash_usec > io_usec + scan_usec;
+          s->hash_sampled = true;
         }
-        if (canon)
-          acc_at(acc, off + logical[b], got ? piece : NULL, take);
-      }
-      /*  Enable hash workers only when measured hashing exceeds read and
-          slice-scan time. CV reduction remains deterministic.  */
-      if (sample && all_got && packed && packed_len >= s->io_buf) {
-        u64 scan_usec = xpar_usec_now() - scan_start;
-        s->hash_parallel = hash_usec > io_usec + scan_usec;
-        s->hash_sampled = true;
-      }
       }
       done = queued;
     }
@@ -3302,7 +3250,7 @@ io_stop:
       r->prefix_bad = true; }
 }
 
-/* True when another entry defines any of this entry's bytes. */
+/*  True when another entry defines any of this entry's bytes.  */
 static bool has_alias(const xpar_vset * s, u32 i) {
   const xpar_entry * e = &s->mf.entry[i];
   u32 k;
@@ -3352,7 +3300,7 @@ static u32 entry_inherited(const xpar_vset * s, u32 i) {
 void xpar_vset_mark_superseded(xpar_vset * old, const xpar_vset * head) {
   xpar_nameidx ix;
   u32 i;
-  old->superseded = (u8 *) xpar_calloc(old->mf.count ? old->mf.count : 1, 1);
+  old->superseded = xpar_calloc(old->mf.count ? old->mf.count : 1, 1);
   xpar_nameidx_build(&head->mf, &ix);
   Fi(old->mf.count,
     const xpar_entry * e = &old->mf.entry[i];
@@ -3370,9 +3318,9 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   xpar_progress_t pg;
   sz buf_size;
   u8 * buf;
-  u8 * shape = (u8 *) xpar_calloc(s->mf.count ? s->mf.count : 1, 1);
-  u32 * inherit = (u32 *) xpar_calloc(s->mf.count ? s->mf.count : 1,
-                                      sizeof(u32));
+  u8 * shape = xpar_calloc(s->mf.count ? s->mf.count : 1, 1);
+  u32 * inherit = xpar_calloc(s->mf.count ? s->mf.count : 1,
+                              sizeof *inherit);
   xpar_pool * pool = xpar_pool_create(o->jobs);
   u64 total = 0;
   u32 i;
@@ -3382,13 +3330,11 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
       shrinks with the budget instead of always costing 8 MiB.  */
   { u64 share = o->memory ? o->memory / 4
                           : (u64) VERIFY_BATCH * VERIFY_IOBUF;
-    if (share < VERIFY_IOBUF) {
-      s->io_buf   = (sz) MAX(share, (u64) 1);
-      s->io_batch = 1;
-    } else {
-      s->io_buf   = VERIFY_IOBUF;
-      s->io_batch = (u32) MIN((u64) VERIFY_BATCH, share / VERIFY_IOBUF);
-    }
+    if (share < VERIFY_IOBUF)
+      { s->io_buf = (sz) MAX(share, (u64) 1);  s->io_batch = 1; }
+    else { s->io_buf = VERIFY_IOBUF;
+             s->io_batch = (u32) MIN((u64) VERIFY_BATCH,
+                                      share / VERIFY_IOBUF); }
     buf_size = (sz) s->io_batch * s->io_buf;
   }
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {
@@ -3401,10 +3347,10 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
     buf_size = MAX(buf_size, (sz) s->geom.slice_size);
   }
   s->io_span = buf_size;
-  buf = (u8 *) xpar_alloc_raw(buf_size);
+  buf = xpar_alloc_raw(buf_size);
 
   if (s->superseded)
-    s->ignored_cell = (u8 *) xpar_calloc(
+    s->ignored_cell = xpar_calloc(
       (sz) MAX(s->eg.slice_count * s->eg.cells_per_slice, 1), 1);
 
   /*  Authenticated deduplicated aliases require full-tree verification.  */
@@ -3422,8 +3368,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
   acc_init(&acc, s, o->strong, js);
 
   /*  Bound checksum work by stored bytes and the padded manifest size.  */
-  {
-    u64 sweep = s->geom.slice_count * s->geom.slice_size;
+  { u64 sweep = s->geom.slice_count * s->geom.slice_size;
     u64 z = s->geom.slice_size;
     u64 present = 0, entry_cap, pad, cap;
     Fi(s->img_count, present += s->img[i].size);
@@ -3440,7 +3385,7 @@ int xpar_vset_check(xpar_vset * s, const xpar_options * o,
     if (sweep > cap)
       FATAL_FORMAT("set geometry implies %" PRIu64
                    " stream bytes, but volumes and manifest support at most "
-                   "%" PRIu64 , sweep, cap);
+                   "%" PRIu64, sweep, cap);
   }
 
   if (s->setd.layout != XPAR_LAYOUT_SIDECAR) {
@@ -3611,7 +3556,7 @@ scanned:
       if (any) s->gone_slices++;
     }
   }
-  /* Clean canonical cells make hash failures alias-local or unlocalisable. */
+  /*  Clean canonical cells make hash failures alias-local or unlocalisable.  */
   Fi(s->mf.count,
     if (!shape[i] || canon_erased(s, i)) continue;
     /*  Attribute ancestor-owned damage to its generation.  */
@@ -3627,7 +3572,7 @@ scanned:
   xpar_pool_destroy(pool);
 
   s->depth = xpar_erasures_max_depth(&s->er);
-  /* Repair uses one decode plan per column pattern. */
+  /*  Repair uses one decode plan per column pattern.  */
   s->column_groups = 0;
   if (s->er.bad_count) {
     xpar_col_groups cg;
@@ -3672,7 +3617,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     xpar_fprintf(xpar_stderr,
                  "xpar: SETD records a %" PRIu32 "-byte cell but no complete cell "
                  "table survives; erasures fall back to slice granularity "
-                 "(`xpar scrub --rebuild-cells` restores it)\n",
+                 "('xpar scrub --rebuild-cells' restores it)\n",
                  s->geom.cell_bytes);
   if (s->lost_gens)
     xpar_fprintf(xpar_stderr,
@@ -3681,36 +3626,36 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
   if (s->ragged_vols)
     xpar_fprintf(xpar_stderr,
                  "xpar: %" PRIu64 " volume%s nonconforming: '%s' is not "
-                 "exactly a sequence of packets; `xpar repair` rewrites "
+                 "exactly a sequence of packets; 'xpar repair' rewrites "
                  "or trims it\n",
                  s->ragged_vols, s->ragged_vols == 1 ? " is" : "s are",
                  s->ragged_first ? s->ragged_first : "?");
   if (s->index_gone)
     xpar_fprintf(xpar_stderr,
                  "xpar: index volume '%s' is missing; the set was opened "
-                 "through a replica (`xpar repair` recreates it)\n",
+                 "through a replica ('xpar repair' recreates it)\n",
                  s->index_gone_first ? s->index_gone_first : "?");
   if (s->recovery_bad)
     xpar_fprintf(xpar_stderr,
                  "xpar: warning: %" PRIu64 " of %" PRIu64 " recovery slices "
-                 "failed their checksum; protection is reduced (`xpar "
-                 "repair` regenerates them)\n",
+                 "failed their checksum; protection is reduced ('xpar "
+                 "repair' regenerates them)\n",
                  s->recovery_bad, s->recovery);
   if (s->recovery_gone)
     xpar_fprintf(xpar_stderr,
                  "xpar: warning: %" PRIu64 " of %" PRIu64 " recovery slices named by the "
                  "layout are not on disk; available protection is reduced "
-                 "(`xpar repair` regenerates them)\n",
+                 "('xpar repair' regenerates them)\n",
                  s->recovery_gone,
                  (s->recovery + s->recovery_gone));
   if (s->archive_resized)
     xpar_fprintf(xpar_stderr,
                  "xpar: the armoured archive is not the length its prologue "
-                 "declares; `xpar repair` rewrites it\n");
+                 "declares; 'xpar repair' rewrites it\n");
   if (s->archive_prologue_bad)
     xpar_fprintf(xpar_stderr,
                  "xpar: an armoured prologue copy no longer verifies; "
-                 "`xpar repair` rewrites the archive header\n");
+                 "'xpar repair' rewrites the archive header\n");
   /*  Always report substituted volumes.  */
   Fi(s->subst_count,
     const char * kind =
@@ -3720,7 +3665,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
     if (xpar_path_same(s->subst[i].want, s->subst[i].got))
       xpar_fprintf(xpar_stderr,
                    "xpar: %s '%s' is not its recorded length; "
-                   "`xpar repair` restores it\n", kind, s->subst[i].want);
+                   "'xpar repair' restores it\n", kind, s->subst[i].want);
     else if (s->subst[i].present)
       xpar_fprintf(xpar_stderr,
                    "xpar: %s '%s' is damaged; intact copy found "
@@ -3732,7 +3677,8 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                    kind, s->subst[i].want, s->subst[i].got));
   /*  Substitutes leave the recorded layout incomplete.  */
   { u64 renamed = 0;
-    for (u32 q = 0; q < (s->subst_count); q++) { if (!xpar_path_same(s->subst[q].want, s->subst[q].got)) renamed++; }
+    Fi(s->subst_count,
+      if (!xpar_path_same(s->subst[i].want, s->subst[i].got)) renamed++);
     if (renamed)
       xpar_fprintf(xpar_stderr,
                    "xpar: %" PRIu64 " volume%s need%s to be restored under "
@@ -3741,7 +3687,10 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
   }
 
   if (o->quiet) return;
-  Fi(s->mf.count, Fk(s->mf.entry[i].extent_count, if (aliased(s, i, k)) aliased_bytes += s->mf.entry[i].extents[k].length));
+  Fi(s->mf.count,
+    Fk(s->mf.entry[i].extent_count,
+      if (aliased(s, i, k))
+        aliased_bytes += s->mf.entry[i].extents[k].length));
 
   xpar_fprintf(xpar_stderr,
                "xpar: %" PRIu64 " slice%s of %" PRIu64 " bytes, %" PRIu64 " recovery slice%s, "
@@ -3833,7 +3782,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
   /*  Untagged slices require force for in-place repair.  */
   if (rc == XPAR_EXIT_REPAIRABLE && !s->setd.slice_tag_len)
     xpar_fputs("xpar: this set has no slice tags, so in-place repair needs "
-               "-f; `xpar repair --to DIR` keeps the originals\n",
+               "-f; 'xpar repair --to DIR' keeps the originals\n",
                xpar_stderr);
   if (rc == XPAR_EXIT_UNREPAIRABLE && s->depth > recovery_live(s))
     xpar_fprintf(xpar_stderr,
@@ -3854,8 +3803,7 @@ void xpar_vset_report(const xpar_vset * s, const xpar_options * o,
                  color ? "\033[31m" : "", color ? "\033[0m" : "");
   else if (rc == XPAR_EXIT_IO)
     xpar_fprintf(xpar_stderr,
-                 "xpar: status: %sI/O error%s, %" PRIu64 " path%s could not "
-                 "be read\n",
+                 "xpar: status: %sI/O error%s, %" PRIu64 " unreadable path%s\n",
                  color ? "\033[31m" : "", color ? "\033[0m" : "",
                  MAX(s->io_errors, s->unreadable_entries),
                  PLURAL(MAX(s->io_errors, s->unreadable_entries)));
@@ -3971,7 +3919,7 @@ int xpar_op_verify(const xpar_options * o) {
       xpar_genref top_ref;
       char top_id[XPAR_SET_ID_LEN * 2 + 1];
       xpar_vset * head;
-      u8 * member = (u8 *) xpar_calloc(c.gen_count, 1);
+      u8 * member = xpar_calloc(c.gen_count, 1);
       u32 at = selected, walked = 0;
       xpar_gchain_genref(&c, selected, &top_ref, top_id);
       top.chain = false;
@@ -3984,8 +3932,7 @@ int xpar_op_verify(const xpar_options * o) {
       }
       FATAL_UNLESS(at == XPAR_GEN_NONE,
                    "the selected generation's ancestry is cyclic");
-      {
-        int worst = XPAR_EXIT_OK;
+      { int worst = XPAR_EXIT_OK;
         xpar_json chain_js;
         u32 g;
         xpar_json_init(&chain_js, xpar_stdout, o->json);

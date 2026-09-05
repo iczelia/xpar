@@ -12,7 +12,7 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.  */
 
-/* Property tests for geometry, erasures, occurrences, paths and packets. */
+/*  Property tests for geometry, erasures, occurrences, paths and packets.  */
 
 #include "t_harness.h"
 #include "container.h"
@@ -38,7 +38,7 @@ static void test_helpers(void) {
   CHECK_U64(xpar_ceil_div(1, 7), 1, "ceil_div(1, 7)");
   CHECK_U64(xpar_ceil_div(7, 7), 1, "ceil_div(7, 7)");
   CHECK_U64(xpar_ceil_div(8, 7), 2, "ceil_div(8, 7)");
-  /* Avoid overflow in the common ceil-division formula. */
+  /*  Avoid overflow in the common ceil-division formula.  */
   CHECK_U64(xpar_ceil_div((u64) -1, 2), ((u64) -1) / 2 + 1,
             "ceil_div near 2^64");
 
@@ -58,7 +58,7 @@ static void test_helpers(void) {
             v, a, up);
       break;
     }
-    if (!xpar_is_pow2(xpar_next_pow2(v & 0xFFFFFFu))) {
+    if (!xpar_is_pow2(xpar_next_pow2(v & 0xFFFFFFU))) {
       CHECK(false, "next_pow2 produced a non-power of two");
       break;
     });
@@ -94,8 +94,7 @@ static void test_helpers(void) {
   buf[7] = 0;
   CHECK(xpar_has_nul(buf, 8), "a trailing NUL must be seen");
   CHECK(xpar_ct_equal(buf, buf, 8), "constant-time compare of equal buffers");
-  {
-    u8 other[8];
+  { u8 other[8];
     xpar_memcpy(other, buf, 8);
     other[0] ^= 0x01;
     CHECK(!xpar_ct_equal(buf, other, 8), "a difference in the first byte");
@@ -106,14 +105,14 @@ static void test_helpers(void) {
   }
 }
 
-/* Independent bitwise CRC-32C oracle. */
+/*  Independent bitwise CRC-32C oracle.  */
 static u32 crc_reference(const u8 * p, sz n) {
-  u32 c = 0xFFFFFFFFu;
+  u32 c = 0xFFFFFFFFU;
   sz i;
   int k;
   Fi(n,
     c ^= p[i];
-    Fk(8, c = (c >> 1) ^ (0x82F63B78u & (u32) -(i32) (c & 1))));
+    Fk(8, c = (c >> 1) ^ (0x82F63B78U & (u32) -(i32) (c & 1))));
   return ~c;
 }
 
@@ -126,13 +125,13 @@ static void test_crc32c(void) {
   xt_section_begin("crc32c");
   xpar_crc32c_init();
   xt_seed(&r, 0x2222);
-  buf = (u8 *) xpar_alloc_raw(cap);
+  buf = xpar_alloc_raw(cap);
   xt_fill(&r, buf, cap);
 
-  /* Cover dispatch length classes. */
-  for (i = 0; i <= 300; i++)
+  /*  Cover dispatch length classes.  */
+  Fi(301,
     CHECK_U64(xpar_crc32c(0, buf, i), crc_reference(buf, i),
-              "crc32c of %" PRIu32 " bytes", i);
+              "crc32c of %" PRIu32 " bytes", i));
   CHECK_U64(xpar_crc32c(0, buf, cap), crc_reference(buf, cap),
             "crc32c of %" PRIu64 " bytes", (u64) cap);
 
@@ -147,14 +146,14 @@ static void test_crc32c(void) {
     xpar_crc32c_shift_op(op, cap - cut);
     CHECK_U64(xpar_crc32c_combine_op(op, a, b), xpar_crc32c(0, buf, cap),
               "combine_op at cut %" PRIu64, (u64) cut);
-    CHECK_U64(xpar_crc32c_combine_op(op, a ^ 0x5A5A5A5Au, b),
-              xpar_crc32c_combine(a ^ 0x5A5A5A5Au, b, cap - cut),
+    CHECK_U64(xpar_crc32c_combine_op(op, a ^ 0x5A5A5A5AU, b),
+              xpar_crc32c_combine(a ^ 0x5A5A5A5AU, b, cap - cut),
               "reused operator at cut %" PRIu64, (u64) cut));
 
-  /* Stored CRC shifting includes the zero suffix CRC. */
+  /*  Stored CRC shifting includes the zero suffix CRC.  */
   Fi(xt_scale(64),
     u32 pad = xt_below(&r, 1024);
-    u8 * tmp = (u8 *) xpar_calloc(2048 + pad, 1);
+    u8 * tmp = xpar_calloc(2048 + pad, 1);
     xpar_memcpy(tmp, buf, 2048);
     CHECK_U64(xpar_crc32c_shift(xpar_crc32c(0, buf, 2048), pad) ^
               xpar_crc32c(0, tmp + 2048, pad),
@@ -175,7 +174,7 @@ static void test_blake3(void) {
 
   xt_section_begin("blake3");
   xt_seed(&r, 0x3333);
-  buf = (u8 *) xpar_alloc_raw(cap);
+  buf = xpar_alloc_raw(cap);
   xt_fill(&r, buf, cap);
   xt_fill(&r, key, 32);
 
@@ -193,8 +192,7 @@ static void test_blake3(void) {
   xpar_blake3_hash_keyed(key, buf, cap, b, 32);
   CHECK(xpar_memcmp(a, b, 32) != 0, "keying must change the digest");
 
-  {
-    u8 wide[128], part[128];
+  { u8 wide[128], part[128];
     xpar_blake3_t h;
     xpar_blake3_init(&h);
     xpar_blake3_update(&h, buf, cap);
@@ -205,8 +203,7 @@ static void test_blake3(void) {
     xt_bytes_equal("XOF seek", part, wide + 64, 64);
   }
 
-  {
-    const sz n = 4096;
+  { const sz n = 4096;
     xpar_blake3_t h;
     xpar_blake3_subtree_tag(buf, n, 0, a, 32);
     xpar_blake3_hash(buf, n, b, 32);
@@ -279,7 +276,7 @@ static void test_geometry(void) {
     u64 cap;
     xpar_memset(&q, 0, sizeof q);
     q.field_log2 = (xt_next(&r) & 1) ? 8 : 16;
-    q.stream_length = xt_next(&r) % (u64) (32u << 20);
+    q.stream_length = xt_next(&r) % (u64) (32U << 20);
     q.recovery = 1 + xt_below(&r, 32);
     switch (xt_below(&r, 3)) {
       case 0: break;
@@ -311,7 +308,7 @@ static void test_geometry(void) {
         accepted, (u32) xt_scale(512));
 }
 
-/* Verify cell mapping and complete, non-overlapping slice coverage. */
+/*  Verify cell mapping and complete, non-overlapping slice coverage.  */
 static void test_cell_mapping(void) {
   xt_rng r;
   u32 i;
@@ -326,7 +323,7 @@ static void test_cell_mapping(void) {
     xpar_memset(&g, 0, sizeof g);
     g.slice_size    = (u64) (1 + xt_below(&r, 32)) * 4096;
     g.stream_base   = (u64) xt_below(&r, 4) * g.slice_size;
-    g.stream_length = 1 + xt_next(&r) % (16u * g.slice_size);
+    g.stream_length = 1 + xt_next(&r) % (16U * g.slice_size);
     g.cell_bytes    = xpar_cell_choose(g.slice_size, 0, 0);
     g.cells_per_slice = g.cell_bytes
                         ? (u32) xpar_ceil_div(g.slice_size, g.cell_bytes) : 1;
@@ -412,8 +409,8 @@ static void test_erasures(void) {
   CHECK_U64(e.bad_count, 0, "a fault past L marks nothing");
 
   xpar_erasures_clear(&e);
-  for (u64 s = 0; s < (6); s++) { xpar_cell_mark(&e, s, 0); }
-  for (u64 s = 0; s < (3); s++) { xpar_cell_mark(&e, s, 2); }
+  Fi(6, xpar_cell_mark(&e, i, 0));
+  Fi(3, xpar_cell_mark(&e, i, 2));
   CHECK_U64(e.bad_count, 9, "nine cells marked");
   CHECK_U64(xpar_erasures_max_depth(&e), 6, "the deepest column has six");
 
@@ -467,7 +464,7 @@ static void test_erasures(void) {
   xpar_erasures_free(&e);
 }
 
-/* Build single-extent entries separated by alignment gaps. */
+/*  Build single-extent entries separated by alignment gaps.  */
 static void build_gapped(xpar_manifest * m, u32 n, u64 len, u64 gap) {
   u64 off = 0;
   u32 i;
@@ -476,13 +473,13 @@ static void build_gapped(xpar_manifest * m, u32 n, u64 len, u64 gap) {
     xpar_entry * e = xpar_manifest_append(m);
     char name[32];
     xpar_snprintf(name, sizeof name, "f%03" PRIu32 ".bin", i);
-    e->name = (char *) xpar_alloc_raw(xpar_strlen(name) + 1);
+    e->name = xpar_alloc_raw(xpar_strlen(name) + 1);
     xpar_memcpy(e->name, name, xpar_strlen(name) + 1);
     e->name_len = (u32) xpar_strlen(name);
     e->entry_type = XPAR_ENTRY_REGULAR;
     e->length = len;
     e->extent_count = 1;
-    e->extents = (xpar_extent *) xpar_alloc_raw(sizeof(xpar_extent));
+    e->extents = xpar_alloc_raw(sizeof *e->extents);
     e->extents[0].stream_offset = off;
     e->extents[0].length = len;
     off += len + gap);
@@ -512,7 +509,7 @@ static void test_occindex(void) {
   CHECK(xpar_stream_locate(&ix, len + gap, &sp), "the next entry is");
   CHECK_U64(sp.entry, 1, "and it is the second one");
 
-  /* A gap resumes at the next extent, not the end of the stream. */
+  /*  A gap resumes at the next extent, not the end of the stream.  */
   CHECK_U64(xpar_occindex_next(&ix, 0, 4 * (len + gap)), 0,
             "a covered offset resumes at itself");
   CHECK_U64(xpar_occindex_next(&ix, len, 4 * (len + gap)), len + gap,
@@ -521,8 +518,8 @@ static void test_occindex(void) {
             "from anywhere inside the gap");
   CHECK_U64(xpar_occindex_next(&ix, len, len + 4), len + 4,
             "a limit inside the gap caps the answer");
-  CHECK_U64(xpar_occindex_next(&ix, 3 * (len + gap) + len, 1ull << 40),
-            1ull << 40, "past the last extent nothing resumes");
+  CHECK_U64(xpar_occindex_next(&ix, 3 * (len + gap) + len, 1ULL << 40),
+            1ULL << 40, "past the last extent nothing resumes");
   CHECK_U64(xpar_occindex_next(&ix, 100, 50), 50,
             "an inverted range returns the limit");
 
@@ -537,8 +534,7 @@ static void test_occindex(void) {
 
   build_gapped(&m, 3, len, 0);
   xpar_occindex_build(&m, &ix);
-  {
-    u64 p;
+  { u64 p;
     for (p = 0; p < 3 * len; p += 97)
       if (xpar_occindex_next(&ix, p, 3 * len) != p) {
         CHECK(false, "a packed stream reported a gap at %" PRIu64, p);
@@ -570,7 +566,7 @@ static void test_extents(void) {
   CHECK_U64(count, 2, "and the new one keeps coalescing");
   CHECK_U64(list[1].length, 51, "with the right length");
 
-  /* Backward references are aliases, not adjacent extents. */
+  /*  Backward references are aliases, not adjacent extents.  */
   xpar_extents_append(&list, &count, &cap, 0, 100);
   CHECK_U64(count, 3, "a backward reference is its own extent");
 
@@ -590,8 +586,8 @@ static xpar_entry * mf_add(xpar_manifest * m, const char * name,
 }
 
 static void mf_extent(xpar_entry * e, u64 off, u64 len) {
-  e->extents = (xpar_extent *) xpar_realloc(
-                 e->extents, (sz) (e->extent_count + 1) * sizeof(xpar_extent));
+  e->extents = xpar_realloc(
+                 e->extents, (sz) (e->extent_count + 1) * sizeof *e->extents);
   e->extents[e->extent_count].stream_offset = off;
   e->extents[e->extent_count].length = len;
   e->extent_count++;
@@ -721,12 +717,12 @@ static void test_paths(void) {
   check_path("a/b/", XPAR_PATH_TRAILING_SLASH, 0);
   check_path("a\tb", XPAR_PATH_CONTROL, 0);
 
-  /* Drive and UNC prefixes are never relative. */
+  /*  Drive and UNC prefixes are never relative.  */
   check_path("C:/x", XPAR_PATH_DRIVE, 0);
   check_path("a:b", XPAR_PATH_DRIVE, 0);
   check_path("\\\\server\\share", XPAR_PATH_UNC, 0);
 
-  /* Other Windows restrictions apply only with XPAR_PATH_WIN. */
+  /*  Other Windows restrictions apply only with XPAR_PATH_WIN.  */
   check_path("a?b", XPAR_PATH_OK, 0);
   check_path("a?b", XPAR_PATH_WINCHAR, XPAR_PATH_WIN);
   check_path("CON", XPAR_PATH_OK, 0);
@@ -736,8 +732,7 @@ static void test_paths(void) {
   check_path("a ", XPAR_PATH_WINTRAIL, XPAR_PATH_WIN);
   check_path("a.", XPAR_PATH_WINTRAIL, XPAR_PATH_WIN);
 
-  {
-    xpar_path_status got = xpar_path_check("a\0b", 3, 0);
+  { xpar_path_status got = xpar_path_check("a\0b", 3, 0);
     CHECK(got == XPAR_PATH_CONTROL, "an embedded NUL must be refused");
   }
 }
@@ -777,12 +772,11 @@ static void test_packets(void) {
   }
   CHECK_U64(seen, 2, "both packets were scanned");
 
-  {
-    u32 i, kept = 0;
+  { u32 i, kept = 0;
     Fi(xt_scale(64),
       sz at = (sz) xt_below(&r, (u32) b.len);
       u8 save = b.data[at];
-      b.data[at] ^= (u8) (1u << xt_below(&r, 8));
+      b.data[at] ^= (u8) (1U << xt_below(&r, 8));
       seen = 0;
       xpar_scan_init(&sc, b.data, b.len, NULL, false);
       while (xpar_scan_next(&sc, &hdr, &body, &off)) seen++;
@@ -791,8 +785,7 @@ static void test_packets(void) {
     CHECK_U64(kept, 0, "a flipped bit must never leave both packets valid");
   }
 
-  {
-    sz full = b.len;
+  { sz full = b.len;
     b.len = full - 8;
     seen = 0;
     xpar_scan_init(&sc, b.data, b.len, NULL, false);
@@ -802,8 +795,7 @@ static void test_packets(void) {
   }
 
   /*  Validate type bytes and reject unknown critical types.  */
-  {
-    xpar_pkt h2;
+  { xpar_pkt h2;
     xpar_buf_free(&b);
     xpar_buf_init(&b);
     xpar_pkt_write(&b, "xyz9", 0, set_id, payload, 8, NULL);
@@ -827,8 +819,7 @@ static void test_packets(void) {
   }
 
   /*  Reject reserved packet flags before further parsing.  */
-  {
-    xpar_pkt h2;
+  { xpar_pkt h2;
     u32 flags;
     xpar_buf_free(&b);
     xpar_buf_init(&b);
@@ -838,10 +829,10 @@ static void test_packets(void) {
     flags = xpar_rd32(b.data + 36);
     CHECK_U64(flags & ~(u32) XPAR_PF_KNOWN, 0,
               "writer clears reserved flags");
-    xpar_wr32(b.data + 36, flags | (1u << 7));
+    xpar_wr32(b.data + 36, flags | (1U << 7));
     CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_MALFORMED,
           "reserved flag rejected");
-    xpar_wr32(b.data + 36, flags | (1u << 31));
+    xpar_wr32(b.data + 36, flags | (1U << 31));
     CHECK(xpar_pkt_read(b.data, b.len, NULL, &h2) == XPAR_E_MALFORMED,
           "top reserved flag rejected");
     xpar_wr32(b.data + 36, flags);
@@ -897,8 +888,7 @@ static void test_volume_headers(void) {
   CHECK_U64(cs.count, 3, "the repeat is not a fourth volume");
   CHECK(cs.conflicts > 0, "two headers for one volume disagree");
 
-  {
-    const u8 * borrowed = cs.pkt[0].body;
+  { const u8 * borrowed = cs.pkt[0].body;
     u8 first = borrowed[0];
     xpar_critset_detach(&cs, b.data, b.len);
     CHECK(cs.pkt[0].body != borrowed,
@@ -928,7 +918,7 @@ static void test_posx_bound(void) {
   CHECK(xpar_posx_collect(&c, set_id, 1, &rec) == XPAR_E_MALFORMED,
         "positive count without POSX data");
   CHECK(rec == NULL, "no table returned");
-  CHECK(xpar_posx_collect(&c, set_id, 0xFFFFFFFFu, &rec) == XPAR_E_MALFORMED,
+  CHECK(xpar_posx_collect(&c, set_id, 0xFFFFFFFFU, &rec) == XPAR_E_MALFORMED,
         "huge count rejected before allocation");
   CHECK(rec == NULL, "no table returned");
 
@@ -951,7 +941,7 @@ static void test_posx_bound(void) {
   CHECK(rec == NULL, "no table returned");
 }
 
-/* Every nonzero field element must have a unique logarithm. */
+/*  Every nonzero field element must have a unique logarithm.  */
 static void test_gf_tables(void) {
   u8 * seen8;
   u8 * seen16;
@@ -959,7 +949,7 @@ static void test_gf_tables(void) {
 
   xt_section_begin("gf tables");
 
-  seen8 = (u8 *) xpar_calloc(256, 1);
+  seen8 = xpar_calloc(256, 1);
   Fi(255,
     u8 v = xpar_gf8_exp[i];
     if (!v) { gap++;  continue; }
@@ -973,8 +963,8 @@ static void test_gf_tables(void) {
   xpar_free(seen8);
 
   dup = 0;  miss = 0;  gap = 0;
-  seen16 = (u8 *) xpar_calloc(65536, 1);
-  Fi(65535u,
+  seen16 = xpar_calloc(65536, 1);
+  Fi(65535U,
     u16 v = xpar_gf16_exp[i];
     if (!v) { gap++;  continue; }
     if (seen16[v]) dup++;
@@ -982,7 +972,7 @@ static void test_gf_tables(void) {
     if (xpar_gf16_log[v] != (u16) i) miss++);
   CHECK_U64(dup, 0, "GF(2^16) alpha^i repeats before the group order");
   CHECK_U64(miss, 0, "GF(2^16) log and exp disagree");
-  for (i = 1; i < 65536u; i++) if (!seen16[i]) gap++;
+  for (i = 1; i < 65536U; i++) if (!seen16[i]) gap++;
   CHECK_U64(gap, 0, "GF(2^16) alpha does not reach every nonzero element");
   xpar_free(seen16);
 }
@@ -1052,7 +1042,7 @@ static void test_reader_bounds(void) {
   xpar_setd_free(&sd);
 
   { u64 y = XPAR_SLICE_REFUSE / XPAR_CELLS_MAX;
-    CHECK(y >= XPAR_CELL_MIN && y <= 0xFFFFFFFFu && y % 64 == 0,
+    CHECK(y >= XPAR_CELL_MIN && y <= 0xFFFFFFFFU && y % 64 == 0,
           "the at-cap control needs a representable, legal cell size");
     hd_setd(setd, XPAR_SLICE_REFUSE, (u32) y);
     CHECK(xpar_setd_read(setd, sizeof setd, &sd) == XPAR_OK,
@@ -1075,7 +1065,7 @@ static void test_reader_bounds(void) {
 
   /*  SLCR: at most XPAR_TABLE_SPLIT slices per packet.  */
   n = 16 + (XPAR_TABLE_SPLIT + 1) * 4;
-  b = (u8 *) xpar_calloc(n, 1);
+  b = xpar_calloc(n, 1);
   xpar_wr64(b + 8, XPAR_TABLE_SPLIT + 1);
   CHECK(xpar_slcr_read(b, n, &cr) == XPAR_E_MALFORMED,
         "SLCR covering more than XPAR_TABLE_SPLIT slices");
@@ -1088,7 +1078,7 @@ static void test_reader_bounds(void) {
 
   /*  SLTG: the same cap, counted in tags.  */
   n = 24 + (XPAR_TABLE_SPLIT + 1) * 8;
-  b = (u8 *) xpar_calloc(n, 1);
+  b = xpar_calloc(n, 1);
   xpar_wr64(b + 8, XPAR_TABLE_SPLIT + 1);
   b[16] = 8;
   CHECK(xpar_sltg_read(b, n, &tg) == XPAR_E_MALFORMED,
@@ -1102,15 +1092,15 @@ static void test_reader_bounds(void) {
 
   /*  SLCL: n * ceil(Z/Y) is what the cap counts, so two cells per slice
       halve the permitted slice count.  */
-  n = 24 + ((XPAR_TABLE_SPLIT / 2) + 1) * 2 * 4;
-  b = (u8 *) xpar_calloc(n, 1);
-  xpar_wr64(b + 8, (XPAR_TABLE_SPLIT / 2) + 1);
+  n = 24 + (XPAR_TABLE_SPLIT / 2 + 1) * 2 * 4;
+  b = xpar_calloc(n, 1);
+  xpar_wr64(b + 8, XPAR_TABLE_SPLIT / 2 + 1);
   xpar_wr32(b + 16, 4096);
   CHECK(xpar_slcl_read(b, n, 8192, &cl) == XPAR_E_MALFORMED,
         "SLCL covering more than XPAR_TABLE_SPLIT cells");
   xpar_slcl_free(&cl);
   xpar_wr64(b + 8, XPAR_TABLE_SPLIT / 2);
-  CHECK(xpar_slcl_read(b, 24 + (XPAR_TABLE_SPLIT / 2) * 2 * 4, 8192, &cl) ==
+  CHECK(xpar_slcl_read(b, 24 + XPAR_TABLE_SPLIT / 2 * 2 * 4, 8192, &cl) ==
           XPAR_OK,
         "SLCL at exactly XPAR_TABLE_SPLIT cells still loads");
   xpar_slcl_free(&cl);
@@ -1124,7 +1114,7 @@ static void test_reader_bounds(void) {
       sz e1 = xpar_align_up(32 + 5, XPAR_PKT_ALIGN);
       sz e2 = xpar_align_up(32 + ln, XPAR_PKT_ALIGN);
       n = 8 + e1 + e2;
-      b = (u8 *) xpar_calloc(n, 1);
+      b = xpar_calloc(n, 1);
       xpar_wr32(b, 2);
       xpar_wr32(b + 4, XPAR_VOL_STANDALONE);
       b[8] = XPAR_VOL_INDEX;

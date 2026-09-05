@@ -18,7 +18,6 @@
 set -e
 
 prog=`basename "$0"`
-here=`cd \`dirname "$0"\` && pwd`
 
 root=`pwd`/competitors
 jobs=`nproc 2>/dev/null || echo 4`

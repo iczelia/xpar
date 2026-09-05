@@ -16,7 +16,7 @@
     XPAR_ARGV_L, and XPAR_ARGV_FN defined; one pass counts, another fills.  */
 
 #if !defined(XPAR_ARGV_CH) || !defined(XPAR_ARGV_L) || !defined(XPAR_ARGV_FN)
-  #error "port-win-argv.h needs XPAR_ARGV_CH, XPAR_ARGV_L and XPAR_ARGV_FN"
+#error "port-win-argv.h needs XPAR_ARGV_CH, XPAR_ARGV_L and XPAR_ARGV_FN"
 #endif
 
 #define XPAR_ARGV_PUT(c)                                                     \
@@ -25,10 +25,9 @@
       if (blen + 1 >= bcap) {                                                \
         XPAR_ARGV_CH * nb;                                                   \
         size_t ncap = bcap * 2;                                              \
-        nb = (XPAR_ARGV_CH *) HeapAlloc(GetProcessHeap(), 0,                 \
-                                        ncap * sizeof(XPAR_ARGV_CH));        \
+        nb = HeapAlloc(GetProcessHeap(), 0, ncap * sizeof *nb);              \
         if (!nb) goto fail;                                                  \
-        memcpy(nb, buf, blen * sizeof(XPAR_ARGV_CH));                        \
+        memcpy(nb, buf, blen * sizeof *buf);                                 \
         HeapFree(GetProcessHeap(), 0, buf);                                  \
         buf = nb;  bcap = ncap;                                              \
       }                                                                      \
@@ -42,8 +41,8 @@ static int XPAR_ARGV_FN(const XPAR_ARGV_CH * cmd, XPAR_ARGV_CH *** out) {
   for (pass = 0; pass < 2; pass++) {
     const XPAR_ARGV_CH * p = cmd;
     if (pass) {
-      argv = (XPAR_ARGV_CH **) HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                         (size_t) (argc + 1) * sizeof(*argv));
+      argv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                       (size_t) (argc + 1) * sizeof *argv);
       if (!argv) return -1;
     }
     argc = 0;
@@ -55,8 +54,7 @@ static int XPAR_ARGV_FN(const XPAR_ARGV_CH * cmd, XPAR_ARGV_CH *** out) {
       buf = NULL;
       if (pass) {
         bcap = 64;
-        buf = (XPAR_ARGV_CH *) HeapAlloc(GetProcessHeap(), 0,
-                                         bcap * sizeof(XPAR_ARGV_CH));
+        buf = HeapAlloc(GetProcessHeap(), 0, bcap * sizeof *buf);
         if (!buf) goto fail;
       }
       while (*p) {
@@ -69,14 +67,11 @@ static int XPAR_ARGV_FN(const XPAR_ARGV_CH * cmd, XPAR_ARGV_CH *** out) {
             Fi(nbs / 2, XPAR_ARGV_PUT(XPAR_ARGV_L('\\')));
             if (nbs & 1) { XPAR_ARGV_PUT(XPAR_ARGV_L('"'));  p++; }
             else { in_quote = !in_quote;  p++; }
-          } else {
-            Fi(nbs, XPAR_ARGV_PUT(XPAR_ARGV_L('\\')));
-          }
+          } else Fi(nbs, XPAR_ARGV_PUT(XPAR_ARGV_L('\\')));
         } else if (*p == XPAR_ARGV_L('"')) {
-          if (in_quote && p[1] == XPAR_ARGV_L('"')) {
-            XPAR_ARGV_PUT(XPAR_ARGV_L('"'));
-            p += 2;
-          } else { in_quote = !in_quote;  p++; }
+          if (in_quote && p[1] == XPAR_ARGV_L('"'))
+            { XPAR_ARGV_PUT(XPAR_ARGV_L('"'));  p += 2; }
+          else { in_quote = !in_quote;  p++; }
         } else {
           XPAR_ARGV_PUT(*p);
           p++;

@@ -49,7 +49,7 @@ static void gf8_tables(void) {
         early return to 1 distinguishes a non-primitive one.  */
     xpar_assert(i == 0 || x != 1);
     xpar_gf8_exp[i] = (u8) x;  xpar_gf8_log[x] = (u8) i;
-    x <<= 1;  if (x & 0x100u) x ^= XPAR_GF8_POLY);
+    x <<= 1;  if (x & 0x100U) x ^= XPAR_GF8_POLY);
   xpar_assert(x == 1);
   /*  Doubling the exp table lets a product index it with the plain sum
       of two logs, which is at most 508, and removes the reduction from
@@ -58,20 +58,20 @@ static void gf8_tables(void) {
   xpar_gf8_log[0] = 0;
   xpar_gf8_inv_tab[0] = 0;
   for (i = 1; i < 256; i++)
-    xpar_gf8_inv_tab[i] = xpar_gf8_exp[255u - xpar_gf8_log[i]];
+    xpar_gf8_inv_tab[i] = xpar_gf8_exp[255U - xpar_gf8_log[i]];
 }
 
 static void gf16_tables(void) {
   u32 x = 1, i;
-  gf16_exp_store = (u16 *) xpar_alloc_raw(131070u * sizeof(u16));
-  gf16_log_store = (u16 *) xpar_alloc_raw(65536u * sizeof(u16));
-  Fi(65535u,
+  gf16_exp_store = xpar_alloc_raw(131070U * sizeof *gf16_exp_store);
+  gf16_log_store = xpar_alloc_raw(65536U * sizeof *gf16_log_store);
+  Fi(65535U,
     xpar_assert(i == 0 || x != 1);
     gf16_exp_store[i] = (u16) x;  gf16_log_store[x] = (u16) i;
-    x <<= 1;  if (x & 0x10000u) x ^= XPAR_GF16_POLY);
+    x <<= 1;  if (x & 0x10000U) x ^= XPAR_GF16_POLY);
   xpar_assert(x == 1);
-  for (i = 65535u; i < 131070u; i++)
-    gf16_exp_store[i] = gf16_exp_store[i - 65535u];
+  for (i = 65535U; i < 131070U; i++)
+    gf16_exp_store[i] = gf16_exp_store[i - 65535U];
   gf16_log_store[0] = 0;
   xpar_gf16_exp = gf16_exp_store;
   xpar_gf16_log = gf16_log_store;
@@ -83,9 +83,8 @@ static void gf16_tables(void) {
 static u64 gf8_affine(u8 c) {
   u64 mx = 0;  int k, i;
   Fk(8,
-    u8 col = xpar_gf8_mul((u8) (1u << k), c);
-    for (i = 0; i < 8; i++)
-      if ((col >> i) & 1) mx |= (u64) 1 << (8 * (7 - i) + k));
+    u8 col = xpar_gf8_mul((u8) (1U << k), c);
+    Fi(8, if ((col >> i) & 1) mx |= (u64) 1 << (8 * (7 - i) + k)));
   return mx;
 }
 
@@ -97,8 +96,8 @@ static void gf16_affine(u16 c, u64 blk[4]) {
   int k, i;
   blk[0] = blk[1] = blk[2] = blk[3] = 0;
   Fk(8,
-    u16 cl = xpar_gf16_mul((u16) (1u << k), c);
-    u16 ch = xpar_gf16_mul((u16) (0x100u << k), c);
+    u16 cl = xpar_gf16_mul((u16) (1U << k), c);
+    u16 ch = xpar_gf16_mul((u16) (0x100U << k), c);
     Fi(8,
       u64 bit = (u64) 1 << (8 * (7 - i) + k);
       if ((cl >> i) & 1)       blk[0] |= bit;
@@ -111,10 +110,10 @@ static void gf16_affine(u16 c, u64 blk[4]) {
     Nibble tables use XOR combinations of basis products from doubling.  */
 
 static u8 gf8_xtime(u8 v) {
-  return (u8) ((v << 1) ^ ((v & 0x80u) ? (XPAR_GF8_POLY & 0xFFu) : 0));
+  return (u8) ((v << 1) ^ ((v & 0x80U) ? (XPAR_GF8_POLY & 0xFFU) : 0));
 }
 static u16 gf16_xtime(u16 v) {
-  return (u16) ((v << 1) ^ ((v & 0x8000u) ? (XPAR_GF16_POLY & 0xFFFFu) : 0));
+  return (u16) ((v << 1) ^ ((v & 0x8000U) ? (XPAR_GF16_POLY & 0xFFFFU) : 0));
 }
 
 void xpar_gf8_prepare(xpar_gf8_coef * m, u8 c) {
@@ -172,26 +171,28 @@ void xpar_gf16_prepare(xpar_gf16_coef * m, u16 c) {
     branch would be unpredictable.  */
 
 static u8 gf8_mulc(u8 a, u32 lc) {
-  u32 z = a ? 0xFFFFFFFFu : 0u;
+  u32 z = a ? 0xFFFFFFFFU : 0U;
   return (u8) (xpar_gf8_exp[lc + xpar_gf8_log[a]] & z);
 }
 
 static u16 gf16_mulc(u16 a, u32 lc) {
-  u32 z = a ? 0xFFFFFFFFu : 0u;
+  u32 z = a ? 0xFFFFFFFFU : 0U;
   return (u16) (xpar_gf16_exp[lc + xpar_gf16_log[a]] & z);
 }
 
 void xpar_gf8_mac_ref(u8 * d, const u8 * s, sz n, u8 c) {
-  if (!c) return;
-  u32 lc = xpar_gf8_log[c];
+  u32 lc;
   sz i;
+  if (!c) return;
+  lc = xpar_gf8_log[c];
   Fi(n, d[i] ^= gf8_mulc(s[i], lc));
 }
 
 void xpar_gf8_mul_ref(u8 * d, const u8 * s, sz n, u8 c) {
-  if (!c) { xpar_memset(d, 0, n);  return; }
-  u32 lc = xpar_gf8_log[c];
+  u32 lc;
   sz i;
+  if (!c) { xpar_memset(d, 0, n);  return; }
+  lc = xpar_gf8_log[c];
   Fi(n, d[i] = gf8_mulc(s[i], lc));
 }
 
@@ -199,17 +200,21 @@ void xpar_gf8_mul_ref(u8 * d, const u8 * s, sz n, u8 c) {
     rd16 and wr16 to match shuffle kernels and leaves an odd tail untouched.  */
 
 void xpar_gf16_mac_ref(u8 * d, const u8 * s, sz n, u16 c) {
+  u32 lc;
+  sz i;
   if (!c) return;
-  u32 lc = xpar_gf16_log[c];
-  for (sz i = 0; i + 2 <= n; i += 2)
+  lc = xpar_gf16_log[c];
+  for (i = 0; i + 2 <= n; i += 2)
     xpar_wr16(d + i, (u16) (xpar_rd16(d + i) ^
                             gf16_mulc(xpar_rd16(s + i), lc)));
 }
 
 void xpar_gf16_mul_ref(u8 * d, const u8 * s, sz n, u16 c) {
+  u32 lc;
+  sz i;
   if (!c) { xpar_memset(d, 0, n & ~(sz) 1);  return; }
-  u32 lc = xpar_gf16_log[c];
-  for (sz i = 0; i + 2 <= n; i += 2)
+  lc = xpar_gf16_log[c];
+  for (i = 0; i + 2 <= n; i += 2)
     xpar_wr16(d + i, gf16_mulc(xpar_rd16(s + i), lc));
 }
 
@@ -227,27 +232,31 @@ void xpar_xor3_ref(u8 * d, const u8 * a, const u8 * b, sz n) {
     written once.  */
 
 void xpar_gf8_fft2_ref(u8 * x, u8 * y, sz n, u8 c) {
-  if (!c) { xpar_xor2_ref(y, x, n);  return; }
-  u32 lc = xpar_gf8_log[c];
+  u32 lc;
   sz i;
+  if (!c) { xpar_xor2_ref(y, x, n);  return; }
+  lc = xpar_gf8_log[c];
   Fi(n,
     u8 vx = (u8) (x[i] ^ gf8_mulc(y[i], lc));
     x[i] = vx;  y[i] = (u8) (y[i] ^ vx));
 }
 
 void xpar_gf8_ifft2_ref(u8 * x, u8 * y, sz n, u8 c) {
-  if (!c) { xpar_xor2_ref(y, x, n);  return; }
-  u32 lc = xpar_gf8_log[c];
+  u32 lc;
   sz i;
+  if (!c) { xpar_xor2_ref(y, x, n);  return; }
+  lc = xpar_gf8_log[c];
   Fi(n,
     u8 vy = (u8) (y[i] ^ x[i]);
     y[i] = vy;  x[i] = (u8) (x[i] ^ gf8_mulc(vy, lc)));
 }
 
 void xpar_gf16_fft2_ref(u8 * x, u8 * y, sz n, u16 c) {
+  u32 lc;
+  sz i;
   if (!c) { xpar_xor2_ref(y, x, n & ~(sz) 1);  return; }
-  u32 lc = xpar_gf16_log[c];
-  for (sz i = 0; i + 2 <= n; i += 2) {
+  lc = xpar_gf16_log[c];
+  for (i = 0; i + 2 <= n; i += 2) {
     u16 vy = xpar_rd16(y + i);
     u16 vx = (u16) (xpar_rd16(x + i) ^ gf16_mulc(vy, lc));
     xpar_wr16(x + i, vx);  xpar_wr16(y + i, (u16) (vy ^ vx));
@@ -255,9 +264,11 @@ void xpar_gf16_fft2_ref(u8 * x, u8 * y, sz n, u16 c) {
 }
 
 void xpar_gf16_ifft2_ref(u8 * x, u8 * y, sz n, u16 c) {
+  u32 lc;
+  sz i;
   if (!c) { xpar_xor2_ref(y, x, n & ~(sz) 1);  return; }
-  u32 lc = xpar_gf16_log[c];
-  for (sz i = 0; i + 2 <= n; i += 2) {
+  lc = xpar_gf16_log[c];
+  for (i = 0; i + 2 <= n; i += 2) {
     u16 vx = xpar_rd16(x + i);
     u16 vy = (u16) (xpar_rd16(y + i) ^ vx);
     xpar_wr16(y + i, vy);
@@ -278,7 +289,7 @@ static const gf_tier gf_tiers[] = {
   { &xpar_gf_kernels_gfni256, XPAR_CPU_GFNI | XPAR_CPU_AVX2   },
 #endif
 #ifdef HAVE_GFNI512
-  /* Require every AVX-512 subset enabled at compile time. */
+  /*  Require every AVX-512 subset enabled at compile time.  */
   { &xpar_gf_kernels_gfni512, XPAR_CPU_GFNI | XPAR_CPU_AVX512F |
                               XPAR_CPU_AVX512BW | XPAR_CPU_AVX512VL },
 #endif
@@ -290,7 +301,7 @@ static const gf_tier gf_tiers[] = {
   { &xpar_gf_kernels_avx2,    XPAR_CPU_AVX2                   },
 #endif
 #ifdef HAVE_NEON_CLMUL
-  /* vmull_p8 is baseline Advanced SIMD. */
+  /*  vmull_p8 is baseline Advanced SIMD.  */
   { &xpar_gf_kernels_neon_clmul, XPAR_CPU_NEON },
 #endif
 #ifdef HAVE_SVE
@@ -357,12 +368,12 @@ void xpar_gf_use_default_tier(void) {
 
 void xpar_gf_init(void) {
   static bool done = false;
+  int i, j;
   if (done) return;
   gf8_tables();
-  for (int c = 0; c < (256); c++) { gf8_aff_tab[c] = gf8_affine((u8) c); }
+  Fi(256, gf8_aff_tab[i] = gf8_affine((u8) i));
   gf16_tables();
-  int j;
-  Fj(16, gf16_affine((u16) (1u << j), gf16_aff_basis[j]));
+  Fj(16, gf16_affine((u16) (1U << j), gf16_aff_basis[j]));
   xpar_gf_use_default_tier();
   done = true;
 }
@@ -370,25 +381,27 @@ void xpar_gf_init(void) {
 /*  Convenience wrappers.  */
 
 static void gf_check(const void * d, const void * s, sz n) {
-  const u8 * a = (const u8 *) d, * b = (const u8 *) s;
+  const u8 * a = d, * b = s;
   xpar_assert(a == b || a + n <= b || b + n <= a);
 }
 
 void xpar_gf8_mul_region(u8 * dst, const u8 * src, sz n, u8 c) {
+  xpar_gf8_coef m;
   if (!n) return;
   gf_check(dst, src, n);
   if (!c)     { xpar_memset(dst, 0, n);  return; }
   if (c == 1) { if (dst != src) xpar_memcpy(dst, src, n);  return; }
-  xpar_gf8_coef m;  xpar_gf8_prepare(&m, c);
+  xpar_gf8_prepare(&m, c);
   gf_k->mul8(dst, src, n, &m);
 }
 
 void xpar_gf16_mul_region(u8 * dst, const u8 * src, sz n, u16 c) {
+  xpar_gf16_coef m;
   xpar_assert((n & 1) == 0);
   if (!n) return;
   gf_check(dst, src, n);
   if (!c)     { xpar_memset(dst, 0, n);  return; }
   if (c == 1) { if (dst != src) xpar_memcpy(dst, src, n);  return; }
-  xpar_gf16_coef m;  xpar_gf16_prepare(&m, c);
+  xpar_gf16_prepare(&m, c);
   gf_k->mul16(dst, src, n, &m);
 }

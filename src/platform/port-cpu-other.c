@@ -20,9 +20,9 @@
 #if defined(__riscv)
 
 #if defined(HAVE_ASM_HWPROBE_H) && defined(HAVE_SYS_SYSCALL_H)
-  #include <asm/hwprobe.h>
-  #include <sys/syscall.h>
-  #include <unistd.h>
+#include <asm/hwprobe.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 u32 xpar_cpu_probe(void) {
@@ -60,7 +60,7 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 #elif defined(__powerpc__) || defined(__powerpc64__) || defined(_ARCH_PPC)
 
 #if defined(HAVE_GETAUXVAL) && defined(HAVE_SYS_AUXV_H)
-  #include <sys/auxv.h>
+#include <sys/auxv.h>
 #endif
 
 #define XPAR_PPC_FEATURE_VSX 0x00000080UL
@@ -96,4 +96,4 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 #endif
 
 const int xpar_cpu_tier_table_n =
-  (int) (sizeof xpar_cpu_tier_table / sizeof xpar_cpu_tier_table[0]) - 1;
+  (int) ARRAY_LEN(xpar_cpu_tier_table) - 1;

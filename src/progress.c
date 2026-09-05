@@ -29,8 +29,8 @@ static void progress_emit(const xpar_progress_t * p) {
   rate = p->bytes_done / elapsed;
   if (p->sink) {
     /*  Compute exact bytes/s without overflowing on large totals.  */
-    u64 bps = rate * 1000000u +
-              (p->bytes_done % elapsed) * 1000000u / elapsed;
+    u64 bps = rate * 1000000U +
+              (p->bytes_done % elapsed) * 1000000U / elapsed;
     p->sink(p->sink_user, p->bytes_done, p->total_bytes, bps);
     return;
   }
@@ -45,12 +45,11 @@ static void progress_emit(const xpar_progress_t * p) {
                  done_mib,
                  (p->total_bytes >> 20),
                  rate);
-  } else {
+  } else
     xpar_fprintf(xpar_stderr, "%s: %" PRIu64 " MiB @ %" PRIu64 " MB/s\n",
                  p->op,
                  done_mib,
                  rate);
-  }
 }
 
 void xpar_progress_init(xpar_progress_t * p, bool on, u64 total,

@@ -47,17 +47,17 @@ enum { XPAR_OWNERMAP_NAME = 0, XPAR_OWNERMAP_NUMERIC };
 enum { XPAR_DEST_DEFAULT = 0, XPAR_DEST_IN_PLACE, XPAR_DEST_TO,
        XPAR_DEST_BACKUP };
 
-#define XPAR_PRES_MTIME     (1u << 0)
-#define XPAR_PRES_ATIME     (1u << 1)
-#define XPAR_PRES_CTIME     (1u << 2)
-#define XPAR_PRES_BTIME     (1u << 3)
-#define XPAR_PRES_MODE      (1u << 4)
-#define XPAR_PRES_SETID     (1u << 5)
-#define XPAR_PRES_ATTRS     (1u << 6)
-#define XPAR_PRES_OWNER     (1u << 7)
-#define XPAR_PRES_XATTR     (1u << 8)
-#define XPAR_PRES_XATTR_ALL (1u << 9)
-#define XPAR_PRES_LINKS     (1u << 10)
+#define XPAR_PRES_MTIME     (1U << 0)
+#define XPAR_PRES_ATIME     (1U << 1)
+#define XPAR_PRES_CTIME     (1U << 2)
+#define XPAR_PRES_BTIME     (1U << 3)
+#define XPAR_PRES_MODE      (1U << 4)
+#define XPAR_PRES_SETID     (1U << 5)
+#define XPAR_PRES_ATTRS     (1U << 6)
+#define XPAR_PRES_OWNER     (1U << 7)
+#define XPAR_PRES_XATTR     (1U << 8)
+#define XPAR_PRES_XATTR_ALL (1U << 9)
+#define XPAR_PRES_LINKS     (1U << 10)
 
 #define XPAR_PRES_TIMES (XPAR_PRES_MTIME | XPAR_PRES_ATIME | \
                          XPAR_PRES_CTIME | XPAR_PRES_BTIME)
@@ -126,7 +126,7 @@ typedef struct {
   u64  min_recovery;
   u64  slice_size;       /*  -s; excludes -b.  */
   u64  slices;           /*  -b; excludes -s.  */
-  u64  cell_bytes;       /* --cell; 0 selects automatic Y. */
+  u64  cell_bytes;       /*  --cell; 0 selects automatic Y.  */
   int  layout;           /*  XPAR_LAYOUT_*  */
   bool layout_given;     /*  Explicit --layout.  */
   bool armour_given;     /*  --armour was explicit.  */

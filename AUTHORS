@@ -1,12 +1,12 @@
-Lead development:
+Lead development
 Kamila Szewczyk <k@iczelia.net>
 
-Acknowledgements:
+Acknowledgements
 - Chris A. Taylor (catid) for the FFT-based Reed-Solomon codec
-  used by xpar, licensed under 3-BSD.
+  used by xpar, licensed under the 3-clause BSD license.
 
-License: GNU General Public License version 3 only.
+License
+GNU General Public License version 3 only.
 
-Includes the source code of yarg, a library for parsing command line
-arguments, written by Kamila Szewczyk and licensed under the terms of
-the Creative Commons Zero v1.0 Universal license.
+The bundled yarg command-line parser is by Kamila Szewczyk and uses the
+Zero-Clause BSD license.

@@ -21,11 +21,11 @@
 #include "xpar2.h"
 
 /*  Planner floor for Y; smaller cells burden small sets with large tables.  */
-#define XPAR_CELL_DEFAULT  65536u
+#define XPAR_CELL_DEFAULT  65536U
 
-#define XPAR_SLICE_TARGET  4000u
+#define XPAR_SLICE_TARGET  4000U
 
-#define XPAR_SLICE_FLOOR   4096u
+#define XPAR_SLICE_FLOOR   4096U
 #define XPAR_SLICE_CEIL    ((u64) 4 << 20)
 #define XPAR_SLICE_REFUSE  ((u64) 1 << 30)
 

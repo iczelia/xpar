@@ -49,8 +49,8 @@ static u32 rs_scale_sat(u32 n, u32 scale) {
 }
 
 static u32 rs_hash32(u32 x) {
-  x ^= x >> 16;  x *= 0x7feb352du;
-  x ^= x >> 15;  x *= 0x846ca68bu;
+  x ^= x >> 16;  x *= 0x7feb352dU;
+  x ^= x >> 15;  x *= 0x846ca68bU;
   return x ^ (x >> 16);
 }
 
@@ -62,12 +62,12 @@ static u32 rs_hash64(i64 v) {
 }
 
 static void rs_index_init(rs_index * x, const xpar_resync_probe * p, u32 n) {
-  u32 slots = rs_pow2(MAX(rs_scale_sat(n, 2), 2u)), i;
+  u32 slots = rs_pow2(MAX(rs_scale_sat(n, 2), 2U)), i;
   xpar_memset(x, 0, sizeof *x);
   x->probe = p;  x->probe_count = n;  x->mask = slots - 1;
-  x->bucket = (u32 *) xpar_alloc_raw((sz) slots * sizeof(u32));
-  x->next = (u32 *) xpar_alloc_raw((sz) MAX(n, 1u) * sizeof(u32));
-  x->unique = (u8 *) xpar_calloc(MAX(n, 1u), 1);
+  x->bucket = xpar_alloc_raw((sz) slots * sizeof *x->bucket);
+  x->next = xpar_alloc_raw((sz) MAX(n, 1U) * sizeof *x->next);
+  x->unique = xpar_calloc(MAX(n, 1U), 1);
   Fi(slots, x->bucket[i] = RS_NONE);
   Fi(n,
     u32 b = rs_hash32(p[i].crc) & x->mask;
@@ -115,46 +115,44 @@ static bool rs_scan(xpar_file * f, u64 size, u64 window, const rs_index * ix,
   u32 crc, to_step = step;
   if (!ix->probe_count || !window || window > size || window > (u64) (sz) -1)
     return true;
-  ring = (u8 *) xpar_alloc_raw((sz) window);
-  input = (u8 *) xpar_alloc_raw(RS_IO);
-  if (xpar_pread(f, ring, (sz) window, 0) != (sz) window) {
-    xpar_free(ring);  xpar_free(input);  return false;
-  }
+  ring = xpar_alloc_raw((sz) window);
+  input = xpar_alloc_raw(RS_IO);
+  if (xpar_pread(f, ring, (sz) window, 0) != (sz) window)
+    { xpar_free(ring);  xpar_free(input);  return false; }
   xpar_crc32c_roll_init(&roll, (sz) window);
   crc = xpar_crc32c(0, ring, (sz) window);
   pos = 0;
-  {
-    u32 b = rs_hash32(crc) & ix->mask, q;
+  { u32 b = rs_hash32(crc) & ix->mask, q;
     for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
       i64 delta;
       if (!ix->unique[q] || ix->probe[q].crc != crc ||
           !rs_delta(pos, ix->probe[q].expected, &delta)) continue;
-      /*  Count matches clipped by the search window. */
+      /*  Count matches clipped by the search window.  */
       if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
       if (!hit(user, q, pos)) goto done;
     }
   }
   while (pos + window < size) {
+    sz n, i;
     at = pos + window;
-    { sz n = (sz) MIN((u64) RS_IO, size - at), i;
-      if (xpar_pread(f, input, n, at) != n) { xpar_free(ring);  xpar_free(input);  return false; }
-      Fi(n,
-        crc = xpar_crc32c_roll_step(&roll, crc, ring[slot], input[i]);
-        ring[slot] = input[i];
-        if (++slot == window) slot = 0;
-        pos++;
-        if (--to_step == 0) {
-          u32 b = rs_hash32(crc) & ix->mask, q;
-          to_step = step;
-          for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
-            i64 delta;
-            if (!ix->unique[q] || ix->probe[q].crc != crc ||
-                !rs_delta(pos, ix->probe[q].expected, &delta)) continue;
-            if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
-            if (!hit(user, q, pos)) goto done;
-          }
-        });
-    }
+    n = (sz) MIN((u64) RS_IO, size - at);
+    if (xpar_pread(f, input, n, at) != n) { xpar_free(ring);  xpar_free(input);  return false; }
+    Fi(n,
+      crc = xpar_crc32c_roll_step(&roll, crc, ring[slot], input[i]);
+      ring[slot] = input[i];
+      if (++slot == window) slot = 0;
+      pos++;
+      if (--to_step == 0) {
+        u32 b = rs_hash32(crc) & ix->mask, q;
+        to_step = step;
+        for (q = ix->bucket[b]; q != RS_NONE; q = ix->next[q]) {
+          i64 delta;
+          if (!ix->unique[q] || ix->probe[q].crc != crc ||
+              !rs_delta(pos, ix->probe[q].expected, &delta)) continue;
+          if (!rs_within(delta, max_delta)) { (*clipped)++;  continue; }
+          if (!hit(user, q, pos)) goto done;
+        }
+      });
   }
 done:
   xpar_free(ring);  xpar_free(input);
@@ -170,7 +168,7 @@ typedef struct {
 } rs_hist;
 
 static bool rs_hist_hit(void * user, u32 probe, u64 physical) {
-  rs_hist * h = (rs_hist *) user;
+  rs_hist * h = user;
   i64 delta;
   u32 at;
   if (!rs_delta(physical, h->probe[probe].expected, &delta)) return true;
@@ -197,9 +195,8 @@ static void rs_insert_best(xpar_resync_result * out, i64 delta, u64 count) {
   }
   out->delta[at].delta = delta;
   out->delta[at].votes = count;
-  for (i = out->count; i < XPAR_RESYNC_DELTAS; i++) {
-    out->delta[i].delta = 0;  out->delta[i].votes = 0;
-  }
+  for (i = out->count; i < XPAR_RESYNC_DELTAS; i++)
+    { out->delta[i].delta = 0;  out->delta[i].votes = 0; }
 }
 
 bool xpar_resync_search(xpar_file * f, u64 file_size, u64 window,
@@ -211,10 +208,10 @@ bool xpar_resync_search(xpar_file * f, u64 file_size, u64 window,
   xpar_memset(out, 0, sizeof *out);
   if (!probe_count || !window || window > file_size) return true;
   if (!step) step = 1;
-  slots = rs_pow2(MIN(MAX(rs_scale_sat(probe_count, 8), 1024u),
+  slots = rs_pow2(MIN(MAX(rs_scale_sat(probe_count, 8), 1024U),
                       RS_MAX_BINS * 2));
   xpar_memset(&h, 0, sizeof h);
-  h.bin = (rs_bin *) xpar_calloc(slots, sizeof(rs_bin));
+  h.bin = xpar_calloc(slots, sizeof *h.bin);
   h.mask = slots - 1;
   h.limit = MIN(RS_MAX_BINS, slots - slots / 4);
   h.probe = probe;
@@ -245,7 +242,7 @@ typedef struct {
 } rs_exhaust;
 
 static bool rs_exhaust_hit(void * user, u32 probe, u64 physical) {
-  rs_exhaust * x = (rs_exhaust *) user;
+  rs_exhaust * x = user;
   if (x->located[probe] != UINT64_MAX) return true;
   x->confirms++;
   if (x->confirm(x->user, probe, physical)) x->located[probe] = physical;
@@ -278,8 +275,7 @@ void xpar_resync_map_add(xpar_resync_map * m, u64 expected, u64 physical) {
   xpar_resync_loc * q;
   if (m->count == m->cap) {
     m->cap = m->cap ? m->cap * 2 : 16;
-    m->loc = (xpar_resync_loc *)
-               xpar_realloc(m->loc, m->cap * sizeof(xpar_resync_loc));
+    m->loc = xpar_realloc(m->loc, m->cap * sizeof *m->loc);
   }
   q = &m->loc[m->count++];
   q->expected = expected;  q->physical = physical;
@@ -337,7 +333,7 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
                        xpar_resync_outcome * out) {
   xpar_resync_result result;
   u64 aligned = 0;
-  u32 i, d;
+  u32 i, j;
 
   xpar_memset(out, 0, sizeof *out);
   Fi(probe_count, located[i] = UINT64_MAX);
@@ -361,29 +357,24 @@ void xpar_resync_entry(xpar_file * f, u64 file_size, u64 slice_size,
 
   out->clipped = result.clipped;
   /*  Confirm every retained candidate when no delta dominates.  */
-  if (!result.overflow) {
-    for (d = 0; d < result.count; d++) {
-      if (d && result.delta[d].votes < 2) break;
+  if (!result.overflow)
+    Fj(result.count,
+      if (j && result.delta[j].votes < 2) break;
       Fi(probe_count,
         u64 physical;
         if (located[i] != UINT64_MAX ||
-            !xpar_resync_shift(probe[i].expected, result.delta[d].delta,
+            !xpar_resync_shift(probe[i].expected, result.delta[j].delta,
                                &physical) ||
             physical > file_size || file_size - physical < slice_size)
           continue;
         out->confirmations++;
-        if (confirm(user, i, physical)) {
-          located[i] = physical;  out->located++;
-        });
-    }
-  }
+        if (confirm(user, i, physical))
+          { located[i] = physical;  out->located++; }));
   if (!out->located && o->exhaustive &&
       (o->mode == XPAR_RESYNC_ALWAYS || o->mode == XPAR_RESYNC_AUTO)) {
     out->confirmations = xpar_resync_exhaustive(
       f, file_size, slice_size, probe, probe_count, o->step, o->window,
       confirm, user, located);
     Fi(probe_count, if (located[i] != UINT64_MAX) out->located++);
-  } else if (!out->located) {
-    out->candidates = result.candidates;
-  }
+  } else if (!out->located) out->candidates = result.candidates;
 }

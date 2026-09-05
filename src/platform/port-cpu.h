@@ -19,24 +19,24 @@
 
 #include "port.h"
 
-#define XPAR_CPU_SSSE3     (1u << 0)   /*  pshufb  */
-#define XPAR_CPU_SSE42     (1u << 1)   /*  the crc32 instruction  */
-#define XPAR_CPU_PCLMUL    (1u << 2)
-#define XPAR_CPU_AVX2      (1u << 3)
-#define XPAR_CPU_AVX512F   (1u << 4)
-#define XPAR_CPU_AVX512BW  (1u << 5)
-#define XPAR_CPU_AVX512VL  (1u << 6)
-#define XPAR_CPU_GFNI      (1u << 7)   /*  gf2p8affineqb  */
-#define XPAR_CPU_NEON      (1u << 8)
-#define XPAR_CPU_ARMCRC    (1u << 9)   /*  ARMv8 CRC32/CRC32C extension  */
-#define XPAR_CPU_VBMI      (1u << 10)  /*  AVX-512 VPERMB  */
-#define XPAR_CPU_VPCLMUL   (1u << 11)  /*  vector carry-less multiply  */
-#define XPAR_CPU_SVE      (1u << 13)
-#define XPAR_CPU_RVV       (1u << 14)
-#define XPAR_CPU_RVVCLMUL  (1u << 15)
-#define XPAR_CPU_VSX       (1u << 16)
+#define XPAR_CPU_SSSE3     (1U << 0)   /*  pshufb  */
+#define XPAR_CPU_SSE42     (1U << 1)   /*  the crc32 instruction  */
+#define XPAR_CPU_PCLMUL    (1U << 2)
+#define XPAR_CPU_AVX2      (1U << 3)
+#define XPAR_CPU_AVX512F   (1U << 4)
+#define XPAR_CPU_AVX512BW  (1U << 5)
+#define XPAR_CPU_AVX512VL  (1U << 6)
+#define XPAR_CPU_GFNI      (1U << 7)   /*  gf2p8affineqb  */
+#define XPAR_CPU_NEON      (1U << 8)
+#define XPAR_CPU_ARMCRC    (1U << 9)   /*  ARMv8 CRC32/CRC32C extension  */
+#define XPAR_CPU_VBMI      (1U << 10)  /*  AVX-512 VPERMB  */
+#define XPAR_CPU_VPCLMUL   (1U << 11)  /*  vector carry-less multiply  */
+#define XPAR_CPU_SVE      (1U << 13)
+#define XPAR_CPU_RVV       (1U << 14)
+#define XPAR_CPU_RVVCLMUL  (1U << 15)
+#define XPAR_CPU_VSX       (1U << 16)
 
-#define XPAR_CPU_ALL       0xffffffffu
+#define XPAR_CPU_ALL       0xffffffffU
 
 /*  Probed features restricted by xpar_cpu_force. Call before threading.  */
 u32 xpar_cpu_features(void);

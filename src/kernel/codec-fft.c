@@ -59,10 +59,10 @@ static void fld_mul(u8 f16, u8 * d, const u8 * s, sz n, u32 c) {
     live working set and scratch allocation while retaining useful kernel
     widths.  */
 
-#define FFT_LIVE (8u << 20)
+#define FFT_LIVE (8U << 20)
 
 static sz fft_strip(u32 count, sz bytes) {
-  u64 t = (u64) FFT_LIVE / (count ? count : 1u);
+  u64 t = (u64) FFT_LIVE / (count ? count : 1U);
   t &= ~(u64) 63;
   if (t < 64) t = 64;
   return (sz) ((u64) bytes < t ? (u64) bytes : t);
@@ -81,7 +81,7 @@ static u8 * pool_new(u32 count, sz stride) {
   u64 need = (u64) count * (u64) stride;
   FATAL_UNLESS(need <= (u64) (sz) -1,
                "column chunk too wide for this host's address space");
-  return (u8 *) xpar_alloc_aligned((sz) need, 64);
+  return xpar_alloc_aligned((sz) need, 64);
 }
 
 /*  Walsh-Hadamard transform modulo 2^w - 1. The error-locator sum is an
@@ -109,10 +109,11 @@ static u32 fwht_mulmod(u32 a, u32 b, u32 bits, u32 mask) {
 /*  Process two layers per load. Blocks starting at `trunc` contain only
     zero subblocks and can be skipped.  */
 static void fwht(u16 * d, u32 len, u32 trunc, u32 bits) {
-  u32 mask = (1u << bits) - 1, dist = 1, dist4 = 4;
+  u32 mask = (1U << bits) - 1, dist = 1, dist4 = 4;
+  u32 r, i;
   for (; dist4 <= len; dist = dist4, dist4 <<= 2)
-    for (u32 r = 0; r < trunc; r += dist4)
-      for (u32 i = r; i < r + dist; i++) {
+    for (r = 0; r < trunc; r += dist4)
+      for (i = r; i < r + dist; i++) {
         u32 t0 = d[i],            t1 = d[i + dist];
         u32 t2 = d[i + dist * 2], t3 = d[i + dist * 3], a;
         a = fwht_add(t0, t1, bits, mask);
@@ -134,54 +135,55 @@ static void fwht(u16 * d, u32 len, u32 trunc, u32 bits) {
 
 static void skew_build8(u8 * sk) {
   u8 t[7];
-  for (u32 i = 1; i < 8; i++) t[i - 1] = xpar_gf8_cantor[i];
-  for (u32 v = 0; v < 7; v++) {
-    u32 step = 1u << (v + 1);
-    sk[(1u << v) - 1] = 0;
-    for (u32 i = v; i < 7; i++) {
-      u32 s = 1u << (i + 1);
-      for (u32 j = (1u << v) - 1; j < s; j += step)
+  u32 i, j, k;
+  for (i = 1; i < 8; i++) t[i - 1] = xpar_gf8_cantor[i];
+  Fk(7,
+    u32 step = 1U << (k + 1);
+    u8 ib;
+    sk[(1U << k) - 1] = 0;
+    for (i = k; i < 7; i++) {
+      u32 s = 1U << (i + 1);
+      for (j = (1U << k) - 1; j < s; j += step)
         sk[j + s] = (u8) (sk[j] ^ t[i]);
     }
-    u8 ib = xpar_gf8_inv(xpar_gf8_mul(t[v],
-                                      (u8) (t[v] ^ xpar_gf8_cantor[0])));
-    for (u32 i = v + 1; i < 7; i++)
+    ib = xpar_gf8_inv(xpar_gf8_mul(t[k],
+                                   (u8) (t[k] ^ xpar_gf8_cantor[0])));
+    for (i = k + 1; i < 7; i++)
       t[i] = xpar_gf8_mul(t[i],
-                          xpar_gf8_mul((u8) (t[i] ^ xpar_gf8_cantor[0]), ib));
-  }
+                          xpar_gf8_mul((u8) (t[i] ^ xpar_gf8_cantor[0]), ib)));
 }
 
 static void skew_build16(u16 * sk) {
   u16 t[15];
-  for (u32 i = 1; i < 16; i++) t[i - 1] = xpar_gf16_cantor[i];
-  for (u32 v = 0; v < 15; v++) {
-    u32 step = 1u << (v + 1);
-    sk[(1u << v) - 1] = 0;
-    for (u32 i = v; i < 15; i++) {
-      u32 s = 1u << (i + 1);
-      for (u32 j = (1u << v) - 1; j < s; j += step)
+  u32 i, j, k;
+  for (i = 1; i < 16; i++) t[i - 1] = xpar_gf16_cantor[i];
+  Fk(15,
+    u32 step = 1U << (k + 1);
+    u16 ib;
+    sk[(1U << k) - 1] = 0;
+    for (i = k; i < 15; i++) {
+      u32 s = 1U << (i + 1);
+      for (j = (1U << k) - 1; j < s; j += step)
         sk[j + s] = (u16) (sk[j] ^ t[i]);
     }
-    u16 ib = xpar_gf16_inv(xpar_gf16_mul(t[v],
-                                (u16) (t[v] ^ xpar_gf16_cantor[0])));
-    for (u32 i = v + 1; i < 15; i++)
+    ib = xpar_gf16_inv(xpar_gf16_mul(t[k],
+                             (u16) (t[k] ^ xpar_gf16_cantor[0])));
+    for (i = k + 1; i < 15; i++)
       t[i] = xpar_gf16_mul(t[i],
-                 xpar_gf16_mul((u16) (t[i] ^ xpar_gf16_cantor[0]), ib));
-  }
+                 xpar_gf16_mul((u16) (t[i] ^ xpar_gf16_cantor[0]), ib)));
 }
 
 /*  Build logs of Cantor-basis elements indexed by coordinate bits. Slot
     zero uses exponent zero, omitting the erased position's zero factor.  */
 static void walsh_build(fft_codec * cd) {
-  u32 order = cd->order, j;
-  u16 * lw = (u16 *) xpar_alloc_raw((sz) order * sizeof(u16));
+  u32 order = cd->order, i, j;
+  u16 * lw = xpar_alloc_raw((sz) order * sizeof *lw);
   lw[0] = 0;
-  for (u32 b = 0; b < cd->bits; b++) {
-    u32 wd = 1u << b;
-    u16 bas = cd->f16 ? xpar_gf16_cantor[b] : (u16) xpar_gf8_cantor[b];
-    Fj(wd, lw[j + wd] = (u16) (lw[j] ^ bas));
-  }
-  for (u32 i = 1; i < order; i++)
+  Fi(cd->bits,
+    u32 wd = 1U << i;
+    u16 bas = cd->f16 ? xpar_gf16_cantor[i] : (u16) xpar_gf8_cantor[i];
+    Fj(wd, lw[j + wd] = (u16) (lw[j] ^ bas)));
+  for (i = 1; i < order; i++)
     lw[i] = cd->f16 ? xpar_gf16_log[lw[i]] : (u16) xpar_gf8_log[lw[i]];
   lw[0] = 0;
   fwht(lw, order, order, cd->bits);
@@ -195,14 +197,17 @@ static void walsh_build(fft_codec * cd) {
 static void fft_fwd(const fft_codec * cd, u8 ** w, u32 trunc, u32 len,
                     u32 base, sz bytes) {
   const xpar_gf_kernels * gk = xpar_gf_active();
+  const xpar_gf8_coef * m8;
   xpar_gf16_coef m16;
-  for (u32 dist = len >> 1; dist; dist >>= 1)
-    for (u32 r = 0; r < trunc; r += dist << 1) {
-      u32 c = skew_at(cd, base + r + dist - 1);
-      const xpar_gf8_coef * m8 = NULL;
+  u32 dist, r, i, c;
+  u8 * x, * y;
+  for (dist = len >> 1; dist; dist >>= 1)
+    for (r = 0; r < trunc; r += dist << 1) {
+      c = skew_at(cd, base + r + dist - 1);
+      m8 = NULL;
       if (c) { if (cd->f16) xpar_gf16_prepare(&m16, (u16) c);  else         m8 = &cd->prep8[c]; }
-      for (u32 i = r; i < r + dist; i++) {
-        u8 * x = w[i], * y = w[i + dist];
+      for (i = r; i < r + dist; i++) {
+        x = w[i];  y = w[i + dist];
         if (!c)           gk->xor2 (y, x, bytes);
         else if (cd->f16) gk->fft16(x, y, bytes, &m16);
         else              gk->fft8 (x, y, bytes, m8);
@@ -213,14 +218,17 @@ static void fft_fwd(const fft_codec * cd, u8 ** w, u32 trunc, u32 len,
 static void fft_inv(const fft_codec * cd, u8 ** w, u32 trunc, u32 len,
                     u32 base, sz bytes) {
   const xpar_gf_kernels * gk = xpar_gf_active();
+  const xpar_gf8_coef * m8;
   xpar_gf16_coef m16;
-  for (u32 dist = 1; dist < len; dist <<= 1)
-    for (u32 r = 0; r < trunc; r += dist << 1) {
-      u32 c = skew_at(cd, base + r + dist - 1);
-      const xpar_gf8_coef * m8 = NULL;
+  u32 dist, r, i, c;
+  u8 * x, * y;
+  for (dist = 1; dist < len; dist <<= 1)
+    for (r = 0; r < trunc; r += dist << 1) {
+      c = skew_at(cd, base + r + dist - 1);
+      m8 = NULL;
       if (c) { if (cd->f16) xpar_gf16_prepare(&m16, (u16) c);  else         m8 = &cd->prep8[c]; }
-      for (u32 i = r; i < r + dist; i++) {
-        u8 * x = w[i], * y = w[i + dist];
+      for (i = r; i < r + dist; i++) {
+        x = w[i];  y = w[i + dist];
         if (!c)           gk->xor2  (y, x, bytes);
         else if (cd->f16) gk->ifft16(x, y, bytes, &m16);
         else              gk->ifft8 (x, y, bytes, m8);
@@ -253,34 +261,34 @@ bool xpar_fft_supports_axis(u8 kind, u8 field_log2, u64 s, u64 r,
 
 void * xpar_fft_new_axis(u8 kind, u8 field_log2, u64 s, u64 r,
                          u8 axis_log2) {
+  fft_codec * cd;
   u32 i;
   xpar_gf_init();
   FATAL_UNLESS(xpar_fft_supports_axis(kind, field_log2, s, r, axis_log2),
                "internal: unsupported FFT codec geometry");
-  fft_codec * cd = (fft_codec *) xpar_calloc(1, sizeof(fft_codec));
+  cd = xpar_calloc(1, sizeof *cd);
   cd->f16   = field_log2 == 16;
   cd->low   = kind == XPAR_CODEC_FFT_LOW;
   cd->bits  = field_log2;
-  cd->order = 1u << field_log2;
+  cd->order = 1U << field_log2;
   cd->mod   = cd->order - 1;
   cd->s = (u32) s;  cd->r = (u32) r;
-  cd->m = 1u << axis_log2;
+  cd->m = 1U << axis_log2;
   cd->n = fft_n(cd->m, cd->low, s, r);
   if (cd->f16) {
-    u16 * sk = (u16 *) xpar_alloc_raw((sz) cd->mod * sizeof(u16));
+    u16 * sk = xpar_alloc_raw((sz) cd->mod * sizeof *sk);
     skew_build16(sk);  cd->skew = sk;
   } else {
-    u8 * sk = (u8 *) xpar_alloc_raw((sz) cd->mod);
+    u8 * sk = xpar_alloc_raw((sz) cd->mod);
     skew_build8(sk);  cd->skew = sk;
-    cd->prep8 = (xpar_gf8_coef *) xpar_alloc_raw(256 *
-                                                 sizeof(xpar_gf8_coef));
+    cd->prep8 = xpar_alloc_raw(256 * sizeof *cd->prep8);
     Fi(256, xpar_gf8_prepare(&cd->prep8[i], (u8) i));
   }
   return cd;
 }
 
 void xpar_fft_free(void * self) {
-  fft_codec * cd = (fft_codec *) self;
+  fft_codec * cd = self;
   if (!cd) return;
   xpar_free(cd->skew);  xpar_free(cd->prep8);  xpar_free(cd->walsh);
   xpar_free(cd);
@@ -290,24 +298,26 @@ void xpar_fft_free(void * self) {
 
 xpar_codec_status xpar_fft_encode(void * self, const u8 * const * data,
                                   u8 * const * rec, sz bytes) {
-  fft_codec * cd = (fft_codec *) self;
+  fft_codec * cd = self;
   const xpar_gf_kernels * gk = xpar_gf_active();
-  u32 m = cd->m, s = cd->s, r = cd->r, j;
+  u32 m = cd->m, s = cd->s, r = cd->r, j, first, b, cnt;
+  sz strip, stride, off;
+  u8 * pool, ** w, ** t;
   xpar_assert(!cd->f16 || (bytes & 1) == 0);
   if (!bytes) return XPAR_CODEC_OK;
   if (cd->low) {
-    sz strip = fft_strip(2 * m, bytes), stride = pool_stride(strip);
-    u8 * pool = pool_new(2 * m, stride);
-    u8 ** w = (u8 **) xpar_alloc_raw((sz) 2 * m * sizeof(u8 *));
+    strip = fft_strip(2 * m, bytes);  stride = pool_stride(strip);
+    pool = pool_new(2 * m, stride);
+    w = xpar_alloc_raw((sz) 2 * m * sizeof *w);
     Fj(2 * m, w[j] = pool + (sz) j * stride);
-    for (sz off = 0; off < bytes; off += strip) {
+    for (off = 0; off < bytes; off += strip) {
       sz len = MIN(strip, bytes - off);
       Fj(s, xpar_memcpy(w[j], data[j] + off, len));
       for (j = s; j < m; j++) xpar_memset(w[j], 0, len);
       fft_inv(cd, w, s, m, 0, len);
-      for (u32 b = 0; b < r; b += m) {
-        u32 cnt = MIN(m, r - b);
-        u8 ** t = w + m;
+      for (b = 0; b < r; b += m) {
+        cnt = MIN(m, r - b);
+        t = w + m;
         Fj(cnt, t[j] = rec[b + j] + off);
         Fj(m, xpar_memcpy(t[j], w[j], len));
         fft_fwd(cd, t, cnt, m, m + b, len);
@@ -318,23 +328,23 @@ xpar_codec_status xpar_fft_encode(void * self, const u8 * const * data,
     xpar_free_aligned(pool);
     return XPAR_CODEC_OK;
   }
-  u32 first = MIN(s, m);
-  sz strip = fft_strip(2 * m, bytes), stride = pool_stride(strip);
-  u8 * pool = pool_new(2 * m - r, stride);
+  first = MIN(s, m);
+  strip = fft_strip(2 * m, bytes);  stride = pool_stride(strip);
+  pool = pool_new(2 * m - r, stride);
   /*  The first R work buffers are the caller's recovery slices: the
       forward transform's outputs land there, so aliasing them saves both
       R buffers and a copy of the answer.  */
-  u8 ** w = (u8 **) xpar_alloc_raw((sz) 2 * m * sizeof(u8 *));
+  w = xpar_alloc_raw((sz) 2 * m * sizeof *w);
   for (j = r; j < 2 * m; j++) w[j] = pool + (sz) (j - r) * stride;
-  for (sz off = 0; off < bytes; off += strip) {
+  for (off = 0; off < bytes; off += strip) {
     sz len = MIN(strip, bytes - off);
     Fj(r, w[j] = rec[j] + off);
     Fj(first, xpar_memcpy(w[j], data[j] + off, len));
     for (j = first; j < m; j++) xpar_memset(w[j], 0, len);
     fft_inv(cd, w, first, m, m, len);
-    for (u32 b = m; b < s; b += m) {
-      u32 cnt = MIN(m, s - b);
-      u8 ** t = w + m;
+    for (b = m; b < s; b += m) {
+      cnt = MIN(m, s - b);
+      t = w + m;
       Fj(cnt, xpar_memcpy(t[j], data[b + j] + off, len));
       for (j = cnt; j < m; j++) xpar_memset(t[j], 0, len);
       fft_inv(cd, t, cnt, m, m + b, len);
@@ -351,24 +361,25 @@ xpar_codec_status xpar_fft_encode(void * self, const u8 * const * data,
 
 void * xpar_fft_plan_new(void * self, const u8 * dpres, const u8 * rpres,
                          xpar_codec_status * status) {
-  fft_codec * cd = (fft_codec *) self;
-  u32 m = cd->m, s = cd->s, r = cd->r, e = 0, got = 0, i, k;
+  fft_codec * cd = self;
+  fft_plan * pl;
+  u16 * loc;
+  u32 m = cd->m, s = cd->s, r = cd->r, e = 0, got = 0, active, i, k;
   Fi(s, if (!dpres[i]) e++);
   Fi(r, if (rpres[i]) got++);
   if (got < e) { *status = XPAR_CODEC_TOO_MANY_LOST;  return NULL; }
   *status = XPAR_CODEC_OK;
-  fft_plan * pl = (fft_plan *) xpar_calloc(1, sizeof(fft_plan));
+  pl = xpar_calloc(1, sizeof *pl);
   pl->cd = cd;  pl->e = e;
-  pl->dpres = (u8 *) xpar_alloc_raw(s);
-  pl->rpres = (u8 *) xpar_alloc_raw(r ? r : 1);
+  pl->dpres = xpar_alloc_raw(s);
+  pl->rpres = xpar_alloc_raw(r ? r : 1);
   xpar_memcpy(pl->dpres, dpres, s);
   xpar_memcpy(pl->rpres, rpres, r);
   if (!e) return pl;
-  pl->lost = (u32 *) xpar_alloc_raw((sz) e * sizeof(u32));
+  pl->lost = xpar_alloc_raw((sz) e * sizeof *pl->lost);
   for (i = 0, k = 0; i < s; i++) if (!dpres[i]) pl->lost[k++] = i;
   if (!cd->walsh) walsh_build(cd);
-  u16 * loc = (u16 *) xpar_calloc(cd->order, sizeof(u16));
-  u32 active;
+  loc = xpar_calloc(cd->order, sizeof *loc);
   if (cd->low) {
     Fi(s, if (!dpres[i]) loc[i] = 1);
     Fi(r, if (!rpres[i]) loc[m + i] = 1);
@@ -383,7 +394,7 @@ void * xpar_fft_plan_new(void * self, const u8 * dpres, const u8 * rpres,
   fwht(loc, cd->order, cd->low ? cd->order : active, cd->bits);
   Fi(cd->order, loc[i] = (u16) fwht_mulmod(loc[i], cd->walsh[i], cd->bits, cd->mod));
   fwht(loc, cd->order, cd->order, cd->bits);
-  pl->elog = (u16 *) xpar_alloc_raw((sz) active * sizeof(u16));
+  pl->elog = xpar_alloc_raw((sz) active * sizeof *pl->elog);
   Fi(active,
     u32 v = loc[i];
     pl->elog[i] = (u16) (v >= cd->mod ? v - cd->mod : v));
@@ -392,7 +403,7 @@ void * xpar_fft_plan_new(void * self, const u8 * dpres, const u8 * rpres,
 }
 
 void xpar_fft_plan_free(void * self) {
-  fft_plan * pl = (fft_plan *) self;
+  fft_plan * pl = self;
   if (!pl) return;
   xpar_free(pl->lost);   xpar_free(pl->dpres);
   xpar_free(pl->rpres);  xpar_free(pl->elog);
@@ -401,17 +412,19 @@ void xpar_fft_plan_free(void * self) {
 
 xpar_codec_status xpar_fft_plan_apply(const void * self, u8 * const * data,
                                       const u8 * const * rec, sz bytes) {
-  const fft_plan * pl = (const fft_plan *) self;
+  const fft_plan * pl = self;
   const fft_codec * cd = pl->cd;
   const xpar_gf_kernels * gk = xpar_gf_active();
-  u32 m = cd->m, s = cd->s, r = cd->r, n = cd->n, i;
+  u32 m = cd->m, s = cd->s, r = cd->r, n = cd->n, i, j;
+  sz strip, stride, off;
+  u8 * pool, ** w;
   xpar_assert(!cd->f16 || (bytes & 1) == 0);
   if (!pl->e || !bytes) return XPAR_CODEC_OK;
-  sz strip = fft_strip(n, bytes), stride = pool_stride(strip);
-  u8 * pool = pool_new(n, stride);
-  u8 ** w = (u8 **) xpar_alloc_raw((sz) n * sizeof(u8 *));
+  strip = fft_strip(n, bytes);  stride = pool_stride(strip);
+  pool = pool_new(n, stride);
+  w = xpar_alloc_raw((sz) n * sizeof *w);
   Fi(n, w[i] = pool + (sz) i * stride);
-  for (sz off = 0; off < bytes; off += strip) {
+  for (off = 0; off < bytes; off += strip) {
     sz len = MIN(strip, bytes - off);
     u32 active;
     if (cd->low) {
@@ -450,12 +463,11 @@ xpar_codec_status xpar_fft_plan_apply(const void * self, u8 * const * data,
       Fk(width, gk->xor2(w[i - width + k], w[i + k], len));
     }
     fft_fwd(cd, w, active, n, 0, len);
-    for (u32 l = 0; l < pl->e; l++) {
-      u32 d = pl->lost[l], at = cd->low ? d : m + d;
+    Fj(pl->e,
+      u32 d = pl->lost[j], at = cd->low ? d : m + d;
       u32 v = pl->elog[at];
       fld_mul(cd->f16, data[d] + off, w[at], len,
-              fld_exp(cd, v ? cd->mod - v : 0));
-    }
+              fld_exp(cd, v ? cd->mod - v : 0)));
   }
   xpar_free(w);  xpar_free_aligned(pool);
   return XPAR_CODEC_OK;

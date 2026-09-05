@@ -29,7 +29,7 @@ static wchar_t * xpar_win_wide(const char * s) {
   int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
   wchar_t * w;
   if (n <= 0) return NULL;
-  w = (wchar_t *) xpar_alloc_raw((sz) n * sizeof(wchar_t));
+  w = xpar_alloc_raw((sz) n * sizeof *w);
   if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) { xpar_free(w);  return NULL; }
   return w;
 }
@@ -39,7 +39,7 @@ static char * xpar_win_utf8(const wchar_t * w, int wlen) {
   int n = WideCharToMultiByte(CP_UTF8, 0, w, wlen, NULL, 0, NULL, NULL);
   char * s;
   if (n < 0) return NULL;
-  s = (char *) xpar_alloc_raw((sz) n + 1);
+  s = xpar_alloc_raw((sz) n + 1);
   if (n && WideCharToMultiByte(CP_UTF8, 0, w, wlen, s, n, NULL, NULL) <= 0) {
     xpar_free(s);
     return NULL;
@@ -62,19 +62,19 @@ static wchar_t * xpar_win_path(const char * s) {
     return NULL;
   }
   n = GetFullPathNameW(raw, 0, NULL, NULL);
-  if (!n || n > 32768u) { xpar_free(raw);  return NULL; }
-  full = (wchar_t *) xpar_alloc_raw(((sz) n + 1) * sizeof(*full));
+  if (!n || n > 32768U) { xpar_free(raw);  return NULL; }
+  full = xpar_alloc_raw(((sz) n + 1) * sizeof *full);
   got = GetFullPathNameW(raw, n + 1, full, NULL);
   xpar_free(raw);
   if (!got || got > n) { xpar_free(full);  return NULL; }
   if (full[0] == L'\\' && full[1] == L'\\') {
-    out = (wchar_t *) xpar_alloc_raw(((sz) got + 7) * sizeof(*out));
-    xpar_memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof(*out));
-    xpar_memcpy(out + 8, full + 2, ((sz) got - 1) * sizeof(*out));
+    out = xpar_alloc_raw(((sz) got + 7) * sizeof *out);
+    xpar_memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof *out);
+    xpar_memcpy(out + 8, full + 2, ((sz) got - 1) * sizeof *out);
   } else {
-    out = (wchar_t *) xpar_alloc_raw(((sz) got + 5) * sizeof(*out));
-    xpar_memcpy(out, L"\\\\?\\", 4 * sizeof(*out));
-    xpar_memcpy(out + 4, full, ((sz) got + 1) * sizeof(*out));
+    out = xpar_alloc_raw(((sz) got + 5) * sizeof *out);
+    xpar_memcpy(out, L"\\\\?\\", 4 * sizeof *out);
+    xpar_memcpy(out + 4, full, ((sz) got + 1) * sizeof *out);
   }
   xpar_free(full);
   return out;

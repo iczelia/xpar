@@ -23,14 +23,14 @@
     defined(_M_ARM64) || defined(_M_ARM)
 
 #if defined(HAVE_GETAUXVAL) && defined(HAVE_SYS_AUXV_H)
-  #include <sys/auxv.h>
+#include <sys/auxv.h>
 #endif
 #if defined(__APPLE__)
-  #include <sys/sysctl.h>
-  #include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/types.h>
 #endif
 #if defined(_WIN32)
-  #include <windows.h>
+#include <windows.h>
 #endif
 
 /*  Linux HWCAP ABI bits; see the kernel's arm and arm64 UAPI headers.  */
@@ -65,23 +65,23 @@ u32 xpar_cpu_probe(void) {
 
 #if defined(HAVE_GETAUXVAL) && defined(HAVE_SYS_AUXV_H)
   { unsigned long h = getauxval(AT_HWCAP);
-  #if defined(__aarch64__)
+#if defined(__aarch64__)
     if (h & XPAR_HWCAP64_ASIMD) f |= XPAR_CPU_NEON;
     if (h & XPAR_HWCAP64_CRC32) f |= XPAR_CPU_ARMCRC;
     if (h & XPAR_HWCAP64_SVE)   f |= XPAR_CPU_SVE;
-  #else
+#else
     if (h & XPAR_HWCAP32_NEON)  f |= XPAR_CPU_NEON;
-  #endif
+#endif
   }
 #elif defined(__APPLE__)
   if (sysctl_flag("hw.optional.neon"))         f |= XPAR_CPU_NEON;
   if (sysctl_flag("hw.optional.armv8_crc32"))  f |= XPAR_CPU_ARMCRC;
   if (sysctl_flag("hw.optional.arm.FEAT_SVE"))   f |= XPAR_CPU_SVE;
 #elif defined(_WIN32)
-  #if defined(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE)
+#if defined(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE)
   if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
     f |= XPAR_CPU_ARMCRC;
-  #endif
+#endif
 #endif
 
   return f;
@@ -106,7 +106,7 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 };
 
 const int xpar_cpu_tier_table_n =
-  (int) (sizeof xpar_cpu_tier_table / sizeof xpar_cpu_tier_table[0]) - 1;
+  (int) ARRAY_LEN(xpar_cpu_tier_table) - 1;
 
 #else
 

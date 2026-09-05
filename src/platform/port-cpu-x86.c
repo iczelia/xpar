@@ -25,9 +25,9 @@
     defined(_M_X64) || defined(_M_IX86)
 
 #if defined(__GNUC__) || defined(__clang__)
-  #include <cpuid.h>
+#include <cpuid.h>
 #elif defined(_MSC_VER)
-  #include <intrin.h>
+#include <intrin.h>
 #endif
 
 static void xpar_cpuid(u32 leaf, u32 sub, u32 r[4]) {
@@ -71,15 +71,15 @@ u32 xpar_cpu_probe(void) {
   if (maxleaf < 1) return 0;
 
   xpar_cpuid(1, 0, r);
-  if (r[2] & (1u << 9))  f |= XPAR_CPU_SSSE3;
-  if (r[2] & (1u << 20)) f |= XPAR_CPU_SSE42;
-  if (r[2] & (1u << 1))  f |= XPAR_CPU_PCLMUL;
+  if (r[2] & (1U << 9))  f |= XPAR_CPU_SSSE3;
+  if (r[2] & (1U << 20)) f |= XPAR_CPU_SSE42;
+  if (r[2] & (1U << 1))  f |= XPAR_CPU_PCLMUL;
 
   /*  XCR0[1] SSE state, [2] YMM state, [5] opmask, [6] ZMM_Hi256,
       [7] Hi16_ZMM. Reading XCR0 at all requires OSXSAVE, so the guard is
       not optional either: xgetbv itself faults without it.  */
   ymm = zmm = false;
-  if ((r[2] & (1u << 27)) && (r[2] & (1u << 28))) {
+  if ((r[2] & (1U << 27)) && (r[2] & (1U << 28))) {
     u64 x = xpar_xcr0();
     ymm = (x & 0x6ULL) == 0x6ULL;
     zmm = ymm && (x & 0xe0ULL) == 0xe0ULL;
@@ -87,13 +87,13 @@ u32 xpar_cpu_probe(void) {
 
   if (maxleaf >= 7) {
     xpar_cpuid(7, 0, r);
-    if (ymm && (r[1] & (1u << 5)))  f |= XPAR_CPU_AVX2;
-    if (zmm && (r[1] & (1u << 16))) f |= XPAR_CPU_AVX512F;
-    if (zmm && (r[1] & (1u << 30))) f |= XPAR_CPU_AVX512BW;
-    if (zmm && (r[1] & (1u << 31))) f |= XPAR_CPU_AVX512VL;
-    if (r[2] & (1u << 8))           f |= XPAR_CPU_GFNI;
-    if (zmm && (r[2] & (1u << 1)))  f |= XPAR_CPU_VBMI;
-    if (ymm && (r[2] & (1u << 10))) f |= XPAR_CPU_VPCLMUL;
+    if (ymm && (r[1] & (1U << 5)))  f |= XPAR_CPU_AVX2;
+    if (zmm && (r[1] & (1U << 16))) f |= XPAR_CPU_AVX512F;
+    if (zmm && (r[1] & (1U << 30))) f |= XPAR_CPU_AVX512BW;
+    if (zmm && (r[1] & (1U << 31))) f |= XPAR_CPU_AVX512VL;
+    if (r[2] & (1U << 8))           f |= XPAR_CPU_GFNI;
+    if (zmm && (r[2] & (1U << 1)))  f |= XPAR_CPU_VBMI;
+    if (ymm && (r[2] & (1U << 10))) f |= XPAR_CPU_VPCLMUL;
   }
   return f;
 }
@@ -103,9 +103,9 @@ u32 xpar_cpu_probe(void) {
 
 #define XPAR_T_SSSE3  (XPAR_CPU_SSSE3)
 #if defined(HAVE_PCLMUL)
-  #define XPAR_T_SSE42  (XPAR_T_SSSE3 | XPAR_CPU_SSE42 | XPAR_CPU_PCLMUL)
+#define XPAR_T_SSE42  (XPAR_T_SSSE3 | XPAR_CPU_SSE42 | XPAR_CPU_PCLMUL)
 #else
-  #define XPAR_T_SSE42  (XPAR_T_SSSE3 | XPAR_CPU_SSE42)
+#define XPAR_T_SSE42  (XPAR_T_SSSE3 | XPAR_CPU_SSE42)
 #endif
 #define XPAR_T_AVX2    (XPAR_T_SSE42 | XPAR_CPU_AVX2)
 #define XPAR_T_GFNI    (XPAR_T_AVX2  | XPAR_CPU_GFNI)
@@ -141,7 +141,7 @@ const xpar_cpu_tier xpar_cpu_tier_table[] = {
 /*  The NULL row is a terminator for readers that want one and is not a
     tier, hence the -1.  */
 const int xpar_cpu_tier_table_n =
-  (int) (sizeof xpar_cpu_tier_table / sizeof xpar_cpu_tier_table[0]) - 1;
+  (int) ARRAY_LEN(xpar_cpu_tier_table) - 1;
 
 #else
 
