@@ -3540,6 +3540,19 @@ static bool gen_content_same(const xpar_entry * a, const xpar_entry * b) {
          !xpar_memcmp(a->prefix_hash, b->prefix_hash, 16);
 }
 
+static void gen_check_changed_file(const xpar_options * o,
+                                   const xpar_entry * old,
+                                   const xpar_entry * now) {
+  if (!o->force && old->entry_type == XPAR_ENTRY_REGULAR &&
+      now->entry_type == XPAR_ENTRY_REGULAR && old->length == now->length &&
+      old->mtime_ns != XPAR_ABSENT_TIME && old->mtime_ns == now->mtime_ns &&
+      xpar_memcmp(old->content_hash, now->content_hash, 32))
+    FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+               "'%.*s' changed content but kept its size and mtime; "
+               "run 'xpar repair' first, or pass --force to record the change",
+               (int) old->name_len, old->name);
+}
+
 /*  Entry equality covers every FILE field, including metadata changes.  */
 static bool gen_entry_same(const xpar_entry * a, const xpar_entry * b,
                            const xpar_posix_rec * ta, u32 na,
@@ -4718,6 +4731,7 @@ int xpar_op_add(const xpar_options * caller) {
         kept++;
       } else {
         const xpar_entry * anc = NULL;
+        gen_check_changed_file(o, &inh.entry[ia], &fresh.entry[ib]);
         e = merge_append(&g);
         gen_entry_copy(e, &fresh.entry[ib]);
         if (fresh.source && fresh.source[ib])
@@ -4792,6 +4806,7 @@ int xpar_op_add(const xpar_options * caller) {
         if (!gen_refresh(e, path, o, caps, &warn_posix,
                          gen_chain_key(&c), c.auth_only))
           FATAL_IO("cannot re-read '%s'", path);
+        gen_check_changed_file(o, old, e);
         g.m.source[g.m.count - 1] = xpar_strdup(path);
         anc = o->dedup != XPAR_DEDUP_NONE ? gen_find_content(&inh, &inh_map, e) : NULL;
         if (anc) { gen_take_extents(e, anc);  g.reuse[g.m.count - 1] = true; }
@@ -5973,6 +5988,14 @@ static void gen_recovery_volume(xpar_buf * out, const xpar_options * o,
   bool wrap_t = xpar_gchain_wrap_armour(c, g, false, &tap);
   xpar_armour * ra = wrap_r ? gen_rcvs_armour(o, 0, &rap) : NULL;
   xpar_options wo = *o;
+  /*  With both table replicas lost, wrapped recovery still identifies
+      --armour=all.  Use its region parameters for the new tables.  */
+  if (!wrap_t && wrap_r &&
+      !xpar_critset_find(&c->crit, c->gen[g].set_id, XPAR_T_SLTG, 0) &&
+      !xpar_critset_find(&c->crit, c->gen[g].set_id, XPAR_T_SLCL, 0)) {
+    tap = rap;
+    wrap_t = true;
+  }
   if (wrap_t) gen_wrap_options(&wo, &tap);
   xpar_buf_init(out);
   xpar_memset(&vh, 0, sizeof vh);
@@ -6166,6 +6189,8 @@ u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
   char ** paths;
   const xpar_tags * st;
   xpar_vset * src;
+  u32 need = XPAR_TAGS_CRC;
+  bool recompute;
   u32 * hit;
   u32 g, i, hits = 0;
 
@@ -6209,10 +6234,30 @@ u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
   src = xpar_vset_open(o);
   st  = xpar_vset_tags(src);
   xpar_memset(&t, 0, sizeof t);
-  t.slice_crc = st->slice_crc;
-  t.slice_tag = st->slice_tag;
-  t.cell_crc  = st->cell_crc;
-  t.tag_len   = st->tag_len;
+  if (c.gen[g].sd.slice_tag_len) need |= XPAR_TAGS_TAG;
+  if (c.gen[g].sd.cell_bytes) need |= XPAR_TAGS_CELL;
+  recompute = (xpar_vset_have_tables(src) & need) != need;
+  if (recompute) {
+    xpar_manifest m;
+    u32 * owner = NULL;
+    int rc = xpar_vset_check(src, o, NULL);
+    if (rc == XPAR_EXIT_IO) FATAL_IO("cannot read data for the index tables");
+    if (!xpar_vset_stream_intact(src, rc))
+      FATAL_CODE(XPAR_EXIT_UNREPAIRABLE,
+                 "cannot recreate the index tables from damaged data");
+    gen_manifest_on_disk(&c, g, o, &m, &owner);
+    gen_encode(&m, &p, c.gen[g].sd.slice_tag_len, o->memory,
+               c.base ? c.base : o->set, gen_chain_key(&c), gen_read_vset,
+               src, &t, NULL);
+    gen_require_source_tables(src, &t, &p);
+    xpar_free(owner);
+    xpar_manifest_free(&m);
+  } else {
+    t.slice_crc = st->slice_crc;
+    t.slice_tag = st->slice_tag;
+    t.cell_crc  = st->cell_crc;
+    t.tag_len   = st->tag_len;
+  }
   staged = xpar_calloc(hits, sizeof *staged);
   paths  = xpar_calloc(hits, sizeof *paths);
   Fi(hits,
@@ -6235,6 +6280,7 @@ u64 xpar_gen_regen_index(const xpar_options * o, u64 * volumes,
     xpar_buf_free(&out));
   /*  Nothing may hold a mapping over a file about to be renamed over.  */
   xpar_vset_close(src);
+  if (recompute) gen_tables_free(&t);
   gen_addrec_publish(staged, hits);
   Fi(hits, xpar_free(paths[i]));
   xpar_free(paths);

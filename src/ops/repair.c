@@ -105,6 +105,7 @@ typedef struct {
   xpar_manifest  mf;
   xpar_nameidx   nix;
   xpar_occindex  ox;
+  char           output_head[XPAR_SET_ID_LEN * 2 + 1];
   u32            scan_entry_count;
   xpar_geom      geom;
   xpar_tagset    tags;
@@ -493,15 +494,35 @@ static void rp_read_manifest(rp * r) {
   xpar_gchain_manifest(&c, g, &r->mf, &owner);
   r->owner = owner;
   r->scan_entry_count = r->mf.count;
-  if (r->o->repair_head_set) {
-    xpar_genref ref;
+  if (r->o->repair_head_set || r->o->gen_count) {
     xpar_manifest head;
     u32 * head_owner = NULL;
-    u32 h;
-    xpar_memset(&ref, 0, sizeof ref);
-    ref.by_id = true;
-    ref.id_prefix = r->o->repair_head_id;
-    h = xpar_gchain_select(&c, &ref);
+    u32 h = g;
+    if (r->o->repair_head_set) {
+      xpar_genref ref;
+      xpar_memset(&ref, 0, sizeof ref);
+      ref.by_id = true;
+      ref.id_prefix = r->o->repair_head_id;
+      h = xpar_gchain_select(&c, &ref);
+    }
+    /*  Only a separate destination can materialise a historical view.
+        Follow the selected branch to the manifest governing live files.  */
+    if (r->o->dest != XPAR_DEST_TO && r->o->gen_count) {
+      if (!c.forked) h = c.head;
+      else for (;;) {
+        u32 i, child = XPAR_GEN_NONE;
+        Fi(c.gen_count,
+          if (c.gen[i].parent != h) continue;
+          if (child != XPAR_GEN_NONE)
+            FATAL("this generation has multiple descendant branches; select "
+                  "a branch head or restore the generation with --to");
+          child = i);
+        if (child == XPAR_GEN_NONE) break;
+        h = child;
+      }
+    }
+    if (h != g || r->o->repair_head_set)
+      xpar_hex(r->output_head, c.gen[h].set_id, XPAR_SET_ID_LEN);
     if (h != g) {
       xpar_manifest selected = r->mf;
       u64 count;
@@ -1314,8 +1335,21 @@ static rp_cell * rp_add_cell(rp * r, u64 slice, u32 col) {
 static void rp_classify(rp * r) {
   u64 s;
   u32 c, k = r->geom.cells_per_slice;
-  u8 * buf = xpar_alloc_raw((sz) (r->geom.cell_bytes
-                                  ? r->geom.cell_bytes : r->geom.slice_size));
+  u8 * buf;
+  /*  Historical bytes can fail their old tags after edits and deletions.
+      If every live file touching this generation passed its content check,
+      those cells have no live data to reconstruct.  */
+  if (r->scan_entry_count < r->mf.count) {
+    u32 i;
+    for (i = 0; i < r->scan_entry_count; i++)
+      if (r->hash_bad[i]) break;
+    if (i == r->scan_entry_count) {
+      xpar_erasures_clear(&r->er);
+      return;
+    }
+  }
+  buf = xpar_alloc_raw((sz) (r->geom.cell_bytes
+                             ? r->geom.cell_bytes : r->geom.slice_size));
   for (s = 0; s < r->geom.slice_count; s++)
     for (c = 0; c < k; c++) {
       rp_cell * cell;
@@ -2473,7 +2507,8 @@ static void rp_entry_state_alloc(rp * r) {
       if (!st.is_regular) continue;
       r->fstate[i] = 1;
       r->fsize[i] = st.size;
-      if (st.size > e->length && !rp_foreign(r, i)) r->fstate[i] |= 2;
+      if (i < r->scan_entry_count && st.size > e->length && !rp_foreign(r, i))
+        r->fstate[i] |= 2;
     } else if (!xpar_errno_absent(xpar_errno()))
       rp_io_error(r, i, xpar_errno()));
 }
@@ -2510,7 +2545,7 @@ static void rp_select_head_output(rp * r) {
   xpar_gchain_load(r->o, &c);
   xpar_memset(&ref, 0, sizeof ref);
   ref.by_id = true;
-  ref.id_prefix = r->o->repair_head_id;
+  ref.id_prefix = r->output_head;
   g = xpar_gchain_select(&c, &ref);
   xpar_gchain_manifest(&c, g, &r->mf, &r->owner);
   r->scan_entry_count = r->mf.count;
@@ -3422,6 +3457,7 @@ bool xpar_vset_recover_data(xpar_vset * s, u64 stream_offset, u64 length,
       xpar_free(path);
     });
   Fi(rtop,
+    if (!rec[i]) rec[i] = xpar_vset_rcvs(s, i, NULL);
     rpresent[i] = rec[i] != NULL;
     if (rpresent[i]) available++);
   if (available < last - first) {
@@ -4236,9 +4272,7 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
   if (!rtop && er->bad_count) return XPAR_EXIT_UNREPAIRABLE;
   rec = xpar_calloc(rtop ? (sz) rtop : 1, sizeof *rec);
 
-  if (sd->layout == XPAR_LAYOUT_ARMOURED)
-    { Fi(rtop, u64 n;  rec[i] = xpar_vset_rcvs(s, i, &n)); }
-  else if (l) {
+  if (sd->layout != XPAR_LAYOUT_ARMOURED && l) {
     rv = xpar_calloc(l->count ? l->count : 1, sizeof *rv);
     Fi(l->count,
       if (l->vol[i].kind == XPAR_VOL_RECOVERY) {
@@ -4250,7 +4284,9 @@ static int repair_owned(const xpar_options * o, xpar_vset * s, int checked,
   }
 
   rpresent = xpar_calloc(rtop ? (sz) rtop : 1, 1);
-  Fi(rtop, rpresent[i] = rec[i] != NULL);
+  Fi(rtop,
+    if (!rec[i]) rec[i] = xpar_vset_rcvs(s, i, NULL);
+    rpresent[i] = rec[i] != NULL);
   out = owned_repair_stream(o, s, checked, rec, rpresent, rtop, acct);
   if (out == XPAR_EXIT_OK && sd->layout == XPAR_LAYOUT_SPLIT &&
       o->dest != XPAR_DEST_TO) {
@@ -4909,7 +4945,7 @@ int xpar_op_repair(const xpar_options * o) {
     rp_free(&r);
     return code;
   }
-  if (o->repair_head_set) rp_select_head_output(&r);
+  if (r.output_head[0]) rp_select_head_output(&r);
 
   rp_build_writes(&r);
   if (!rp_file_gate(&r)) {

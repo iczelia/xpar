@@ -485,6 +485,10 @@ an entry with unchanged content inherits its bytes, so metadata-only changes
 add no stream data.
 .I stat
 may re-store such an entry.
+If a scanned regular file has different content but retains its recorded size
+and modification time, add exits 2. Repair the file first, or use
+.B \-\-force
+to record an intentional change.
 .TP
 .BR "add \-\-verify\-unchanged" ", " "add \-\-allow\-missing"
 Alias for
@@ -533,7 +537,11 @@ already process multi-generation sets this way. This is required to check
 inherited data. Superseded ancestor slices consume recovery and are reported as
 such. With
 .BR \-\-generation ,
-only the selected generation is processed.
+only the selected generation is processed. Sidecar repair in place or with
+.B \-\-backup
+preserves the current branch head's files. Use
+.B \-\-to=DIR
+to restore the selected generation's contents separately.
 .SH LAYOUTS
 .TP
 .B sidecar

@@ -3306,7 +3306,8 @@ void xpar_vset_mark_superseded(xpar_vset * old, const xpar_vset * head) {
     const xpar_entry * e = &old->mf.entry[i];
     i64 h = xpar_nameidx_find(&head->mf, &ix, e->name, e->name_len);
     if (h < 0 || xpar_memcmp(e->file_id, head->mf.entry[h].file_id,
-                             XPAR_SET_ID_LEN))
+                             XPAR_SET_ID_LEN) ||
+        xpar_memcmp(e->content_hash, head->mf.entry[h].content_hash, 32))
       old->superseded[i] = 1);
   xpar_nameidx_free(&ix);
 }

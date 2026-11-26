@@ -114,13 +114,15 @@ typedef struct {
   const char * layout;
   const char * codec;
   const char * field;
+  const char * armour;
 } layout_case;
 
 static void test_layouts(xt_context * c) {
   static const layout_case cases[] = {
-    { "sidecar matrix GF(2^8)", "sidecar", "matrix", "8" },
-    { "split FFT GF(2^8)", "split", "fft", "8" },
-    { "armoured matrix GF(2^16)", "armoured", "matrix", "16" }
+    { "sidecar matrix GF(2^8)", "sidecar", "matrix", "8", "metadata" },
+    { "split FFT GF(2^8)", "split", "fft", "8", "metadata" },
+    { "split with armoured recovery", "split", "fft", "8", "all" },
+    { "armoured matrix GF(2^16)", "armoured", "matrix", "16", "all" }
   };
   u32 i;
   Fi(ARRAY_LEN(cases),
@@ -128,7 +130,7 @@ static void test_layouts(xt_context * c) {
       "create", "--reproducible", "--dedup=none", "--align=none",
       "-s", "4K", "-r", "4", "--layout", cases[i].layout,
       "--codec", cases[i].codec, "--field", cases[i].field,
-      "--volumes=3", "-o", "set", "DATA.BIN", NULL
+      "--armour", cases[i].armour, "--volumes=3", "-o", "set", "DATA.BIN", NULL
     };
     static const char * const verify[] = { "verify", "set.xpa", NULL };
     static const char * const repair[] = {
@@ -151,8 +153,9 @@ static void test_layouts(xt_context * c) {
       CHECK(xt_files_equal(data, keep), "the layout repairs every byte");
     } else if (!xpar_strcmp(cases[i].layout, "split")) {
       CHECK(xt_find_file(dir, "set", ".d00", target, sizeof target) &&
-            xt_path(clean, sizeof clean, dir, "CLEAN.BIN") &&
-            xt_copy_file(target, clean), "save the split data volume");
+            xt_path(clean, sizeof clean, c->root, "CLEAN.BIN") &&
+            xt_copy_file(target, clean) &&
+            xpar_remove(data) == 0 && xpar_remove(keep) == 0, "save the split data volume");
       CHECK(xt_damage(target, 4100, 211, 0xCA5E + i),
             "damage the split data volume");
       run(c, dir, 1, verify, "verify the damaged volume");
@@ -301,6 +304,79 @@ static void test_tree_workflow(xt_context * c) {
         xt_write_pattern(late, 8192, 64), "add a late file");
   run(c, dir, 0, add, "add a generation");
   run(c, dir, 0, chain, "verify the whole generation chain");
+}
+
+static void test_generation_edits(xt_context * c) {
+  static const char * const create[] = {
+    "create", "-s", "4K", "-r", "2", "-o", "set", "DATA.BIN", NULL
+  };
+  static const char * const add[] = {
+    "add", "set.xpa", "DATA.BIN", "SMALL.BIN", NULL
+  };
+  static const char * const rescan[] = {
+    "add", "--verify-unchanged", "set.xpa", "SMALL.BIN", NULL
+  };
+  static const char * const accept[] = {
+    "add", "-f", "set.xpa", "DATA.BIN", "SMALL.BIN", NULL
+  };
+  static const char * const verify[] = { "verify", "set.xpa", NULL };
+  static const char * const repair[] = {
+    "repair", "--in-place", "set.xpa", NULL
+  };
+  static const char * const ancestor[] = {
+    "repair", "--generation=0", "--in-place", "set.xpa", NULL
+  };
+  char dir[XT_PATH_MAX], data[XT_PATH_MAX], keep[XT_PATH_MAX];
+  xpar_stat_t st;
+  if (!xt_case_begin(c, dir, sizeof dir, "edits across generations"))
+    { CHECK(false, "create the case directory");  return; }
+  CHECK(copy_seed(c, dir, "DATA.BIN") && copy_seed(c, dir, "SMALL.BIN") &&
+        xt_path(data, sizeof data, dir, "DATA.BIN") &&
+        xt_path(keep, sizeof keep, dir, "EDIT.BIN") &&
+        xpar_lstat(data, &st) == 0, "prepare generation inputs");
+  if (run(c, dir, 0, create, "create the base generation") != 0) return;
+  CHECK(xt_damage(data, 20000, 18000, 371) &&
+        xpar_set_times(data, 1, XPAR_TIME_NONE, st.mtime_ns,
+                       XPAR_TIME_NONE) == 0 &&
+        xt_copy_file(data, keep), "rewrite bytes while preserving mtime");
+  run(c, dir, 2, add, "refuse a same-mtime rewrite");
+  run(c, dir, 2, rescan, "refuse a same-mtime rewrite on rescan");
+  run(c, dir, 0, accept, "record the intended rewrite");
+  run(c, dir, 0, verify, "verify superseded content");
+  run(c, dir, 0, repair, "accept a healthy chain");
+  run(c, dir, 0, ancestor, "repair the ancestor against the live tree");
+  CHECK(xt_files_equal(data, keep), "preserve the newer contents");
+}
+
+static void test_index_tables(xt_context * c) {
+  static const char * const create[] = {
+    "create", "-s", "4K", "-r", "8", "-o", "set", "DATA.BIN", NULL
+  };
+  static const char * const verify[] = { "verify", "set.xpa", NULL };
+  static const char * const repair[] = { "repair", "--in-place", "set.xpa", NULL };
+  char dir[XT_PATH_MAX], idx[XT_PATH_MAX], keep[XT_PATH_MAX], vol[XT_PATH_MAX];
+  char data[XT_PATH_MAX], original[XT_PATH_MAX];
+  const char * rebuild[] = { "repair", "--in-place", NULL, NULL };
+  if (!xt_case_begin(c, dir, sizeof dir, "recreate missing index tables"))
+    { CHECK(false, "create the case directory");  return; }
+  CHECK(copy_seed(c, dir, "DATA.BIN"), "prepare the protected file");
+  if (run(c, dir, 0, create, "create replicated tables") != 0) return;
+  CHECK(xt_path(idx, sizeof idx, dir, "set.xpa") &&
+        xt_path(keep, sizeof keep, c->root, "INDEX.BIN") &&
+        xt_copy_file(idx, keep) && xpar_remove(idx) == 0 &&
+        xt_find_file(dir, "set.v00", "", vol, sizeof vol) &&
+        xpar_remove(vol) == 0 &&
+        xt_find_file(dir, "set.v", "", vol, sizeof vol),
+        "lose the index and first recovery volume");
+  rebuild[2] = path_leaf(vol);
+  run(c, dir, 0, rebuild, "recreate the index from remaining volumes");
+  CHECK(xt_files_equal(idx, keep), "rebuilt index matches the original");
+  run(c, dir, 0, verify, "verify the rebuilt index");
+  CHECK(xt_path(data, sizeof data, dir, "DATA.BIN") &&
+        xt_path(original, sizeof original, c->seed, "DATA.BIN") &&
+        xt_damage(data, 5000, 50, 316), "damage one protected slice");
+  run(c, dir, 0, repair, "repair with the rebuilt index");
+  CHECK(xt_files_equal(data, original), "recover the protected bytes");
 }
 
 static void test_geometry_and_limits(xt_context * c) {
@@ -691,6 +767,8 @@ void xt_run_functional(int argc, char ** argv) {
   test_reproducible(&c);
   test_statuses(&c);
   test_tree_workflow(&c);
+  test_generation_edits(&c);
+  test_index_tables(&c);
   test_geometry_and_limits(&c);
   test_authentication(&c);
   test_stdout_safety(&c);
