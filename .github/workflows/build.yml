@@ -534,7 +534,7 @@ jobs:
             qemu: arm
             libc: armhf
     env:
-      QEMU: qemu-${{ matrix.target.qemu }}-static ${{ matrix.target.cpu }}
+      QEMU: qemu-${{ matrix.target.qemu }} ${{ matrix.target.cpu }}
     steps:
       - name: Download source package artifact
         uses: actions/download-artifact@v7
@@ -548,7 +548,7 @@ jobs:
       - name: Install the cross-toolchain and qemu-user
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-user-static \
+          sudo apt-get install -y qemu-user \
             ${{ matrix.target.gcc || format('gcc-{0}', matrix.target.host) }} \
             libc6-dev-${{ matrix.target.libc }}-cross
 
@@ -642,7 +642,7 @@ jobs:
       - name: Differential kernel check at a second vector length
         if: matrix.target.cpu2
         run: |
-          qemu-${{ matrix.target.qemu }}-static \
+          qemu-${{ matrix.target.qemu }} \
             -cpu ${{ matrix.target.cpu2 }} ./xpar benchmark --tiers
 
   #  Test the DJGPP build in FreeDOS across hosts.
